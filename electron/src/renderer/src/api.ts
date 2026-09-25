@@ -15,7 +15,7 @@ declare global {
       stopRecording(): Promise<CursorSample[]>;
       saveBundle(videoBytes: ArrayBuffer, cursor: CursorSample[], project: Project): Promise<string>;
       displays(): Promise<{ id: number; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]>;
-      exportBegin(outPath: string, w: number, h: number, fps: number): Promise<boolean>;
+      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn?: string): Promise<boolean>;
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       exportEnd(): Promise<boolean>;
     };

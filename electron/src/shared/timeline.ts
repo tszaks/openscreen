@@ -40,6 +40,17 @@ export class Timeline {
     return null;
   }
 
+  /** True when the timeline maps source 1:1 (single clip, full range, speed 1). */
+  get isIdentity(): boolean {
+    if (this.clips.length !== 1) return false;
+    const c = this.clips[0];
+    return (
+      c.sourceStart <= 0.001 &&
+      Math.abs(c.sourceEnd - this.sourceDuration) <= 0.001 &&
+      c.speed === 1
+    );
+  }
+
   split(atOutputTime: number): boolean {
     const src = this.sourceTime(atOutputTime);
     if (src === null) return false;

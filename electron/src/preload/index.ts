@@ -7,8 +7,8 @@ const api = {
   saveBundle: (videoBytes: ArrayBuffer, cursor: unknown, project: unknown) =>
     ipcRenderer.invoke('bundle:save', { videoBytes, cursor, project }),
   displays: () => ipcRenderer.invoke('display:info'),
-  exportBegin: (outPath: string, w: number, h: number, fps: number) =>
-    ipcRenderer.invoke('export:begin', { outPath, w, h, fps }),
+  exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string) =>
+    ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn }),
   exportFrame: (bytes: ArrayBuffer) => ipcRenderer.invoke('export:frame', bytes),
   exportEnd: () => ipcRenderer.invoke('export:end'),
 };
