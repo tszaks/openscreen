@@ -191,6 +191,31 @@ export function Editor({
     setSelectedClip(null);
   };
 
+  const setClipSpeed = (speed: number) => {
+    if (!selectedClip) return;
+    setProj((p) => ({
+      ...p,
+      clips: p.clips.map((c) => (c.id === selectedClip ? { ...c, speed } : c)),
+    }));
+  };
+
+  // Keyboard shortcuts: space = play/pause, S = split at playhead.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause();
+      } else if (e.key === 's' || e.key === 'S') {
+        splitAtPlayhead();
+      } else if (e.key === 'Backspace' || e.key === 'Delete') {
+        deleteSelectedClip();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   const importCaptions = async (file: File) => {
     const cues = parseCaptions(await file.text());
     if (!cues.length) {
@@ -311,6 +336,21 @@ export function Editor({
         <button onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1}>
           Delete clip
         </button>
+        {selectedClip && (
+          <label>
+            Speed
+            <select
+              value={proj.clips.find((c) => c.id === selectedClip)?.speed ?? 1}
+              onChange={(e) => setClipSpeed(+e.target.value)}
+            >
+              {[0.5, 0.75, 1, 1.5, 2, 4].map((v) => (
+                <option key={v} value={v}>
+                  {v}×
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label style={{ cursor: 'pointer' }}>
           Captions…
           <input
