@@ -99,6 +99,11 @@ app.whenReady().then(() => {
     return true;
   });
 
+  ipcMain.handle('file:writeText', async (_e, args: { path: string; text: string }) => {
+    writeFileSync(args.path, args.text);
+    return true;
+  });
+
   // Reopen a saved .openscreen bundle in the editor.
   ipcMain.handle('bundle:open', async () => {
     const picked = await dialog.showOpenDialog(win!, {

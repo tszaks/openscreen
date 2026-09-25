@@ -8,6 +8,7 @@ import type { Ripple } from '../../shared/ripples';
 export interface FrameInputs {
   frame: CanvasImageSource; // source frame at this output time
   cursor: Point | null; // normalized position, or null to hide
+  cursorTrail?: Point[]; // recent positions, oldest→newest (motion smear)
   ripples: Ripple[];
   cameraFrame?: CanvasImageSource;
   keystrokes?: string[]; // recently pressed key names, oldest→newest
@@ -82,17 +83,29 @@ export class CanvasCompositor {
     ctx.restore();
 
     // 3. Cursor (full-source normalized → crop-relative → rect pixels).
-    if (input.cursor) {
-      const p = input.cursor;
-      const cropRelX = (p.x * fullW - sx) / cropW;
-      const cropRelY = (p.y * fullH - sy) / cropH;
-      const cxp = rect.x + cropRelX * rect.w;
-      const cyp = rect.y + cropRelY * rect.h;
-      const d = H * 0.012;
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    const dot = (px: number, py: number, d: number, fill: string) => {
+      ctx.fillStyle = fill;
       ctx.beginPath();
-      ctx.ellipse(cxp, cyp, d / 2, d / 2, 0, 0, Math.PI * 2);
+      ctx.ellipse(px, py, d / 2, d / 2, 0, 0, Math.PI * 2);
       ctx.fill();
+    };
+    const toPx = (p: Point) => ({
+      x: rect.x + ((p.x * fullW - sx) / cropW) * rect.w,
+      y: rect.y + ((p.y * fullH - sy) / cropH) * rect.h,
+    });
+    const d = H * style.cursorSize;
+    if (input.cursorTrail?.length) {
+      const n = input.cursorTrail.length;
+      for (let i = 0; i < n; i++) {
+        const t = (i + 1) / n; // fade oldest→newest
+        const { x, y } = toPx(input.cursorTrail[i]);
+        const hex = style.cursorHex;
+        dot(x, y, d * (0.4 + 0.6 * t), `${hex}${Math.round(0x66 * t).toString(16).padStart(2, '0')}`);
+      }
+    }
+    if (input.cursor) {
+      const { x, y } = toPx(input.cursor);
+      dot(x, y, d, `${style.cursorHex}d9`);
     }
 
     // 4. Click ripples — same full-source→crop-relative mapping.

@@ -6,7 +6,7 @@ import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
 import { Timeline } from '../../shared/timeline';
 import { CanvasCompositor } from './compositor';
-import { parseCaptions } from '../../shared/captions';
+import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
 
 const SWATCHES = [
@@ -173,6 +173,7 @@ export function Editor({
       compositor.render(time, {
         frame: video,
         cursor: cursorPos,
+        cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, time) : undefined,
         keystrokes: keyCaps,
         ripples: ripplesAt(time, clickEv),
         cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
@@ -295,6 +296,7 @@ export function Editor({
       const cam = camRef.current;
       if (cam) await seekVideo(cam, srcT);
       compositor.render(outT, {
+        cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, outT) : undefined,
         frame: video,
         cursor: cursorAt(smoothed, outT),
         keystrokes: keysAt(outT, keys),
@@ -310,6 +312,10 @@ export function Editor({
       }
     }
     await api.exportEnd();
+    if (proj.captions.length) {
+      const srtPath = outPath.replace(/\.mp4$/, '.srt');
+      await api.writeText(srtPath, toSrt(proj.captions));
+    }
     setStatus(`exported → ${outPath}`);
   };
 
@@ -796,6 +802,40 @@ export function Editor({
             </label>
           ))}
         </div>
+        <div className="sliders">
+          <label title="Software cursor size (fraction of frame height)">
+            Cursor {(proj.style.cursorSize * 1000).toFixed(0)}
+            <input
+              type="range"
+              min={0.005}
+              max={0.03}
+              step={0.001}
+              value={proj.style.cursorSize}
+              onChange={(e) =>
+                setProj((p) => ({ ...p, style: { ...p.style, cursorSize: +e.target.value } }))
+              }
+            />
+          </label>
+          <label title="Smear the cursor along its recent path">
+            <input
+              type="checkbox"
+              checked={proj.style.cursorTrail}
+              onChange={(e) =>
+                setProj((p) => ({ ...p, style: { ...p.style, cursorTrail: e.target.checked } }))
+              }
+            />
+            Trail
+          </label>
+          <label title="Cursor color">
+            <input
+              type="color"
+              value={proj.style.cursorHex}
+              onChange={(e) =>
+                setProj((p) => ({ ...p, style: { ...p.style, cursorHex: e.target.value } }))
+              }
+            />
+          </label>
+        </div>
         <button onClick={() => videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause()}>
           Play/Pause
         </button>
@@ -973,6 +1013,20 @@ function fmtTime(t: number) {
   const m = Math.floor(t / 60);
   const s = Math.floor(t % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/** Recent cursor positions (oldest→newest) over the last ~0.28s — the trail. */
+function trailAt(smoothed: CursorSample[], time: number) {
+  const s = new CursorSmoother();
+  const moves = smoothed.filter((m) => m.kind === 'move');
+  const out: { x: number; y: number }[] = [];
+  const span = 0.28;
+  const steps = 8;
+  for (let i = steps; i >= 1; i--) {
+    const p = s.positionAt(time - (span * i) / steps, moves);
+    if (p) out.push(p);
+  }
+  return out;
 }
 
 /** Cursor position at output time from the smoothed move samples. */

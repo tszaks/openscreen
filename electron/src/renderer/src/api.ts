@@ -16,6 +16,7 @@ declare global {
       saveBundle(videoBytes: ArrayBuffer, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer, keys?: KeystrokeSample[]): Promise<string>;
       openBundle(): Promise<{ bundleDir: string; project: Project; cursor: CursorSample[]; keys: KeystrokeSample[]; videoPath: string; camPath?: string } | null>;
       saveProject(dir: string, project: Project): Promise<boolean>;
+      writeText(path: string, text: string): Promise<boolean>;
       displays(): Promise<{ id: number; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]>;
       pickBackground(): Promise<string | null>;
       wallpaperPath(): Promise<string | null>;

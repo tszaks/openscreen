@@ -9,6 +9,7 @@ const api = {
   openBundle: () => ipcRenderer.invoke('bundle:open'),
   saveProject: (dir: string, project: unknown) =>
     ipcRenderer.invoke('bundle:saveProject', { dir, project }),
+  writeText: (path: string, text: string) => ipcRenderer.invoke('file:writeText', { path, text }),
   displays: () => ipcRenderer.invoke('display:info'),
   pickBackground: () => ipcRenderer.invoke('background:pick'),
   wallpaperPath: () => ipcRenderer.invoke('background:wallpaper'),
