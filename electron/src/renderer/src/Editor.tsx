@@ -613,6 +613,49 @@ export function Editor({
             Wall
           </button>
         </div>
+        {proj.style.background.kind === 'imageFile' && (
+          <label>
+            Blur {proj.style.background.blur ?? 0}px
+            <input
+              type="range"
+              min={0}
+              max={60}
+              step={1}
+              value={proj.style.background.blur ?? 0}
+              onChange={(e) =>
+                setProj((p) => ({
+                  ...p,
+                  style: {
+                    ...p.style,
+                    background: { kind: 'imageFile', path: p.style.background.kind === 'imageFile' ? p.style.background.path : '', blur: +e.target.value },
+                  },
+                }))
+              }
+            />
+          </label>
+        )}
+        <label title="Add a text overlay at the playhead">
+          <button
+            onClick={() =>
+              setProj((p) => ({
+                ...p,
+                annotations: [
+                  ...p.annotations,
+                  {
+                    id: crypto.randomUUID(),
+                    start: playhead,
+                    end: Math.min(timeline.outputDuration, playhead + 3),
+                    text: 'Text',
+                    band: 1,
+                    hex: '#ffffff',
+                  },
+                ],
+              }))
+            }
+          >
+            + Text
+          </button>
+        </label>
         {camUrl && (
           <div className="sliders">
             <label>
@@ -781,9 +824,57 @@ export function Editor({
         <span className="status">{status}</span>
       </div>
       </div>
-      {proj.captions.length > 0 && (
+      {(proj.captions.length > 0 || proj.annotations.length > 0) && (
         <div className="transcript">
-          <h3>Transcript</h3>
+          {proj.annotations.length > 0 && (
+            <>
+              <h3>Text</h3>
+              {proj.annotations.map((a) => (
+                <div className="cue" key={a.id}>
+                  <input
+                    value={a.text}
+                    onChange={(e) =>
+                      setProj((p) => ({
+                        ...p,
+                        annotations: p.annotations.map((x) =>
+                          x.id === a.id ? { ...x, text: e.target.value } : x,
+                        ),
+                      }))
+                    }
+                  />
+                  <span
+                    className="x"
+                    title="Position: top / middle / bottom"
+                    onClick={() =>
+                      setProj((p) => ({
+                        ...p,
+                        annotations: p.annotations.map((x) =>
+                          x.id === a.id ? { ...x, band: ((x.band + 1) % 3) as 0 | 1 | 2 } : x,
+                        ),
+                      }))
+                    }
+                  >
+                    {a.band === 0 ? '⤒' : a.band === 1 ? '↕' : '⤓'}
+                  </span>
+                  <span
+                    className="x"
+                    title="Delete"
+                    onClick={() =>
+                      setProj((p) => ({
+                        ...p,
+                        annotations: p.annotations.filter((x) => x.id !== a.id),
+                      }))
+                    }
+                  >
+                    ✕
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
+          {proj.captions.length > 0 && (
+            <>
+              <h3>Transcript</h3>
           <button className="cutall" onClick={cutFillers} title="Cut cues that are only filler words">
             Cut fillers
           </button>
@@ -803,6 +894,8 @@ export function Editor({
               </span>
             </div>
           ))}
+            </>
+          )}
         </div>
       )}
     </div>

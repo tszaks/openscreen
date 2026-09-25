@@ -1,7 +1,7 @@
 // Canvas compositor — port of the RenderKit compositor. Draw order:
 // background → screen frame (zoomed via camera, rounded corners, shadow)
 // → software cursor → click ripples → caption pill.
-import type { CaptionCue, Point, Project, Size } from '../../shared/types';
+import type { Annotation, CaptionCue, Point, Project, Size } from '../../shared/types';
 import { cameraAt, type AutofocusOptions, type FocusSegment } from '../../shared/autofocus';
 import type { Ripple } from '../../shared/ripples';
 
@@ -154,6 +154,11 @@ export class CanvasCompositor {
 
     // 7. Keystroke keycaps, bottom-left inside the content frame.
     if (input.keystrokes?.length) this.drawKeystrokes(input.keystrokes, rect, H);
+
+    // 8. Text annotations on the content frame.
+    for (const a of this.project.annotations ?? []) {
+      if (time >= a.start && time <= a.end) this.drawAnnotation(a, rect, H);
+    }
   }
 
   private bgImage?: HTMLImageElement;
@@ -170,19 +175,33 @@ export class CanvasCompositor {
         this.bgImage.src = `file://${bg.path}`;
       }
       if (this.bgImage.complete && this.bgImage.naturalWidth > 0) {
-        // cover-fit
         const ar = W / H;
         const ir = this.bgImage.naturalWidth / this.bgImage.naturalHeight;
         let sw = this.bgImage.naturalWidth;
         let sh = this.bgImage.naturalHeight;
         if (ar > ir) sh = sw / ar;
         else sw = sh * ar;
-        ctx.drawImage(
-          this.bgImage,
-          (this.bgImage.naturalWidth - sw) / 2,
-          (this.bgImage.naturalHeight - sh) / 2,
-          sw, sh, 0, 0, W, H,
-        );
+        const blur = bg.blur ?? 0;
+        if (blur > 0) {
+          ctx.save();
+          ctx.filter = `blur(${blur}px)`;
+          // slight overscan hides the softened edges
+          const m = blur;
+          ctx.drawImage(
+            this.bgImage,
+            (this.bgImage.naturalWidth - sw) / 2,
+            (this.bgImage.naturalHeight - sh) / 2,
+            sw, sh, -m, -m, W + m * 2, H + m * 2,
+          );
+          ctx.restore();
+        } else {
+          ctx.drawImage(
+            this.bgImage,
+            (this.bgImage.naturalWidth - sw) / 2,
+            (this.bgImage.naturalHeight - sh) / 2,
+            sw, sh, 0, 0, W, H,
+          );
+        }
       } else {
         ctx.fillStyle = '#111';
         ctx.fillRect(0, 0, W, H);
@@ -202,6 +221,21 @@ export class CanvasCompositor {
       ctx.fillStyle = '#111';
       ctx.fillRect(0, 0, W, H);
     }
+  }
+
+  private drawAnnotation(a: Annotation, rect: { x: number; y: number; w: number; h: number }, H: number) {
+    const { ctx } = this;
+    const fontSize = Math.max(20, H * 0.055);
+    ctx.font = `800 ${fontSize}px -apple-system, sans-serif`;
+    const tw = ctx.measureText(a.text).width;
+    const x = rect.x + rect.w / 2 - tw / 2;
+    const y = rect.y + (a.band === 0 ? rect.h * 0.12 : a.band === 1 ? rect.h * 0.47 : rect.h * 0.82);
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = fontSize * 0.12;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.strokeText(a.text, x, y);
+    ctx.fillStyle = a.hex;
+    ctx.fillText(a.text, x, y);
   }
 
   private drawCaption(cue: CaptionCue, rect: { x: number; y: number; w: number; h: number }, W: number, H: number) {
