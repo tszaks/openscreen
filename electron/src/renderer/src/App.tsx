@@ -7,7 +7,7 @@ import { Editor } from './Editor';
 type Phase =
   | { name: 'picker' }
   | { name: 'recording'; startedAt: number }
-  | { name: 'editor'; bundleDir: string; videoUrl: string; project: Project; cursor: CursorSample[] };
+  | { name: 'editor'; bundleDir: string; videoUrl: string; camUrl?: string; project: Project; cursor: CursorSample[] };
 
 /** Capture one source (screen or window) at 60fps via getDisplayMedia. */
 async function captureStream(sourceId: string): Promise<MediaStream> {
@@ -47,11 +47,15 @@ export function App() {
   const [selected, setSelected] = useState<SourceInfo | null>(null);
   const [selectedDevice, setSelectedDevice] = useState<MediaDeviceInfo | null>(null);
   const [micOn, setMicOn] = useState(false);
+  const [camOn, setCamOn] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [status, setStatus] = useState('');
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const camRecRef = useRef<MediaRecorder | null>(null);
+  const camStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const camChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     api.listSources().then(setSources).catch((e) => setStatus(`sources: ${e}`));
@@ -89,12 +93,25 @@ export function App() {
       rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
       rec.start(250);
       recorderRef.current = rec;
+      if (camOn && devices.length > 0) {
+        try {
+          const camStream = await captureDevice(devices[0].deviceId);
+          camStreamRef.current = camStream;
+          camChunksRef.current = [];
+          const camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
+          camRec.ondataavailable = (e) => e.data.size && camChunksRef.current.push(e.data);
+          camRec.start(250);
+          camRecRef.current = camRec;
+        } catch {
+          setStatus('camera unavailable — recording screen only');
+        }
+      }
       await api.startRecording(selectedDevice?.deviceId ?? selected!.id);
       setPhase({ name: 'recording', startedAt: performance.now() });
     } catch (e) {
       setStatus(`record: ${e}`);
     }
-  }, [selected, selectedDevice, micOn]);
+  }, [selected, selectedDevice, micOn, camOn, devices]);
 
   const stop = useCallback(async () => {
     const rec = recorderRef.current;
@@ -105,18 +122,34 @@ export function App() {
     stream.getTracks().forEach((t) => t.stop());
     await done;
     const cursor = await api.stopRecording();
+    // Stop the camera recorder too, if it ran.
+    let camBlob: Blob | undefined;
+    if (camRecRef.current) {
+      const camRec = camRecRef.current;
+      const camDone = new Promise<void>((r) => (camRec.onstop = () => r()));
+      camRec.stop();
+      camStreamRef.current?.getTracks().forEach((t) => t.stop());
+      await camDone;
+      camRecRef.current = null;
+      camStreamRef.current = null;
+      camBlob = new Blob(camChunksRef.current, { type: camRec.mimeType });
+    }
     const blob = new Blob(chunksRef.current, { type: rec.mimeType });
     const videoBytes = await blob.arrayBuffer();
+    const camBytes = camBlob ? await camBlob.arrayBuffer() : undefined;
     const track = stream.getVideoTracks()[0]?.getSettings();
     const project = defaultProject({
       screenVideoFile: 'screen.webm',
+      cameraVideoFile: camBytes ? 'cam.webm' : undefined,
       sourceKind: selectedDevice ? 'iosDevice' : 'display',
       sourceSize: { width: track?.width ?? 1920, height: track?.height ?? 1080 },
       duration: elapsed,
     });
-    const bundleDir = await api.saveBundle(videoBytes, cursor, project);
+    if (camBytes) project.cameraOverlay.enabled = true;
+    const bundleDir = await api.saveBundle(videoBytes, cursor, project, camBytes);
     const videoUrl = URL.createObjectURL(blob);
-    setPhase({ name: 'editor', bundleDir, videoUrl, project, cursor });
+    const camUrl = camBlob ? URL.createObjectURL(camBlob) : undefined;
+    setPhase({ name: 'editor', bundleDir, videoUrl, camUrl, project, cursor });
   }, [elapsed]);
 
   if (phase.name === 'picker') {
@@ -164,6 +197,7 @@ export function App() {
                 name: 'editor',
                 bundleDir: b.bundleDir,
                 videoUrl: `file://${b.videoPath}`,
+                camUrl: b.camPath ? `file://${b.camPath}` : undefined,
                 project: b.project,
                 cursor: b.cursor,
               });
@@ -173,6 +207,9 @@ export function App() {
           </button>{' '}
           <label style={{ fontSize: 13 }}>
             <input type="checkbox" checked={micOn} onChange={(e) => setMicOn(e.target.checked)} /> Mic
+          </label>{' '}
+          <label style={{ fontSize: 13 }}>
+            <input type="checkbox" checked={camOn} onChange={(e) => setCamOn(e.target.checked)} /> Cam
           </label>{' '}
           <span className="status">{status}</span>
         </div>
@@ -195,6 +232,7 @@ export function App() {
   return (
     <Editor
       videoUrl={phase.videoUrl}
+      camUrl={phase.camUrl}
       project={phase.project}
       cursor={phase.cursor}
       bundleDir={phase.bundleDir}

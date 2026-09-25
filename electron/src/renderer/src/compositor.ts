@@ -106,7 +106,42 @@ export class CanvasCompositor {
       ctx.fill();
     }
 
-    // 5. Caption pill near content bottom.
+    // 5. Camera overlay PiP in a corner of the content frame.
+    const overlay = this.project.cameraOverlay;
+    if (overlay.enabled && input.cameraFrame) {
+      const d = Math.min(rect.w, rect.h) * overlay.sizeFraction;
+      const margin = Math.min(rect.w, rect.h) * 0.04;
+      const ox = /Right/.test(overlay.corner) ? rect.x + rect.w - d - margin : rect.x + margin;
+      const oy = /bottom/i.test(overlay.corner) ? rect.y + rect.h - d - margin : rect.y + margin;
+      ctx.save();
+      ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
+      ctx.shadowBlur = style.shadowRadius * 0.4;
+      ctx.beginPath();
+      if (overlay.circular) {
+        ctx.ellipse(ox + d / 2, oy + d / 2, d / 2, d / 2, 0, 0, Math.PI * 2);
+      } else {
+        roundedPath(ctx, ox, oy, d, d, d * 0.18);
+      }
+      ctx.clip();
+      // Cover-crop the camera frame to square.
+      const cf = input.cameraFrame as CanvasImageSource;
+      const fw = (cf as HTMLVideoElement).videoWidth || (cf as HTMLCanvasElement).width || 1;
+      const fh = (cf as HTMLVideoElement).videoHeight || (cf as HTMLCanvasElement).height || 1;
+      const side = Math.min(fw, fh);
+      ctx.drawImage(cf, (fw - side) / 2, (fh - side) / 2, side, side, ox, oy, d, d);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.lineWidth = Math.max(1.5, d * 0.02);
+      ctx.beginPath();
+      if (overlay.circular) {
+        ctx.ellipse(ox + d / 2, oy + d / 2, d / 2, d / 2, 0, 0, Math.PI * 2);
+      } else {
+        roundedPath(ctx, ox, oy, d, d, d * 0.18);
+      }
+      ctx.stroke();
+    }
+
+    // 6. Caption pill near content bottom.
     const cue = this.project.captions.find((c) => c.start <= time && time <= c.end);
     if (cue && cue.text) this.drawCaption(cue, rect, W, H);
   }
