@@ -17,3 +17,5 @@ OpenScreen.xcodeproj/
 
 # OS noise
 .DS_Store
+node_modules/
+dist/
