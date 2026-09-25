@@ -443,6 +443,13 @@ app.whenReady().then(() => {
   );
 
   createWindow();
+
+  // Auto-update from GitHub Releases (packaged builds only).
+  if (app.isPackaged) {
+    import('electron-updater')
+      .then(({ autoUpdater }) => autoUpdater.checkForUpdatesAndNotify())
+      .catch(() => {});
+  }
 });
 
 app.on('window-all-closed', () => {
