@@ -156,6 +156,21 @@ export function App() {
           <button className="primary" disabled={!selected && !selectedDevice} onClick={start}>
             Start Recording
           </button>{' '}
+          <button
+            onClick={async () => {
+              const b = await api.openBundle();
+              if (!b) return;
+              setPhase({
+                name: 'editor',
+                bundleDir: b.bundleDir,
+                videoUrl: `file://${b.videoPath}`,
+                project: b.project,
+                cursor: b.cursor,
+              });
+            }}
+          >
+            Open project…
+          </button>{' '}
           <label style={{ fontSize: 13 }}>
             <input type="checkbox" checked={micOn} onChange={(e) => setMicOn(e.target.checked)} /> Mic
           </label>{' '}

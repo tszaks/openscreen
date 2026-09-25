@@ -1,5 +1,5 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, screen } from 'electron';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen } from 'electron';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCursorTracker, type CursorTracker } from './cursor';
 import type { CursorSample, Project } from '../shared/types';
@@ -63,6 +63,22 @@ app.whenReady().then(() => {
       return dir;
     },
   );
+
+  // Reopen a saved .openscreen bundle in the editor.
+  ipcMain.handle('bundle:open', async () => {
+    const picked = await dialog.showOpenDialog(win!, {
+      title: 'Open recording',
+      defaultPath: recordingsRoot(),
+      properties: ['openDirectory'],
+      filters: [{ name: 'OpenScreen bundles', extensions: ['openscreen'] }],
+    });
+    if (picked.canceled || !picked.filePaths[0]) return null;
+    const dir = picked.filePaths[0];
+    const project = JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'));
+    const cursor = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8')).samples ?? [];
+    const videoPath = join(dir, project.recording?.screenVideoFile ?? 'screen.webm');
+    return { bundleDir: dir, project, cursor, videoPath };
+  });
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
