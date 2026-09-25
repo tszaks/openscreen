@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import type { CursorSample, Project } from '../../shared/types';
-import { AutofocusPlanner, cameraAt, type FocusSegment } from '../../shared/autofocus';
+import { AutofocusPlanner, cameraAt, defaultAutofocus, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
 import { Timeline } from '../../shared/timeline';
@@ -36,6 +36,7 @@ export function Editor({
   const [duration, setDuration] = useState(project.recording.duration || 0);
   const [status, setStatus] = useState('');
   const [autofocusOn, setAutofocusOn] = useState(true);
+  const [zoomDepth, setZoomDepth] = useState(2);
   const [manualSegments, setManualSegments] = useState<FocusSegment[]>([]);
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
   const [cropMode, setCropMode] = useState(false);
@@ -48,13 +49,13 @@ export function Editor({
 
   const segments = useMemo<FocusSegment[]>(() => {
     const auto = autofocusOn
-      ? new AutofocusPlanner().planSegments(
+      ? new AutofocusPlanner({ ...defaultAutofocus, maxScale: zoomDepth }).planSegments(
           cursor.filter((s) => s.kind === 'clickDown'),
           timeline.outputDuration || duration,
         )
       : [];
     return [...auto, ...manualSegments].sort((a, b) => a.inStart - b.inStart);
-  }, [cursor, timeline, autofocusOn, duration, manualSegments]);
+  }, [cursor, timeline, autofocusOn, duration, manualSegments, zoomDepth]);
 
   const canvasSize = useMemo(() => {
     const src = proj.recording.sourceSize;
@@ -412,6 +413,19 @@ export function Editor({
           />
           Auto-focus
         </label>
+        {autofocusOn && (
+          <label title="Max zoom on click">
+            Zoom {zoomDepth.toFixed(1)}×
+            <input
+              type="range"
+              min={1.2}
+              max={4}
+              step={0.1}
+              value={zoomDepth}
+              onChange={(e) => setZoomDepth(+e.target.value)}
+            />
+          </label>
+        )}
         <div className="swatches">
           {SWATCHES.map((s) => (
             <button
