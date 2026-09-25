@@ -59,6 +59,7 @@ export function Editor({
   const [manualSegments, setManualSegments] = useState<FocusSegment[]>([]);
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
   const [motionEv, setMotionEv] = useState<CursorSample[]>([]);
+  const [exporting, setExporting] = useState(false);
   const [cropMode, setCropMode] = useState(false);
   const cropDrag = useRef<{ x: number; y: number } | null>(null);
   const [peaks, setPeaks] = useState<number[]>([]);
@@ -295,6 +296,7 @@ export function Editor({
     const fps = proj.outputFPS;
     const total = Math.floor((timeline.outputDuration || duration) * fps);
     const { width: W, height: H } = canvasSize;
+    setExporting(true);
     const outPath = `${bundleDir}/export-${Date.now()}.mp4`;
     const audioIn = `${bundleDir}/${proj.recording.screenVideoFile}`;
     // Cut timelines get filtered audio (atrim+atempo+concat); identity gets
@@ -341,6 +343,7 @@ export function Editor({
     } else {
       setStatus(`exported → ${outPath}`);
     }
+    setExporting(false);
   };
 
   /** Output-time range of each clip for the timeline strip. */
@@ -629,7 +632,7 @@ export function Editor({
         src={videoUrl}
         className="hidden"
         preload="auto"
-        muted
+        muted={exporting}
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
       />
       {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
