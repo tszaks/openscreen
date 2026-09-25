@@ -12,6 +12,8 @@ const api = {
   displays: () => ipcRenderer.invoke('display:info'),
   pickBackground: () => ipcRenderer.invoke('background:pick'),
   wallpaperPath: () => ipcRenderer.invoke('background:wallpaper'),
+  transcribe: (dir: string, videoFile: string) =>
+    ipcRenderer.invoke('captions:transcribe', { dir, videoFile }),
   exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string) =>
     ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn }),
   exportFrame: (bytes: ArrayBuffer) => ipcRenderer.invoke('export:frame', bytes),

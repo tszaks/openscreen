@@ -115,6 +115,38 @@ app.whenReady().then(() => {
     });
   });
 
+  // Transcribe a bundle's audio via whisper-cli → caption cues (source time).
+  ipcMain.handle('captions:transcribe', async (_e, args: { dir: string; videoFile: string }) => {
+    const { execFile } = await import('node:child_process');
+    const { existsSync, readFileSync } = await import('node:fs');
+    const wav = join(args.dir, 'audio.wav');
+    const jsonOut = join(args.dir, 'transcript.json');
+    const run = (cmd: string, argv: string[]) =>
+      new Promise<void>((resolve, reject) =>
+        execFile(cmd, argv, (e) => (e ? reject(e) : resolve())),
+      );
+    await run('ffmpeg', [
+      '-y', '-i', join(args.dir, args.videoFile),
+      '-vn', '-ar', '16000', '-ac', '1', '-f', 'wav', wav,
+    ]);
+    const model = process.env.OPENSCREEN_WHISPER_MODEL ?? join(app.getPath('home'), 'models', 'ggml-base.en.bin');
+    await run('whisper-cli', [
+      '-m', model, '-f', wav, '--output-json', '--output-file', jsonOut.replace(/\.json$/, ''),
+      '-t', '4',
+    ]);
+    if (!existsSync(jsonOut)) throw new Error('whisper produced no output');
+    const parsed = JSON.parse(readFileSync(jsonOut, 'utf8'));
+    // whisper-cli --output-json emits { transcription: [{ offsets: {from,to}, text }] }
+    const segs = parsed.transcription ?? parsed.result ?? [];
+    return segs
+      .map((s: { offsets?: { from: number; to: number }; timestamps?: { from: string; to: string }; text: string }) => {
+        const from = s.offsets?.from ?? 0;
+        const to = s.offsets?.to ?? 0;
+        return { start: from / 1000, end: to / 1000, text: (s.text ?? '').trim() };
+      })
+      .filter((c: { start: number; end: number; text: string }) => c.end > c.start && c.text);
+  });
+
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
   ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string }) => {

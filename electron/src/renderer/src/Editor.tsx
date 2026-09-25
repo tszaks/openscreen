@@ -359,6 +359,30 @@ export function Editor({
     return () => window.removeEventListener('keydown', onKey);
   });
 
+  const transcribe = async () => {
+    setStatus('transcribing…');
+    try {
+      const segs = await api.transcribe(bundleDir, proj.recording.screenVideoFile);
+      // whisper times are source-time — remap through the timeline.
+      const cues = segs
+        .map((s) => {
+          const start = timeline.outputTime(s.start);
+          const end = timeline.outputTime(s.end);
+          if (start === null || end === null) return null;
+          return { id: crypto.randomUUID(), start, end, text: s.text };
+        })
+        .filter((c): c is NonNullable<typeof c> => c !== null);
+      if (!cues.length) {
+        setStatus('no speech detected (recording has no audio?)');
+        return;
+      }
+      setProj((p) => ({ ...p, captions: cues }));
+      setStatus(`${cues.length} captions transcribed`);
+    } catch (e) {
+      setStatus(`transcribe failed: ${e}`);
+    }
+  };
+
   const importCaptions = async (file: File) => {
     const cues = parseCaptions(await file.text());
     if (!cues.length) {
@@ -620,6 +644,9 @@ export function Editor({
             </select>
           </label>
         )}
+        <button onClick={transcribe} title="Auto-transcribe via whisper">
+          Transcribe
+        </button>
         <label style={{ cursor: 'pointer' }}>
           Captions…
           <input

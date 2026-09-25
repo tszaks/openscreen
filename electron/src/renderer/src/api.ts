@@ -19,6 +19,7 @@ declare global {
       displays(): Promise<{ id: number; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]>;
       pickBackground(): Promise<string | null>;
       wallpaperPath(): Promise<string | null>;
+      transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string }[]>;
       exportBegin(outPath: string, w: number, h: number, fps: number, audioIn?: string): Promise<boolean>;
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       exportEnd(): Promise<boolean>;
