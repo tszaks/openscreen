@@ -4,8 +4,8 @@ const api = {
   listSources: () => ipcRenderer.invoke('sources:list'),
   startRecording: (sourceId: string) => ipcRenderer.invoke('recording:start', sourceId),
   stopRecording: () => ipcRenderer.invoke('recording:stop'),
-  saveBundle: (videoBytes: ArrayBuffer, cursor: unknown, project: unknown) =>
-    ipcRenderer.invoke('bundle:save', { videoBytes, cursor, project }),
+  saveBundle: (videoBytes: ArrayBuffer, cursor: unknown, project: unknown, camBytes?: ArrayBuffer) =>
+    ipcRenderer.invoke('bundle:save', { videoBytes, camBytes, cursor, project }),
   openBundle: () => ipcRenderer.invoke('bundle:open'),
   saveProject: (dir: string, project: unknown) =>
     ipcRenderer.invoke('bundle:saveProject', { dir, project }),

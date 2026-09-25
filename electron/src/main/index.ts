@@ -54,10 +54,13 @@ app.whenReady().then(() => {
   // Save a finished recording: webm blob + cursor track + project.json.
   ipcMain.handle(
     'bundle:save',
-    async (_e, args: { videoBytes: ArrayBuffer; cursor: CursorSample[]; project: Project }) => {
+    async (_e, args: { videoBytes: ArrayBuffer; camBytes?: ArrayBuffer; cursor: CursorSample[]; project: Project }) => {
       const dir = join(recordingsRoot(), `rec-${Date.now()}.openscreen`);
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'screen.webm'), Buffer.from(args.videoBytes));
+      if (args.camBytes && args.camBytes.byteLength > 0) {
+        writeFileSync(join(dir, 'cam.webm'), Buffer.from(args.camBytes));
+      }
       writeFileSync(join(dir, 'cursor.json'), JSON.stringify({ samples: args.cursor }, null, 2));
       writeFileSync(join(dir, 'project.json'), JSON.stringify(args.project, null, 2));
       return dir;
@@ -83,7 +86,10 @@ app.whenReady().then(() => {
     const project = JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'));
     const cursor = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8')).samples ?? [];
     const videoPath = join(dir, project.recording?.screenVideoFile ?? 'screen.webm');
-    return { bundleDir: dir, project, cursor, videoPath };
+    const camPath = project.recording?.cameraVideoFile
+      ? join(dir, project.recording.cameraVideoFile)
+      : undefined;
+    return { bundleDir: dir, project, cursor, videoPath, camPath };
   });
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer

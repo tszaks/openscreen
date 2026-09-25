@@ -17,16 +17,19 @@ const SWATCHES = [
 
 export function Editor({
   videoUrl,
+  camUrl,
   project,
   cursor,
   bundleDir,
 }: {
   videoUrl: string;
+  camUrl?: string;
   project: Project;
   cursor: CursorSample[];
   bundleDir: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const camRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [proj, setProj] = useState(project);
   const [playhead, setPlayhead] = useState(0);
@@ -73,10 +76,12 @@ export function Editor({
       canvas.width = canvasSize.width;
       canvas.height = canvasSize.height;
       const cursorPos = cursorAt(smoothed, time);
+      const cam = camRef.current;
       compositor.render(time, {
         frame: video,
         cursor: cursorPos,
         ripples: ripplesAt(time, clickEv),
+        cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
       });
       ctx.drawImage(compositor.canvas, 0, 0);
     },
@@ -93,11 +98,20 @@ export function Editor({
       setPlayhead(video.currentTime);
       raf = requestAnimationFrame(loop);
     };
-    const onSeeked = () => renderAt(video.currentTime);
+    const onSeeked = () => {
+      if (camRef.current) camRef.current.currentTime = video.currentTime;
+      renderAt(video.currentTime);
+    };
     video.addEventListener('seeked', onSeeked);
     if (!video.paused) raf = requestAnimationFrame(loop);
-    const onPlay = () => { raf = requestAnimationFrame(loop); };
-    const onPause = () => cancelAnimationFrame(raf);
+    const onPlay = () => {
+      camRef.current?.play();
+      raf = requestAnimationFrame(loop);
+    };
+    const onPause = () => {
+      camRef.current?.pause();
+      cancelAnimationFrame(raf);
+    };
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
     return () => {
@@ -127,6 +141,7 @@ export function Editor({
     }
     const srcT = timeline.sourceTime(t) ?? t;
     if (videoRef.current) videoRef.current.currentTime = srcT;
+    if (camRef.current) camRef.current.currentTime = srcT;
     setPlayhead(t);
   };
 
@@ -148,10 +163,13 @@ export function Editor({
       const srcT = timeline.sourceTime(outT);
       if (srcT === null) continue;
       await seekVideo(video, srcT);
+      const cam = camRef.current;
+      if (cam) await seekVideo(cam, srcT);
       compositor.render(outT, {
         frame: video,
         cursor: cursorAt(smoothed, outT),
         ripples: ripplesAt(outT, clickEv),
+        cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
       });
       const ctx = compositor.canvas.getContext('2d')!;
       const rgba = ctx.getImageData(0, 0, W, H);
@@ -243,6 +261,7 @@ export function Editor({
         muted
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
       />
+      {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
       <div className="preview-wrap">
         <canvas ref={canvasRef} className="preview" />
       </div>
@@ -305,6 +324,57 @@ export function Editor({
             />
           ))}
         </div>
+        {camUrl && (
+          <div className="sliders">
+            <label>
+              Camera
+              <input
+                type="checkbox"
+                checked={proj.cameraOverlay.enabled}
+                onChange={(e) =>
+                  setProj((p) => ({
+                    ...p,
+                    cameraOverlay: { ...p.cameraOverlay, enabled: e.target.checked },
+                  }))
+                }
+              />
+            </label>
+            <label>
+              Corner
+              <select
+                value={proj.cameraOverlay.corner}
+                onChange={(e) =>
+                  setProj((p) => ({
+                    ...p,
+                    cameraOverlay: {
+                      ...p.cameraOverlay,
+                      corner: e.target.value as typeof p.cameraOverlay.corner,
+                    },
+                  }))
+                }
+              >
+                {(['topLeft', 'topRight', 'bottomLeft', 'bottomRight'] as const).map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Circle
+              <input
+                type="checkbox"
+                checked={proj.cameraOverlay.circular}
+                onChange={(e) =>
+                  setProj((p) => ({
+                    ...p,
+                    cameraOverlay: { ...p.cameraOverlay, circular: e.target.checked },
+                  }))
+                }
+              />
+            </label>
+          </div>
+        )}
         <div className="sliders">
           {(
             [
