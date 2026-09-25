@@ -51,6 +51,7 @@ export function App() {
   const [elapsed, setElapsed] = useState(0);
   const [status, setStatus] = useState('');
   const [perms, setPerms] = useState<{ screen: string; hooks: boolean } | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const camRecRef = useRef<MediaRecorder | null>(null);
@@ -72,8 +73,12 @@ export function App() {
     return () => clearInterval(t);
   }, [phase]);
 
-  const start = useCallback(async () => {
+  const start = useCallback(() => {
     if (!selected && !selectedDevice) return;
+    setCountdown(3);
+  }, [selected, selectedDevice]);
+
+  const reallyStart = useCallback(async () => {
     try {
       const stream = selectedDevice
         ? await captureDevice(selectedDevice.deviceId)
@@ -114,6 +119,17 @@ export function App() {
       setStatus(`record: ${e}`);
     }
   }, [selected, selectedDevice, micOn, camOn, devices]);
+
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      setCountdown(null);
+      void reallyStart();
+      return;
+    }
+    const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 900);
+    return () => clearTimeout(t);
+  }, [countdown, reallyStart]);
 
   const stop = useCallback(async () => {
     const rec = recorderRef.current;
@@ -231,6 +247,9 @@ export function App() {
           </label>{' '}
           <span className="status">{status}</span>
         </div>
+        {countdown !== null && countdown > 0 && (
+          <div className="countdown">{countdown}</div>
+        )}
       </div>
     );
   }

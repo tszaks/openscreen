@@ -28,6 +28,7 @@ declare global {
       exportBegin(outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: { start: number; end: number; speed: number }[], clicks?: number[]): Promise<boolean>;
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       exportEnd(): Promise<boolean>;
+      exportGif(inMp4: string, outGif: string): Promise<boolean>;
     };
   }
 }

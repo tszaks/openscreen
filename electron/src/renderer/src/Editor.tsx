@@ -272,7 +272,7 @@ export function Editor({
     setPlayhead(t);
   };
 
-  const exportVideo = async () => {
+  const exportVideo = async (wantGif = false) => {
     const video = videoRef.current;
     if (!video) return;
     setStatus('exporting…');
@@ -317,7 +317,14 @@ export function Editor({
       const srtPath = outPath.replace(/\.mp4$/, '.srt');
       await api.writeText(srtPath, toSrt(proj.captions));
     }
-    setStatus(`exported → ${outPath}`);
+    if (wantGif) {
+      const gifPath = outPath.replace(/\.mp4$/, '.gif');
+      setStatus('converting gif…');
+      await api.exportGif(outPath, gifPath);
+      setStatus(`exported → ${outPath} + gif`);
+    } else {
+      setStatus(`exported → ${outPath}`);
+    }
   };
 
   /** Output-time range of each clip for the timeline strip. */
@@ -934,7 +941,8 @@ export function Editor({
             ))}
           </select>
         </label>
-        <button className="primary" onClick={exportVideo}>Export MP4</button>
+        <button className="primary" onClick={() => exportVideo()}>Export MP4</button>
+        <button onClick={() => exportVideo(true)}>Export GIF</button>
         <span className="status">{status}</span>
       </div>
       </div>
