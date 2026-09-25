@@ -66,20 +66,24 @@ app.whenReady().then(() => {
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
-  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number }) => {
+  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string }) => {
     const { spawn } = await import('node:child_process');
-    const ff = spawn('ffmpeg', [
+    const argv = [
       '-y',
       '-f', 'rawvideo',
       '-pix_fmt', 'rgba',
       '-s', `${args.w}x${args.h}`,
       '-r', String(args.fps),
       '-i', 'pipe:0',
+      // audio passthrough when the timeline is uncut — mux the webm's
+      // audio straight through instead of re-encoding silence
+      ...(args.audioIn ? ['-i', args.audioIn, '-map', '0:v', '-map', '1:a?', '-c:a', 'aac', '-shortest'] : []),
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
       '-crf', '18',
       args.outPath,
-    ]);
+    ];
+    const ff = spawn('ffmpeg', argv);
     const errChunks: Buffer[] = [];
     ff.stdin.on('error', (e) => console.error('ffmpeg stdin:', e));
     ff.stderr.on('data', (d: Buffer) => {

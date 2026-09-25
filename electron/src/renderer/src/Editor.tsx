@@ -136,7 +136,9 @@ export function Editor({
     const total = Math.floor((timeline.outputDuration || duration) * fps);
     const { width: W, height: H } = canvasSize;
     const outPath = `${bundleDir}/export-${Date.now()}.mp4`;
-    await api.exportBegin(outPath, W, H, fps);
+    // audio passthrough only valid while the timeline is 1:1
+    const audioIn = timeline.isIdentity ? `${bundleDir}/${proj.recording.screenVideoFile}` : undefined;
+    await api.exportBegin(outPath, W, H, fps, audioIn);
     video.pause();
 
     for (let i = 0; i < total; i++) {
