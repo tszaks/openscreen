@@ -78,6 +78,17 @@ export function Editor({
 
   const timeline = useMemo(() => new Timeline(proj.recording.duration, proj.clips), [proj]);
 
+  // Autosave edits into the bundle (debounced; undo/redo snapshots included).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      void api.saveProject(bundleDir, proj).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proj, bundleDir]);
+
+  const cancelExport = useRef(false);
+
   const smoothed = useMemo(() => new CursorSmoother().smoothedPath(cursor), [cursor]);
   const clickEv = useMemo(() => clickEvents(cursor, timeline), [cursor, timeline]);
 
@@ -307,7 +318,9 @@ export function Editor({
     await api.exportBegin(outPath, W, H, fps, audioIn, audioClips, clickSfx ? clickEv.map((e) => e.time) : undefined);
     video.pause();
 
+    cancelExport.current = false;
     for (let i = 0; i < total; i++) {
+      if (cancelExport.current) break;
       const outT = i / fps;
       const srcT = timeline.sourceTime(outT);
       if (srcT === null) continue;
@@ -331,6 +344,11 @@ export function Editor({
       }
     }
     await api.exportEnd();
+    setExporting(false);
+    if (cancelExport.current) {
+      setStatus('export cancelled');
+      return;
+    }
     if (proj.captions.length) {
       const srtPath = outPath.replace(/\.mp4$/, '.srt');
       await api.writeText(srtPath, toSrt(proj.captions));
@@ -1046,6 +1064,7 @@ export function Editor({
         </label>
         <button className="primary" onClick={() => exportVideo()}>Export MP4</button>
         <button onClick={() => exportVideo(true)}>Export GIF</button>
+        {exporting && <button onClick={() => { cancelExport.current = true; }}>Cancel</button>}
         <span className="status">{status}</span>
       </div>
       </div>
