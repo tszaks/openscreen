@@ -111,6 +111,7 @@ app.whenReady().then(() => {
     const project = JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'));
     project.annotations ??= [];
     project.captions ??= [];
+    if (project.style) project.style.deviceFrame ??= 'none';
     const cursor = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8')).samples ?? [];
     let keys: unknown[] = [];
     try {

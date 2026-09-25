@@ -52,6 +52,8 @@ export interface StyleSettings {
   /** Normalized source-space crop (null = full frame). Applied before zoom. */
   cropRect: { x: number; y: number; w: number; h: number } | null;
   background: Background;
+  /** Wrap the content frame in device hardware chrome. */
+  deviceFrame: 'none' | 'phone';
 }
 
 export type Background =
@@ -115,6 +117,7 @@ export const defaultStyle = (): StyleSettings => ({
   shadowOpacity: 0.35,
   cropRect: null,
   background: { kind: 'gradient', startHex: '#3a1c71', endHex: '#d76d77', angle: 120 },
+  deviceFrame: 'none',
 });
 
 export const defaultProject = (recording: RecordingRef): Project => ({

@@ -670,6 +670,21 @@ export function Editor({
             />
           </label>
         )}
+        {proj.recording.sourceKind === 'iosDevice' && (
+          <label title="Wrap the frame in iPhone hardware chrome">
+            Phone frame
+            <input
+              type="checkbox"
+              checked={proj.style.deviceFrame === 'phone'}
+              onChange={(e) =>
+                setProj((p) => ({
+                  ...p,
+                  style: { ...p.style, deviceFrame: e.target.checked ? 'phone' : 'none' },
+                }))
+              }
+            />
+          </label>
+        )}
         <label title="Add a text overlay at the playhead">
           <button
             onClick={() =>
