@@ -102,6 +102,19 @@ app.whenReady().then(() => {
     return picked.canceled ? null : picked.filePaths[0];
   });
 
+  // Current macOS desktop wallpaper path (for the 'wallpaper' background).
+  ipcMain.handle('background:wallpaper', async () => {
+    if (process.platform !== 'darwin') return null;
+    const { execFile } = await import('node:child_process');
+    return new Promise<string | null>((resolve) => {
+      execFile(
+        'osascript',
+        ['-e', 'tell application "Finder" to get POSIX path of (get desktop picture as alias)'],
+        (_err, stdout) => resolve(stdout.trim() || null),
+      );
+    });
+  });
+
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
   ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string }) => {
