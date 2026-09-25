@@ -152,12 +152,37 @@ export class CanvasCompositor {
     if (cue && cue.text) this.drawCaption(cue, rect, W, H);
   }
 
+  private bgImage?: HTMLImageElement;
+
   private drawBackground(W: number, H: number) {
     const { ctx } = this;
     const bg = this.project.style.background;
     if (bg.kind === 'solid') {
       ctx.fillStyle = bg.hex;
       ctx.fillRect(0, 0, W, H);
+    } else if (bg.kind === 'imageFile') {
+      if (!this.bgImage || !this.bgImage.src.endsWith(bg.path)) {
+        this.bgImage = new Image();
+        this.bgImage.src = `file://${bg.path}`;
+      }
+      if (this.bgImage.complete && this.bgImage.naturalWidth > 0) {
+        // cover-fit
+        const ar = W / H;
+        const ir = this.bgImage.naturalWidth / this.bgImage.naturalHeight;
+        let sw = this.bgImage.naturalWidth;
+        let sh = this.bgImage.naturalHeight;
+        if (ar > ir) sh = sw / ar;
+        else sw = sh * ar;
+        ctx.drawImage(
+          this.bgImage,
+          (this.bgImage.naturalWidth - sw) / 2,
+          (this.bgImage.naturalHeight - sh) / 2,
+          sw, sh, 0, 0, W, H,
+        );
+      } else {
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, W, H);
+      }
     } else if (bg.kind === 'gradient') {
       const rad = (bg.angle * Math.PI) / 180;
       const x0 = W / 2 - (Math.cos(rad) * W) / 2;

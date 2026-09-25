@@ -307,6 +307,28 @@ export function Editor({
     setSelectedClip(null);
   };
 
+  const trimClip = (edge: 'start' | 'end') => {
+    if (!selectedClip) return;
+    const src = timeline.sourceTime(playhead);
+    if (src === null) {
+      setStatus('playhead is outside a kept clip');
+      return;
+    }
+    setProj((p) => ({
+      ...p,
+      clips: p.clips.map((c) => {
+        if (c.id !== selectedClip) return c;
+        if (edge === 'start' && src > c.sourceStart && src < c.sourceEnd) {
+          return { ...c, sourceStart: src };
+        }
+        if (edge === 'end' && src < c.sourceEnd && src > c.sourceStart) {
+          return { ...c, sourceEnd: src };
+        }
+        return c;
+      }),
+    }));
+  };
+
   const setClipSpeed = (speed: number) => {
     if (!selectedClip) return;
     setProj((p) => ({
@@ -442,6 +464,20 @@ export function Editor({
               }
             />
           ))}
+          <button
+            title="Custom background image"
+            onClick={async () => {
+              const path = await api.pickBackground();
+              if (path) {
+                setProj((p) => ({
+                  ...p,
+                  style: { ...p.style, background: { kind: 'imageFile', path } },
+                }));
+              }
+            }}
+          >
+            Img…
+          </button>
         </div>
         {camUrl && (
           <div className="sliders">
@@ -540,6 +576,16 @@ export function Editor({
         <button onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1}>
           Delete clip
         </button>
+        {selectedClip && (
+          <>
+            <button onClick={() => trimClip('start')} title="Trim clip start to playhead">
+              ⟦Trim
+            </button>
+            <button onClick={() => trimClip('end')} title="Trim clip end to playhead">
+              Trim⟧
+            </button>
+          </>
+        )}
         {selectedClip && (
           <label>
             Speed

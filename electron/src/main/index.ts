@@ -92,6 +92,16 @@ app.whenReady().then(() => {
     return { bundleDir: dir, project, cursor, videoPath, camPath };
   });
 
+  // Pick an image file for the background.
+  ipcMain.handle('background:pick', async () => {
+    const picked = await dialog.showOpenDialog(win!, {
+      title: 'Background image',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+    });
+    return picked.canceled ? null : picked.filePaths[0];
+  });
+
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
   ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string }) => {
