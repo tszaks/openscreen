@@ -32,5 +32,9 @@ let package = Package(
         .testTarget(name: "OpenScreenCoreTests", dependencies: ["OpenScreenCore"]),
         .testTarget(name: "CursorKitTests", dependencies: ["CursorKit"]),
         .testTarget(name: "EditKitTests", dependencies: ["EditKit"]),
+        .testTarget(
+            name: "PipelineTests",
+            dependencies: ["OpenScreenCore", "CaptureKit", "CursorKit", "EditKit", "ExportKit", "RenderKit"]
+        ),
     ]
 )
