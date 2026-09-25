@@ -32,6 +32,7 @@ export function Editor({
   const [duration, setDuration] = useState(project.recording.duration || 0);
   const [status, setStatus] = useState('');
   const [autofocusOn, setAutofocusOn] = useState(true);
+  const [manualSegments, setManualSegments] = useState<FocusSegment[]>([]);
 
   const timeline = useMemo(() => new Timeline(proj.recording.duration, proj.clips), [proj]);
 
@@ -39,12 +40,14 @@ export function Editor({
   const clickEv = useMemo(() => clickEvents(cursor, timeline), [cursor, timeline]);
 
   const segments = useMemo<FocusSegment[]>(() => {
-    if (!autofocusOn) return [];
-    return new AutofocusPlanner().planSegments(
-      cursor.filter((s) => s.kind === 'clickDown'),
-      timeline.outputDuration || duration,
-    );
-  }, [cursor, timeline, autofocusOn, duration]);
+    const auto = autofocusOn
+      ? new AutofocusPlanner().planSegments(
+          cursor.filter((s) => s.kind === 'clickDown'),
+          timeline.outputDuration || duration,
+        )
+      : [];
+    return [...auto, ...manualSegments].sort((a, b) => a.inStart - b.inStart);
+  }, [cursor, timeline, autofocusOn, duration, manualSegments]);
 
   const canvasSize = useMemo(() => {
     const src = proj.recording.sourceSize;
@@ -106,6 +109,20 @@ export function Editor({
   const seekTimeline = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const t = ((e.clientX - rect.left) / rect.width) * (timeline.outputDuration || duration);
+    if (e.altKey) {
+      // Alt+click: add a manual zoom centered on the cursor at that time.
+      const c = cursorAt(smoothed, t) ?? { x: 0.5, y: 0.5 };
+      const seg: FocusSegment = {
+        inStart: t,
+        holdStart: t + 0.5,
+        holdEnd: t + 1.4,
+        outEnd: t + 2.1,
+        center: { x: c.x, y: c.y },
+        scale: 2,
+      };
+      setManualSegments((m) => [...m, seg]);
+      return;
+    }
     const srcT = timeline.sourceTime(t) ?? t;
     if (videoRef.current) videoRef.current.currentTime = srcT;
     setPlayhead(t);
@@ -144,7 +161,7 @@ export function Editor({
     setStatus(`exported → ${outPath}`);
   };
 
-  const zoomMarks = segments.map((s) => s.inStart);
+  const zoomMarks = segments;
 
   return (
     <div className="editor">
@@ -164,11 +181,17 @@ export function Editor({
           className="playhead"
           style={{ left: `${(playhead / (timeline.outputDuration || duration || 1)) * 100}%` }}
         />
-        {zoomMarks.map((t, i) => (
+        {zoomMarks.map((s, i) => (
           <div
             key={i}
             className="zoommark"
-            style={{ left: `${(t / (timeline.outputDuration || duration || 1)) * 100}%` }}
+            title="Zoom (right-click to remove)"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setManualSegments((m) => m.filter((x) => x !== s));
+            }}
+            style={{ left: `${(s.inStart / (timeline.outputDuration || duration || 1)) * 100}%` }}
           />
         ))}
       </div>
@@ -196,6 +219,30 @@ export function Editor({
                 setProj((p) => ({ ...p, style: { ...p.style, background: s.bg } }))
               }
             />
+          ))}
+        </div>
+        <div className="sliders">
+          {(
+            [
+              ['Padding', 'paddingFraction', 0, 0.4, 0.01],
+              ['Corner', 'cornerRadius', 0, 120, 1],
+              ['Shadow', 'shadowRadius', 0, 200, 1],
+              ['Shadow α', 'shadowOpacity', 0, 1, 0.01],
+            ] as const
+          ).map(([label, key, min, max, step]) => (
+            <label key={key} title={key}>
+              {label}
+              <input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={proj.style[key]}
+                onChange={(e) =>
+                  setProj((p) => ({ ...p, style: { ...p.style, [key]: +e.target.value } }))
+                }
+              />
+            </label>
           ))}
         </div>
         <button onClick={() => videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause()}>
