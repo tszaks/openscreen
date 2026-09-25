@@ -20,3 +20,4 @@ OpenScreen.xcodeproj/
 node_modules/
 dist/
 tsconfig.tsbuildinfo
+release/

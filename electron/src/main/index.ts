@@ -96,6 +96,13 @@ app.whenReady().then(() => {
   // sends raw frame buffers; main streams them into ffmpeg stdin.
   ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string }) => {
     const { spawn } = await import('node:child_process');
+    // Prefer the bundled ffmpeg (packaged app), fall back to PATH (dev).
+    let ffmpegBin = 'ffmpeg';
+    try {
+      const mod = await import('ffmpeg-static');
+      const p = (mod.default ?? (mod as unknown as string)) as string;
+      if (p) ffmpegBin = p.replace('app.asar', 'app.asar.unpacked');
+    } catch {}
     const argv = [
       '-y',
       '-f', 'rawvideo',
@@ -111,7 +118,7 @@ app.whenReady().then(() => {
       '-crf', '18',
       args.outPath,
     ];
-    const ff = spawn('ffmpeg', argv);
+    const ff = spawn(ffmpegBin, argv);
     const errChunks: Buffer[] = [];
     ff.stdin.on('error', (e) => console.error('ffmpeg stdin:', e));
     ff.stderr.on('data', (d: Buffer) => {
