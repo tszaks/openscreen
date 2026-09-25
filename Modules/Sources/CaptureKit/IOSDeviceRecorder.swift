@@ -13,6 +13,7 @@ public final class IOSDeviceRecorder: NSObject, Recorder, @unchecked Sendable {
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var sessionStartTime: CMTime?
+    private var recordedSize = CGSizeValue(width: 0, height: 0)
     private let outputURL: URL
     private var device: AVCaptureDevice?
 
@@ -26,6 +27,7 @@ public final class IOSDeviceRecorder: NSObject, Recorder, @unchecked Sendable {
             throw CaptureError.deviceNotFound
         }
         self.device = device
+        try FileManager.default.createDirectory(at: inputs.outputDirectory, withIntermediateDirectories: true)
 
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         if status == .notDetermined {
@@ -71,12 +73,11 @@ public final class IOSDeviceRecorder: NSObject, Recorder, @unchecked Sendable {
 
         let asset = AVURLAsset(url: outputURL)
         let duration = (try? await asset.load(.duration).seconds) ?? 0
-        let size = CGSizeValue(width: 0, height: 0) // resolved at first frame in v2
         let project = Project(
             recording: RecordingRef(
                 screenVideoFile: "screen.mp4",
                 sourceKind: .iosDevice,
-                sourceSize: size,
+                sourceSize: recordedSize,
                 duration: duration
             ),
             clips: [Clip(sourceStart: 0, sourceEnd: duration)]
@@ -89,6 +90,7 @@ public final class IOSDeviceRecorder: NSObject, Recorder, @unchecked Sendable {
     private func ensureWriter(for sampleBuffer: CMSampleBuffer) throws {
         guard writer == nil, let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else { return }
         let dims = CMVideoFormatDescriptionGetDimensions(formatDesc)
+        recordedSize = CGSizeValue(width: Double(dims.width), height: Double(dims.height))
         let writer = try AVAssetWriter(url: outputURL, fileType: .mp4)
         let vInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
