@@ -17,6 +17,7 @@ declare global {
       openBundle(): Promise<{ bundleDir: string; project: Project; cursor: CursorSample[]; videoPath: string; camPath?: string } | null>;
       saveProject(dir: string, project: Project): Promise<boolean>;
       displays(): Promise<{ id: number; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]>;
+      pickBackground(): Promise<string | null>;
       exportBegin(outPath: string, w: number, h: number, fps: number, audioIn?: string): Promise<boolean>;
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       exportEnd(): Promise<boolean>;
