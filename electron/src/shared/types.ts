@@ -41,6 +41,8 @@ export interface StyleSettings {
   cornerRadius: number;
   shadowRadius: number;
   shadowOpacity: number;
+  /** Normalized source-space crop (null = full frame). Applied before zoom. */
+  cropRect: { x: number; y: number; w: number; h: number } | null;
   background: Background;
 }
 
@@ -91,6 +93,7 @@ export const defaultStyle = (): StyleSettings => ({
   cornerRadius: 24,
   shadowRadius: 60,
   shadowOpacity: 0.35,
+  cropRect: null,
   background: { kind: 'gradient', startHex: '#3a1c71', endHex: '#d76d77', angle: 120 },
 });
 

@@ -41,8 +41,17 @@ export class CanvasCompositor {
     // 2. Screen frame inside padded content rect, camera-cropped.
     const pad = Math.min(W, H) * style.paddingFraction;
     const contentRect = { x: pad, y: pad, w: W - pad * 2, h: H - pad * 2 };
-    // Fit source aspect inside content rect.
-    const srcAspect = this.project.recording.sourceSize.width / this.project.recording.sourceSize.height;
+
+    // Effective source rect = user crop (normalized → px) or full source.
+    const fullW = this.project.recording.sourceSize.width;
+    const fullH = this.project.recording.sourceSize.height;
+    const crop = style.cropRect;
+    const srcRect = crop
+      ? { x: crop.x * fullW, y: crop.y * fullH, w: crop.w * fullW, h: crop.h * fullH }
+      : { x: 0, y: 0, w: fullW, h: fullH };
+
+    // Fit effective-source aspect inside content rect.
+    const srcAspect = srcRect.w / srcRect.h;
     let rect = { ...contentRect };
     if (contentRect.w / contentRect.h > srcAspect) {
       rect.w = contentRect.h * srcAspect;
@@ -54,31 +63,28 @@ export class CanvasCompositor {
 
     const cam = cameraAt(time, this.focusSegments, this.autofocusOpts);
 
-    // Camera crop in source space: center on cam.center, visible size =
-    // source/scale — normalized → source pixels.
-    const srcW = this.project.recording.sourceSize.width;
-    const srcH = this.project.recording.sourceSize.height;
-    const cropW = srcW / cam.scale;
-    const cropH = srcH / cam.scale;
-    const cx = cam.center.x * srcW;
-    const cy = cam.center.y * srcH;
-    const sx = Math.max(0, Math.min(srcW - cropW, cx - cropW / 2));
-    const sy = Math.max(0, Math.min(srcH - cropH, cy - cropH / 2));
+    // Camera crop: camera center is normalized over the FULL source —
+    // remap into effective-source space, then apply zoom scale.
+    const cropW = srcRect.w / cam.scale;
+    const cropH = srcRect.h / cam.scale;
+    const cx = cam.center.x * fullW - srcRect.x;
+    const cy = cam.center.y * fullH - srcRect.y;
+    const sx = srcRect.x + Math.max(0, Math.min(srcRect.w - cropW, cx - cropW / 2));
+    const sy = srcRect.y + Math.max(0, Math.min(srcRect.h - cropH, cy - cropH / 2));
 
     ctx.save();
     ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
     ctx.shadowBlur = style.shadowRadius;
     roundedPath(ctx, rect.x, rect.y, rect.w, rect.h, style.cornerRadius);
     ctx.clip();
-    // Source may not cover the full crop (edge clamp): scale crop→rect.
     ctx.drawImage(input.frame, sx, sy, cropW, cropH, rect.x, rect.y, rect.w, rect.h);
     ctx.restore();
 
-    // 3. Cursor (source normalized → crop-relative → rect pixels).
+    // 3. Cursor (full-source normalized → crop-relative → rect pixels).
     if (input.cursor) {
       const p = input.cursor;
-      const cropRelX = (p.x * srcW - sx) / cropW;
-      const cropRelY = (p.y * srcH - sy) / cropH;
+      const cropRelX = (p.x * fullW - sx) / cropW;
+      const cropRelY = (p.y * fullH - sy) / cropH;
       const cxp = rect.x + cropRelX * rect.w;
       const cyp = rect.y + cropRelY * rect.h;
       const d = H * 0.012;
@@ -88,10 +94,10 @@ export class CanvasCompositor {
       ctx.fill();
     }
 
-    // 4. Click ripples — same normalized→crop-relative mapping.
+    // 4. Click ripples — same full-source→crop-relative mapping.
     for (const r of input.ripples) {
-      const rx = rect.x + ((r.position.x * srcW - sx) / cropW) * rect.w;
-      const ry = rect.y + ((r.position.y * srcH - sy) / cropH) * rect.h;
+      const rx = rect.x + ((r.position.x * fullW - sx) / cropW) * rect.w;
+      const ry = rect.y + ((r.position.y * fullH - sy) / cropH) * rect.h;
       const maxR = H * 0.055;
       const rad = maxR * (0.25 + 0.75 * r.progress);
       const alpha = Math.max(0, 0.75 * (1 - r.progress));
