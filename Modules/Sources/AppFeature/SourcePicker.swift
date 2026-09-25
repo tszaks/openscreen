@@ -35,10 +35,13 @@ public struct SourcePickerView: View {
             .frame(maxHeight: 320)
 
             Button("Start Recording") {
-                guard let selected,
-                      let inputs = controller.inputs(for: selected, outputDirectory: Self.newBundleURL())
-                else { return }
-                Task { await controller.startRecording(inputs: inputs, appState: appState) }
+                guard let selected else { return }
+                Task {
+                    guard let inputs = await controller.inputs(
+                        for: selected, outputDirectory: Self.newBundleURL()
+                    ) else { return }
+                    await controller.startRecording(inputs: inputs, appState: appState)
+                }
             }
             .buttonStyle(.borderedProminent)
             .disabled(selected == nil)

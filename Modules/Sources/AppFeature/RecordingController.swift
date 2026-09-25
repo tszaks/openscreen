@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import CaptureKit
 import Foundation
@@ -41,6 +42,15 @@ public final class RecordingController: ObservableObject {
             }
         }
 
+        if !displays.isEmpty {
+            options.append(SourceOption(
+                id: "region",
+                kind: .region,
+                title: "Region…",
+                subtitle: "drag to select an area"
+            ))
+        }
+
         for device in IOSDeviceDiscovery.connectedDevices() {
             options.append(SourceOption(
                 id: "ios-\(device.uniqueID)",
@@ -60,7 +70,8 @@ public final class RecordingController: ObservableObject {
     }
 
     /// Resolve a picker option back to the concrete input object.
-    public func inputs(for option: SourceOption, outputDirectory: URL) -> RecordingInputs? {
+    /// For `.region` this shows the drag-select overlay — hence async.
+    public func inputs(for option: SourceOption, outputDirectory: URL) async -> RecordingInputs? {
         var inputs = RecordingInputs(source: .synthetic, outputDirectory: outputDirectory)
         switch option.kind {
         case .display:
@@ -74,7 +85,9 @@ public final class RecordingController: ObservableObject {
             else { return nil }
             inputs.source = .window(window)
         case .region:
-            inputs.source = .synthetic // region picker TODO
+            guard let screen = NSScreen.main, let display = displays.first else { return nil }
+            guard let rect = await RegionPicker().pickRegion(on: screen) else { return nil }
+            inputs.source = .region(display, rect)
         case .iosDevice:
             guard let device = IOSDeviceDiscovery.connectedDevices()
                 .first(where: { "ios-\($0.uniqueID)" == option.id })
