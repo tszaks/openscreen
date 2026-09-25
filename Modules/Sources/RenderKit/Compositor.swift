@@ -15,12 +15,27 @@ public struct FrameInput: Sendable {
     public var cursorPosition: CGPointValue
     /// Whether the cursor is visible at all at this time.
     public var cursorVisible: Bool
+    /// Active click ripples (position + expansion progress 0–1).
+    public var ripples: [Ripple]
 
-    public init(screenFrame: CGImage, cameraFrame: CGImage? = nil, cursorPosition: CGPointValue, cursorVisible: Bool) {
+    public init(screenFrame: CGImage, cameraFrame: CGImage? = nil, cursorPosition: CGPointValue, cursorVisible: Bool, ripples: [Ripple] = []) {
         self.screenFrame = screenFrame
         self.cameraFrame = cameraFrame
         self.cursorPosition = cursorPosition
         self.cursorVisible = cursorVisible
+        self.ripples = ripples
+    }
+
+    /// An expanding ring rendered where a click landed.
+    public struct Ripple: Sendable {
+        public var position: CGPointValue
+        /// 0 = just clicked … 1 = fully expanded/faded out.
+        public var progress: Double
+
+        public init(position: CGPointValue, progress: Double) {
+            self.position = position
+            self.progress = progress
+        }
     }
 }
 
@@ -91,6 +106,9 @@ public final class Compositor: @unchecked Sendable {
         if input.cursorVisible {
             drawCursor(in: ctx, at: input.cursorPosition, within: rect)
         }
+        for ripple in input.ripples {
+            drawRipple(in: ctx, ripple, within: rect)
+        }
         if project.cameraOverlay.enabled, let cam = input.cameraFrame {
             drawCamera(in: ctx, frame: cam, canvas: canvas)
         }
@@ -134,6 +152,22 @@ public final class Compositor: @unchecked Sendable {
         let y = contentRect.origin.y + (1 - position.y) * contentRect.height - d / 2
         ctx.setFillColor(hexColor("#FFFFFFCC"))
         ctx.fillEllipse(in: CGRect(x: x, y: y, width: d, height: d))
+    }
+
+    /// Expanding white ring + soft inner flash, Screen-Studio style click feedback.
+    private func drawRipple(in ctx: CGContext, _ ripple: FrameInput.Ripple, within contentRect: CGRect) {
+        let maxRadius = canvas.height * 0.055
+        let r = maxRadius * (0.25 + 0.75 * ripple.progress)
+        let alpha = max(0, 0.75 * (1 - ripple.progress))
+        let cx = contentRect.origin.x + ripple.position.x * contentRect.width
+        let cy = contentRect.origin.y + (1 - ripple.position.y) * contentRect.height
+        let ringRect = CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2)
+        ctx.setStrokeColor(CGColor(gray: 1, alpha: alpha))
+        ctx.setLineWidth(max(1.5, canvas.height * 0.002))
+        ctx.strokeEllipse(in: ringRect)
+        let innerR = r * 0.45
+        ctx.setFillColor(CGColor(gray: 1, alpha: alpha * 0.35))
+        ctx.fillEllipse(in: CGRect(x: cx - innerR, y: cy - innerR, width: innerR * 2, height: innerR * 2))
     }
 
     /// Burn-in captions: active cue centered near the bottom of the content rect.

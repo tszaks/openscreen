@@ -91,6 +91,16 @@ public final class Exporter: @unchecked Sendable {
         let rawSamples = (try? bundle.loadCursorSamples()) ?? []
         let smoothed = smoother.smoothedPath(from: rawSamples)
 
+        // Click-down events mapped to output times; each fires a ripple for
+        // `rippleLifetime` seconds after it lands.
+        let rippleLifetime = 0.7
+        let clickEvents: [(time: TimeInterval, position: CGPointValue)] = rawSamples
+            .filter { $0.kind == .clickDown }
+            .compactMap { s in
+                timeline.outputTime(forSourceTime: s.time)
+                    .map { ($0, CGPointValue(x: s.x, y: s.y)) }
+            }
+
         for i in 0..<totalFrames {
             while !input.isReadyForMoreMediaData {
                 try await Task.sleep(nanoseconds: 1_000_000)
@@ -100,11 +110,17 @@ public final class Exporter: @unchecked Sendable {
             guard let screen = frames(sourceT) else { continue }
 
             let cursorPos = nearestPosition(at: outT, in: smoothed)
+            let ripples = clickEvents.compactMap { ev -> FrameInput.Ripple? in
+                let progress = (outT - ev.time) / rippleLifetime
+                guard progress >= 0, progress <= 1 else { return nil }
+                return FrameInput.Ripple(position: ev.position, progress: progress)
+            }
             let input_ = FrameInput(
                 screenFrame: screen,
                 cameraFrame: nil,
                 cursorPosition: cursorPos,
-                cursorVisible: true
+                cursorVisible: true,
+                ripples: ripples
             )
             if let img = compositor.render(at: outT, input: input_),
                let buf = img.pixelBuffer(width: Int(canvas.width), height: Int(canvas.height)) {

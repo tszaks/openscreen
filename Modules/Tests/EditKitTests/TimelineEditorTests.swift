@@ -69,6 +69,16 @@ struct TimelineTests {
         #expect(tl.outputDuration == 6)
     }
 
+    @Test func outputTimeInvertsSourceTime() {
+        let tl = Timeline(sourceDuration: 6, clips: [
+            Clip(sourceStart: 0, sourceEnd: 4),
+            Clip(sourceStart: 4, sourceEnd: 6, speed: 2),
+        ])
+        #expect(tl.outputTime(forSourceTime: 2) == 2)
+        #expect(tl.outputTime(forSourceTime: 5) == 4.5)
+        #expect(tl.outputTime(forSourceTime: 7) == nil) // trimmed away
+    }
+
     @Test func sourceTimeMapsThroughSpeed() {
         var tl = Timeline(sourceDuration: 20)
         tl.setSpeed(clipID: tl.clips[0].id, speed: 2)

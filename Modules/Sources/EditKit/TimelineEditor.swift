@@ -75,4 +75,19 @@ public struct Timeline: Codable, Equatable, Sendable {
         }
         return nil
     }
+
+    /// Map source time to output timeline time — the inverse of
+    /// `sourceTime(atOutputTime:)`. Returns nil when the source time is
+    /// outside every clip (e.g. trimmed away). Source times inside a sped-up
+    /// or slowed clip map linearly at `1/speed`.
+    public func outputTime(forSourceTime time: TimeInterval) -> TimeInterval? {
+        var cursor: TimeInterval = 0
+        for clip in clips {
+            if time >= clip.sourceStart && time <= clip.sourceEnd {
+                return cursor + (time - clip.sourceStart) / clip.speed
+            }
+            cursor += clip.outputDuration
+        }
+        return nil
+    }
 }
