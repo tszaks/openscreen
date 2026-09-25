@@ -25,6 +25,7 @@ const api = {
     ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn, audioClips, clicks }),
   exportFrame: (bytes: ArrayBuffer) => ipcRenderer.invoke('export:frame', bytes),
   exportEnd: () => ipcRenderer.invoke('export:end'),
+  exportGif: (inMp4: string, outGif: string) => ipcRenderer.invoke('export:gif', { inMp4, outGif }),
 };
 
 export type OpenScreenApi = typeof api;

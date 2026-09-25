@@ -175,6 +175,7 @@ app.whenReady().then(() => {
   });
 
   // Transcribe a bundle's audio via whisper-cli → caption cues (source time).
+  // The ggml model auto-downloads on first use (~148MB, into ~/models).
   ipcMain.handle('captions:transcribe', async (_e, args: { dir: string; videoFile: string }) => {
     const { execFile } = await import('node:child_process');
     const { existsSync, readFileSync } = await import('node:fs');
@@ -184,8 +185,34 @@ app.whenReady().then(() => {
       new Promise<void>((resolve, reject) =>
         execFile(cmd, argv, (e) => (e ? reject(e) : resolve())),
       );
-    const model = process.env.OPENSCREEN_WHISPER_MODEL ?? join(app.getPath('home'), 'models', 'ggml-base.en.bin');
-    await run('whisper-cli', [
+
+    const modelDir = join(app.getPath('home'), 'models');
+    const model = process.env.OPENSCREEN_WHISPER_MODEL ?? join(modelDir, 'ggml-base.en.bin');
+    if (!existsSync(model)) {
+      mkdirSync(modelDir, { recursive: true });
+      try {
+        await run('curl', [
+          '-fL', '--progress-bar',
+          'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin',
+          '-o', model,
+        ]);
+      } catch {
+        throw new Error('whisper model missing and download failed (set OPENSCREEN_WHISPER_MODEL)');
+      }
+    }
+
+    // whisper-cli from PATH or the common homebrew install spot.
+    let cli = 'whisper-cli';
+    if (!existsSync('/opt/homebrew/bin/whisper-cli')) {
+      try {
+        await run('which', ['whisper-cli']);
+      } catch {
+        throw new Error('whisper-cli not found — brew install whisper-cpp');
+      }
+    } else {
+      cli = '/opt/homebrew/bin/whisper-cli';
+    }
+    await run(cli, [
       '-m', model, '-f', wav, '--output-json', '--output-file', jsonOut.replace(/\.json$/, ''),
       '-t', '4',
     ]);
@@ -370,6 +397,24 @@ app.whenReady().then(() => {
       if (code !== 0) console.error('ffmpeg exited', code, Buffer.concat(errChunks).toString());
     });
     (globalThis as any).__ffmpeg = ff;
+    return true;
+  });
+
+  // Convert an exported mp4 into an optimized gif (two-pass palette).
+  ipcMain.handle('export:gif', async (_e, args: { inMp4: string; outGif: string }) => {
+    const { execFile } = await import('node:child_process');
+    const bin = await ffmpegPath();
+    await new Promise<void>((resolve, reject) =>
+      execFile(
+        bin,
+        [
+          '-y', '-i', args.inMp4,
+          '-vf', 'fps=12,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer',
+          '-loop', '0', args.outGif,
+        ],
+        (e) => (e ? reject(e) : resolve()),
+      ),
+    );
     return true;
   });
 
