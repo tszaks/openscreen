@@ -64,6 +64,12 @@ app.whenReady().then(() => {
     },
   );
 
+  // Persist editor changes back into an existing bundle.
+  ipcMain.handle('bundle:saveProject', async (_e, args: { dir: string; project: Project }) => {
+    writeFileSync(join(args.dir, 'project.json'), JSON.stringify(args.project, null, 2));
+    return true;
+  });
+
   // Reopen a saved .openscreen bundle in the editor.
   ipcMain.handle('bundle:open', async () => {
     const picked = await dialog.showOpenDialog(win!, {

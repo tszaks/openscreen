@@ -33,6 +33,7 @@ export function Editor({
   const [status, setStatus] = useState('');
   const [autofocusOn, setAutofocusOn] = useState(true);
   const [manualSegments, setManualSegments] = useState<FocusSegment[]>([]);
+  const [selectedClip, setSelectedClip] = useState<string | null>(null);
 
   const timeline = useMemo(() => new Timeline(proj.recording.duration, proj.clips), [proj]);
 
@@ -163,6 +164,37 @@ export function Editor({
     setStatus(`exported → ${outPath}`);
   };
 
+  /** Output-time range of each clip for the timeline strip. */
+  const clipBlocks = useMemo(() => {
+    let cursor = 0;
+    return timeline.clips.map((c) => {
+      const start = cursor;
+      const dur = (c.sourceEnd - c.sourceStart) / Math.max(c.speed, 1e-9);
+      cursor += dur;
+      return { id: c.id, start, end: cursor };
+    });
+  }, [timeline]);
+
+  const splitAtPlayhead = () => {
+    const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
+    if (!tl.split(playhead)) {
+      setStatus('cannot split here');
+      return;
+    }
+    setProj((p) => ({ ...p, clips: tl.clips }));
+  };
+
+  const deleteSelectedClip = () => {
+    if (!selectedClip || proj.clips.length <= 1) return;
+    setProj((p) => ({ ...p, clips: p.clips.filter((c) => c.id !== selectedClip) }));
+    setSelectedClip(null);
+  };
+
+  const saveProject = async () => {
+    await api.saveProject(bundleDir, proj);
+    setStatus('project saved');
+  };
+
   const zoomMarks = segments;
 
   return (
@@ -183,6 +215,20 @@ export function Editor({
           className="playhead"
           style={{ left: `${(playhead / (timeline.outputDuration || duration || 1)) * 100}%` }}
         />
+        {clipBlocks.map((b) => (
+          <div
+            key={b.id}
+            className={`clipblock${selectedClip === b.id ? ' selected' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedClip(b.id);
+            }}
+            style={{
+              left: `${(b.start / (timeline.outputDuration || duration || 1)) * 100}%`,
+              width: `${((b.end - b.start) / (timeline.outputDuration || duration || 1)) * 100}%`,
+            }}
+          />
+        ))}
         {zoomMarks.map((s, i) => (
           <div
             key={i}
@@ -250,6 +296,11 @@ export function Editor({
         <button onClick={() => videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause()}>
           Play/Pause
         </button>
+        <button onClick={splitAtPlayhead}>Split</button>
+        <button onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1}>
+          Delete clip
+        </button>
+        <button onClick={saveProject}>Save project</button>
         <button className="primary" onClick={exportVideo}>Export MP4</button>
         <span className="status">{status}</span>
       </div>

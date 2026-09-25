@@ -29,6 +29,8 @@
       .timeline { height: 64px; background: #26262c; border-radius: 8px; position: relative; cursor: pointer; }
       .timeline .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; }
       .timeline .zoommark { position: absolute; top: 26px; width: 8px; height: 8px; background: #fdcb6e; transform: rotate(45deg); border-radius: 1px; }
+      .timeline .clipblock { position: absolute; top: 4px; height: 18px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.15); border-radius: 3px; box-sizing: border-box; }
+      .timeline .clipblock.selected { background: rgba(109,140,220,.4); border-color: #6d8ce0; }
       .panel { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
       .panel label { font-size: 12px; color: #aaa; display: flex; gap: 6px; align-items: center; }
       .panel input[type=range] { width: 110px; }
