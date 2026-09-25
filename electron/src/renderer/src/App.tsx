@@ -26,10 +26,27 @@ async function captureStream(sourceId: string): Promise<MediaStream> {
   return stream as MediaStream;
 }
 
+/** Capture a device camera (wired iPhone/iPad appear as continuity video
+ *  devices on macOS) at up to 1080p60. */
+async function captureDevice(deviceId: string): Promise<MediaStream> {
+  return navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      deviceId: { exact: deviceId },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 60 },
+    },
+  });
+}
+
 export function App() {
   const [phase, setPhase] = useState<Phase>({ name: 'picker' });
   const [sources, setSources] = useState<SourceInfo[]>([]);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selected, setSelected] = useState<SourceInfo | null>(null);
+  const [selectedDevice, setSelectedDevice] = useState<MediaDeviceInfo | null>(null);
+  const [micOn, setMicOn] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [status, setStatus] = useState('');
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -38,6 +55,9 @@ export function App() {
 
   useEffect(() => {
     api.listSources().then(setSources).catch((e) => setStatus(`sources: ${e}`));
+    navigator.mediaDevices.enumerateDevices().then((all) => {
+      setDevices(all.filter((d) => d.kind === 'videoinput' && d.label));
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -47,9 +67,19 @@ export function App() {
   }, [phase]);
 
   const start = useCallback(async () => {
-    if (!selected) return;
+    if (!selected && !selectedDevice) return;
     try {
-      const stream = await captureStream(selected.id);
+      const stream = selectedDevice
+        ? await captureDevice(selectedDevice.deviceId)
+        : await captureStream(selected!.id);
+      if (micOn) {
+        try {
+          const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mic.getAudioTracks().forEach((t) => stream.addTrack(t));
+        } catch {
+          setStatus('mic denied — recording silent');
+        }
+      }
       streamRef.current = stream;
       chunksRef.current = [];
       const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
@@ -59,12 +89,12 @@ export function App() {
       rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
       rec.start(250);
       recorderRef.current = rec;
-      await api.startRecording(selected.id);
+      await api.startRecording(selectedDevice?.deviceId ?? selected!.id);
       setPhase({ name: 'recording', startedAt: performance.now() });
     } catch (e) {
       setStatus(`record: ${e}`);
     }
-  }, [selected]);
+  }, [selected, selectedDevice, micOn]);
 
   const stop = useCallback(async () => {
     const rec = recorderRef.current;
@@ -80,7 +110,7 @@ export function App() {
     const track = stream.getVideoTracks()[0]?.getSettings();
     const project = defaultProject({
       screenVideoFile: 'screen.webm',
-      sourceKind: 'display',
+      sourceKind: selectedDevice ? 'iosDevice' : 'display',
       sourceSize: { width: track?.width ?? 1920, height: track?.height ?? 1080 },
       duration: elapsed,
     });
@@ -98,17 +128,37 @@ export function App() {
             <button
               key={s.id}
               className={`source${selected?.id === s.id ? ' selected' : ''}`}
-              onClick={() => setSelected(s)}
+              onClick={() => {
+                setSelected(s);
+                setSelectedDevice(null);
+              }}
             >
               <img src={s.thumbnailDataUrl} alt="" />
               <div className="name">{s.name}</div>
             </button>
           ))}
+          {devices.map((d) => (
+            <button
+              key={d.deviceId}
+              className={`source${selectedDevice?.deviceId === d.deviceId ? ' selected' : ''}`}
+              onClick={() => {
+                setSelectedDevice(d);
+                setSelected(null);
+              }}
+            >
+              <div className="name" style={{ padding: '24px 8px', textAlign: 'center' }}>
+                {d.label}
+              </div>
+            </button>
+          ))}
         </div>
         <div>
-          <button className="primary" disabled={!selected} onClick={start}>
+          <button className="primary" disabled={!selected && !selectedDevice} onClick={start}>
             Start Recording
           </button>{' '}
+          <label style={{ fontSize: 13 }}>
+            <input type="checkbox" checked={micOn} onChange={(e) => setMicOn(e.target.checked)} /> Mic
+          </label>{' '}
           <span className="status">{status}</span>
         </div>
       </div>
