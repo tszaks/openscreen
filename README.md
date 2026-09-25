@@ -21,14 +21,14 @@ SwiftPM multi-module package so contributors can work module-by-module:
 | `CaptionsKit` | On-device speech → caption cues, SRT/VTT writers |
 | `AppFeature` | SwiftUI shell: picker, recording HUD, editor, export |
 
-The app target is generated with [xcodegen](https://github.com/yonaskolb/XcodeGen) (`project.yml`) and links the `AppFeature` product from the local package.
+The app target is generated with [xcodegen](https://github.com/yonaskolb/XcodeGen) (`project.yml`) and links the `AppFeature` product from the local package at `Modules/`.
 
 ## Build & test
 
 ```sh
-swift build          # all modules
-swift test           # unit tests (no screen-recording permission needed)
-xcodegen generate    # regenerate OpenScreen.xcodeproj
+cd Modules && swift build   # all modules
+cd Modules && swift test    # unit tests (no screen-recording permission needed)
+xcodegen generate           # regenerate OpenScreen.xcodeproj
 xcodebuild -project OpenScreen.xcodeproj -scheme OpenScreen build
 ```
 
@@ -37,7 +37,6 @@ On first run macOS will prompt for Screen Recording permission; camera/mic promp
 ## Layout
 
 - `SPEC.md` — feature matrix, architecture decisions, milestones
-- `Sources/` — SwiftPM modules
-- `Tests/` — unit tests for core math, cursor, and timeline
+- `Modules/` — SwiftPM package (`Package.swift`, `Sources/`, `Tests/`); lives under its own directory so the local-package reference in the Xcode project resolves quickly (a package root containing `.git`/`.build` stalls `xcodebuild`)
 - `App/OpenScreenApp/` — app entry point, Info.plist, entitlements
 - `project.yml` — xcodegen spec for the app shell

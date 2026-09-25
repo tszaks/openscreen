@@ -6,7 +6,7 @@ options:
 
 packages:
   OpenScreenModules:
-    path: ./
+    path: Modules
 
 targets:
   OpenScreen:
