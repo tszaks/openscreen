@@ -50,6 +50,7 @@ export function App() {
   const [camOn, setCamOn] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [status, setStatus] = useState('');
+  const [perms, setPerms] = useState<{ screen: string; hooks: boolean } | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const camRecRef = useRef<MediaRecorder | null>(null);
@@ -59,6 +60,7 @@ export function App() {
 
   useEffect(() => {
     api.listSources().then(setSources).catch((e) => setStatus(`sources: ${e}`));
+    api.permissionsStatus().then(setPerms).catch(() => {});
     navigator.mediaDevices.enumerateDevices().then((all) => {
       setDevices(all.filter((d) => d.kind === 'videoinput' && d.label));
     }).catch(() => {});
@@ -156,6 +158,21 @@ export function App() {
     return (
       <div className="app">
         <h2>OpenScreen</h2>
+        {perms && perms.screen !== 'granted' && (
+          <div className="permwarn">
+            Screen Recording permission is {perms.screen} — captures will come
+            out black until granted.{' '}
+            <button onClick={() => api.openScreenSettings()}>
+              Open System Settings
+            </button>
+          </div>
+        )}
+        {perms && !perms.hooks && (
+          <div className="permwarn">
+            Input hooks unavailable — clicks and keystrokes won't be tracked
+            (grant Accessibility + restart the app).
+          </div>
+        )}
         <div className="sources">
           {sources.map((s) => (
             <button

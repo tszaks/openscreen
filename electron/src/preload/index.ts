@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 const api = {
   listSources: () => ipcRenderer.invoke('sources:list'),
+  permissionsStatus: () => ipcRenderer.invoke('permissions:status'),
+  openScreenSettings: () => ipcRenderer.invoke('permissions:openScreenSettings'),
   startRecording: (sourceId: string) => ipcRenderer.invoke('recording:start', sourceId),
   stopRecording: () => ipcRenderer.invoke('recording:stop'),
   saveBundle: (videoBytes: ArrayBuffer, cursor: unknown, project: unknown, camBytes?: ArrayBuffer, keys?: unknown) =>
