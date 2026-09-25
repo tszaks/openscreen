@@ -50,6 +50,28 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Permission status so the UI can warn before a doomed recording:
+  // screen capture needs Screen Recording; click/keystroke tracking needs
+  // Accessibility (unprobeable — inferred from whether uiohook loads).
+  ipcMain.handle('permissions:status', async () => {
+    const { systemPreferences } = await import('electron');
+    const screen = systemPreferences.getMediaAccessStatus('screen'); // 'granted' | 'denied' | 'not-determined' | 'restricted'
+    let hooks = false;
+    try {
+      await import('uiohook-napi');
+      hooks = true;
+    } catch {}
+    return { screen, hooks };
+  });
+
+  ipcMain.handle('permissions:openScreenSettings', async () => {
+    const { shell } = await import('electron');
+    shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+    );
+    return true;
+  });
+
   ipcMain.handle('sources:list', async () => {
     const sources = await desktopCapturer.getSources({
       types: ['screen', 'window'],

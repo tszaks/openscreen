@@ -11,6 +11,8 @@ declare global {
   interface Window {
     openscreen: {
       listSources(): Promise<SourceInfo[]>;
+      permissionsStatus(): Promise<{ screen: string; hooks: boolean }>;
+      openScreenSettings(): Promise<boolean>;
       startRecording(sourceId: string): Promise<boolean>;
       stopRecording(): Promise<{ samples: CursorSample[]; keys: KeystrokeSample[] }>;
       saveBundle(videoBytes: ArrayBuffer, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer, keys?: KeystrokeSample[]): Promise<string>;
