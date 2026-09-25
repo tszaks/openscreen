@@ -44,6 +44,19 @@ export function Editor({
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
   const [cropMode, setCropMode] = useState(false);
   const cropDrag = useRef<{ x: number; y: number } | null>(null);
+  const [peaks, setPeaks] = useState<number[]>([]);
+  const waveRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    let dead = false;
+    api.audioPeaks(bundleDir, proj.recording.screenVideoFile, 1200).then((p) => {
+      if (!dead) setPeaks(p);
+    });
+    return () => {
+      dead = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundleDir]);
 
   const timeline = useMemo(() => new Timeline(proj.recording.duration, proj.clips), [proj]);
 
@@ -471,6 +484,28 @@ export function Editor({
     setStatus('project saved');
   };
 
+  // Repaint the waveform whenever peaks or the cut layout changes.
+  useEffect(() => {
+    const cv = waveRef.current;
+    if (!cv || !peaks.length) return;
+    const W = (cv.width = cv.clientWidth * 2);
+    const H = (cv.height = cv.clientHeight * 2);
+    const g = cv.getContext('2d');
+    if (!g) return;
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = 'rgba(255,255,255,0.28)';
+    const outDur = timeline.outputDuration || duration || 1;
+    const srcDur = proj.recording.duration || 1;
+    for (let x = 0; x < W; x++) {
+      const outT = (x / W) * outDur;
+      const srcT = timeline.sourceTime(outT);
+      if (srcT == null) continue;
+      const p = peaks[Math.min(peaks.length - 1, Math.floor((srcT / srcDur) * peaks.length))];
+      const h = Math.max(2, p * H * 0.9);
+      g.fillRect(x, (H - h) / 2, 1, h);
+    }
+  }, [peaks, timeline, duration, proj.recording.duration]);
+
   const zoomMarks = segments;
 
   return (
@@ -497,6 +532,7 @@ export function Editor({
         />
       </div>
       <div className="timeline" onClick={seekTimeline}>
+        <canvas ref={waveRef} className="wave" />
         <div
           className="playhead"
           style={{ left: `${(playhead / (timeline.outputDuration || duration || 1)) * 100}%` }}
