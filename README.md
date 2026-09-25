@@ -1,42 +1,45 @@
 # openscreen
 
-An open-source screen recorder in the spirit of Screen Studio, with polished auto-zoom and cursor effects. Recording iPhone and iPad screens is the headline feature.
+An open-source screen recorder in the spirit of Screen Studio — buttery auto-focus zoom on clicks, cursor smoothing, styled backgrounds, editor, captions. Recording iPhone and iPad screens is the headline feature.
 
-## Status
+## Stack
 
-Early scaffold — capture pipeline, cursor smoothing, zoom planning, timeline editing, compositor, and exporter are implemented as SwiftPM modules with tests. The SwiftUI app shell (source picker → recording → editor → export) is wired up.
-
-## Architecture
-
-SwiftPM multi-module package so contributors can work module-by-module:
-
-| Module | Job |
-|---|---|
-| `OpenScreenCore` | Project/bundle model, geometry math |
-| `CaptureKit` | ScreenCaptureKit + AVFoundation recorders, cursor monitor, iOS device capture |
-| `CursorKit` | Cursor path smoothing (Catmull-Rom), click clustering, auto-zoom planning |
-| `RenderKit` | Background/frame/cursor compositor, editor preview renderer |
-| `EditKit` | Timeline: split, trim, speed, reorder clips |
-| `ExportKit` | Frame-accurate offline render → mp4 |
-| `CaptionsKit` | On-device speech → caption cues, SRT/VTT writers |
-| `AppFeature` | SwiftUI shell: picker, recording HUD, editor, export |
-
-The app target is generated with [xcodegen](https://github.com/yonaskolb/XcodeGen) (`project.yml`) and links the `AppFeature` product from the local package at `Modules/`.
-
-## Build & test
-
-```sh
-cd Modules && swift build   # all modules
-cd Modules && swift test    # unit tests (no screen-recording permission needed)
-xcodegen generate           # regenerate OpenScreen.xcodeproj
-xcodebuild -project OpenScreen.xcodeproj -scheme OpenScreen build
-```
-
-On first run macOS will prompt for Screen Recording permission; camera/mic prompts appear when those toggles are on. The **Synthetic demo** source exercises the full pipeline without any permissions.
+**Electron + TypeScript + React** — same stack as Screen Studio. The capture/UI layer is Electron; the motion model (autofocus segments, easing, cursor smoothing, timeline mapping, click ripples) is a pure shared library with unit tests — that's where the buttery feel lives.
 
 ## Layout
 
-- `SPEC.md` — feature matrix, architecture decisions, milestones
-- `Modules/` — SwiftPM package (`Package.swift`, `Sources/`, `Tests/`); lives under its own directory so the local-package reference in the Xcode project resolves quickly (a package root containing `.git`/`.build` stalls `xcodebuild`)
-- `App/OpenScreenApp/` — app entry point, Info.plist, entitlements
-- `project.yml` — xcodegen spec for the app shell
+- `electron/` — the app
+  - `src/shared/` — pure model layer: `autofocus.ts` (click clusters → focus segments + per-frame camera eval), `easing.ts` (smootherstep/spring curves), `cursor.ts` (Catmull-Rom smoothing), `timeline.ts` (clip ↔ output mapping), `ripples.ts`, `types.ts`
+  - `src/main/` — Electron main: window, `desktopCapturer` sources, 120Hz cursor poller + uiohook global clicks, bundle save, ffmpeg export pipe
+  - `src/preload/` — contextBridge API
+  - `src/renderer/` — React UI: source picker → record HUD → editor (composited canvas preview, timeline with zoom markers, style swatches) → MP4 export
+  - `test/` — vitest unit tests for the model layer
+- `Modules/`, `App/`, `project.yml` — **legacy** native Swift scaffold kept for reference (SwiftPM modules + SwiftUI shell; the model-layer semantics there mirror `src/shared/`)
+
+## Develop
+
+```sh
+cd electron
+npm install
+npm test            # model-layer unit tests
+npm run build       # main (tsc) + renderer (vite)
+npm run electron:dev
+```
+
+Requires ffmpeg on PATH (`brew install ffmpeg`) for MP4 export.
+
+## What works (verified end-to-end on macOS)
+
+- Screen/window capture via `desktopCapturer` + `getUserMedia` (60fps webm)
+- Global cursor track at 120Hz + click events via uiohook
+- Auto-focus zoom: clicks → smoothed glide-in → hold → glide-out; consecutive click clusters pan directly (no zoom-out detour)
+- Click ripples, software cursor, styled backgrounds, rounded/shadowed frame
+- Editor preview renders the fully composited frame; timeline shows zoom markers
+- Export: frame-by-frame compositor render → raw RGBA → ffmpeg → h264 mp4
+
+## Known gaps / next
+
+- Wired iPhone capture path (continuity camera enumerate → getUserMedia)
+- Audio: recording inputs exist; export passthrough written for 1:1 timelines (Swift side) — Electron port pending
+- Captions: SFSpeech→burn-in exists on the Swift side; Electron port pending
+- Global click hook needs Accessibility permission (uiohook)
