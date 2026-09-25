@@ -58,6 +58,7 @@ export function Editor({
   const [zoomDepth, setZoomDepth] = useState(2);
   const [manualSegments, setManualSegments] = useState<FocusSegment[]>([]);
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
+  const [motionEv, setMotionEv] = useState<CursorSample[]>([]);
   const [cropMode, setCropMode] = useState(false);
   const cropDrag = useRef<{ x: number; y: number } | null>(null);
   const [peaks, setPeaks] = useState<number[]>([]);
@@ -85,12 +86,13 @@ export function Editor({
           [
             ...cursor.filter((s) => s.kind === 'clickDown'),
             ...(dwellOn ? dwellFocusEvents(cursor) : []),
+            ...motionEv,
           ].sort((a, b) => a.time - b.time),
           timeline.outputDuration || duration,
         )
       : [];
     return [...auto, ...manualSegments].sort((a, b) => a.inStart - b.inStart);
-  }, [cursor, timeline, autofocusOn, dwellOn, duration, manualSegments, zoomDepth]);
+  }, [cursor, timeline, autofocusOn, dwellOn, duration, manualSegments, zoomDepth, motionEv]);
 
   const canvasSize = useMemo(() => {
     const src = proj.recording.sourceSize;
@@ -497,6 +499,65 @@ export function Editor({
     return () => window.removeEventListener('keydown', onKey);
   });
 
+  /**
+   * Frame-diff the recording for sustained local motion (taps/swipes on an
+   * iPhone/iPad capture, where no cursor events exist). Sustained-motion
+   * centroids become autofocus events through the same dwell pipeline.
+   */
+  const detectMotion = async () => {
+    const video = videoRef.current;
+    if (!video || !duration) return;
+    const origT = video.currentTime;
+    video.pause();
+    setStatus('detecting motion…');
+    try {
+      const src = proj.recording.sourceSize;
+      const W2 = 192;
+      const H2 = Math.max(8, Math.round((W2 * src.height) / src.width));
+      const det = document.createElement('canvas');
+      det.width = W2;
+      det.height = H2;
+      const dctx = det.getContext('2d', { willReadFrequently: true })!;
+      const samples: CursorSample[] = [];
+      let prev: ImageData | null = null;
+      const step = 0.4;
+      const area = W2 * H2;
+      for (let t = step; t < duration; t += step) {
+        await seekVideo(video, t);
+        dctx.drawImage(video, 0, 0, W2, H2);
+        const img = dctx.getImageData(0, 0, W2, H2);
+        if (prev) {
+          const d = img.data;
+          const p = prev.data;
+          let sx = 0;
+          let sy = 0;
+          let n = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            const diff =
+              Math.abs(d[i] - p[i]) + Math.abs(d[i + 1] - p[i + 1]) + Math.abs(d[i + 2] - p[i + 2]);
+            if (diff > 90) {
+              sx += i / 4 % W2;
+              sy += Math.floor(i / 4 / W2);
+              n++;
+            }
+          }
+          // Sustained local motion only — ignore noise and whole-frame changes
+          // (scrolls, transitions) which would yank the zoom around.
+          if (n > area * 0.003 && n < area * 0.35) {
+            samples.push({ time: t - step / 2, x: sx / n / W2, y: sy / n / H2, kind: 'move' });
+          }
+        }
+        prev = img;
+        setStatus(`detecting motion ${Math.round((t / duration) * 100)}%`);
+      }
+      const ev = dwellFocusEvents(samples, { radius: 0.06, minDur: 0.6, debounce: 2 });
+      setMotionEv(ev);
+      setStatus(ev.length ? `${ev.length} motion focus region(s)` : 'no sustained motion detected');
+    } finally {
+      await seekVideo(video, origT);
+    }
+  };
+
   const transcribe = async () => {
     setStatus('transcribing…');
     try {
@@ -661,6 +722,11 @@ export function Editor({
           />
           Click sfx
         </label>
+        {autofocusOn && (
+          <button onClick={detectMotion} title="Frame-diff the video for taps/swipes (iPhone/iPad captures have no cursor track)">
+            Detect touches
+          </button>
+        )}
         {autofocusOn && (
           <label title="Max zoom on click">
             Zoom {zoomDepth.toFixed(1)}×
