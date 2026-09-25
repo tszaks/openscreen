@@ -23,7 +23,8 @@
       .rec-hud { display: flex; align-items: center; gap: 12px; }
       .rec-dot { width: 12px; height: 12px; border-radius: 50%; background: #e74c3c; animation: pulse 1s infinite alternate; }
       @keyframes pulse { to { opacity: 0.3; } }
-      .editor { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+      .editor { display: flex; gap: 10px; flex: 1; min-height: 0; }
+      .ed-main { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 0; }
       .preview-wrap { flex: 1; min-height: 0; max-height: 58vh; display: flex; align-items: center; justify-content: center; }
       canvas.preview { max-width: 100%; max-height: 100%; border-radius: 8px; }
       .timeline { height: 64px; background: #26262c; border-radius: 8px; position: relative; cursor: pointer; }
@@ -31,6 +32,15 @@
       .timeline .zoommark { position: absolute; top: 26px; width: 8px; height: 8px; background: #fdcb6e; transform: rotate(45deg); border-radius: 1px; }
       .timeline .clipblock { position: absolute; top: 4px; height: 18px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.15); border-radius: 3px; box-sizing: border-box; }
       .timeline .clipblock.selected { background: rgba(109,140,220,.4); border-color: #6d8ce0; }
+      .timeline .clipblock[draggable=true] { cursor: grab; }
+      .transcript { width: 250px; overflow-y: auto; background: #26262c; border-radius: 8px; padding: 8px; font-size: 12px; flex-shrink: 0; }
+      .transcript h3 { margin: 2px 4px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #888; font-weight: 600; }
+      .cue { padding: 4px 6px; border-radius: 4px; cursor: pointer; display: flex; gap: 6px; align-items: baseline; }
+      .cue:hover { background: rgba(255,255,255,.06); }
+      .cue .t { color: #888; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+      .cue .x { margin-left: auto; color: #666; padding: 0 3px; }
+      .cue .x:hover { color: #e74c3c; }
+      .transcript .cutall { margin: 2px 4px 8px; font-size: 11px; }
       .panel { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
       .panel label { font-size: 12px; color: #aaa; display: flex; gap: 6px; align-items: center; }
       .panel input[type=range] { width: 110px; }
