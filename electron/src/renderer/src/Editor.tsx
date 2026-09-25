@@ -40,6 +40,7 @@ export function Editor({
   const [status, setStatus] = useState('');
   const [autofocusOn, setAutofocusOn] = useState(true);
   const [dwellOn, setDwellOn] = useState(true);
+  const [clickSfx, setClickSfx] = useState(true);
   const [zoomDepth, setZoomDepth] = useState(2);
   const [manualSegments, setManualSegments] = useState<FocusSegment[]>([]);
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
@@ -285,7 +286,7 @@ export function Editor({
     const audioClips = timeline.isIdentity
       ? undefined
       : proj.clips.map((c) => ({ start: c.sourceStart, end: c.sourceEnd, speed: c.speed }));
-    await api.exportBegin(outPath, W, H, fps, audioIn, audioClips);
+    await api.exportBegin(outPath, W, H, fps, audioIn, audioClips, clickSfx ? clickEv.map((e) => e.time) : undefined);
     video.pause();
 
     for (let i = 0; i < total; i++) {
@@ -611,6 +612,14 @@ export function Editor({
             Dwell zoom
           </label>
         )}
+        <label title="Mix a click sound at each click">
+          <input
+            type="checkbox"
+            checked={clickSfx}
+            onChange={(e) => setClickSfx(e.target.checked)}
+          />
+          Click sfx
+        </label>
         {autofocusOn && (
           <label title="Max zoom on click">
             Zoom {zoomDepth.toFixed(1)}×
