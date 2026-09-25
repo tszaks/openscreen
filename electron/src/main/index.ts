@@ -79,7 +79,6 @@ app.whenReady().then(() => {
       title: 'Open recording',
       defaultPath: recordingsRoot(),
       properties: ['openDirectory'],
-      filters: [{ name: 'OpenScreen bundles', extensions: ['openscreen'] }],
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
     const dir = picked.filePaths[0];
