@@ -109,6 +109,8 @@ app.whenReady().then(() => {
     if (picked.canceled || !picked.filePaths[0]) return null;
     const dir = picked.filePaths[0];
     const project = JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'));
+    project.annotations ??= [];
+    project.captions ??= [];
     const cursor = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8')).samples ?? [];
     let keys: unknown[] = [];
     try {

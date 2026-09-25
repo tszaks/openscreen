@@ -57,7 +57,7 @@ export interface StyleSettings {
 export type Background =
   | { kind: 'solid'; hex: string }
   | { kind: 'gradient'; startHex: string; endHex: string; angle: number }
-  | { kind: 'imageFile'; path: string }
+  | { kind: 'imageFile'; path: string; blur?: number }
   | { kind: 'wallpaper' };
 
 export interface CaptionCue {
@@ -65,6 +65,17 @@ export interface CaptionCue {
   start: number;
   end: number;
   text: string;
+}
+
+export interface Annotation {
+  id: string;
+  /** output-time range the overlay is visible (seconds) */
+  start: number;
+  end: number;
+  text: string;
+  /** 0=top, 1=middle, 2=bottom third of the content frame */
+  band: 0 | 1 | 2;
+  hex: string;
 }
 
 export interface CameraOverlay {
@@ -92,6 +103,7 @@ export interface Project {
   style: StyleSettings;
   cameraOverlay: CameraOverlay;
   captions: CaptionCue[];
+  annotations: Annotation[];
   exportPreset: 'original' | 'p1080' | 'uhd4k';
   outputFPS: number;
 }
@@ -112,6 +124,7 @@ export const defaultProject = (recording: RecordingRef): Project => ({
   style: defaultStyle(),
   cameraOverlay: { enabled: false, corner: 'bottomLeft', sizeFraction: 0.22, circular: true },
   captions: [],
+  annotations: [],
   exportPreset: 'p1080',
   outputFPS: 60,
 });
