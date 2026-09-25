@@ -54,6 +54,10 @@ export interface StyleSettings {
   background: Background;
   /** Wrap the content frame in device hardware chrome. */
   deviceFrame: 'none' | 'phone';
+  /** Software cursor rendering. */
+  cursorSize: number; // dot diameter as a fraction of frame height
+  cursorTrail: boolean;
+  cursorHex: string;
 }
 
 export type Background =
@@ -118,6 +122,9 @@ export const defaultStyle = (): StyleSettings => ({
   cropRect: null,
   background: { kind: 'gradient', startHex: '#3a1c71', endHex: '#d76d77', angle: 120 },
   deviceFrame: 'none',
+  cursorSize: 0.012,
+  cursorTrail: false,
+  cursorHex: '#ffffff',
 });
 
 export const defaultProject = (recording: RecordingRef): Project => ({
