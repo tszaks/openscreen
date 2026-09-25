@@ -159,6 +159,37 @@ export class CanvasCompositor {
     for (const a of this.project.annotations ?? []) {
       if (time >= a.start && time <= a.end) this.drawAnnotation(a, rect, H);
     }
+
+    // 9. Device bezel — hardware chrome drawn over the frame edge.
+    if (style.deviceFrame === 'phone') this.drawPhoneBezel(rect, H);
+  }
+
+  private drawPhoneBezel(rect: { x: number; y: number; w: number; h: number }, H: number) {
+    const { ctx } = this;
+    const bw = Math.max(6, rect.w * 0.045); // bezel thickness
+    const r = Math.max(rect.w * 0.12, 8) + bw / 2;
+    // Outer shell
+    ctx.strokeStyle = '#141418';
+    ctx.lineWidth = bw;
+    roundedPath(ctx, rect.x - bw / 2, rect.y - bw / 2, rect.w + bw, rect.h + bw, r);
+    ctx.stroke();
+    // Inner hairline between screen and bezel
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = Math.max(1, bw * 0.08);
+    roundedPath(ctx, rect.x, rect.y, rect.w, rect.h, Math.max(rect.w * 0.12, 8));
+    ctx.stroke();
+    // Dynamic Island pill, overlapping the top edge
+    const iw = rect.w * 0.32;
+    const ih = Math.max(bw * 0.9, rect.h * 0.024);
+    ctx.fillStyle = '#0a0a0d';
+    roundedPath(ctx, rect.x + rect.w / 2 - iw / 2, rect.y + ih * 0.55, iw, ih, ih / 2);
+    ctx.fill();
+    // Side buttons
+    ctx.fillStyle = '#1c1c22';
+    const bh = rect.h * 0.11;
+    ctx.fillRect(rect.x - bw - bw * 0.15, rect.y + rect.h * 0.22, bw * 0.5, bh); // volume
+    ctx.fillRect(rect.x - bw - bw * 0.15, rect.y + rect.h * 0.36, bw * 0.5, bh * 0.8);
+    ctx.fillRect(rect.x + rect.w + bw - bw * 0.35, rect.y + rect.h * 0.28, bw * 0.5, bh); // power
   }
 
   private bgImage?: HTMLImageElement;
