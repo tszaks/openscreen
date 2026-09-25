@@ -22,6 +22,14 @@ export interface CursorSample {
   kind: CursorKind;
 }
 
+/** A pressed key observed during recording. */
+export interface KeystrokeSample {
+  /** Seconds since recording start. */
+  time: number;
+  /** Human-readable key name ("A", "Enter", "Shift"). */
+  key: string;
+}
+
 /** Camera instruction: at `time`, look at `center` (normalized) at `scale`. */
 export interface ZoomKeyframe {
   time: number;
