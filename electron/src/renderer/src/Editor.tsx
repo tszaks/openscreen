@@ -38,6 +38,8 @@ export function Editor({
   const [autofocusOn, setAutofocusOn] = useState(true);
   const [manualSegments, setManualSegments] = useState<FocusSegment[]>([]);
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
+  const [cropMode, setCropMode] = useState(false);
+  const cropDrag = useRef<{ x: number; y: number } | null>(null);
 
   const timeline = useMemo(() => new Timeline(proj.recording.duration, proj.clips), [proj]);
 
@@ -65,6 +67,70 @@ export function Editor({
     [proj, canvasSize, segments],
   );
 
+  /** Map a point on the preview canvas to normalized full-source coords
+   *  (valid in crop mode, where the source is drawn unzoomed). */
+  const canvasToSource = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const r = canvas.getBoundingClientRect();
+    const px = ((clientX - r.left) / r.width) * canvasSize.width;
+    const py = ((clientY - r.top) / r.height) * canvasSize.height;
+    // Raw source is aspect-fit centered — recover its rect.
+    const src = proj.recording.sourceSize;
+    const pad = Math.min(canvasSize.width, canvasSize.height) * proj.style.paddingFraction;
+    const cw = canvasSize.width - pad * 2;
+    const ch = canvasSize.height - pad * 2;
+    const ar = src.width / src.height;
+    let rw = cw;
+    let rh = ch;
+    let rx = pad;
+    let ry = pad;
+    if (cw / ch > ar) {
+      rw = ch * ar;
+      rx = pad + (cw - rw) / 2;
+    } else {
+      rh = cw / ar;
+      ry = pad + (ch - rh) / 2;
+    }
+    return { x: (px - rx) / rw, y: (py - ry) / rh };
+  };
+
+  const onCanvasDown = (e: React.MouseEvent) => {
+    if (!cropMode) return;
+    const p = canvasToSource(e.clientX, e.clientY);
+    if (p) cropDrag.current = p;
+  };
+
+  const onCanvasMove = (e: React.MouseEvent) => {
+    if (!cropMode || !cropDrag.current) return;
+    const p = canvasToSource(e.clientX, e.clientY);
+    if (!p) return;
+    const s = cropDrag.current;
+    const x = Math.min(s.x, p.x);
+    const y = Math.min(s.y, p.y);
+    const w = Math.abs(p.x - s.x);
+    const h = Math.abs(p.y - s.y);
+    if (w > 0.01 && h > 0.01) {
+      setProj((pr) => ({
+        ...pr,
+        style: {
+          ...pr.style,
+          cropRect: {
+            x: Math.max(0, x),
+            y: Math.max(0, y),
+            w: Math.min(1, x + w) - Math.max(0, x),
+            h: Math.min(1, y + h) - Math.max(0, y),
+          },
+        },
+      }));
+    }
+  };
+
+  const onCanvasUp = () => {
+    cropDrag.current = null;
+    setCropMode(false);
+  };
+
   // Draw the composited frame for `time` onto the preview canvas.
   const renderAt = useCallback(
     (time: number) => {
@@ -84,8 +150,39 @@ export function Editor({
         cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
       });
       ctx.drawImage(compositor.canvas, 0, 0);
+      // In crop mode, dim outside the current crop rect (in source space).
+      if (cropMode) {
+        const src = proj.recording.sourceSize;
+        const pad = Math.min(canvasSize.width, canvasSize.height) * proj.style.paddingFraction;
+        const cw = canvasSize.width - pad * 2;
+        const ch = canvasSize.height - pad * 2;
+        const ar = src.width / src.height;
+        let rw = cw, rh = ch, rx = pad, ry = pad;
+        if (cw / ch > ar) { rw = ch * ar; rx = pad + (cw - rw) / 2; }
+        else { rh = cw / ar; ry = pad + (ch - rh) / 2; }
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+        const c = proj.style.cropRect;
+        ctx.drawImage(video, 0, 0, src.width, src.height, rx, ry, rw, rh);
+        if (c) {
+          const cx0 = rx + c.x * rw;
+          const cy0 = ry + c.y * rh;
+          const cx1 = rx + (c.x + c.w) * rw;
+          const cy1 = ry + (c.y + c.h) * rh;
+          // cut the hole back out so the selection stays bright
+          ctx.clearRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+          ctx.drawImage(
+            video,
+            (c.x * src.width), (c.y * src.height), (c.w * src.width), (c.h * src.height),
+            cx0, cy0, cx1 - cx0, cy1 - cy0,
+          );
+          ctx.strokeStyle = '#fdcb6e';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+        }
+      }
     },
-    [compositor, canvasSize, smoothed, clickEv],
+    [compositor, canvasSize, smoothed, clickEv, cropMode, proj],
   );
 
   // Keep preview in sync while video plays or after seeks.
@@ -263,7 +360,15 @@ export function Editor({
       />
       {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
       <div className="preview-wrap">
-        <canvas ref={canvasRef} className="preview" />
+        <canvas
+          ref={canvasRef}
+          className="preview"
+          style={{ cursor: cropMode ? 'crosshair' : undefined }}
+          onMouseDown={onCanvasDown}
+          onMouseMove={onCanvasMove}
+          onMouseUp={onCanvasUp}
+          onMouseLeave={onCanvasUp}
+        />
       </div>
       <div className="timeline" onClick={seekTimeline}>
         <div
@@ -402,6 +507,21 @@ export function Editor({
         <button onClick={() => videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause()}>
           Play/Pause
         </button>
+        <button
+          onClick={() => {
+            setCropMode((c) => !c);
+            if (!cropMode) renderAt(videoRef.current?.currentTime ?? 0);
+          }}
+        >
+          {cropMode ? 'Dragging…' : 'Crop'}
+        </button>
+        {proj.style.cropRect && !cropMode && (
+          <button
+            onClick={() => setProj((p) => ({ ...p, style: { ...p.style, cropRect: null } }))}
+          >
+            Reset crop
+          </button>
+        )}
         <button onClick={splitAtPlayhead}>Split</button>
         <button onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1}>
           Delete clip
