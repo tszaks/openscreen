@@ -174,6 +174,42 @@ app.whenReady().then(() => {
       .filter((c: { start: number; end: number; text: string }) => c.end > c.start && c.text);
   });
 
+  // Waveform peaks for the timeline: decode audio.wav → normalized
+  // peak per bucket in source-time order.
+  ipcMain.handle('audio:peaks', async (_e, args: { dir: string; videoFile: string; buckets?: number }) => {
+    const wav = await extractWav(args.dir, args.videoFile);
+    const buf = readFileSync(wav);
+    let off = 12;
+    let dataOff = -1;
+    let dataLen = 0;
+    while (off + 8 <= buf.length) {
+      const id = buf.toString('ascii', off, off + 4);
+      const len = buf.readUInt32LE(off + 4);
+      if (id === 'data') {
+        dataOff = off + 8;
+        dataLen = len;
+        break;
+      }
+      off += 8 + len + (len % 2);
+    }
+    if (dataOff < 0) return [];
+    const n = Math.min(Math.floor(dataLen / 2), Math.floor((buf.length - dataOff) / 2));
+    const buckets = Math.max(64, Math.min(4096, args.buckets ?? 800));
+    const per = Math.max(1, Math.floor(n / buckets));
+    const peaks: number[] = [];
+    for (let b = 0; b < buckets; b++) {
+      let max = 0;
+      const start = dataOff + b * per * 2;
+      const end = Math.min(start + per * 2, dataOff + n * 2);
+      for (let i = start; i + 1 < end; i += 2) {
+        const v = Math.abs(buf.readInt16LE(i));
+        if (v > max) max = v;
+      }
+      peaks.push(max / 32768);
+    }
+    return peaks;
+  });
+
   // Silence detection: ffmpeg silencedetect on the bundle audio →
   // [{start,end}] silent ranges in source seconds.
   ipcMain.handle(
