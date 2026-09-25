@@ -1,0 +1,19 @@
+# Swift / Xcode
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/project.xcworkspace/
+*.xcodeproj/xcuserdata/
+*.xcuserstate
+*.xcuserdatad
+
+# Generated Xcode project (xcodegen output — regenerate with `xcodegen`)
+OpenScreen.xcodeproj/
+
+# Media artifacts — never commit recordings or exports
+*.mp4
+*.mov
+*.openscreen/
+
+# OS noise
+.DS_Store
