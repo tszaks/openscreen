@@ -59,7 +59,12 @@ export function Editor({
 
   const canvasSize = useMemo(() => {
     const src = proj.recording.sourceSize;
-    const h = proj.exportPreset === 'uhd4k' ? 2160 : 1080;
+    const h =
+      proj.exportPreset === 'uhd4k'
+        ? 2160
+        : proj.exportPreset === 'original'
+          ? src.height
+          : 1080;
     return { width: Math.round((h * src.width) / src.height), height: h };
   }, [proj]);
 
@@ -478,6 +483,20 @@ export function Editor({
           >
             Img…
           </button>
+          <button
+            title="Use desktop wallpaper"
+            onClick={async () => {
+              const path = await api.wallpaperPath();
+              if (path) {
+                setProj((p) => ({
+                  ...p,
+                  style: { ...p.style, background: { kind: 'imageFile', path } },
+                }));
+              } else setStatus('wallpaper unavailable');
+            }}
+          >
+            Wall
+          </button>
         </div>
         {camUrl && (
           <div className="sliders">
@@ -611,6 +630,32 @@ export function Editor({
           />
         </label>
         <button onClick={saveProject}>Save project</button>
+        <label>
+          Res
+          <select
+            value={proj.exportPreset}
+            onChange={(e) =>
+              setProj((p) => ({ ...p, exportPreset: e.target.value as typeof p.exportPreset }))
+            }
+          >
+            <option value="original">Original</option>
+            <option value="p1080">1080p</option>
+            <option value="uhd4k">4K</option>
+          </select>
+        </label>
+        <label>
+          FPS
+          <select
+            value={proj.outputFPS}
+            onChange={(e) => setProj((p) => ({ ...p, outputFPS: +e.target.value }))}
+          >
+            {[24, 30, 60].map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
+        </label>
         <button className="primary" onClick={exportVideo}>Export MP4</button>
         <span className="status">{status}</span>
       </div>
