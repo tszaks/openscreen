@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import OpenScreenCore
@@ -93,6 +94,7 @@ public final class Compositor: @unchecked Sendable {
         if project.cameraOverlay.enabled, let cam = input.cameraFrame {
             drawCamera(in: ctx, frame: cam, canvas: canvas)
         }
+        drawCaption(in: ctx, at: time, within: rect)
         return ctx.makeImage()
     }
 
@@ -132,6 +134,45 @@ public final class Compositor: @unchecked Sendable {
         let y = contentRect.origin.y + (1 - position.y) * contentRect.height - d / 2
         ctx.setFillColor(hexColor("#FFFFFFCC"))
         ctx.fillEllipse(in: CGRect(x: x, y: y, width: d, height: d))
+    }
+
+    /// Burn-in captions: active cue centered near the bottom of the content rect.
+    private func drawCaption(in ctx: CGContext, at time: TimeInterval, within contentRect: CGRect) {
+        guard let cue = project.captions.first(where: { $0.start <= time && time <= $0.end }),
+              !cue.text.isEmpty else { return }
+
+        let fontSize = max(16, canvas.height * 0.032)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
+            .foregroundColor: NSColor.white,
+        ]
+        let text = NSAttributedString(string: cue.text, attributes: attrs)
+        let textSize = text.size()
+        let padX = fontSize * 0.5
+        let padY = fontSize * 0.28
+        let pillWidth = textSize.width + padX * 2
+        let pillHeight = textSize.height + padY * 2
+        let pillRect = CGRect(
+            x: contentRect.midX - pillWidth / 2,
+            // Captions sit above the content rect's bottom edge in normalized
+            // space — CoreGraphics Y is bottom-up, so that means small +y.
+            y: contentRect.minY + canvas.height * 0.03,
+            width: pillWidth,
+            height: pillHeight
+        )
+        ctx.saveGState()
+        ctx.setFillColor(CGColor(gray: 0, alpha: 0.65))
+        let pill = CGPath(roundedRect: pillRect, cornerWidth: pillHeight / 4, cornerHeight: pillHeight / 4, transform: nil)
+        ctx.addPath(pill)
+        ctx.fillPath()
+        // NSAttributedString draws in AppKit (top-left) coordinates — flip.
+        let transform = CGAffineTransform(translationX: 0, y: canvas.height).scaledBy(x: 1, y: -1)
+        ctx.concatenate(transform)
+        text.draw(at: CGPoint(
+            x: pillRect.minX + padX,
+            y: canvas.height - pillRect.minY - padY - textSize.height
+        ))
+        ctx.restoreGState()
     }
 
     private func drawCamera(in ctx: CGContext, frame: CGImage, canvas: CGSizeValue) {

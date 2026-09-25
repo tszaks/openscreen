@@ -36,6 +36,17 @@ public final class Exporter: @unchecked Sendable {
         let totalFrames = Int(timeline.outputDuration * Double(fps))
         guard totalFrames > 0 else { throw ExportError.noFrames }
 
+        // Audio passthrough only when the timeline preserves the source 1:1
+        // (single full-range clip at speed 1) — retimed audio is a later
+        // milestone; remapped/sampled audio lands then.
+        let sourceAsset = AVURLAsset(url: bundle.screenVideoURL)
+        let wantsAudioCopy = timeline.clips.count == 1
+            && timeline.clips[0].speed == 1
+            && timeline.clips[0].sourceStart <= 0.05
+            && timeline.clips[0].sourceEnd >= timeline.sourceDuration - 0.05
+        let sourceAudioTrack = try? await sourceAsset.loadTracks(withMediaType: .audio).first
+        let includeAudio = wantsAudioCopy && sourceAudioTrack != nil
+
         try? FileManager.default.removeItem(at: outputURL)
         let writer = try AVAssetWriter(url: outputURL, fileType: .mp4)
         let codec: AVVideoCodecType = project.exportPreset == .uhd4k ? .hevc : .h264
@@ -46,6 +57,20 @@ public final class Exporter: @unchecked Sendable {
         ])
         input.expectsMediaDataInRealTime = false
         writer.add(input)
+
+        var audioInput: AVAssetWriterInput?
+        if includeAudio {
+            let aInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 48000,
+                AVNumberOfChannelsKey: 2,
+            ])
+            aInput.expectsMediaDataInRealTime = false
+            if writer.canAdd(aInput) {
+                writer.add(aInput)
+                audioInput = aInput
+            }
+        }
 
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
@@ -91,6 +116,22 @@ public final class Exporter: @unchecked Sendable {
                 }
             }
             progress(Progress(framesDone: i + 1, framesTotal: totalFrames))
+        }
+
+        if let audioInput, let sourceAudioTrack {
+            let reader = try AVAssetReader(asset: sourceAsset)
+            let out = AVAssetReaderTrackOutput(track: sourceAudioTrack, outputSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+            ])
+            reader.add(out)
+            reader.startReading()
+            while let buf = out.copyNextSampleBuffer() {
+                while !audioInput.isReadyForMoreMediaData {
+                    try await Task.sleep(nanoseconds: 1_000_000)
+                }
+                audioInput.append(buf)
+            }
+            audioInput.markAsFinished()
         }
 
         input.markAsFinished()
