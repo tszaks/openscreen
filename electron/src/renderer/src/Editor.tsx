@@ -6,6 +6,7 @@ import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
 import { Timeline } from '../../shared/timeline';
 import { CanvasCompositor } from './compositor';
+import { parseCaptions } from '../../shared/captions';
 
 const SWATCHES = [
   { name: 'Aurora', bg: { kind: 'gradient' as const, startHex: '#3a1c71', endHex: '#d76d77', angle: 120 } },
@@ -190,6 +191,16 @@ export function Editor({
     setSelectedClip(null);
   };
 
+  const importCaptions = async (file: File) => {
+    const cues = parseCaptions(await file.text());
+    if (!cues.length) {
+      setStatus('no cues found in file');
+      return;
+    }
+    setProj((p) => ({ ...p, captions: cues }));
+    setStatus(`${cues.length} captions imported`);
+  };
+
   const saveProject = async () => {
     await api.saveProject(bundleDir, proj);
     setStatus('project saved');
@@ -300,6 +311,15 @@ export function Editor({
         <button onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1}>
           Delete clip
         </button>
+        <label style={{ cursor: 'pointer' }}>
+          Captions…
+          <input
+            type="file"
+            accept=".srt,.vtt"
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && importCaptions(e.target.files[0])}
+          />
+        </label>
         <button onClick={saveProject}>Save project</button>
         <button className="primary" onClick={exportVideo}>Export MP4</button>
         <span className="status">{status}</span>
