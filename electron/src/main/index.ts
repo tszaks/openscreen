@@ -204,9 +204,38 @@ app.whenReady().then(() => {
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
-  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string }) => {
+  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[] }) => {
     const { spawn } = await import('node:child_process');
     const ffmpegBin = await ffmpegPath();
+    let audioArgs: string[] = [];
+    // Confirm the source actually has an audio stream before filtering
+    // (filter_complex on a missing stream aborts the whole encode).
+    let hasAudio = false;
+    if (args.audioIn) {
+      const { execFile } = await import('node:child_process');
+      const probe = await new Promise<string>((resolve) =>
+        execFile(ffmpegBin, ['-i', args.audioIn!], (_e, _so, se) => resolve(se ?? '')),
+      );
+      hasAudio = /Stream #\d+:\d+.*Audio:/.test(probe);
+    }
+    if (hasAudio && args.audioIn && args.audioClips?.length) {
+      // Cut timeline: rebuild audio as atrim+atempo+concat over kept clips.
+      const clips = args.audioClips;
+      const parts = clips.map(
+        (c, i) =>
+          `[1:a]atrim=start=${c.start.toFixed(3)}:end=${c.end.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${Math.min(100, Math.max(0.5, c.speed))}[a${i}]`,
+      );
+      const concat = `${clips.map((_, i) => `[a${i}]`).join('')}concat=n=${clips.length}:v=0:a=1[outa]`;
+      audioArgs = [
+        '-i', args.audioIn,
+        '-filter_complex', [...parts, concat].join(';'),
+        '-map', '0:v', '-map', '[outa]',
+        '-c:a', 'aac', '-shortest',
+      ];
+    } else if (hasAudio && args.audioIn) {
+      // identity timeline — passthrough
+      audioArgs = ['-i', args.audioIn, '-map', '0:v', '-map', '1:a?', '-c:a', 'aac', '-shortest'];
+    }
     const argv = [
       '-y',
       '-f', 'rawvideo',
@@ -214,9 +243,7 @@ app.whenReady().then(() => {
       '-s', `${args.w}x${args.h}`,
       '-r', String(args.fps),
       '-i', 'pipe:0',
-      // audio passthrough when the timeline is uncut — mux the webm's
-      // audio straight through instead of re-encoding silence
-      ...(args.audioIn ? ['-i', args.audioIn, '-map', '0:v', '-map', '1:a?', '-c:a', 'aac', '-shortest'] : []),
+      ...audioArgs,
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
       '-crf', '18',

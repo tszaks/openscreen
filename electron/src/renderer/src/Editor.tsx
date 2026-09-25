@@ -261,9 +261,13 @@ export function Editor({
     const total = Math.floor((timeline.outputDuration || duration) * fps);
     const { width: W, height: H } = canvasSize;
     const outPath = `${bundleDir}/export-${Date.now()}.mp4`;
-    // audio passthrough only valid while the timeline is 1:1
-    const audioIn = timeline.isIdentity ? `${bundleDir}/${proj.recording.screenVideoFile}` : undefined;
-    await api.exportBegin(outPath, W, H, fps, audioIn);
+    const audioIn = `${bundleDir}/${proj.recording.screenVideoFile}`;
+    // Cut timelines get filtered audio (atrim+atempo+concat); identity gets
+    // passthrough. Main probes for a real audio stream either way.
+    const audioClips = timeline.isIdentity
+      ? undefined
+      : proj.clips.map((c) => ({ start: c.sourceStart, end: c.sourceEnd, speed: c.speed }));
+    await api.exportBegin(outPath, W, H, fps, audioIn, audioClips);
     video.pause();
 
     for (let i = 0; i < total; i++) {

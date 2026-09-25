@@ -21,7 +21,7 @@ declare global {
       wallpaperPath(): Promise<string | null>;
       transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string }[]>;
       detectSilences(dir: string, videoFile: string, thresholdDb?: number, minDur?: number): Promise<{ start: number; end: number }[]>;
-      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn?: string): Promise<boolean>;
+      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: { start: number; end: number; speed: number }[]): Promise<boolean>;
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       exportEnd(): Promise<boolean>;
     };
