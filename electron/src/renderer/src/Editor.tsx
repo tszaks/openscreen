@@ -35,6 +35,20 @@ export function Editor({
   const camRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [proj, setProj] = useState(project);
+  // Undo/redo: snapshot the previous project on every change (cap 60).
+  const historyRef = useRef<{ undo: Project[]; redo: Project[] }>({ undo: [], redo: [] });
+  const projRef = useRef(proj);
+  const applyingHistory = useRef(false);
+  useEffect(() => {
+    if (applyingHistory.current) {
+      applyingHistory.current = false;
+    } else {
+      historyRef.current.undo.push(projRef.current);
+      if (historyRef.current.undo.length > 60) historyRef.current.undo.shift();
+      historyRef.current.redo = [];
+    }
+    projRef.current = proj;
+  }, [proj]);
   const [playhead, setPlayhead] = useState(0);
   const [duration, setDuration] = useState(project.recording.duration || 0);
   const [status, setStatus] = useState('');
@@ -446,10 +460,30 @@ export function Editor({
     setStatus(`cut ${ranges.length} filler cue(s), ${removed.toFixed(1)}s`);
   };
 
-  // Keyboard shortcuts: space = play/pause, S = split at playhead.
+  // Keyboard shortcuts: space = play/pause, S = split, ⌘Z = undo, ⌘⇧Z = redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        const h = historyRef.current;
+        if (e.shiftKey) {
+          const next = h.redo.pop();
+          if (next) {
+            h.undo.push(projRef.current);
+            applyingHistory.current = true;
+            setProj(next);
+          }
+        } else {
+          const prev = h.undo.pop();
+          if (prev) {
+            h.redo.push(projRef.current);
+            applyingHistory.current = true;
+            setProj(prev);
+          }
+        }
+        return;
+      }
       if (e.code === 'Space') {
         e.preventDefault();
         videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause();
