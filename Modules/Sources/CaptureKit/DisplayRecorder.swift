@@ -63,6 +63,7 @@ public final class DisplayRecorder: NSObject, Recorder, @unchecked Sendable {
         }
 
         // Writer.
+        try FileManager.default.createDirectory(at: inputs.outputDirectory, withIntermediateDirectories: true)
         let writer = try AVAssetWriter(url: outputURL, fileType: .mp4)
         let vSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,

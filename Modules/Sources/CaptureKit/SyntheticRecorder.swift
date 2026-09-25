@@ -23,6 +23,7 @@ public final class SyntheticRecorder: Recorder, @unchecked Sendable {
     /// track with a few clicks, then returns the bundle.
     public func stop() async throws -> RecordingBundle {
         guard startedAt != nil else { throw CaptureError.writerFailed("not started") }
+        try FileManager.default.createDirectory(at: inputs.outputDirectory, withIntermediateDirectories: true)
         let duration: TimeInterval = 4.0
         let size = CGSizeValue(width: 1280, height: 720)
         let fps = 30

@@ -36,6 +36,7 @@ public final class Exporter: @unchecked Sendable {
         let totalFrames = Int(timeline.outputDuration * Double(fps))
         guard totalFrames > 0 else { throw ExportError.noFrames }
 
+        try? FileManager.default.removeItem(at: outputURL)
         let writer = try AVAssetWriter(url: outputURL, fileType: .mp4)
         let codec: AVVideoCodecType = project.exportPreset == .uhd4k ? .hevc : .h264
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -82,7 +83,12 @@ public final class Exporter: @unchecked Sendable {
             )
             if let img = compositor.render(at: outT, input: input_),
                let buf = img.pixelBuffer(width: Int(canvas.width), height: Int(canvas.height)) {
-                adaptor.append(buf, withPresentationTime: CMTime(seconds: outT, preferredTimescale: CMTimeScale(fps)))
+                let pts = CMTime(seconds: outT, preferredTimescale: 600)
+                if !adaptor.append(buf, withPresentationTime: pts) {
+                    throw ExportError.writerFailed(
+                        "append failed at frame \(i): \(writer.error?.localizedDescription ?? "?") status=\(writer.status.rawValue)"
+                    )
+                }
             }
             progress(Progress(framesDone: i + 1, framesTotal: totalFrames))
         }
