@@ -248,7 +248,7 @@ app.whenReady().then(() => {
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
-  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[] }) => {
+  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[] }) => {
     const { spawn } = await import('node:child_process');
     const ffmpegBin = await ffmpegPath();
     let audioArgs: string[] = [];
@@ -262,23 +262,66 @@ app.whenReady().then(() => {
       );
       hasAudio = /Stream #\d+:\d+.*Audio:/.test(probe);
     }
+
+    // Click sfx: a decaying-sine tick per output-time click, mixed into
+    // whatever program audio exists (or as the whole track when none).
+    const clicks = (args.clicks ?? []).filter((t) => t >= 0).slice(0, 300);
+    const sfxParts: string[] = [];
+    let sfxOut = '';
+    if (clicks.length) {
+      // short decaying sine ping per click
+      sfxParts.push(`[sfxin]asplit=${clicks.length}${clicks.map((_, i) => `[s${i}]`).join('')}`);
+      clicks.forEach((t, i) => {
+        const ms = Math.round(t * 1000);
+        sfxParts.push(`[s${i}]adelay=${ms}|${ms},volume=0.6[c${i}]`);
+      });
+      sfxParts.push(`${clicks.map((_, i) => `[c${i}]`).join('')}amix=inputs=${clicks.length}:normalize=0[sfx]`);
+      sfxOut = '[sfx]';
+    }
+
+    const filters: string[] = [];
+    let programPad = ''; // labeled pad feeding program audio into amix, or ''
     if (hasAudio && args.audioIn && args.audioClips?.length) {
-      // Cut timeline: rebuild audio as atrim+atempo+concat over kept clips.
       const clips = args.audioClips;
-      const parts = clips.map(
-        (c, i) =>
-          `[1:a]atrim=start=${c.start.toFixed(3)}:end=${c.end.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${Math.min(100, Math.max(0.5, c.speed))}[a${i}]`,
+      filters.push(
+        ...clips.map(
+          (c, i) =>
+            `[1:a]atrim=start=${c.start.toFixed(3)}:end=${c.end.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${Math.min(100, Math.max(0.5, c.speed))}[a${i}]`,
+        ),
+        `${clips.map((_, i) => `[a${i}]`).join('')}concat=n=${clips.length}:v=0:a=1[prog]`,
       );
-      const concat = `${clips.map((_, i) => `[a${i}]`).join('')}concat=n=${clips.length}:v=0:a=1[outa]`;
+      programPad = '[prog]';
+    } else if (hasAudio && args.audioIn) {
+      programPad = '[1:a]'; // pad specifier works directly as a filter input
+    }
+
+    const lavfiIndex = args.audioIn ? 2 : 1;
+    const lavfiInputs: string[] = clicks.length
+      ? ['-f', 'lavfi', '-i', 'aevalsrc=0.5*sin(1900*2*PI*t)*exp(-t*70):s=44100:d=0.09']
+      : [];
+    const mapArgs: string[] = [];
+    if (clicks.length && programPad) {
+      filters.unshift(`[${lavfiIndex}:a]anull[sfxin]`, ...sfxParts);
+      filters.push(`${programPad}[sfx]amix=inputs=2:normalize=0[aout]`);
+      mapArgs.push('-map', '0:v', '-map', '[aout]');
+    } else if (clicks.length) {
+      filters.unshift(`[${lavfiIndex}:a]anull[sfxin]`, ...sfxParts);
+      mapArgs.push('-map', '0:v', '-map', '[sfx]');
+    } else if (hasAudio && args.audioClips?.length) {
+      mapArgs.push('-map', '0:v', '-map', '[prog]');
+    } else if (hasAudio) {
+      // identity timeline — passthrough, no filter_complex needed
+      audioArgs = ['-i', args.audioIn!, '-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-shortest'];
+    }
+
+    if (audioArgs.length === 0 && filters.length) {
       audioArgs = [
-        '-i', args.audioIn,
-        '-filter_complex', [...parts, concat].join(';'),
-        '-map', '0:v', '-map', '[outa]',
+        ...(args.audioIn ? ['-i', args.audioIn] : []),
+        ...lavfiInputs,
+        '-filter_complex', filters.join(';'),
+        ...mapArgs,
         '-c:a', 'aac', '-shortest',
       ];
-    } else if (hasAudio && args.audioIn) {
-      // identity timeline — passthrough
-      audioArgs = ['-i', args.audioIn, '-map', '0:v', '-map', '1:a?', '-c:a', 'aac', '-shortest'];
     }
     const argv = [
       '-y',
