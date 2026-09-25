@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
-import type { CursorSample, Project } from '../../shared/types';
+import type { CursorSample, KeystrokeSample, Project } from '../../shared/types';
 import { AutofocusPlanner, cameraAt, defaultAutofocus, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
 import { Timeline } from '../../shared/timeline';
 import { CanvasCompositor } from './compositor';
 import { parseCaptions } from '../../shared/captions';
+import { keysAt } from '../../shared/keystrokes';
 
 const SWATCHES = [
   { name: 'Aurora', bg: { kind: 'gradient' as const, startHex: '#3a1c71', endHex: '#d76d77', angle: 120 } },
@@ -20,12 +21,14 @@ export function Editor({
   camUrl,
   project,
   cursor,
+  keys,
   bundleDir,
 }: {
   videoUrl: string;
   camUrl?: string;
   project: Project;
   cursor: CursorSample[];
+  keys: KeystrokeSample[];
   bundleDir: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -148,10 +151,12 @@ export function Editor({
       canvas.width = canvasSize.width;
       canvas.height = canvasSize.height;
       const cursorPos = cursorAt(smoothed, time);
+      const keyCaps = keysAt(time, keys);
       const cam = camRef.current;
       compositor.render(time, {
         frame: video,
         cursor: cursorPos,
+        keystrokes: keyCaps,
         ripples: ripplesAt(time, clickEv),
         cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
       });
@@ -271,6 +276,7 @@ export function Editor({
       compositor.render(outT, {
         frame: video,
         cursor: cursorAt(smoothed, outT),
+        keystrokes: keysAt(outT, keys),
         ripples: ripplesAt(outT, clickEv),
         cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
       });

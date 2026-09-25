@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type SourceInfo } from './api';
-import type { CursorSample, Project } from '../../shared/types';
+import type { CursorSample, KeystrokeSample, Project } from '../../shared/types';
 import { defaultProject } from '../../shared/types';
 import { Editor } from './Editor';
 
 type Phase =
   | { name: 'picker' }
   | { name: 'recording'; startedAt: number }
-  | { name: 'editor'; bundleDir: string; videoUrl: string; camUrl?: string; project: Project; cursor: CursorSample[] };
+  | { name: 'editor'; bundleDir: string; videoUrl: string; camUrl?: string; project: Project; cursor: CursorSample[]; keys: KeystrokeSample[] };
 
 /** Capture one source (screen or window) at 60fps via getDisplayMedia. */
 async function captureStream(sourceId: string): Promise<MediaStream> {
@@ -121,7 +121,7 @@ export function App() {
     rec.stop();
     stream.getTracks().forEach((t) => t.stop());
     await done;
-    const cursor = await api.stopRecording();
+    const { samples: cursor, keys } = await api.stopRecording();
     // Stop the camera recorder too, if it ran.
     let camBlob: Blob | undefined;
     if (camRecRef.current) {
@@ -146,10 +146,10 @@ export function App() {
       duration: elapsed,
     });
     if (camBytes) project.cameraOverlay.enabled = true;
-    const bundleDir = await api.saveBundle(videoBytes, cursor, project, camBytes);
+    const bundleDir = await api.saveBundle(videoBytes, cursor, project, camBytes, keys);
     const videoUrl = URL.createObjectURL(blob);
     const camUrl = camBlob ? URL.createObjectURL(camBlob) : undefined;
-    setPhase({ name: 'editor', bundleDir, videoUrl, camUrl, project, cursor });
+    setPhase({ name: 'editor', bundleDir, videoUrl, camUrl, project, cursor, keys });
   }, [elapsed]);
 
   if (phase.name === 'picker') {
@@ -200,6 +200,7 @@ export function App() {
                 camUrl: b.camPath ? `file://${b.camPath}` : undefined,
                 project: b.project,
                 cursor: b.cursor,
+                keys: b.keys,
               });
             }}
           >
@@ -235,6 +236,7 @@ export function App() {
       camUrl={phase.camUrl}
       project={phase.project}
       cursor={phase.cursor}
+      keys={phase.keys}
       bundleDir={phase.bundleDir}
     />
   );

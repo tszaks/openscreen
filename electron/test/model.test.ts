@@ -91,6 +91,23 @@ describe('Timeline', () => {
   });
 });
 
+describe('keysAt', () => {
+  it('returns recent keys, dedupes held repeats, caps at 3', async () => {
+    const { keysAt } = await import('../src/shared/keystrokes');
+    const keys = [
+      { time: 0.5, key: 'A' },
+      { time: 0.6, key: 'A' }, // held repeat — collapses
+      { time: 0.7, key: 'B' },
+      { time: 0.8, key: 'C' },
+      { time: 0.9, key: 'D' },
+      { time: 5.0, key: 'Old' }, // outside the window
+    ];
+    expect(keysAt(1.0, keys, 1.4)).toEqual(['B', 'C', 'D']);
+    expect(keysAt(4.0, keys, 1.4)).toEqual([]);
+    expect(keysAt(5.4, keys, 1.4)).toEqual(['Old']);
+  });
+});
+
 describe('ripples', () => {
   it('maps clicks through the timeline and expires them', () => {
     const tl = new Timeline(10);

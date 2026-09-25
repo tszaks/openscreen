@@ -11,11 +11,11 @@
 // the optional helper. The model layer doesn't care where events come from.
 
 import { screen } from 'electron';
-import type { CursorSample } from '../shared/types';
+import type { CursorSample, KeystrokeSample } from '../shared/types';
 
 export interface CursorTracker {
   start(): Promise<void>;
-  stop(): CursorSample[];
+  stop(): { samples: CursorSample[]; keys: KeystrokeSample[] };
 }
 
 /** Polls cursor position at `hz`, normalized to the display bounds the
@@ -23,6 +23,7 @@ export interface CursorTracker {
  *  mark dragMove; else moves stay 'move'. */
 export function createCursorTracker(hz = 120): CursorTracker {
   const samples: CursorSample[] = [];
+  const keys: KeystrokeSample[] = [];
   const t0 = () => performance.now() / 1000;
   let startT = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -56,13 +57,20 @@ export function createCursorTracker(hz = 120): CursorTracker {
 
       // Optional global click hook — absent without Accessibility permission.
       try {
-        const { uIOhook } = await import('uiohook-napi');
+        const { uIOhook, UiohookKey } = await import('uiohook-napi');
+        const keyNames = new Map<number, string>(
+          Object.entries(UiohookKey).map(([name, code]) => [code as number, name]),
+        );
         uIOhook.on('mousedown', () => void pushClick('clickDown'));
         uIOhook.on('mouseup', () => void pushClick('clickUp'));
+        uIOhook.on('keydown', (e) => {
+          const t = performance.now() / 1000 - startT;
+          keys.push({ time: t, key: keyNames.get(e.keycode) ?? String(e.keycode) });
+        });
         uIOhook.start();
         clickHook = { stop: () => uIOhook.stop() };
       } catch {
-        clickHook = null; // degrade: moves only, no click events
+        clickHook = null; // degrade: moves only, no click/key events
       }
     },
     stop() {
@@ -70,7 +78,7 @@ export function createCursorTracker(hz = 120): CursorTracker {
       timer = null;
       clickHook?.stop();
       clickHook = null;
-      return samples;
+      return { samples, keys };
     },
   };
 }

@@ -2,7 +2,7 @@ import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen } from 'el
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCursorTracker, type CursorTracker } from './cursor';
-import type { CursorSample, Project } from '../shared/types';
+import type { CursorSample, KeystrokeSample, Project } from '../shared/types';
 
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
@@ -71,15 +71,15 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('recording:stop', async () => {
-    const samples = tracker?.stop() ?? [];
+    const out = tracker?.stop() ?? { samples: [], keys: [] };
     tracker = null;
-    return samples;
+    return out;
   });
 
   // Save a finished recording: webm blob + cursor track + project.json.
   ipcMain.handle(
     'bundle:save',
-    async (_e, args: { videoBytes: ArrayBuffer; camBytes?: ArrayBuffer; cursor: CursorSample[]; project: Project }) => {
+    async (_e, args: { videoBytes: ArrayBuffer; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) => {
       const dir = join(recordingsRoot(), `rec-${Date.now()}.openscreen`);
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'screen.webm'), Buffer.from(args.videoBytes));
@@ -87,6 +87,7 @@ app.whenReady().then(() => {
         writeFileSync(join(dir, 'cam.webm'), Buffer.from(args.camBytes));
       }
       writeFileSync(join(dir, 'cursor.json'), JSON.stringify({ samples: args.cursor }, null, 2));
+      writeFileSync(join(dir, 'keystrokes.json'), JSON.stringify({ keys: args.keys ?? [] }, null, 2));
       writeFileSync(join(dir, 'project.json'), JSON.stringify(args.project, null, 2));
       return dir;
     },
@@ -109,11 +110,15 @@ app.whenReady().then(() => {
     const dir = picked.filePaths[0];
     const project = JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'));
     const cursor = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8')).samples ?? [];
+    let keys: unknown[] = [];
+    try {
+      keys = JSON.parse(readFileSync(join(dir, 'keystrokes.json'), 'utf8')).keys ?? [];
+    } catch {}
     const videoPath = join(dir, project.recording?.screenVideoFile ?? 'screen.webm');
     const camPath = project.recording?.cameraVideoFile
       ? join(dir, project.recording.cameraVideoFile)
       : undefined;
-    return { bundleDir: dir, project, cursor, videoPath, camPath };
+    return { bundleDir: dir, project, cursor, keys, videoPath, camPath };
   });
 
   // Pick an image file for the background.

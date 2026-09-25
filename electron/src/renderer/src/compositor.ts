@@ -10,6 +10,7 @@ export interface FrameInputs {
   cursor: Point | null; // normalized position, or null to hide
   ripples: Ripple[];
   cameraFrame?: CanvasImageSource;
+  keystrokes?: string[]; // recently pressed key names, oldest→newest
 }
 
 export class CanvasCompositor {
@@ -150,6 +151,9 @@ export class CanvasCompositor {
     // 6. Caption pill near content bottom.
     const cue = this.project.captions.find((c) => c.start <= time && time <= c.end);
     if (cue && cue.text) this.drawCaption(cue, rect, W, H);
+
+    // 7. Keystroke keycaps, bottom-left inside the content frame.
+    if (input.keystrokes?.length) this.drawKeystrokes(input.keystrokes, rect, H);
   }
 
   private bgImage?: HTMLImageElement;
@@ -218,6 +222,59 @@ export class CanvasCompositor {
     ctx.textBaseline = 'middle';
     ctx.fillText(cue.text, px + padX, py + ph / 2);
   }
+
+  private drawKeystrokes(keys: string[], rect: { x: number; y: number; w: number; h: number }, H: number) {
+    const { ctx } = this;
+    const fontSize = Math.max(14, H * 0.028);
+    ctx.font = `600 ${fontSize}px -apple-system, sans-serif`;
+    ctx.textBaseline = 'middle';
+    const capH = fontSize * 1.8;
+    const padX = fontSize * 0.45;
+    const gap = fontSize * 0.3;
+    const y = rect.y + rect.h - capH - H * 0.03;
+    let x = rect.x + H * 0.03;
+    for (const key of keys) {
+      const label = keyLabel(key);
+      const cw = Math.max(ctx.measureText(label).width + padX * 2, capH);
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      roundedPath(ctx, x, y, cw, capH, capH / 4);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, x + (cw - ctx.measureText(label).width) / 2, y + capH / 2);
+      x += cw + gap;
+    }
+  }
+}
+
+/** Display label for a uiohook key name. */
+function keyLabel(key: string): string {
+  const map: Record<string, string> = {
+    Space: 'Space',
+    Enter: '↵',
+    Return: '↵',
+    Escape: 'esc',
+    Backspace: '⌫',
+    Delete: '⌦',
+    Tab: '⇥',
+    Shift: '⇧',
+    ShiftRight: '⇧',
+    Ctrl: '⌃',
+    CtrlRight: '⌃',
+    Alt: '⌥',
+    AltRight: '⌥',
+    Meta: '⌘',
+    MetaRight: '⌘',
+    ArrowUp: '↑',
+    ArrowDown: '↓',
+    ArrowLeft: '←',
+    ArrowRight: '→',
+    CapsLock: '⇪',
+  };
+  if (map[key]) return map[key];
+  return key.length === 1 ? key.toUpperCase() : key;
 }
 
 function roundedPath(

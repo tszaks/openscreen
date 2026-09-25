@@ -1,4 +1,4 @@
-import type { CursorSample, Project } from '../../shared/types';
+import type { CursorSample, KeystrokeSample, Project } from '../../shared/types';
 
 export interface SourceInfo {
   id: string;
@@ -12,9 +12,9 @@ declare global {
     openscreen: {
       listSources(): Promise<SourceInfo[]>;
       startRecording(sourceId: string): Promise<boolean>;
-      stopRecording(): Promise<CursorSample[]>;
-      saveBundle(videoBytes: ArrayBuffer, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer): Promise<string>;
-      openBundle(): Promise<{ bundleDir: string; project: Project; cursor: CursorSample[]; videoPath: string; camPath?: string } | null>;
+      stopRecording(): Promise<{ samples: CursorSample[]; keys: KeystrokeSample[] }>;
+      saveBundle(videoBytes: ArrayBuffer, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer, keys?: KeystrokeSample[]): Promise<string>;
+      openBundle(): Promise<{ bundleDir: string; project: Project; cursor: CursorSample[]; keys: KeystrokeSample[]; videoPath: string; camPath?: string } | null>;
       saveProject(dir: string, project: Project): Promise<boolean>;
       displays(): Promise<{ id: number; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]>;
       pickBackground(): Promise<string | null>;
