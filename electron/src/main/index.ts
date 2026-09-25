@@ -10,6 +10,31 @@ let tracker: CursorTracker | null = null;
 const recordingsRoot = () =>
   join(app.getPath('videos'), 'OpenScreen');
 
+const ffmpegPath = async () => {
+  try {
+    const mod = await import('ffmpeg-static');
+    const p = (mod.default ?? (mod as unknown as string)) as string;
+    if (p) return p.replace('app.asar', 'app.asar.unpacked');
+  } catch {}
+  return 'ffmpeg';
+};
+
+// Extract 16kHz mono wav from a bundle video for analysis (shared by
+// transcription and silence detection).
+const extractWav = async (dir: string, videoFile: string) => {
+  const { execFile } = await import('node:child_process');
+  const wav = join(dir, 'audio.wav');
+  const bin = await ffmpegPath();
+  await new Promise<void>((resolve, reject) =>
+    execFile(
+      bin,
+      ['-y', '-i', join(dir, videoFile), '-vn', '-ar', '16000', '-ac', '1', '-f', 'wav', wav],
+      (e) => (e ? reject(e) : resolve()),
+    ),
+  );
+  return wav;
+};
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -118,16 +143,12 @@ app.whenReady().then(() => {
   ipcMain.handle('captions:transcribe', async (_e, args: { dir: string; videoFile: string }) => {
     const { execFile } = await import('node:child_process');
     const { existsSync, readFileSync } = await import('node:fs');
-    const wav = join(args.dir, 'audio.wav');
+    const wav = await extractWav(args.dir, args.videoFile);
     const jsonOut = join(args.dir, 'transcript.json');
     const run = (cmd: string, argv: string[]) =>
       new Promise<void>((resolve, reject) =>
         execFile(cmd, argv, (e) => (e ? reject(e) : resolve())),
       );
-    await run('ffmpeg', [
-      '-y', '-i', join(args.dir, args.videoFile),
-      '-vn', '-ar', '16000', '-ac', '1', '-f', 'wav', wav,
-    ]);
     const model = process.env.OPENSCREEN_WHISPER_MODEL ?? join(app.getPath('home'), 'models', 'ggml-base.en.bin');
     await run('whisper-cli', [
       '-m', model, '-f', wav, '--output-json', '--output-file', jsonOut.replace(/\.json$/, ''),
@@ -146,17 +167,41 @@ app.whenReady().then(() => {
       .filter((c: { start: number; end: number; text: string }) => c.end > c.start && c.text);
   });
 
+  // Silence detection: ffmpeg silencedetect on the bundle audio →
+  // [{start,end}] silent ranges in source seconds.
+  ipcMain.handle(
+    'audio:detectSilences',
+    async (_e, args: { dir: string; videoFile: string; thresholdDb?: number; minDur?: number }) => {
+      const { execFile } = await import('node:child_process');
+      const wav = await extractWav(args.dir, args.videoFile);
+      const noise = `-${Math.abs(args.thresholdDb ?? 35)}dB`;
+      const dur = String(args.minDur ?? 0.4);
+      const bin = await ffmpegPath();
+      const stderr = await new Promise<string>((resolve, reject) =>
+        execFile(
+          bin,
+          ['-i', wav, '-af', `silencedetect=n=${noise}:d=${dur}`, '-f', 'null', '-'],
+          (e, _so, se) => (e && !se ? reject(e) : resolve(se ?? '')),
+        ),
+      );
+      const silences: { start: number; end: number }[] = [];
+      let cur: number | null = null;
+      for (const m of stderr.matchAll(/silence_(start|end):\s*([\d.]+)/g)) {
+        if (m[1] === 'start') cur = parseFloat(m[2]);
+        else if (cur !== null) {
+          silences.push({ start: cur, end: parseFloat(m[2]) });
+          cur = null;
+        }
+      }
+      return silences;
+    },
+  );
+
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
   ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string }) => {
     const { spawn } = await import('node:child_process');
-    // Prefer the bundled ffmpeg (packaged app), fall back to PATH (dev).
-    let ffmpegBin = 'ffmpeg';
-    try {
-      const mod = await import('ffmpeg-static');
-      const p = (mod.default ?? (mod as unknown as string)) as string;
-      if (p) ffmpegBin = p.replace('app.asar', 'app.asar.unpacked');
-    } catch {}
+    const ffmpegBin = await ffmpegPath();
     const argv = [
       '-y',
       '-f', 'rawvideo',

@@ -14,6 +14,8 @@ const api = {
   wallpaperPath: () => ipcRenderer.invoke('background:wallpaper'),
   transcribe: (dir: string, videoFile: string) =>
     ipcRenderer.invoke('captions:transcribe', { dir, videoFile }),
+  detectSilences: (dir: string, videoFile: string, thresholdDb?: number, minDur?: number) =>
+    ipcRenderer.invoke('audio:detectSilences', { dir, videoFile, thresholdDb, minDur }),
   exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string) =>
     ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn }),
   exportFrame: (bytes: ArrayBuffer) => ipcRenderer.invoke('export:frame', bytes),

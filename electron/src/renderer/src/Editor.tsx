@@ -342,6 +342,69 @@ export function Editor({
     }));
   };
 
+  const dragFrom = useRef<number | null>(null);
+
+  /** Remove source-time ranges from the timeline; returns seconds removed. */
+  const cutSourceRanges = (ranges: { start: number; end: number }[]) => {
+    const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
+    const removed = tl.cutRanges(ranges);
+    if (removed > 0) setProj((p) => ({ ...p, clips: tl.clips }));
+    return removed;
+  };
+
+  const cutSilences = async () => {
+    setStatus('detecting silences…');
+    try {
+      const sils = await api.detectSilences(bundleDir, proj.recording.screenVideoFile);
+      if (!sils.length) {
+        setStatus('no silence detected');
+        return;
+      }
+      const removed = cutSourceRanges(sils);
+      const pct = Math.round((removed / proj.recording.duration) * 100);
+      setStatus(removed ? `cut ${removed.toFixed(1)}s of silence (${pct}%)` : 'silence was already cut');
+    } catch (e) {
+      setStatus(`silence detect failed: ${e}`);
+    }
+  };
+
+  const seekOutput = (outT: number) => {
+    const srcT = timeline.sourceTime(outT);
+    if (srcT !== null) {
+      if (videoRef.current) videoRef.current.currentTime = srcT;
+      if (camRef.current) camRef.current.currentTime = srcT;
+    }
+    setPlayhead(outT);
+  };
+
+  const cutCue = (cue: { start: number; end: number }) => {
+    const s = timeline.sourceTime(cue.start);
+    const e = timeline.sourceTime(cue.end);
+    if (s === null || e === null) {
+      setStatus('cue already cut');
+      return;
+    }
+    const removed = cutSourceRanges([{ start: s, end: e }]);
+    setStatus(removed ? `cut ${removed.toFixed(1)}s` : 'nothing cut');
+  };
+
+  const cutFillers = () => {
+    const ranges = proj.captions
+      .filter((c) => FILLER.test(c.text))
+      .map((c) => {
+        const s = timeline.sourceTime(c.start);
+        const e = timeline.sourceTime(c.end);
+        return s !== null && e !== null && e > s ? { start: s, end: e } : null;
+      })
+      .filter((r): r is { start: number; end: number } => r !== null);
+    if (!ranges.length) {
+      setStatus('no filler cues');
+      return;
+    }
+    const removed = cutSourceRanges(ranges);
+    setStatus(`cut ${ranges.length} filler cue(s), ${removed.toFixed(1)}s`);
+  };
+
   // Keyboard shortcuts: space = play/pause, S = split at playhead.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -402,6 +465,7 @@ export function Editor({
 
   return (
     <div className="editor">
+      <div className="ed-main">
       <video
         ref={videoRef}
         src={videoUrl}
@@ -431,6 +495,23 @@ export function Editor({
           <div
             key={b.id}
             className={`clipblock${selectedClip === b.id ? ' selected' : ''}`}
+            draggable
+            onDragStart={(e) => {
+              dragFrom.current = timeline.clips.findIndex((c) => c.id === b.id);
+              e.dataTransfer.effectAllowed = 'move';
+            }}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const from = dragFrom.current;
+              const to = timeline.clips.findIndex((c) => c.id === b.id);
+              dragFrom.current = null;
+              if (from === null || to < 0 || from === to) return;
+              const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
+              tl.reorder(from, to);
+              setProj((p) => ({ ...p, clips: tl.clips }));
+            }}
             onClick={(e) => {
               e.stopPropagation();
               setSelectedClip(b.id);
@@ -647,6 +728,9 @@ export function Editor({
         <button onClick={transcribe} title="Auto-transcribe via whisper">
           Transcribe
         </button>
+        <button onClick={cutSilences} title="Detect and cut silent spans from the timeline">
+          Cut silences
+        </button>
         <label style={{ cursor: 'pointer' }}>
           Captions…
           <input
@@ -686,8 +770,41 @@ export function Editor({
         <button className="primary" onClick={exportVideo}>Export MP4</button>
         <span className="status">{status}</span>
       </div>
+      </div>
+      {proj.captions.length > 0 && (
+        <div className="transcript">
+          <h3>Transcript</h3>
+          <button className="cutall" onClick={cutFillers} title="Cut cues that are only filler words">
+            Cut fillers
+          </button>
+          {proj.captions.map((c) => (
+            <div className="cue" key={c.id} onClick={() => seekOutput(c.start)}>
+              <span className="t">{fmtTime(c.start)}</span>
+              <span>{c.text}</span>
+              <span
+                className="x"
+                title="Cut this cue from the video"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  cutCue(c);
+                }}
+              >
+                ✂
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+const FILLER = /^[\s.,!?]*(?:um+|uh+|er+|eh+|ah+|hmm+|mm+|mhm)[\s.,!?]*$/i;
+
+function fmtTime(t: number) {
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 /** Cursor position at output time from the smoothed move samples. */

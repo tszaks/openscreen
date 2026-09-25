@@ -42,6 +42,53 @@ describe('Timeline', () => {
     expect(tl.clips).toHaveLength(2);
     expect(tl.clips[0].sourceEnd).toBeCloseTo(4);
   });
+
+  it('cutRanges removes source spans and keeps speed', () => {
+    const tl = new Timeline(10);
+    const removed = tl.cutRanges([
+      { start: 2, end: 4 },
+      { start: 7, end: 8 },
+    ]);
+    expect(removed).toBeCloseTo(3);
+    expect(tl.clips.map((c) => [c.sourceStart, c.sourceEnd])).toEqual([
+      [0, 2],
+      [4, 7],
+      [8, 10],
+    ]);
+    expect(tl.outputDuration).toBeCloseTo(7);
+  });
+
+  it('cutRanges across sped-up clips preserves speed', () => {
+    const tl = new Timeline(10, [
+      { id: 'a', sourceStart: 0, sourceEnd: 5, speed: 2 },
+      { id: 'b', sourceStart: 5, sourceEnd: 10, speed: 1 },
+    ]);
+    tl.cutRanges([{ start: 4, end: 6 }]);
+    expect(tl.clips.map((c) => [c.sourceStart, c.sourceEnd, c.speed])).toEqual([
+      [0, 4, 2],
+      [6, 10, 1],
+    ]);
+    expect(tl.outputDuration).toBeCloseTo(6);
+  });
+
+  it('cutRanges never empties the timeline', () => {
+    const tl = new Timeline(1);
+    tl.cutRanges([{ start: 0, end: 1 }]);
+    expect(tl.clips).toHaveLength(1);
+    expect(tl.outputDuration).toBeGreaterThan(0);
+  });
+
+  it('reorder moves clips within the list', () => {
+    const tl = new Timeline(10, [
+      { id: 'a', sourceStart: 0, sourceEnd: 3, speed: 1 },
+      { id: 'b', sourceStart: 3, sourceEnd: 6, speed: 1 },
+      { id: 'c', sourceStart: 6, sourceEnd: 10, speed: 1 },
+    ]);
+    tl.reorder(2, 0);
+    expect(tl.clips.map((c) => c.id)).toEqual(['c', 'a', 'b']);
+    tl.reorder(0, 5); // out of bounds — no-op
+    expect(tl.clips.map((c) => c.id)).toEqual(['c', 'a', 'b']);
+  });
 });
 
 describe('ripples', () => {
