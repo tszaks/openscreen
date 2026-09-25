@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenScreen</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; }
+      body {
+        font-family: -apple-system, system-ui, sans-serif;
+        background: #1a1a1e; color: #eee;
+        height: 100vh; overflow: hidden;
+      }
+      #root { height: 100%; }
+      .app { display: flex; flex-direction: column; height: 100%; padding: 20px; gap: 14px; }
+      .sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; overflow-y: auto; }
+      .source { background: #26262c; border: 2px solid transparent; border-radius: 10px; padding: 8px; cursor: pointer; text-align: left; color: inherit; }
+      .source.selected { border-color: #6c5ce7; }
+      .source img { width: 100%; border-radius: 6px; display: block; }
+      .source .name { font-size: 12px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      button.primary { background: #6c5ce7; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; font-size: 14px; font-weight: 600; cursor: pointer; }
+      button.primary:disabled { opacity: 0.4; cursor: default; }
+      .rec-hud { display: flex; align-items: center; gap: 12px; }
+      .rec-dot { width: 12px; height: 12px; border-radius: 50%; background: #e74c3c; animation: pulse 1s infinite alternate; }
+      @keyframes pulse { to { opacity: 0.3; } }
+      .editor { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+      .preview-wrap { flex: 1; min-height: 0; max-height: 58vh; display: flex; align-items: center; justify-content: center; }
+      canvas.preview { max-width: 100%; max-height: 100%; border-radius: 8px; }
+      .timeline { height: 64px; background: #26262c; border-radius: 8px; position: relative; cursor: pointer; }
+      .timeline .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; }
+      .timeline .zoommark { position: absolute; top: 26px; width: 8px; height: 8px; background: #fdcb6e; transform: rotate(45deg); border-radius: 1px; }
+      .panel { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+      .panel label { font-size: 12px; color: #aaa; display: flex; gap: 6px; align-items: center; }
+      .panel input[type=range] { width: 110px; }
+      .swatches { display: flex; gap: 6px; }
+      .swatch { width: 28px; height: 28px; border-radius: 6px; border: 2px solid transparent; cursor: pointer; padding: 0; }
+      .swatch.selected { border-color: #fff; }
+      .status { font-size: 12px; color: #888; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -14,6 +14,7 @@ public final class EditorModel: ObservableObject {
     public enum Action {
         case split
         case autoZoom
+        case clearZooms
     }
 
     @Published public private(set) var bundle: RecordingBundle
@@ -75,6 +76,8 @@ public final class EditorModel: ObservableObject {
                 clicks: clicks,
                 duration: timeline.outputDuration
             )
+        case .clearZooms:
+            bundle.project.zoomKeyframes = []
         }
         renderPreview()
     }
