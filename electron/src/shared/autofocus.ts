@@ -48,6 +48,59 @@ export interface FocusSegment {
   scale: number;
 }
 
+/**
+ * Dwell-zoom: find spots where the cursor lingered (attention without a
+ * click). Emits pseudo-click samples the planner can merge with real
+ * clicks — Screen Studio zooms on both. A dwell starts when the cursor
+ * stays within `radius` (normalized) for `minDur` seconds and won't
+ * re-trigger until it leaves the radius for `debounce` seconds.
+ */
+export function dwellFocusEvents(
+  moves: CursorSample[],
+  opts: { radius?: number; minDur?: number; debounce?: number } = {},
+): CursorSample[] {
+  const radius = opts.radius ?? 0.035;
+  const minDur = opts.minDur ?? 0.8;
+  const debounce = opts.debounce ?? 4;
+  const pts = moves
+    .filter((m) => m.kind === 'move')
+    .sort((a, b) => a.time - b.time);
+  const events: CursorSample[] = [];
+  let anchor = -1; // index where the current dwell window started
+  let cx = 0;
+  let cy = 0;
+  let lastFired = -Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    if (anchor < 0) {
+      anchor = i;
+      cx = p.x;
+      cy = p.y;
+      continue;
+    }
+    if (Math.hypot(p.x - cx, p.y - cy) > radius) {
+      // moved away — restart the window here
+      anchor = i;
+      cx = p.x;
+      cy = p.y;
+      continue;
+    }
+    if (p.time - pts[anchor].time >= minDur && p.time - lastFired >= debounce) {
+      // centroid of the dwell window
+      let sx = 0;
+      let sy = 0;
+      for (let k = anchor; k <= i; k++) {
+        sx += pts[k].x;
+        sy += pts[k].y;
+      }
+      const n = i - anchor + 1;
+      events.push({ time: pts[anchor].time, x: sx / n, y: sy / n, kind: 'clickDown' });
+      lastFired = p.time;
+    }
+  }
+  return events;
+}
+
 export class AutofocusPlanner {
   constructor(public options: AutofocusOptions = defaultAutofocus) {}
 

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import type { CursorSample, KeystrokeSample, Project } from '../../shared/types';
-import { AutofocusPlanner, cameraAt, defaultAutofocus, type FocusSegment } from '../../shared/autofocus';
+import { AutofocusPlanner, cameraAt, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
 import { Timeline } from '../../shared/timeline';
@@ -39,6 +39,7 @@ export function Editor({
   const [duration, setDuration] = useState(project.recording.duration || 0);
   const [status, setStatus] = useState('');
   const [autofocusOn, setAutofocusOn] = useState(true);
+  const [dwellOn, setDwellOn] = useState(true);
   const [zoomDepth, setZoomDepth] = useState(2);
   const [manualSegments, setManualSegments] = useState<FocusSegment[]>([]);
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
@@ -66,12 +67,15 @@ export function Editor({
   const segments = useMemo<FocusSegment[]>(() => {
     const auto = autofocusOn
       ? new AutofocusPlanner({ ...defaultAutofocus, maxScale: zoomDepth }).planSegments(
-          cursor.filter((s) => s.kind === 'clickDown'),
+          [
+            ...cursor.filter((s) => s.kind === 'clickDown'),
+            ...(dwellOn ? dwellFocusEvents(cursor) : []),
+          ].sort((a, b) => a.time - b.time),
           timeline.outputDuration || duration,
         )
       : [];
     return [...auto, ...manualSegments].sort((a, b) => a.inStart - b.inStart);
-  }, [cursor, timeline, autofocusOn, duration, manualSegments, zoomDepth]);
+  }, [cursor, timeline, autofocusOn, dwellOn, duration, manualSegments, zoomDepth]);
 
   const canvasSize = useMemo(() => {
     const src = proj.recording.sourceSize;
@@ -591,6 +595,16 @@ export function Editor({
           />
           Auto-focus
         </label>
+        {autofocusOn && (
+          <label title="Also zoom where the cursor lingers, not just clicks">
+            <input
+              type="checkbox"
+              checked={dwellOn}
+              onChange={(e) => setDwellOn(e.target.checked)}
+            />
+            Dwell zoom
+          </label>
+        )}
         {autofocusOn && (
           <label title="Max zoom on click">
             Zoom {zoomDepth.toFixed(1)}×

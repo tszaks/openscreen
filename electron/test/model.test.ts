@@ -91,6 +91,33 @@ describe('Timeline', () => {
   });
 });
 
+describe('dwellFocusEvents', () => {
+  it('emits a pseudo-click where the cursor lingers, debounced', async () => {
+    const { dwellFocusEvents } = await import('../src/shared/autofocus');
+    const moves: import('../src/shared/types').CursorSample[] = [];
+    // fast sweep — no dwell
+    for (let i = 0; i < 20; i++) moves.push({ time: i * 0.05, x: i * 0.05, y: 0.5, kind: 'move' });
+    // linger ~2s at (0.7, 0.4)
+    for (let i = 0; i < 40; i++)
+      moves.push({ time: 1 + i * 0.05, x: 0.7 + (i % 3) * 0.002, y: 0.4, kind: 'move' });
+    const events = dwellFocusEvents(moves, { radius: 0.03, minDur: 0.8, debounce: 4 });
+    expect(events.length).toBe(1);
+    expect(events[0].kind).toBe('clickDown');
+    expect(Math.abs(events[0].x - 0.7)).toBeLessThan(0.01);
+  });
+
+  it('ignores clicks-only input and short pauses', async () => {
+    const { dwellFocusEvents } = await import('../src/shared/autofocus');
+    const moves: import('../src/shared/types').CursorSample[] = [
+      { time: 0, x: 0.5, y: 0.5, kind: 'clickDown' },
+      { time: 0.1, x: 0.5, y: 0.5, kind: 'move' },
+      { time: 0.2, x: 0.5, y: 0.5, kind: 'move' },
+      { time: 0.3, x: 0.9, y: 0.5, kind: 'move' },
+    ];
+    expect(dwellFocusEvents(moves, { minDur: 0.8 })).toEqual([]);
+  });
+});
+
 describe('keysAt', () => {
   it('returns recent keys, dedupes held repeats, caps at 3', async () => {
     const { keysAt } = await import('../src/shared/keystrokes');
