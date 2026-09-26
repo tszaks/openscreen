@@ -16,6 +16,7 @@ import {
   lastKeptAtOrBefore,
   type CutProposal,
 } from '../../shared/editcuts';
+import { suggestChapters, toChapterList } from '../../shared/chapters';
 import type { TranscriptWord } from '../../shared/types';
 
 const SWATCHES = [
@@ -374,6 +375,10 @@ export function Editor({
     if (proj.captions.length) {
       const srtPath = outPath.replace(/\.mp4$/, '.srt');
       await api.writeText(srtPath, toSrt(proj.captions));
+    }
+    if (proj.chapters.length) {
+      const chPath = outPath.replace(/\.mp4$/, '.chapters.txt');
+      await api.writeText(chPath, toChapterList(proj.chapters) + '\n');
     }
     if (wantGif) {
       const gifPath = outPath.replace(/\.mp4$/, '.gif');
@@ -814,6 +819,14 @@ export function Editor({
             />
           );
         })}
+        {(proj.chapters ?? []).map((ch) => (
+          <div
+            key={ch.id}
+            className="chaptermark"
+            title={`Chapter: ${ch.title}`}
+            style={{ left: `${(ch.start / (timeline.outputDuration || duration || 1)) * 100}%` }}
+          />
+        ))}
         {zoomMarks.map((s, i) => (
           <div
             key={i}
@@ -1223,7 +1236,7 @@ export function Editor({
           </div>
         </div>
       )}
-      {(proj.captions.length > 0 || proj.annotations.length > 0) && (
+      {(proj.captions.length > 0 || proj.annotations.length > 0 || proj.chapters.length > 0) && (
         <div className="transcript">
           {proj.annotations.length > 0 && (
             <>
@@ -1285,6 +1298,21 @@ export function Editor({
                 >
                   Edit
                 </button>
+                <button
+                  className="mini"
+                  title="Suggest chapters + a title from the transcript"
+                  onClick={() => {
+                    const ch = suggestChapters(proj.captions, timeline.outputDuration || duration);
+                    if (!ch.length) {
+                      setStatus('not enough transcript for chapters');
+                      return;
+                    }
+                    setProj((p) => ({ ...p, chapters: ch }));
+                    setStatus(`${ch.length} chapters suggested`);
+                  }}
+                >
+                  Chapters
+                </button>
               </h3>
           {editTranscript && wordSel && (
             <button className="cutall" onClick={cutSelectedWords} title="Cut the selected words' span from the video">
@@ -1335,6 +1363,58 @@ export function Editor({
               </span>
             </div>
           ))}
+            </>
+          )}
+          {proj.chapters.length > 0 && (
+            <>
+              <h3>
+                Chapters
+                <button
+                  className="mini"
+                  title="Copy as YouTube chapter list"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(toChapterList(proj.chapters));
+                    setStatus('chapters copied');
+                  }}
+                >
+                  Copy
+                </button>
+                <button
+                  className="mini"
+                  title="Clear chapters"
+                  onClick={() => setProj((p) => ({ ...p, chapters: [] }))}
+                >
+                  Clear
+                </button>
+              </h3>
+              {proj.chapters.map((ch) => (
+                <div className="cue" key={ch.id} onClick={() => seekOutput(ch.start)}>
+                  <span className="t">{fmtTime(ch.start)}</span>
+                  <input
+                    className="chtitle"
+                    value={ch.title}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) =>
+                      setProj((p) => ({
+                        ...p,
+                        chapters: p.chapters.map((x) =>
+                          x.id === ch.id ? { ...x, title: e.target.value } : x,
+                        ),
+                      }))
+                    }
+                  />
+                  <span
+                    className="x"
+                    title="Remove chapter"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setProj((p) => ({ ...p, chapters: p.chapters.filter((x) => x.id !== ch.id) }));
+                    }}
+                  >
+                    ✕
+                  </span>
+                </div>
+              ))}
             </>
           )}
         </div>

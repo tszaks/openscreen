@@ -45,6 +45,8 @@
       .transcript h3 { display: flex; align-items: center; gap: 6px; }
       .transcript h3 .mini { font-size: 10px; padding: 2px 7px; border-radius: 5px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: #aaa; cursor: pointer; }
       .transcript h3 .mini.on { background: #6c5ce7; border-color: #6c5ce7; color: #fff; }
+      .transcript .cue .chtitle { flex: 1; min-width: 0; background: rgba(255,255,255,.06); border: 1px solid transparent; border-radius: 4px; color: inherit; font-size: 12px; padding: 2px 5px; }
+      .transcript .cue .chtitle:focus { border-color: #6c5ce7; outline: none; }
       .transcript .words .tw { border-radius: 3px; padding: 0 1px; }
       .transcript .words .tw:hover { background: rgba(253,203,110,.25); }
       .transcript .words .tw.sel { background: rgba(231,76,60,.55); color: #fff; }
@@ -55,6 +57,7 @@
       .smartcuts .sc-actions .primary { padding: 6px 12px; font-size: 12px; }
       .timeline .cutmark { position: absolute; top: 4px; bottom: 24px; background: rgba(231,76,60,.4); border-left: 1px solid rgba(231,76,60,.8); border-right: 1px solid rgba(231,76,60,.8); pointer-events: none; }
       .timeline .cutmark.off { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.2); }
+      .timeline .chaptermark { position: absolute; top: 0; bottom: 0; width: 2px; background: #6c5ce7; }
       .panel { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
       .panel label { font-size: 12px; color: #aaa; display: flex; gap: 6px; align-items: center; }
       .panel input[type=range] { width: 110px; }
