@@ -59,17 +59,30 @@ export function outputFiles(base: string, preset: ExportPreset): string[] {
 
 type LayoutFields = { layout?: { presetId?: unknown } & Record<string, unknown> };
 
-/** The layout preset chosen in the editor, when there is one and it is known. */
+/**
+ * The layout preset chosen in the editor, or null for 'none' and unknown ids.
+ * Any 'appstore…' id means the App Store size for the recording's device and
+ * orientation, as the compositor draws it. Mirrors md-editor's layoutPreset() in shared/mobileProject.ts;
+ * switch to that once both branches are merged.
+ */
 export function layoutPresetOf(proj: Project): ExportPreset | null {
   const id = (proj as Project & LayoutFields).layout?.presetId;
+  if (typeof id === 'string' && id.startsWith('appstore')) {
+    const { width, height } = proj.recording.sourceSize;
+    const match = detectDevice(width, height);
+    const family = match.device.family === 'ipad' && match.confidence >= 0.8 ? 'ipad' : 'iphone';
+    return appStorePresetFor(family, width > height);
+  }
   return PRESETS.find((p) => p.id === id) ?? null;
 }
 
 /**
  * The project as a preset renders it. `layout.presetId` tells the compositor
- * which layout to draw. Full-bleed presets (App Store) also drop the device
- * frame, padding, rounded corners and shadow so the screen fills the canvas
- * even where the compositor predates presets.
+ * which layout to draw; for iOS recordings it lays out at the preset's own
+ * size (projectCanvasSize), which is the size planRenders gives a pass.
+ * Full-bleed presets (App Store) also drop padding, rounded corners and
+ * shadow: the phone layout ignores those, but desktop recordings, which keep
+ * the classic padded frame, then fill the canvas instead.
  */
 export function projectForPreset(proj: Project, preset: ExportPreset): Project {
   const layout = { ...(proj as Project & LayoutFields).layout, presetId: preset.id };
