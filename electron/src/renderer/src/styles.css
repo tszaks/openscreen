@@ -661,6 +661,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -740,7 +741,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   transition-duration: var(--t1);
 }
 .card.selected {
-  background: linear-gradient(var(--accent-tint), var(--accent-tint)), var(--raised);
+  background: linear-gradient(rgba(255, 138, 61, 0.07), rgba(255, 138, 61, 0.07)), var(--raised);
   box-shadow:
     0 0 0 2px var(--accent),
     0 8px 28px rgba(255, 138, 61, 0.12);
@@ -756,6 +757,11 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   border-radius: 8px;
   background: var(--stage);
   box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.thumb-empty {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-3);
 }
 .card-thumb img {
   width: 100%;
@@ -811,6 +817,25 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
     inset 0 0 0 1.5px var(--accent),
     inset 0 0 0 4px #0c0c0e,
     0 6px 18px rgba(0, 0, 0, 0.5);
+}
+.device-outline.tablet {
+  aspect-ratio: 3 / 4;
+  border-radius: 10px;
+}
+.device-outline.tablet::after {
+  width: 6px;
+  height: 6px;
+  top: 6px;
+}
+/* Any other camera (e.g. the Mac's built-in one): a lens, not a phone. */
+.device-outline.camera {
+  height: 38%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, #2a2a31 0 22%, #111114 24% 100%);
+}
+.device-outline.camera::after {
+  display: none;
 }
 .device-outline.large {
   height: 96px;
@@ -1699,6 +1724,16 @@ input[type='color']::-webkit-color-swatch {
 
 .lane-audio {
   overflow: hidden;
+}
+.lane-note {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  font-size: 11px;
+  color: var(--text-3);
+  pointer-events: none;
 }
 .wave {
   position: absolute;

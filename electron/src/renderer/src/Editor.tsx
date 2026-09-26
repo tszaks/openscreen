@@ -1698,6 +1698,9 @@ export function Editor({
           </div>
           <div className="lane lane-audio">
             <canvas ref={waveRef} className="wave" />
+            {peaks.length > 0 && Math.max(...peaks) < 0.01 && (
+              <span className="lane-note">No audio in this recording</span>
+            )}
           </div>
           {(smartCuts ?? []).map((p, i) => {
             const r = proposalOutRange(p);

@@ -258,7 +258,11 @@ export function App() {
                     }}
                   >
                     <div className="card-thumb device-thumb">
-                      <div className="device-outline" />
+                      <div
+                        className={`device-outline${
+                          /ipad/i.test(d.label) ? ' tablet' : /iphone/i.test(d.label) ? '' : ' camera'
+                        }`}
+                      />
                     </div>
                     <div className="card-name">{d.label}</div>
                   </button>
@@ -286,7 +290,15 @@ export function App() {
                   }}
                 >
                   <div className="card-thumb">
-                    <img src={s.thumbnailDataUrl} alt="" />
+                    {s.thumbnailDataUrl && s.thumbnailDataUrl.length > 32 ? (
+                      <img
+                        src={s.thumbnailDataUrl}
+                        alt=""
+                        onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
+                      />
+                    ) : (
+                      <span className="thumb-empty">{s.name.slice(0, 1).toUpperCase()}</span>
+                    )}
                   </div>
                   <div className="card-name">{s.name}</div>
                 </button>
