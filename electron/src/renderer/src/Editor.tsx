@@ -18,6 +18,9 @@ import {
 } from '../../shared/editcuts';
 import { suggestChapters, toChapterList } from '../../shared/chapters';
 import type { TranscriptWord } from '../../shared/types';
+import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Slider, Switch, Tabs } from './ui';
+
+type InspectorTab = 'background' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'text';
 
 const SWATCHES = [
   { name: 'Aurora', bg: { kind: 'gradient' as const, startHex: '#3a1c71', endHex: '#d76d77', angle: 120 } },
@@ -80,6 +83,11 @@ export function Editor({
   const [editTranscript, setEditTranscript] = useState(false);
   const [wordSel, setWordSel] = useState<{ cueId: string; anchor: number; end: number } | null>(null);
   const [voiceCleanup, setVoiceCleanup] = useState(false);
+  // UI only: inspector tab, export menu, and a mirror of the video's play state.
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('background');
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let dead = false;
@@ -579,28 +587,34 @@ export function Editor({
     setStatus(removed ? `cut ${removed.toFixed(1)}s` : 'nothing cut');
   };
 
+  const undo = () => {
+    const h = historyRef.current;
+    const prev = h.undo.pop();
+    if (prev) {
+      h.redo.push(projRef.current);
+      applyingHistory.current = true;
+      setProj(prev);
+    }
+  };
+
+  const redo = () => {
+    const h = historyRef.current;
+    const next = h.redo.pop();
+    if (next) {
+      h.undo.push(projRef.current);
+      applyingHistory.current = true;
+      setProj(next);
+    }
+  };
+
   // Keyboard shortcuts: space = play/pause, S = split, ⌘Z = undo, ⌘⇧Z = redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
-        const h = historyRef.current;
-        if (e.shiftKey) {
-          const next = h.redo.pop();
-          if (next) {
-            h.undo.push(projRef.current);
-            applyingHistory.current = true;
-            setProj(next);
-          }
-        } else {
-          const prev = h.undo.pop();
-          if (prev) {
-            h.redo.push(projRef.current);
-            applyingHistory.current = true;
-            setProj(prev);
-          }
-        }
+        if (e.shiftKey) redo();
+        else undo();
         return;
       }
       if (e.code === 'Space') {
@@ -756,177 +770,82 @@ export function Editor({
     }
   }, [peaks, timeline, duration, proj.recording.duration]);
 
+  // Smart cut proposals are reviewed in the Text tab, so bring it forward.
+  useEffect(() => {
+    if (smartCuts) setInspectorTab('text');
+  }, [smartCuts]);
+
+  // Close the export menu on any click outside it.
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!exportMenuRef.current?.contains(e.target as Node)) setExportMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [exportMenuOpen]);
+
   const zoomMarks = segments;
 
-  return (
-    <div className="editor">
-      <div className="ed-main">
-      <video
-        ref={videoRef}
-        src={videoUrl}
+  // ── presentation only below: derived display values and UI-only state ──
+  const outDur = timeline.outputDuration || duration || 1;
+  const bundleName = (bundleDir.split('/').filter(Boolean).pop() ?? 'Untitled').replace(/\.openscreen$/, '');
+  const exportProgress = /exporting (\d+)\/(\d+)/.exec(status);
+  const selectedSpeed = proj.clips.find((c) => c.id === selectedClip)?.speed ?? 1;
+  const togglePlay = () =>
+    videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause();
+
+  const inspectorTabs = [
+    { value: 'background' as const, label: 'Background' },
+    { value: 'zoom' as const, label: 'Zoom' },
+    { value: 'cursor' as const, label: 'Cursor' },
+    ...(camUrl ? [{ value: 'camera' as const, label: 'Camera' }] : []),
+    { value: 'audio' as const, label: 'Audio' },
+    { value: 'text' as const, label: 'Text' },
+  ];
+  const activeTab: InspectorTab = !camUrl && inspectorTab === 'camera' ? 'background' : inspectorTab;
+
+  const importCaptionsButton = (variant: 'secondary' | 'ghost', size: 'sm' | 'md') => (
+    <label className={`btn btn-${variant} btn-${size}`}>
+      Import captions…
+      <input
+        type="file"
+        accept=".srt,.vtt"
         className="hidden"
-        preload="auto"
-        muted={exporting}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onChange={(e) => e.target.files?.[0] && importCaptions(e.target.files[0])}
       />
-      {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
-      <div className="preview-wrap">
-        <canvas
-          ref={canvasRef}
-          className="preview"
-          style={{ cursor: cropMode ? 'crosshair' : undefined }}
-          onMouseDown={onCanvasDown}
-          onMouseMove={onCanvasMove}
-          onMouseUp={onCanvasUp}
-          onMouseLeave={onCanvasUp}
-        />
-      </div>
-      <div className="timeline" onClick={seekTimeline}>
-        <canvas ref={waveRef} className="wave" />
-        <div
-          className="playhead"
-          style={{ left: `${(playhead / (timeline.outputDuration || duration || 1)) * 100}%` }}
-        />
-        {clipBlocks.map((b) => (
-          <div
-            key={b.id}
-            className={`clipblock${selectedClip === b.id ? ' selected' : ''}`}
-            draggable
-            onDragStart={(e) => {
-              dragFrom.current = timeline.clips.findIndex((c) => c.id === b.id);
-              e.dataTransfer.effectAllowed = 'move';
-            }}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              const from = dragFrom.current;
-              const to = timeline.clips.findIndex((c) => c.id === b.id);
-              dragFrom.current = null;
-              if (from === null || to < 0 || from === to) return;
-              const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
-              tl.reorder(from, to);
-              setProj((p) => ({ ...p, clips: tl.clips }));
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              setSelectedClip(b.id);
-            }}
-            style={{
-              left: `${(b.start / (timeline.outputDuration || duration || 1)) * 100}%`,
-              width: `${((b.end - b.start) / (timeline.outputDuration || duration || 1)) * 100}%`,
-            }}
-          />
-        ))}
-        {(smartCuts ?? []).map((p, i) => {
-          const r = proposalOutRange(p);
-          if (!r) return null;
-          const outDur = timeline.outputDuration || duration || 1;
-          return (
-            <div
-              key={`cut-${i}`}
-              className={`cutmark${p.on ? '' : ' off'}`}
-              title={`${p.kind === 'silence' ? 'Silence' : 'Filler'} ${p.label}`}
-              style={{
-                left: `${(r.start / outDur) * 100}%`,
-                width: `${((r.end - r.start) / outDur) * 100}%`,
-              }}
-            />
-          );
-        })}
-        {(proj.chapters ?? []).map((ch) => (
-          <div
-            key={ch.id}
-            className="chaptermark"
-            title={`Chapter: ${ch.title}`}
-            style={{ left: `${(ch.start / (timeline.outputDuration || duration || 1)) * 100}%` }}
-          />
-        ))}
-        {zoomMarks.map((s, i) => (
-          <div
-            key={i}
-            className="zoommark"
-            title="Zoom (right-click to remove)"
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setManualSegments((m) => m.filter((x) => x !== s));
-            }}
-            style={{ left: `${(s.inStart / (timeline.outputDuration || duration || 1)) * 100}%` }}
-          />
-        ))}
-      </div>
-      <div className="panel">
-        <label>
-          <input
-            type="checkbox"
-            checked={autofocusOn}
-            onChange={(e) => setAutofocusOn(e.target.checked)}
-          />
-          Auto-focus
-        </label>
-        {autofocusOn && (
-          <label title="Also zoom where the cursor lingers, not just clicks">
-            <input
-              type="checkbox"
-              checked={dwellOn}
-              onChange={(e) => setDwellOn(e.target.checked)}
-            />
-            Dwell zoom
-          </label>
-        )}
-        <label title="Mix a click sound at each click">
-          <input
-            type="checkbox"
-            checked={clickSfx}
-            onChange={(e) => setClickSfx(e.target.checked)}
-          />
-          Click sfx
-        </label>
-        <label title="Denoise + level the voice track on export (highpass, afftdn, compressor, limiter — all local ffmpeg)">
-          <input
-            type="checkbox"
-            checked={voiceCleanup}
-            onChange={(e) => setVoiceCleanup(e.target.checked)}
-          />
-          Voice cleanup
-        </label>
-        {autofocusOn && (
-          <button onClick={detectMotion} title="Frame-diff the video for taps/swipes (iPhone/iPad captures have no cursor track)">
-            Detect touches
-          </button>
-        )}
-        {autofocusOn && (
-          <label title="Max zoom on click">
-            Zoom {zoomDepth.toFixed(1)}×
-            <input
-              type="range"
-              min={1.2}
-              max={4}
-              step={0.1}
-              value={zoomDepth}
-              onChange={(e) => setZoomDepth(+e.target.value)}
-            />
-          </label>
-        )}
-        <div className="swatches">
+    </label>
+  );
+
+  const backgroundPanel = (
+    <>
+      <Section title="Backdrop">
+        <div className="tiles">
           {SWATCHES.map((s) => (
             <button
               key={s.name}
+              type="button"
               title={s.name}
-              className="swatch"
-              style={
-                s.bg.kind === 'gradient'
-                  ? { background: `linear-gradient(${s.bg.angle}deg, ${s.bg.startHex}, ${s.bg.endHex})` }
-                  : { background: s.bg.hex }
-              }
+              className={`tile${sameBackground(s.bg, proj.style.background) ? ' selected' : ''}`}
               onClick={() =>
                 setProj((p) => ({ ...p, style: { ...p.style, background: s.bg } }))
               }
-            />
+            >
+              <span
+                className="tile-swatch"
+                style={
+                  s.bg.kind === 'gradient'
+                    ? { background: `linear-gradient(${s.bg.angle}deg, ${s.bg.startHex}, ${s.bg.endHex})` }
+                    : { background: s.bg.hex }
+                }
+              />
+              <span className="tile-label">{s.name}</span>
+            </button>
           ))}
           <button
+            type="button"
             title="Custom background image"
+            className="tile"
             onClick={async () => {
               const path = await api.pickBackground();
               if (path) {
@@ -937,10 +856,13 @@ export function Editor({
               }
             }}
           >
-            Img…
+            <span className="tile-swatch tile-text">Image…</span>
+            <span className="tile-label">Choose</span>
           </button>
           <button
+            type="button"
             title="Use desktop wallpaper"
+            className="tile"
             onClick={async () => {
               const path = await api.wallpaperPath();
               if (path) {
@@ -951,502 +873,898 @@ export function Editor({
               } else setStatus('wallpaper unavailable');
             }}
           >
-            Wall
+            <span className="tile-swatch tile-text">Desktop</span>
+            <span className="tile-label">Wallpaper</span>
           </button>
         </div>
         {proj.style.background.kind === 'imageFile' && (
-          <label>
-            Blur {proj.style.background.blur ?? 0}px
-            <input
-              type="range"
-              min={0}
-              max={60}
-              step={1}
-              value={proj.style.background.blur ?? 0}
-              onChange={(e) =>
-                setProj((p) => ({
-                  ...p,
-                  style: {
-                    ...p.style,
-                    background: { kind: 'imageFile', path: p.style.background.kind === 'imageFile' ? p.style.background.path : '', blur: +e.target.value },
-                  },
-                }))
-              }
-            />
-          </label>
-        )}
-        {proj.recording.sourceKind === 'iosDevice' && (
-          <label title="Wrap the frame in iPhone hardware chrome">
-            Phone frame
-            <input
-              type="checkbox"
-              checked={proj.style.deviceFrame === 'phone'}
-              onChange={(e) =>
-                setProj((p) => ({
-                  ...p,
-                  style: { ...p.style, deviceFrame: e.target.checked ? 'phone' : 'none' },
-                }))
-              }
-            />
-          </label>
-        )}
-        <label title="Add a text overlay at the playhead">
-          <button
-            onClick={() =>
+          <Slider
+            label="Image blur"
+            min={0}
+            max={60}
+            step={1}
+            value={proj.style.background.blur ?? 0}
+            format={(v) => `${v}px`}
+            onChange={(v) =>
               setProj((p) => ({
                 ...p,
-                annotations: [
-                  ...p.annotations,
-                  {
-                    id: crypto.randomUUID(),
-                    start: playhead,
-                    end: Math.min(timeline.outputDuration, playhead + 3),
-                    text: 'Text',
-                    band: 1,
-                    hex: '#ffffff',
-                  },
-                ],
+                style: {
+                  ...p.style,
+                  background: { kind: 'imageFile', path: p.style.background.kind === 'imageFile' ? p.style.background.path : '', blur: v },
+                },
               }))
             }
-          >
-            + Text
-          </button>
-        </label>
-        {camUrl && (
-          <div className="sliders">
-            <label>
-              Camera
-              <input
-                type="checkbox"
-                checked={proj.cameraOverlay.enabled}
-                onChange={(e) =>
-                  setProj((p) => ({
-                    ...p,
-                    cameraOverlay: { ...p.cameraOverlay, enabled: e.target.checked },
-                  }))
-                }
-              />
-            </label>
-            <label>
-              Corner
-              <select
-                value={proj.cameraOverlay.corner}
-                onChange={(e) =>
-                  setProj((p) => ({
-                    ...p,
-                    cameraOverlay: {
-                      ...p.cameraOverlay,
-                      corner: e.target.value as typeof p.cameraOverlay.corner,
-                    },
-                  }))
-                }
-              >
-                {(['topLeft', 'topRight', 'bottomLeft', 'bottomRight'] as const).map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Circle
-              <input
-                type="checkbox"
-                checked={proj.cameraOverlay.circular}
-                onChange={(e) =>
-                  setProj((p) => ({
-                    ...p,
-                    cameraOverlay: { ...p.cameraOverlay, circular: e.target.checked },
-                  }))
-                }
-              />
-            </label>
-          </div>
-        )}
-        <div className="sliders">
-          {(
-            [
-              ['Padding', 'paddingFraction', 0, 0.4, 0.01],
-              ['Corner', 'cornerRadius', 0, 120, 1],
-              ['Shadow', 'shadowRadius', 0, 200, 1],
-              ['Shadow α', 'shadowOpacity', 0, 1, 0.01],
-            ] as const
-          ).map(([label, key, min, max, step]) => (
-            <label key={key} title={key}>
-              {label}
-              <input
-                type="range"
-                min={min}
-                max={max}
-                step={step}
-                value={proj.style[key]}
-                onChange={(e) =>
-                  setProj((p) => ({ ...p, style: { ...p.style, [key]: +e.target.value } }))
-                }
-              />
-            </label>
-          ))}
-        </div>
-        <div className="sliders">
-          <label title="Software cursor size (fraction of frame height)">
-            Cursor {(proj.style.cursorSize * 1000).toFixed(0)}
-            <input
-              type="range"
-              min={0.005}
-              max={0.03}
-              step={0.001}
-              value={proj.style.cursorSize}
-              onChange={(e) =>
-                setProj((p) => ({ ...p, style: { ...p.style, cursorSize: +e.target.value } }))
-              }
-            />
-          </label>
-          <label title="Smear the cursor along its recent path">
-            <input
-              type="checkbox"
-              checked={proj.style.cursorTrail}
-              onChange={(e) =>
-                setProj((p) => ({ ...p, style: { ...p.style, cursorTrail: e.target.checked } }))
-              }
-            />
-            Trail
-          </label>
-          <label title="Cursor color">
-            <input
-              type="color"
-              value={proj.style.cursorHex}
-              onChange={(e) =>
-                setProj((p) => ({ ...p, style: { ...p.style, cursorHex: e.target.value } }))
-              }
-            />
-          </label>
-        </div>
-        <button onClick={() => videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause()}>
-          Play/Pause
-        </button>
-        <button
-          onClick={() => {
-            setCropMode((c) => !c);
-            if (!cropMode) renderAt(videoRef.current?.currentTime ?? 0);
-          }}
-        >
-          {cropMode ? 'Dragging…' : 'Crop'}
-        </button>
-        {proj.style.cropRect && !cropMode && (
-          <button
-            onClick={() => setProj((p) => ({ ...p, style: { ...p.style, cropRect: null } }))}
-          >
-            Reset crop
-          </button>
-        )}
-        <button onClick={splitAtPlayhead}>Split</button>
-        <button onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1}>
-          Delete clip
-        </button>
-        {selectedClip && (
-          <>
-            <button onClick={() => trimClip('start')} title="Trim clip start to playhead">
-              ⟦Trim
-            </button>
-            <button onClick={() => trimClip('end')} title="Trim clip end to playhead">
-              Trim⟧
-            </button>
-          </>
-        )}
-        {selectedClip && (
-          <label>
-            Speed
-            <select
-              value={proj.clips.find((c) => c.id === selectedClip)?.speed ?? 1}
-              onChange={(e) => setClipSpeed(+e.target.value)}
-            >
-              {[0.5, 0.75, 1, 1.5, 2, 4].map((v) => (
-                <option key={v} value={v}>
-                  {v}×
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <button onClick={transcribe} title="Auto-transcribe via whisper">
-          Transcribe
-        </button>
-        <button
-          onClick={smartCut}
-          title="Detect silences + filler words and preview the cuts before applying"
-        >
-          Smart cut
-        </button>
-        <label style={{ cursor: 'pointer' }}>
-          Captions…
-          <input
-            type="file"
-            accept=".srt,.vtt"
-            className="hidden"
-            onChange={(e) => e.target.files?.[0] && importCaptions(e.target.files[0])}
           />
-        </label>
-        <button onClick={saveProject}>Save project</button>
-        <label>
-          Res
-          <select
-            value={proj.exportPreset}
-            onChange={(e) =>
-              setProj((p) => ({ ...p, exportPreset: e.target.value as typeof p.exportPreset }))
+        )}
+      </Section>
+      <Section title="Frame">
+        {(
+          [
+            ['Padding', 'paddingFraction', 0, 0.4, 0.01, (v: number) => `${Math.round(v * 100)}%`],
+            ['Corner radius', 'cornerRadius', 0, 120, 1, (v: number) => `${v}px`],
+            ['Shadow', 'shadowRadius', 0, 200, 1, (v: number) => `${v}px`],
+            ['Shadow opacity', 'shadowOpacity', 0, 1, 0.01, (v: number) => `${Math.round(v * 100)}%`],
+          ] as const
+        ).map(([label, key, min, max, step, format]) => (
+          <Slider
+            key={key}
+            label={label}
+            title={key}
+            min={min}
+            max={max}
+            step={step}
+            value={proj.style[key]}
+            format={format}
+            onChange={(v) => setProj((p) => ({ ...p, style: { ...p.style, [key]: v } }))}
+          />
+        ))}
+        {proj.recording.sourceKind === 'iosDevice' && (
+          <Switch
+            label="Phone frame"
+            hint="Wrap the frame in iPhone hardware"
+            title="Wrap the frame in iPhone hardware chrome"
+            checked={proj.style.deviceFrame === 'phone'}
+            onChange={(v) =>
+              setProj((p) => ({
+                ...p,
+                style: { ...p.style, deviceFrame: v ? 'phone' : 'none' },
+              }))
             }
-          >
-            <option value="original">Original</option>
-            <option value="p1080">1080p</option>
-            <option value="uhd4k">4K</option>
-          </select>
-        </label>
-        <label>
-          FPS
-          <select
-            value={proj.outputFPS}
-            onChange={(e) => setProj((p) => ({ ...p, outputFPS: +e.target.value }))}
-          >
-            {[24, 30, 60].map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="primary" onClick={() => exportVideo()}>Export MP4</button>
-        <button onClick={() => exportVideo(true)}>Export GIF</button>
-        {exporting && <button onClick={() => { cancelExport.current = true; }}>Cancel</button>}
-        <span className="status">{status}</span>
-      </div>
-      </div>
-      {smartCuts && (
-        <div className="transcript smartcuts">
-          <h3>
-            Smart cut — {smartCuts.filter((p) => p.on).length}/{smartCuts.length} selected
-          </h3>
-          {smartCuts.map((p, i) => {
-            const r = proposalOutRange(p);
-            return (
-              <div
-                className="cue"
-                key={i}
-                onClick={() => {
-                  if (r) seekOutput(r.start);
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={p.on}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={() =>
-                    setSmartCuts((s) =>
-                      s ? s.map((x, xi) => (xi === i ? { ...x, on: !x.on } : x)) : s,
-                    )
-                  }
-                />
-                <span className="t">{r ? fmtTime(r.start) : '—'}</span>
-                <span className={p.kind}>
-                  {p.kind === 'silence' ? 'silence' : 'filler'} {p.label}
-                </span>
-              </div>
-            );
-          })}
-          <div className="sc-actions">
-            <button className="primary" onClick={applySmartCuts}>
-              Apply cuts
-            </button>
-            <button onClick={() => setSmartCuts(null)}>Dismiss</button>
+          />
+        )}
+      </Section>
+    </>
+  );
+
+  const zoomPanel = (
+    <>
+      <Section title="Automatic">
+        <Switch
+          label="Auto-focus"
+          hint="Zoom toward each click"
+          checked={autofocusOn}
+          onChange={setAutofocusOn}
+        />
+        {autofocusOn && (
+          <Switch
+            label="Dwell zoom"
+            hint="Also zoom where the cursor lingers"
+            title="Also zoom where the cursor lingers, not just clicks"
+            checked={dwellOn}
+            onChange={setDwellOn}
+          />
+        )}
+        {autofocusOn && (
+          <Slider
+            label="Zoom depth"
+            title="Max zoom on click"
+            min={1.2}
+            max={4}
+            step={0.1}
+            value={zoomDepth}
+            format={(v) => `${v.toFixed(1)}×`}
+            onChange={setZoomDepth}
+          />
+        )}
+        {autofocusOn && (
+          <div className="row">
+            <span className="row-text">
+              <span className="row-label">Touches</span>
+              <span className="row-hint">iPhone and iPad captures have no cursor track</span>
+            </span>
+            <Button
+              size="sm"
+              onClick={detectMotion}
+              title="Frame-diff the video for taps/swipes (iPhone/iPad captures have no cursor track)"
+            >
+              Detect touches
+            </Button>
           </div>
-        </div>
-      )}
-      {(proj.captions.length > 0 || proj.annotations.length > 0 || proj.chapters.length > 0) && (
-        <div className="transcript">
-          {proj.annotations.length > 0 && (
-            <>
-              <h3>Text</h3>
-              {proj.annotations.map((a) => (
-                <div className="cue" key={a.id}>
-                  <input
-                    value={a.text}
-                    onChange={(e) =>
-                      setProj((p) => ({
-                        ...p,
-                        annotations: p.annotations.map((x) =>
-                          x.id === a.id ? { ...x, text: e.target.value } : x,
-                        ),
-                      }))
-                    }
-                  />
-                  <span
-                    className="x"
-                    title="Position: top / middle / bottom"
-                    onClick={() =>
-                      setProj((p) => ({
-                        ...p,
-                        annotations: p.annotations.map((x) =>
-                          x.id === a.id ? { ...x, band: ((x.band + 1) % 3) as 0 | 1 | 2 } : x,
-                        ),
-                      }))
-                    }
-                  >
-                    {a.band === 0 ? '⤒' : a.band === 1 ? '↕' : '⤓'}
-                  </span>
-                  <span
-                    className="x"
-                    title="Delete"
-                    onClick={() =>
-                      setProj((p) => ({
-                        ...p,
-                        annotations: p.annotations.filter((x) => x.id !== a.id),
-                      }))
-                    }
-                  >
-                    ✕
-                  </span>
-                </div>
-              ))}
-            </>
-          )}
-          {proj.captions.length > 0 && (
-            <>
-              <h3>
-                Transcript
-                <button
-                  className={`mini${editTranscript ? ' on' : ''}`}
-                  title="Edit mode: click a word, shift-click to extend, then delete to cut that span"
-                  onClick={() => {
-                    setEditTranscript((v) => !v);
-                    setWordSel(null);
-                  }}
-                >
-                  Edit
-                </button>
-                <button
-                  className="mini"
-                  title="Suggest chapters + a title from the transcript"
-                  onClick={() => {
-                    const ch = suggestChapters(proj.captions, timeline.outputDuration || duration);
-                    if (!ch.length) {
-                      setStatus('not enough transcript for chapters');
-                      return;
-                    }
-                    setProj((p) => ({ ...p, chapters: ch }));
-                    setStatus(`${ch.length} chapters suggested`);
-                  }}
-                >
-                  Chapters
-                </button>
-              </h3>
-          {editTranscript && wordSel && (
-            <button className="cutall" onClick={cutSelectedWords} title="Cut the selected words' span from the video">
-              Cut selected words
-            </button>
-          )}
-          {proj.captions.map((c) => (
-            <div className="cue" key={c.id} onClick={() => !editTranscript && seekOutput(c.start)}>
-              <span className="t">{fmtTime(c.start)}</span>
-              {editTranscript && c.words?.length ? (
-                <span className="words">
-                  {c.words.map((w, wi) => {
-                    const sel =
-                      wordSel?.cueId === c.id &&
-                      wi >= Math.min(wordSel.anchor, wordSel.end) &&
-                      wi <= Math.max(wordSel.anchor, wordSel.end);
-                    return (
-                      <span
-                        key={wi}
-                        className={`tw${sel ? ' sel' : ''}`}
-                        title={fmtTime(w.start)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (e.shiftKey && wordSel?.cueId === c.id) {
-                            setWordSel({ cueId: c.id, anchor: wordSel.anchor, end: wi });
-                          } else {
-                            setWordSel({ cueId: c.id, anchor: wi, end: wi });
-                          }
-                        }}
-                      >
-                        {w.text}{' '}
-                      </span>
-                    );
-                  })}
-                </span>
-              ) : (
-                <span>{c.text}</span>
-              )}
-              <span
-                className="x"
-                title="Cut this cue from the video"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  cutCue(c);
-                }}
-              >
-                ✂
+        )}
+      </Section>
+      <Section title="Manual zooms">
+        <p className="hint">
+          <Kbd>⌥</Kbd> Option-click the timeline to add a zoom at that moment. Right-click a
+          manual zoom on the Zoom lane to remove it.
+        </p>
+        <p className="hint tnum">
+          {manualSegments.length
+            ? `${manualSegments.length} manual zoom${manualSegments.length === 1 ? '' : 's'}`
+            : 'No manual zooms yet'}
+        </p>
+      </Section>
+    </>
+  );
+
+  const cursorPanel = (
+    <Section title="Cursor">
+      <Slider
+        label="Size"
+        title="Software cursor size (fraction of frame height)"
+        min={0.005}
+        max={0.03}
+        step={0.001}
+        value={proj.style.cursorSize}
+        format={(v) => (v * 1000).toFixed(0)}
+        onChange={(v) => setProj((p) => ({ ...p, style: { ...p.style, cursorSize: v } }))}
+      />
+      <Switch
+        label="Trail"
+        hint="Smear the cursor along its recent path"
+        checked={proj.style.cursorTrail}
+        onChange={(v) => setProj((p) => ({ ...p, style: { ...p.style, cursorTrail: v } }))}
+      />
+      <label className="row" title="Cursor color">
+        <span className="row-label">Color</span>
+        <span className="color-field">
+          <span className="tnum">{proj.style.cursorHex.toUpperCase()}</span>
+          <input
+            type="color"
+            value={proj.style.cursorHex}
+            onChange={(e) =>
+              setProj((p) => ({ ...p, style: { ...p.style, cursorHex: e.target.value } }))
+            }
+          />
+        </span>
+      </label>
+    </Section>
+  );
+
+  const cameraPanel = camUrl && (
+    <Section title="Camera">
+      <Switch
+        label="Show camera"
+        checked={proj.cameraOverlay.enabled}
+        onChange={(v) =>
+          setProj((p) => ({
+            ...p,
+            cameraOverlay: { ...p.cameraOverlay, enabled: v },
+          }))
+        }
+      />
+      <div className="field-block">
+        <span className="row-label">Corner</span>
+        <Segmented
+          label="Camera corner"
+          columns={2}
+          value={proj.cameraOverlay.corner}
+          options={[
+            { value: 'topLeft', label: 'Top left' },
+            { value: 'topRight', label: 'Top right' },
+            { value: 'bottomLeft', label: 'Bottom left' },
+            { value: 'bottomRight', label: 'Bottom right' },
+          ]}
+          onChange={(corner) =>
+            setProj((p) => ({
+              ...p,
+              cameraOverlay: { ...p.cameraOverlay, corner },
+            }))
+          }
+        />
+      </div>
+      <Switch
+        label="Circle"
+        hint="Crop the camera to a circle"
+        checked={proj.cameraOverlay.circular}
+        onChange={(v) =>
+          setProj((p) => ({
+            ...p,
+            cameraOverlay: { ...p.cameraOverlay, circular: v },
+          }))
+        }
+      />
+    </Section>
+  );
+
+  const audioPanel = (
+    <Section title="Audio">
+      <Switch
+        label="Click sounds"
+        hint="Mix a click sound at each click"
+        title="Mix a click sound at each click"
+        checked={clickSfx}
+        onChange={setClickSfx}
+      />
+      <Switch
+        label="Voice cleanup"
+        hint="Denoise and level the voice on export, locally with ffmpeg"
+        title="Denoise + level the voice track on export (highpass, afftdn, compressor, limiter — all local ffmpeg)"
+        checked={voiceCleanup}
+        onChange={setVoiceCleanup}
+      />
+    </Section>
+  );
+
+  const smartCutPanel = smartCuts && (
+    <section className="section smartcuts">
+      <header className="section-head">
+        <h3>Smart cut</h3>
+        <span className="section-meta tnum">
+          {smartCuts.filter((p) => p.on).length} of {smartCuts.length} selected
+        </span>
+      </header>
+      <div className="list">
+        {smartCuts.map((p, i) => {
+          const r = proposalOutRange(p);
+          return (
+            <div
+              className="cue"
+              key={i}
+              onClick={() => {
+                if (r) seekOutput(r.start);
+              }}
+            >
+              <input
+                type="checkbox"
+                className="check"
+                checked={p.on}
+                onClick={(e) => e.stopPropagation()}
+                onChange={() =>
+                  setSmartCuts((s) =>
+                    s ? s.map((x, xi) => (xi === i ? { ...x, on: !x.on } : x)) : s,
+                  )
+                }
+              />
+              <span className="t">{r ? fmtTime(r.start) : '—'}</span>
+              <span className="cue-text">
+                <span className={`tag ${p.kind}`}>{p.kind === 'silence' ? 'Silence' : 'Filler'}</span>
+                {p.label}
               </span>
             </div>
-          ))}
-            </>
-          )}
-          {proj.chapters.length > 0 && (
+          );
+        })}
+      </div>
+      <div className="sticky-actions">
+        <Button variant="primary" onClick={applySmartCuts}>
+          Apply cuts
+        </Button>
+        <Button variant="ghost" onClick={() => setSmartCuts(null)}>
+          Dismiss
+        </Button>
+      </div>
+    </section>
+  );
+
+  const textPanel = (
+    <>
+      {smartCutPanel}
+      <Section
+        title="Text overlays"
+        actions={
+          <Button size="sm" title="Add a text overlay at the playhead" onClick={() =>
+            setProj((p) => ({
+              ...p,
+              annotations: [
+                ...p.annotations,
+                {
+                  id: crypto.randomUUID(),
+                  start: playhead,
+                  end: Math.min(timeline.outputDuration, playhead + 3),
+                  text: 'Text',
+                  band: 1,
+                  hex: '#ffffff',
+                },
+              ],
+            }))
+          }>
+            Add text
+          </Button>
+        }
+      >
+        {proj.annotations.length === 0 ? (
+          <p className="hint">Adds a three second overlay at the playhead.</p>
+        ) : (
+          <div className="list">
+            {proj.annotations.map((a) => (
+              <div className="annot" key={a.id}>
+                <input
+                  className="field"
+                  value={a.text}
+                  onChange={(e) =>
+                    setProj((p) => ({
+                      ...p,
+                      annotations: p.annotations.map((x) =>
+                        x.id === a.id ? { ...x, text: e.target.value } : x,
+                      ),
+                    }))
+                  }
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="band-btn"
+                  title="Position: top / middle / bottom"
+                  onClick={() =>
+                    setProj((p) => ({
+                      ...p,
+                      annotations: p.annotations.map((x) =>
+                        x.id === a.id ? { ...x, band: ((x.band + 1) % 3) as 0 | 1 | 2 } : x,
+                      ),
+                    }))
+                  }
+                >
+                  {a.band === 0 ? 'Top' : a.band === 1 ? 'Middle' : 'Bottom'}
+                </Button>
+                <IconButton
+                  label="Delete"
+                  className="sm"
+                  onClick={() =>
+                    setProj((p) => ({
+                      ...p,
+                      annotations: p.annotations.filter((x) => x.id !== a.id),
+                    }))
+                  }
+                >
+                  {Icon.close(12)}
+                </IconButton>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      <Section
+        title="Transcript"
+        actions={
+          proj.captions.length > 0 && (
             <>
-              <h3>
+              <Button
+                size="sm"
+                variant="ghost"
+                className={editTranscript ? 'is-on' : ''}
+                aria-pressed={editTranscript}
+                title="Edit mode: click a word, shift-click to extend, then delete to cut that span"
+                onClick={() => {
+                  setEditTranscript((v) => !v);
+                  setWordSel(null);
+                }}
+              >
+                Edit
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Suggest chapters + a title from the transcript"
+                onClick={() => {
+                  const ch = suggestChapters(proj.captions, timeline.outputDuration || duration);
+                  if (!ch.length) {
+                    setStatus('not enough transcript for chapters');
+                    return;
+                  }
+                  setProj((p) => ({ ...p, chapters: ch }));
+                  setStatus(`${ch.length} chapters suggested`);
+                }}
+              >
                 Chapters
-                <button
-                  className="mini"
-                  title="Copy as YouTube chapter list"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(toChapterList(proj.chapters));
-                    setStatus('chapters copied');
-                  }}
-                >
-                  Copy
-                </button>
-                <button
-                  className="mini"
-                  title="Clear chapters"
-                  onClick={() => setProj((p) => ({ ...p, chapters: [] }))}
-                >
-                  Clear
-                </button>
-              </h3>
-              {proj.chapters.map((ch) => (
-                <div className="cue" key={ch.id} onClick={() => seekOutput(ch.start)}>
-                  <span className="t">{fmtTime(ch.start)}</span>
-                  <input
-                    className="chtitle"
-                    value={ch.title}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) =>
-                      setProj((p) => ({
-                        ...p,
-                        chapters: p.chapters.map((x) =>
-                          x.id === ch.id ? { ...x, title: e.target.value } : x,
-                        ),
-                      }))
-                    }
-                  />
-                  <span
-                    className="x"
-                    title="Remove chapter"
+              </Button>
+            </>
+          )
+        }
+      >
+        {proj.captions.length === 0 ? (
+          <EmptyState
+            title="No transcript yet"
+            actions={
+              <>
+                <Button variant="primary" onClick={transcribe} title="Auto-transcribe via whisper">
+                  Transcribe
+                </Button>
+                {importCaptionsButton('secondary', 'md')}
+              </>
+            }
+          >
+            Transcribe the recording to get captions you can edit word by word and turn
+            into chapters. You can also import an SRT or VTT file.
+          </EmptyState>
+        ) : (
+          <>
+            <div className="toolbar">
+              <Button size="sm" onClick={transcribe} title="Auto-transcribe via whisper">
+                Transcribe again
+              </Button>
+              {importCaptionsButton('ghost', 'sm')}
+            </div>
+            {editTranscript && (
+              <div className="edit-hint">
+                {wordSel ? (
+                  <Button size="sm" variant="danger" onClick={cutSelectedWords} title="Cut the selected words' span from the video">
+                    Cut selected words
+                  </Button>
+                ) : (
+                  <span>
+                    Click a word, <Kbd>⇧</Kbd> Shift-click to extend, then <Kbd>⌫</Kbd> to cut.
+                  </span>
+                )}
+              </div>
+            )}
+            <div className="list">
+              {proj.captions.map((c) => (
+                <div className="cue" key={c.id} onClick={() => !editTranscript && seekOutput(c.start)}>
+                  <span className="t">{fmtTime(c.start)}</span>
+                  {editTranscript && c.words?.length ? (
+                    <span className="cue-text words">
+                      {c.words.map((w, wi) => {
+                        const sel =
+                          wordSel?.cueId === c.id &&
+                          wi >= Math.min(wordSel.anchor, wordSel.end) &&
+                          wi <= Math.max(wordSel.anchor, wordSel.end);
+                        return (
+                          <span
+                            key={wi}
+                            className={`tw${sel ? ' sel' : ''}`}
+                            title={fmtTime(w.start)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (e.shiftKey && wordSel?.cueId === c.id) {
+                                setWordSel({ cueId: c.id, anchor: wordSel.anchor, end: wi });
+                              } else {
+                                setWordSel({ cueId: c.id, anchor: wi, end: wi });
+                              }
+                            }}
+                          >
+                            {w.text}{' '}
+                          </span>
+                        );
+                      })}
+                    </span>
+                  ) : (
+                    <span className="cue-text">{c.text}</span>
+                  )}
+                  <IconButton
+                    label="Cut this cue from the video"
+                    className="sm cue-action"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setProj((p) => ({ ...p, chapters: p.chapters.filter((x) => x.id !== ch.id) }));
+                      cutCue(c);
                     }}
                   >
-                    ✕
-                  </span>
+                    {Icon.scissors(12)}
+                  </IconButton>
                 </div>
               ))}
+            </div>
+          </>
+        )}
+      </Section>
+
+      {proj.chapters.length > 0 && (
+        <Section
+          title="Chapters"
+          actions={
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Copy as YouTube chapter list"
+                onClick={() => {
+                  void navigator.clipboard.writeText(toChapterList(proj.chapters));
+                  setStatus('chapters copied');
+                }}
+              >
+                Copy
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Clear chapters"
+                onClick={() => setProj((p) => ({ ...p, chapters: [] }))}
+              >
+                Clear
+              </Button>
             </>
+          }
+        >
+          <div className="list">
+            {proj.chapters.map((ch) => (
+              <div className="cue" key={ch.id} onClick={() => seekOutput(ch.start)}>
+                <span className="t">{fmtTime(ch.start)}</span>
+                <input
+                  className="field chtitle"
+                  value={ch.title}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) =>
+                    setProj((p) => ({
+                      ...p,
+                      chapters: p.chapters.map((x) =>
+                        x.id === ch.id ? { ...x, title: e.target.value } : x,
+                      ),
+                    }))
+                  }
+                />
+                <IconButton
+                  label="Remove chapter"
+                  className="sm cue-action"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setProj((p) => ({ ...p, chapters: p.chapters.filter((x) => x.id !== ch.id) }));
+                  }}
+                >
+                  {Icon.close(12)}
+                </IconButton>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {!smartCuts && (
+        <Section title="Smart cut">
+          <div className="row">
+            <span className="row-hint">
+              Find silences{proj.captions.length ? ' and filler words' : ''}, then review each cut
+              before applying.
+            </span>
+            <Button
+              size="sm"
+              onClick={smartCut}
+              title="Detect silences + filler words and preview the cuts before applying"
+            >
+              Smart cut
+            </Button>
+          </div>
+        </Section>
+      )}
+    </>
+  );
+
+  return (
+    <div className="editor">
+      <video
+        ref={videoRef}
+        src={videoUrl}
+        className="hidden"
+        preload="auto"
+        muted={exporting}
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onLoadedData={(e) => renderAt(e.currentTarget.currentTime)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+      />
+      {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
+
+      <header className="topbar ed-top">
+        <span className="doc-title" title={bundleDir}>{bundleName}</span>
+        <div className="history no-drag">
+          <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
+          <IconButton label="Redo (⌘⇧Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
+        </div>
+        <div className="spacer" />
+        {(status || exporting) && (
+          <div className={`status-pill no-drag${exporting ? ' busy' : ''}`} title={status}>
+            {exportProgress && (
+              <span className="progress">
+                <span style={{ width: `${(+exportProgress[1] / Math.max(1, +exportProgress[2])) * 100}%` }} />
+              </span>
+            )}
+            <span className="status-text tnum">
+              {exportProgress
+                ? `Exporting ${Math.round((+exportProgress[1] / Math.max(1, +exportProgress[2])) * 100)}%`
+                : status}
+            </span>
+            {exporting && (
+              <button type="button" className="pill-cancel" onClick={() => { cancelExport.current = true; }}>
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
+        <div className="spacer" />
+        <Button variant="ghost" onClick={saveProject}>Save</Button>
+        <div className="split-btn no-drag" ref={exportMenuRef}>
+          <Button variant="primary" className="split-main" disabled={exporting} onClick={() => exportVideo()}>
+            Export MP4
+          </Button>
+          <Button
+            variant="primary"
+            className="split-toggle"
+            aria-label="Export options"
+            aria-expanded={exportMenuOpen}
+            onClick={() => setExportMenuOpen((o) => !o)}
+          >
+            {Icon.chevronDown(12)}
+          </Button>
+          {exportMenuOpen && (
+            <div className="menu" role="dialog" aria-label="Export options">
+              <div className="field-block">
+                <span className="row-label">Resolution</span>
+                <Segmented
+                  label="Resolution"
+                  value={proj.exportPreset}
+                  options={[
+                    { value: 'original', label: 'Original' },
+                    { value: 'p1080', label: '1080p' },
+                    { value: 'uhd4k', label: '4K' },
+                  ]}
+                  onChange={(v) => setProj((p) => ({ ...p, exportPreset: v }))}
+                />
+              </div>
+              <div className="field-block">
+                <span className="row-label">Frame rate</span>
+                <Segmented
+                  label="Frame rate"
+                  value={proj.outputFPS}
+                  options={[24, 30, 60].map((f) => ({ value: f, label: `${f} fps` }))}
+                  onChange={(v) => setProj((p) => ({ ...p, outputFPS: v }))}
+                />
+              </div>
+              <div className="menu-sep" />
+              <Button
+                disabled={exporting}
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  void exportVideo(true);
+                }}
+              >
+                Export GIF
+              </Button>
+              <p className="hint">The GIF is made from the MP4, which is kept alongside it.</p>
+            </div>
           )}
         </div>
-      )}
+      </header>
+
+      <main className="ed-stage">
+        <div className="stage-canvas">
+          <div className="stage-inner">
+            <canvas
+              ref={canvasRef}
+              className={`preview${cropMode ? ' cropping' : ''}`}
+              style={{ cursor: cropMode ? 'crosshair' : undefined }}
+              onMouseDown={onCanvasDown}
+              onMouseMove={onCanvasMove}
+              onMouseUp={onCanvasUp}
+              onMouseLeave={onCanvasUp}
+            />
+          </div>
+        </div>
+        <div className="transport">
+          <div className="transport-group">
+            <button
+              type="button"
+              className="play-btn"
+              aria-label={playing ? 'Pause' : 'Play'}
+              title={playing ? 'Pause (Space)' : 'Play (Space)'}
+              onClick={togglePlay}
+            >
+              {playing ? Icon.pause(14) : Icon.play(14)}
+            </button>
+            <span className="timecode tnum">
+              {fmtPrecise(playhead)}
+              <span> / {fmtPrecise(timeline.outputDuration || duration)}</span>
+            </span>
+          </div>
+          <div className="transport-group">
+            <Button size="sm" variant="ghost" onClick={splitAtPlayhead} title="Split at playhead (S)">
+              Split
+            </Button>
+            <Button size="sm" variant="ghost" disabled={!selectedClip} onClick={() => trimClip('start')} title="Trim clip start to playhead">
+              Trim start
+            </Button>
+            <Button size="sm" variant="ghost" disabled={!selectedClip} onClick={() => trimClip('end')} title="Trim clip end to playhead">
+              Trim end
+            </Button>
+            <Button size="sm" variant="ghost" onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1} title="Delete clip (⌫)">
+              Delete clip
+            </Button>
+            {selectedClip && (
+              <Segmented
+                size="sm"
+                label="Clip speed"
+                value={selectedSpeed}
+                options={[0.5, 0.75, 1, 1.5, 2, 4].map((v) => ({ value: v, label: `${v}×` }))}
+                onChange={setClipSpeed}
+              />
+            )}
+          </div>
+          <div className="transport-group">
+            <Button
+              size="sm"
+              variant="ghost"
+              className={cropMode ? 'is-on' : ''}
+              onClick={() => {
+                setCropMode((c) => !c);
+                if (!cropMode) renderAt(videoRef.current?.currentTime ?? 0);
+              }}
+            >
+              {cropMode ? 'Drag on preview…' : 'Crop'}
+            </Button>
+            {proj.style.cropRect && !cropMode && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setProj((p) => ({ ...p, style: { ...p.style, cropRect: null } }))}
+              >
+                Reset crop
+              </Button>
+            )}
+          </div>
+        </div>
+      </main>
+
+      <aside className="inspector">
+        <Tabs value={activeTab} tabs={inspectorTabs} onChange={setInspectorTab} />
+        <div className="inspector-body" key={activeTab}>
+          {activeTab === 'background' && backgroundPanel}
+          {activeTab === 'zoom' && zoomPanel}
+          {activeTab === 'cursor' && cursorPanel}
+          {activeTab === 'camera' && cameraPanel}
+          {activeTab === 'audio' && audioPanel}
+          {activeTab === 'text' && textPanel}
+        </div>
+      </aside>
+
+      <footer className="ed-timeline">
+        <div className="tl-labels" aria-hidden="true">
+          <span />
+          <span>Clips</span>
+          <span>Zoom</span>
+          <span>Audio</span>
+        </div>
+        {/* The seek target spans exactly the lanes, so click % = time %. */}
+        <div className="tl-lanes" onClick={seekTimeline}>
+          <div className="tl-ruler">
+            {rulerTicks(outDur).map((t) => (
+              <span key={t} className="tick tnum" style={{ left: `${(t / outDur) * 100}%` }}>
+                {fmtTime(t)}
+              </span>
+            ))}
+          </div>
+          <div className="lane lane-clips">
+            {clipBlocks.map((b, i) => {
+              const speed = timeline.clips[i]?.speed ?? 1;
+              return (
+                <div
+                  key={b.id}
+                  className={`clipblock${selectedClip === b.id ? ' selected' : ''}`}
+                  draggable
+                  onDragStart={(e) => {
+                    dragFrom.current = timeline.clips.findIndex((c) => c.id === b.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const from = dragFrom.current;
+                    const to = timeline.clips.findIndex((c) => c.id === b.id);
+                    dragFrom.current = null;
+                    if (from === null || to < 0 || from === to) return;
+                    const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
+                    tl.reorder(from, to);
+                    setProj((p) => ({ ...p, clips: tl.clips }));
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedClip(b.id);
+                  }}
+                  style={{
+                    left: `${(b.start / (timeline.outputDuration || duration || 1)) * 100}%`,
+                    width: `${((b.end - b.start) / (timeline.outputDuration || duration || 1)) * 100}%`,
+                  }}
+                >
+                  <span className="clip-label tnum">
+                    Clip {i + 1}
+                    <span>
+                      {(b.end - b.start).toFixed(1)}s{speed !== 1 ? ` · ${speed}×` : ''}
+                    </span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="lane lane-zoom">
+            {zoomMarks.map((s, i) => {
+              const manual = manualSegments.includes(s);
+              return (
+                <div
+                  key={i}
+                  className={`zoommark${manual ? ' manual' : ''}`}
+                  title={manual ? 'Manual zoom (right-click to remove)' : 'Auto zoom'}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setManualSegments((m) => m.filter((x) => x !== s));
+                  }}
+                  style={{
+                    left: `${(s.inStart / (timeline.outputDuration || duration || 1)) * 100}%`,
+                    width: `${(Math.max(0, s.outEnd - s.inStart) / (timeline.outputDuration || duration || 1)) * 100}%`,
+                  }}
+                >
+                  <span className="tnum">{s.scale.toFixed(1)}×</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="lane lane-audio">
+            <canvas ref={waveRef} className="wave" />
+            {peaks.length > 0 && Math.max(...peaks) < 0.03 && (
+              <span className="lane-note">Silent recording</span>
+            )}
+          </div>
+          {(smartCuts ?? []).map((p, i) => {
+            const r = proposalOutRange(p);
+            if (!r) return null;
+            const outDur = timeline.outputDuration || duration || 1;
+            return (
+              <div
+                key={`cut-${i}`}
+                className={`cutmark${p.on ? '' : ' off'}`}
+                title={`${p.kind === 'silence' ? 'Silence' : 'Filler'} ${p.label}`}
+                style={{
+                  left: `${(r.start / outDur) * 100}%`,
+                  width: `${((r.end - r.start) / outDur) * 100}%`,
+                }}
+              />
+            );
+          })}
+          {(proj.chapters ?? []).map((ch) => (
+            <div
+              key={ch.id}
+              className="chaptermark"
+              title={`Chapter: ${ch.title}`}
+              style={{ left: `${(ch.start / (timeline.outputDuration || duration || 1)) * 100}%` }}
+            />
+          ))}
+          <div
+            className="playhead"
+            style={{ left: `${(playhead / (timeline.outputDuration || duration || 1)) * 100}%` }}
+          />
+        </div>
+      </footer>
     </div>
   );
 }
 
 const FILLER = /^[\s.,!?]*(?:um+|uh+|er+|eh+|ah+|hmm+|mm+|mhm)[\s.,!?]*$/i;
+
+/** Field-wise background equality (saved projects may order keys differently). */
+function sameBackground(a: Project['style']['background'], b: Project['style']['background']) {
+  if (a.kind === 'gradient' && b.kind === 'gradient') {
+    return (
+      a.startHex.toLowerCase() === b.startHex.toLowerCase() &&
+      a.endHex.toLowerCase() === b.endHex.toLowerCase() &&
+      a.angle === b.angle
+    );
+  }
+  if (a.kind === 'solid' && b.kind === 'solid') return a.hex.toLowerCase() === b.hex.toLowerCase();
+  return false;
+}
+
+/** Evenly spaced ruler labels: the smallest round step giving at most ~10. */
+function rulerTicks(total: number) {
+  const steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800];
+  const step = steps.find((s) => total / s <= 10) ?? 3600;
+  const out: number[] = [];
+  for (let t = 0; t < total - step * 0.3; t += step) out.push(t);
+  return out;
+}
+
+/** m:ss.t for the transport readout. */
+function fmtPrecise(t: number) {
+  const m = Math.floor(t / 60);
+  const s = t - m * 60;
+  return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+}
 
 function fmtTime(t: number) {
   const m = Math.floor(t / 60);
