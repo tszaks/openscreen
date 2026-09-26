@@ -10,8 +10,12 @@ import {
   sourceKindFor,
   type EndReason,
 } from '../../shared/recording';
+import { decodeIosError } from '../../shared/iosErrors';
 import { Editor } from './Editor';
 import { Button, EmptyState, Segmented } from './ui';
+import { IosSetupCard } from './components/IosSetupCard';
+import { RecordingCard } from './components/RecordingCard';
+import { checklistFor, readSetupPrefs, recordingWarning, writeSetupPref, type SetupPrefs, type SetupTrigger } from './components/iosSetup';
 
 type PickerTab = 'displays' | 'windows' | 'devices';
 
@@ -93,6 +97,16 @@ export function App() {
   const [countdown, setCountdown] = useState<number | null>(null);
   // UI only: which source tab the picker shows (null = pick a sensible default).
   const [pickerTab, setPickerTab] = useState<PickerTab | null>(null);
+  // The iPhone setup checklist: persisted choices, the dialog (first pick or
+  // a failed start; `key` remounts it at its step), and the copy shown in
+  // place of the empty iPhone tab.
+  const [setupPrefs, setSetupPrefs] = useState<SetupPrefs>(() => readSetupPrefs(localStorage));
+  const [setupDialog, setSetupDialog] = useState<{ step: number; message: string | null; key: number } | null>(null);
+  const [inlineSetup, setInlineSetup] = useState(() => !readSetupPrefs(localStorage).hidden);
+  // Mid-take iPhone warning ("may be locked"), read from the helper while recording.
+  const [iosWarning, setIosWarning] = useState<string | null>(null);
+  // The stream being recorded, shown muted on the recording card.
+  const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const latchRef = useRef<ReturnType<typeof createStopLatch> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -113,6 +127,26 @@ export function App() {
       setPhase({ name: 'editor', session: ++sessionRef.current, ...p }),
     [],
   );
+
+  const openSetup = useCallback(
+    (trigger: SetupTrigger) => {
+      const open = checklistFor(trigger, setupPrefs);
+      if (!open) return;
+      setSetupDialog({ ...open, key: Date.now() });
+      if (trigger.kind === 'firstUse') {
+        writeSetupPref(localStorage, 'seen');
+        setSetupPrefs((p) => ({ ...p, seen: true }));
+      }
+    },
+    [setupPrefs],
+  );
+  const hideSetup = useCallback(() => {
+    writeSetupPref(localStorage, 'hidden');
+    setSetupPrefs((p) => ({ ...p, hidden: true }));
+    setSetupDialog(null);
+    setInlineSetup(false);
+  }, []);
+  const closeSetupDialog = useCallback(() => setSetupDialog(null), []);
 
   // Cameras stay listed before permission gives them labels.
   const refreshCameras = useCallback(async () => {
@@ -191,6 +225,25 @@ export function App() {
       clearInterval(t);
     };
   }, [recordingSourceId]);
+
+  // While an iPhone take runs, read the helper's warning so a locked phone
+  // (a frozen picture) is called out, and cleared once frames resume.
+  const iosRecording = phase.name === 'recording' && !!selectedIos && !saving;
+  useEffect(() => {
+    if (!iosRecording) {
+      setIosWarning(null);
+      return;
+    }
+    let live = true;
+    const poll = () =>
+      api.iosList().then((r) => live && setIosWarning(recordingWarning(r.warning))).catch(() => {});
+    void poll();
+    const t = setInterval(poll, 1500);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [iosRecording]);
 
   useEffect(() => {
     if (!notice) return;
@@ -298,7 +351,11 @@ export function App() {
         camRecRef.current = null;
         camStreamRef.current = null;
         stopTracks(camStream);
-        setStatus(ipcMessage(e));
+        // "no-frames" (and a start that timed out) opens the checklist at
+        // the step that fixes it, with the helper's own words on top.
+        const { code, message } = decodeIosError(ipcMessage(e));
+        setStatus(message);
+        openSetup({ kind: 'startError', code, message });
       }
       return;
     }
@@ -343,6 +400,7 @@ export function App() {
       camRec?.start(250);
       recorderRef.current = rec;
       streamRef.current = stream;
+      setLiveStream(stream);
       beginRecordingPhase();
     } catch (e) {
       // Nothing may keep running after a failed start: no recorder, no
@@ -359,7 +417,7 @@ export function App() {
       if (tracking) await api.stopRecording().catch(() => {});
       setStatus(captureErrorMessage(e, selectedDevice ? cameraLabel(selectedDevice, 0) : selected?.name));
     }
-  }, [selected, selectedDevice, selectedIos, micOn, openCamera]);
+  }, [selected, selectedDevice, selectedIos, micOn, openCamera, openSetup]);
 
   useEffect(() => {
     if (countdown === null) return;
@@ -452,6 +510,7 @@ export function App() {
         recorderRef.current = null;
         streamRef.current = null;
         latchRef.current = null;
+        setLiveStream(null);
       }
     },
     [selected, stopCamOverlay, openEditor],
@@ -592,6 +651,7 @@ export function App() {
           setSelectedIos(d);
           setSelected(null);
           setSelectedDevice(null);
+          openSetup({ kind: 'firstUse' });
         }}
       >
         <div className="card-thumb device-thumb">
@@ -674,10 +734,23 @@ export function App() {
                 <EmptyState art={<div className="device-outline large" />} title="iPhone capture is unavailable">
                   {ios.error}
                 </EmptyState>
+              ) : ios.ready && inlineSetup ? (
+                <div className="setup-empty">
+                  <p className="empty-title">No iPhone or iPad connected</p>
+                  <p className="empty-body">Follow these steps. It shows up here within a few seconds.</p>
+                  <IosSetupCard onClose={() => setInlineSetup(false)} onHide={hideSetup} />
+                </div>
               ) : (
                 <EmptyState
                   art={<div className="device-outline large" />}
                   title={ios.ready ? 'No iPhone or iPad connected' : 'Looking for iPhone and iPad…'}
+                  actions={
+                    ios.ready && (
+                      <Button size="sm" onClick={() => setInlineSetup(true)}>
+                        Show setup steps
+                      </Button>
+                    )
+                  }
                 >
                   Connect it with a USB cable, unlock it, and tap Trust on the device if
                   asked. It shows up here within a few seconds.
@@ -783,6 +856,16 @@ export function App() {
         </footer>
 
         {noticeToast}
+        {setupDialog && (
+          <IosSetupCard
+            key={setupDialog.key}
+            dialog
+            initialStep={setupDialog.step}
+            message={setupDialog.message}
+            onClose={closeSetupDialog}
+            onHide={hideSetup}
+          />
+        )}
         {countdown !== null && countdown > 0 && (
           <div className="countdown">
             <div className="countdown-ring">
@@ -799,23 +882,20 @@ export function App() {
   }
 
   if (phase.name === 'recording') {
-    const mm = Math.floor(elapsed / 60);
-    const ss = Math.floor(elapsed % 60);
+    const sourceName = selectedIos?.name ?? (selectedDevice ? cameraLabel(selectedDevice, 0) : selected?.name) ?? 'Recording';
     return (
       <div className="shell">
         <header className="topbar" />
         <main className="rec-screen">
-          <div className="rec-pill">
-            <span className="rec-dot" />
-            <span className="rec-time">
-              {String(mm).padStart(2, '0')}:{String(ss).padStart(2, '0')}
-            </span>
-            <span className="rec-source">{selectedIos?.name ?? (selectedDevice ? cameraLabel(selectedDevice, 0) : selected?.name) ?? 'Recording'}</span>
-            <Button variant="record" onClick={() => void stop()} disabled={saving}>
-              <span className="stop-glyph" />
-              {saving ? 'Saving…' : 'Stop'}
-            </Button>
-          </div>
+          <RecordingCard
+            sourceName={sourceName}
+            elapsed={elapsed}
+            saving={saving}
+            onStop={() => void stop()}
+            stream={selectedIos ? null : liveStream}
+            device={selectedIos ? { name: selectedIos.name, tablet: /ipad/i.test(selectedIos.name) } : null}
+            warning={selectedIos ? iosWarning : null}
+          />
           <p className="rec-hint">{saving ? 'Saving the recording…' : 'Recording. Stop to open the editor.'}</p>
         </main>
         {noticeToast}
