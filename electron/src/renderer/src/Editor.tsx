@@ -1,16 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
-import type { CursorSample, KeystrokeSample, Project } from '../../shared/types';
+import { normalizeProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
 import { AutofocusPlanner, cameraAt, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
-import { Timeline } from '../../shared/timeline';
-import { CanvasCompositor } from './compositor';
+import { Timeline, toOutputTime } from '../../shared/timeline';
+import { locate, mediaDuration, playbackTick, type PlaybackTick } from '../../shared/playback';
+import { remapProject, remapTime } from '../../shared/remap';
+import { History } from '../../shared/history';
+import { CanvasCompositor, backgroundReady } from './compositor';
 import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
 import {
   planSmartCuts,
-  remapCues,
   removedRanges,
   firstKeptAtOrAfter,
   lastKeptAtOrBefore,
@@ -18,6 +20,8 @@ import {
 } from '../../shared/editcuts';
 import { suggestChapters, toChapterList } from '../../shared/chapters';
 import type { TranscriptWord } from '../../shared/types';
+import { SaveTracker, isTextEntry } from '../../shared/editorSession';
+import { exportCanvasSize, ipcErrorMessage } from '../../shared/exportArgs';
 import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Slider, Switch, Tabs } from './ui';
 
 type InspectorTab = 'background' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'text';
@@ -36,6 +40,8 @@ export function Editor({
   cursor,
   keys,
   bundleDir,
+  onNewRecording,
+  onOpenProject,
 }: {
   videoUrl: string;
   camUrl?: string;
@@ -43,35 +49,59 @@ export function Editor({
   cursor: CursorSample[];
   keys: KeystrokeSample[];
   bundleDir: string;
+  /** Leave for the source picker. Called only once changes are dealt with. */
+  onNewRecording: () => void;
+  /** Pick and open another project in place of this one. */
+  onOpenProject: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const camRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [proj, setProj] = useState(project);
-  // Undo/redo: snapshot the previous project on every change (cap 60).
-  const historyRef = useRef<{ undo: Project[]; redo: Project[] }>({ undo: [], redo: [] });
+  const [proj, setProj] = useState(() => normalizeProject(project));
+  // Undo/redo: one step per burst of edits (a slider drag is one step, not
+  // one per tick). Mount and no-op updates record nothing.
+  const historyRef = useRef(new History<Project>());
   const projRef = useRef(proj);
   const applyingHistory = useRef(false);
   useEffect(() => {
+    if (proj === projRef.current) return;
     if (applyingHistory.current) {
       applyingHistory.current = false;
     } else {
-      historyRef.current.undo.push(projRef.current);
-      if (historyRef.current.undo.length > 60) historyRef.current.undo.shift();
-      historyRef.current.redo = [];
+      historyRef.current.record(projRef.current, performance.now());
     }
     projRef.current = proj;
   }, [proj]);
+  // Each pointer gesture (a click, a drag) is its own undo step.
+  useEffect(() => {
+    const seal = () => historyRef.current.seal();
+    window.addEventListener('pointerdown', seal, true);
+    window.addEventListener('pointerup', seal, true);
+    return () => {
+      window.removeEventListener('pointerdown', seal, true);
+      window.removeEventListener('pointerup', seal, true);
+    };
+  }, []);
+  // Output time, always. The video element only knows source time.
   const [playhead, setPlayhead] = useState(0);
+  const playheadRef = useRef(0);
+  // Index of the clip being played (a source moment can sit in two clips).
+  const playIndex = useRef(0);
+  const movePlayhead = (t: number) => {
+    playheadRef.current = t;
+    setPlayhead(t);
+  };
   const [duration, setDuration] = useState(project.recording.duration || 0);
   const [status, setStatus] = useState('');
-  const [autofocusOn, setAutofocusOn] = useState(true);
-  const [dwellOn, setDwellOn] = useState(true);
-  const [clickSfx, setClickSfx] = useState(true);
-  const [zoomDepth, setZoomDepth] = useState(2);
-  const [manualSegments, setManualSegments] = useState<FocusSegment[]>([]);
+  // Zoom and audio settings live in the project, so they save and undo.
+  const { autofocus: autofocusOn, dwell: dwellOn, depth: zoomDepth, motionEvents: motionEv } = proj.zoom;
+  const { clickSounds: clickSfx, voiceCleanup } = proj.audio;
+  const manualSegments = proj.manualZooms;
+  const setZoom = (patch: Partial<ZoomSettings>) =>
+    setProj((p) => ({ ...p, zoom: { ...p.zoom, ...patch } }));
+  const setAudio = (patch: Partial<AudioSettings>) =>
+    setProj((p) => ({ ...p, audio: { ...p.audio, ...patch } }));
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
-  const [motionEv, setMotionEv] = useState<CursorSample[]>([]);
   const [exporting, setExporting] = useState(false);
   const [cropMode, setCropMode] = useState(false);
   const cropDrag = useRef<{ x: number; y: number } | null>(null);
@@ -82,12 +112,39 @@ export function Editor({
   // Transcript edit mode: click/shift-click selects word ranges to cut.
   const [editTranscript, setEditTranscript] = useState(false);
   const [wordSel, setWordSel] = useState<{ cueId: string; anchor: number; end: number } | null>(null);
-  const [voiceCleanup, setVoiceCleanup] = useState(false);
   // UI only: inspector tab, export menu, and a mirror of the video's play state.
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('background');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  // What's on disk, so leaving can warn about edits the autosave hasn't
+  // written yet (or couldn't write).
+  const saveTracker = useRef(new SaveTracker(proj));
+  // Where to go once the unsaved-changes confirm is answered.
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
+  const disposed = useRef(false);
+
+  /** Write a snapshot into the bundle and record it as saved. */
+  const persist = async (snapshot: Project) => {
+    await api.saveProject(bundleDir, snapshot);
+    saveTracker.current.markSaved(snapshot);
+  };
+
+  // Leaving stops playback and lets go of the decoders; App releases any
+  // blob URLs behind them.
+  useEffect(() => {
+    const media = [videoRef.current, camRef.current];
+    disposed.current = false;
+    return () => {
+      disposed.current = true;
+      for (const v of media) {
+        if (!v) continue;
+        v.pause();
+        v.removeAttribute('src');
+        v.load();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let dead = false;
@@ -100,12 +157,17 @@ export function Editor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bundleDir]);
 
-  const timeline = useMemo(() => new Timeline(proj.recording.duration, proj.clips), [proj]);
+  const timeline = useMemo(
+    () => new Timeline(proj.recording.duration, proj.clips),
+    [proj.recording.duration, proj.clips],
+  );
+  const timelineRef = useRef(timeline);
+  timelineRef.current = timeline;
 
   // Autosave edits into the bundle (debounced; undo/redo snapshots included).
   useEffect(() => {
     const t = setTimeout(() => {
-      void api.saveProject(bundleDir, proj).catch(() => {});
+      void persist(proj).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -119,27 +181,25 @@ export function Editor({
   const segments = useMemo<FocusSegment[]>(() => {
     const auto = autofocusOn
       ? new AutofocusPlanner({ ...defaultAutofocus, maxScale: zoomDepth }).planSegments(
-          [
-            ...cursor.filter((s) => s.kind === 'clickDown'),
-            ...(dwellOn ? dwellFocusEvents(cursor) : []),
-            ...motionEv,
-          ].sort((a, b) => a.time - b.time),
+          // Clicks, dwells and touches are source time; zooms play in output time.
+          toOutputTime(
+            [
+              ...cursor.filter((s) => s.kind === 'clickDown'),
+              ...(dwellOn ? dwellFocusEvents(cursor) : []),
+              ...motionEv,
+            ],
+            timeline,
+          ),
           timeline.outputDuration || duration,
         )
       : [];
     return [...auto, ...manualSegments].sort((a, b) => a.inStart - b.inStart);
   }, [cursor, timeline, autofocusOn, dwellOn, duration, manualSegments, zoomDepth, motionEv]);
 
-  const canvasSize = useMemo(() => {
-    const src = proj.recording.sourceSize;
-    const h =
-      proj.exportPreset === 'uhd4k'
-        ? 2160
-        : proj.exportPreset === 'original'
-          ? src.height
-          : 1080;
-    return { width: Math.round((h * src.width) / src.height), height: h };
-  }, [proj]);
+  const canvasSize = useMemo(
+    () => exportCanvasSize(proj.recording.sourceSize, proj.exportPreset),
+    [proj],
+  );
 
   const compositor = useMemo(
     () => new CanvasCompositor(proj, canvasSize, segments),
@@ -210,9 +270,16 @@ export function Editor({
     setCropMode(false);
   };
 
-  // Draw the composited frame for `time` onto the preview canvas.
+  // Leaving the canvas only ends crop mode mid-drag, not on the way in.
+  const onCanvasLeave = () => {
+    if (cropDrag.current) onCanvasUp();
+  };
+
+  // Draw the composited frame at output time `outT` onto the preview canvas.
+  // The video is already on the matching source frame; cursor and keys are
+  // recorded in source time, so they follow the video.
   const renderAt = useCallback(
-    (time: number) => {
+    (outT: number) => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2) return;
@@ -220,15 +287,16 @@ export function Editor({
       if (!ctx) return;
       canvas.width = canvasSize.width;
       canvas.height = canvasSize.height;
-      const cursorPos = cursorAt(smoothed, time);
-      const keyCaps = keysAt(time, keys);
+      const srcT = video.currentTime;
+      const cursorPos = cursorAt(smoothed, srcT);
+      const keyCaps = keysAt(srcT, keys);
       const cam = camRef.current;
-      compositor.render(time, {
+      compositor.render(outT, {
         frame: video,
         cursor: cursorPos,
-        cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, time) : undefined,
+        cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, srcT) : undefined,
         keystrokes: keyCaps,
-        ripples: ripplesAt(time, clickEv),
+        ripples: ripplesAt(outT, clickEv),
         cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
       });
       ctx.drawImage(compositor.canvas, 0, 0);
@@ -245,14 +313,15 @@ export function Editor({
         ctx.fillStyle = 'rgba(0,0,0,0.45)';
         ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
         const c = proj.style.cropRect;
+        // The whole uncropped frame, dimmed, so there's something to drag over.
         ctx.drawImage(video, 0, 0, src.width, src.height, rx, ry, rw, rh);
+        ctx.fillRect(rx, ry, rw, rh);
         if (c) {
           const cx0 = rx + c.x * rw;
           const cy0 = ry + c.y * rh;
           const cx1 = rx + (c.x + c.w) * rw;
           const cy1 = ry + (c.y + c.h) * rh;
-          // cut the hole back out so the selection stays bright
-          ctx.clearRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+          // redraw the selection undimmed
           ctx.drawImage(
             video,
             (c.x * src.width), (c.y * src.height), (c.w * src.width), (c.h * src.height),
@@ -264,49 +333,113 @@ export function Editor({
         }
       }
     },
-    [compositor, canvasSize, smoothed, clickEv, cropMode, proj],
+    [compositor, canvasSize, smoothed, keys, clickEv, cropMode, proj],
   );
 
-  // Keep preview in sync while video plays or after seeks.
+  /** Move the playhead to output time `outT` and put the video (and camera)
+   *  on the source frame that plays there, at that clip's speed. */
+  const seekOutput = (outT: number) => {
+    const tl = timelineRef.current;
+    const t = Math.min(Math.max(0, outT), tl.outputDuration);
+    const at = locate(tl, t);
+    playIndex.current = at.index;
+    for (const v of [videoRef.current, camRef.current]) {
+      if (!v) continue;
+      if (Math.abs(v.currentTime - at.srcT) > 1e-3) v.currentTime = at.srcT;
+      v.playbackRate = tl.clips[at.index].speed;
+    }
+    movePlayhead(t);
+    if (videoRef.current?.paused) renderAt(t);
+  };
+
+  // Playback follows the timeline: each frame maps the video's source time to
+  // output time, hops over removed footage to the next clip, plays each clip
+  // at its speed, and stops at the end.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     let raf = 0;
+    const apply = (tick: PlaybackTick) => {
+      const cam = camRef.current;
+      if (tick.kind === 'jump') {
+        playIndex.current = tick.index;
+        video.currentTime = tick.seekTo;
+        if (cam) cam.currentTime = tick.seekTo;
+      }
+      if (tick.kind !== 'end' && video.playbackRate !== tick.rate) {
+        video.playbackRate = tick.rate;
+        if (cam) cam.playbackRate = tick.rate;
+      }
+      movePlayhead(tick.outT);
+      renderAt(tick.outT);
+    };
     const loop = () => {
-      renderAt(video.currentTime);
-      setPlayhead(video.currentTime);
-      raf = requestAnimationFrame(loop);
+      const tick = playbackTick(timelineRef.current, playIndex.current, video.currentTime);
+      apply(tick);
+      if (tick.kind === 'end') video.pause();
+      else raf = requestAnimationFrame(loop);
     };
-    const onSeeked = () => {
-      if (camRef.current) camRef.current.currentTime = video.currentTime;
-      renderAt(video.currentTime);
-    };
-    video.addEventListener('seeked', onSeeked);
-    if (!video.paused) raf = requestAnimationFrame(loop);
+    const onSeeked = () => renderAt(playheadRef.current);
     const onPlay = () => {
+      // Play from the playhead; from the end, start over.
+      const atEnd = playheadRef.current >= timelineRef.current.outputDuration - 0.02;
+      seekOutput(atEnd ? 0 : playheadRef.current);
       camRef.current?.play();
+      cancelAnimationFrame(raf);
       raf = requestAnimationFrame(loop);
     };
     const onPause = () => {
       camRef.current?.pause();
       cancelAnimationFrame(raf);
+      const tick = playbackTick(timelineRef.current, playIndex.current, video.currentTime);
+      if (tick.kind !== 'jump') movePlayhead(tick.outT);
+      else if (video.ended) {
+        // The file ended between frames, but a later clip still has to play.
+        apply(tick);
+        void video.play();
+      }
     };
+    video.addEventListener('seeked', onSeeked);
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
+    if (!video.paused) raf = requestAnimationFrame(loop);
+    // Paused edits (style, crop, undo…) redraw right away.
+    else renderAt(playheadRef.current);
     return () => {
       cancelAnimationFrame(raf);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderAt]);
+
+  // A clip edit or undo moves footage under the playhead: keep the playhead
+  // on the timeline and show the frame that now plays there.
+  useEffect(() => {
+    seekOutput(Math.min(playheadRef.current, timeline.outputDuration));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeline]);
+
+  // Redraw once a background image finishes loading.
+  const bgPath = proj.style.background.kind === 'imageFile' ? proj.style.background.path : null;
+  useEffect(() => {
+    if (!bgPath) return;
+    let live = true;
+    void backgroundReady(bgPath).then(() => {
+      if (live && videoRef.current?.paused) renderAt(playheadRef.current);
+    });
+    return () => {
+      live = false;
+    };
+  }, [bgPath, renderAt]);
 
   const seekTimeline = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const t = ((e.clientX - rect.left) / rect.width) * (timeline.outputDuration || duration);
     if (e.altKey) {
       // Alt+click: add a manual zoom centered on the cursor at that time.
-      const c = cursorAt(smoothed, t) ?? { x: 0.5, y: 0.5 };
+      const c = cursorAt(smoothed, locate(timeline, t).srcT) ?? { x: 0.5, y: 0.5 };
       const seg: FocusSegment = {
         inStart: t,
         holdStart: t + 0.5,
@@ -315,45 +448,46 @@ export function Editor({
         center: { x: c.x, y: c.y },
         scale: 2,
       };
-      setManualSegments((m) => [...m, seg]);
+      setProj((p) => ({ ...p, manualZooms: [...p.manualZooms, seg] }));
       return;
     }
-    const srcT = timeline.sourceTime(t) ?? t;
-    if (videoRef.current) videoRef.current.currentTime = srcT;
-    if (camRef.current) camRef.current.currentTime = srcT;
-    setPlayhead(t);
+    seekOutput(t);
   };
 
   const exportVideo = async (wantGif = false) => {
     const video = videoRef.current;
-    if (!video) return;
-    setStatus('exporting…');
+    if (!video || exporting) return;
+    const outPath = await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4');
+    if (!outPath) return;
+    // A GIF is converted from an intermediate mp4 in the bundle.
+    const mp4Path = wantGif ? `${bundleDir}/export-${Date.now()}.mp4` : outPath;
     const fps = proj.outputFPS;
     const total = Math.floor((timeline.outputDuration || duration) * fps);
     const { width: W, height: H } = canvasSize;
-    setExporting(true);
-    const outPath = `${bundleDir}/export-${Date.now()}.mp4`;
     const audioIn = `${bundleDir}/${proj.recording.screenVideoFile}`;
-    // Cut timelines get filtered audio (atrim+atempo+concat); identity gets
-    // passthrough. Main probes for a real audio stream either way.
+    // Cut timelines get filtered audio (atrim+atempo+concat); identity uses
+    // the track as is. Main probes for a real audio stream either way.
     const audioClips = timeline.isIdentity
       ? undefined
       : proj.clips.map((c) => ({ start: c.sourceStart, end: c.sourceEnd, speed: c.speed }));
-    await api.exportBegin(
-      outPath,
-      W,
-      H,
-      fps,
-      audioIn,
-      audioClips,
-      clickSfx ? clickEv.map((e) => e.time) : undefined,
-      voiceCleanup,
-    );
-    video.pause();
-
+    setExporting(true);
+    setStatus('exporting…');
     cancelExport.current = false;
-    let failed: unknown = null;
+    let encoding = false; // ffmpeg is running and owns a partial file
     try {
+      await api.exportBegin(
+        mp4Path,
+        W,
+        H,
+        fps,
+        audioIn,
+        audioClips,
+        clickSfx ? clickEv.map((e) => e.time) : undefined,
+        voiceCleanup,
+        total / fps,
+      );
+      encoding = true;
+      video.pause();
       for (let i = 0; i < total; i++) {
         if (cancelExport.current) break;
         const outT = i / fps;
@@ -363,55 +497,47 @@ export function Editor({
         const cam = camRef.current;
         if (cam) await seekVideo(cam, srcT);
         compositor.render(outT, {
-          cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, outT) : undefined,
+          cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, srcT) : undefined,
           frame: video,
-          cursor: cursorAt(smoothed, outT),
-          keystrokes: keysAt(outT, keys),
+          cursor: cursorAt(smoothed, srcT),
+          keystrokes: keysAt(srcT, keys),
           ripples: ripplesAt(outT, clickEv),
           cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
         });
         const ctx = compositor.canvas.getContext('2d')!;
         const rgba = ctx.getImageData(0, 0, W, H);
-        await api.exportFrame(rgba.data.buffer);
+        await api.exportFrame(rgba.data.buffer); // rejects once ffmpeg has stopped
         if (i % 10 === 0) {
           setStatus(`exporting ${i}/${total}`);
           await new Promise((r) => setTimeout(r, 0)); // let UI paint
         }
       }
+      if (cancelExport.current) {
+        encoding = false;
+        await api.exportAbort();
+        setStatus('export cancelled');
+        return;
+      }
+      encoding = false; // end() cleans up after itself on failure
+      await api.exportEnd();
+      if (proj.captions.length) {
+        await api.writeText(outPath.replace(/\.[^./]*$/, '.srt'), toSrt(proj.captions));
+      }
+      if (proj.chapters.length) {
+        await api.writeText(outPath.replace(/\.[^./]*$/, '.chapters.txt'), toChapterList(proj.chapters) + '\n');
+      }
+      if (wantGif) {
+        setStatus('converting gif…');
+        await api.exportGif(mp4Path, outPath);
+      }
+      setStatus(`exported ${outPath.split('/').pop()}`);
+      void api.exportReveal(outPath);
     } catch (e) {
-      failed = e;
+      if (encoding) await api.exportAbort().catch(() => {});
+      setStatus(`export failed: ${ipcErrorMessage(e)}`);
+    } finally {
+      setExporting(false);
     }
-    try {
-      await api.exportEnd(); // always ends the ffmpeg pipe, even on failure
-    } catch {
-      // ffmpeg already exited or never started — nothing to end
-    }
-    setExporting(false);
-    if (failed !== null) {
-      setStatus(`export failed: ${failed instanceof Error ? failed.message : String(failed)}`);
-      return;
-    }
-    if (cancelExport.current) {
-      setStatus('export cancelled');
-      return;
-    }
-    if (proj.captions.length) {
-      const srtPath = outPath.replace(/\.mp4$/, '.srt');
-      await api.writeText(srtPath, toSrt(proj.captions));
-    }
-    if (proj.chapters.length) {
-      const chPath = outPath.replace(/\.mp4$/, '.chapters.txt');
-      await api.writeText(chPath, toChapterList(proj.chapters) + '\n');
-    }
-    if (wantGif) {
-      const gifPath = outPath.replace(/\.mp4$/, '.gif');
-      setStatus('converting gif…');
-      await api.exportGif(outPath, gifPath);
-      setStatus(`exported → ${outPath} + gif`);
-    } else {
-      setStatus(`exported → ${outPath}`);
-    }
-    setExporting(false);
   };
 
   /** Output-time range of each clip for the timeline strip. */
@@ -425,18 +551,29 @@ export function Editor({
     });
   }, [timeline]);
 
+  /** Replace the clip list. Captions, text overlays, chapters, manual zooms
+   *  and the playhead move with their footage. */
+  const editClips = (clips: Clip[]) => {
+    const oldTl = timeline;
+    const newTl = new Timeline(proj.recording.duration, clips);
+    setProj((p) => remapProject(p, oldTl, newTl));
+    movePlayhead(
+      remapTime(playheadRef.current, oldTl, newTl) ?? Math.min(playheadRef.current, newTl.outputDuration),
+    );
+  };
+
   const splitAtPlayhead = () => {
     const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
     if (!tl.split(playhead)) {
       setStatus('cannot split here');
       return;
     }
-    setProj((p) => ({ ...p, clips: tl.clips }));
+    editClips(tl.clips);
   };
 
   const deleteSelectedClip = () => {
     if (!selectedClip || proj.clips.length <= 1) return;
-    setProj((p) => ({ ...p, clips: p.clips.filter((c) => c.id !== selectedClip) }));
+    editClips(proj.clips.filter((c) => c.id !== selectedClip));
     setSelectedClip(null);
   };
 
@@ -447,9 +584,8 @@ export function Editor({
       setStatus('playhead is outside a kept clip');
       return;
     }
-    setProj((p) => ({
-      ...p,
-      clips: p.clips.map((c) => {
+    editClips(
+      proj.clips.map((c) => {
         if (c.id !== selectedClip) return c;
         if (edge === 'start' && src > c.sourceStart && src < c.sourceEnd) {
           return { ...c, sourceStart: src };
@@ -459,28 +595,23 @@ export function Editor({
         }
         return c;
       }),
-    }));
+    );
   };
 
   const setClipSpeed = (speed: number) => {
     if (!selectedClip) return;
-    setProj((p) => ({
-      ...p,
-      clips: p.clips.map((c) => (c.id === selectedClip ? { ...c, speed } : c)),
-    }));
+    editClips(proj.clips.map((c) => (c.id === selectedClip ? { ...c, speed } : c)));
   };
 
   const dragFrom = useRef<number | null>(null);
 
   /** Remove source-time ranges from the timeline; returns seconds removed.
-   *  Captions/words are remapped through the cut so the transcript stays
-   *  aligned to the new output timeline. */
+   *  Captions, words and the rest follow the cut via `editClips`. */
   const cutSourceRanges = (ranges: { start: number; end: number }[]) => {
-    const oldTl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
     const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
     const removed = tl.cutRanges(ranges);
     if (removed > 0) {
-      setProj((p) => ({ ...p, clips: tl.clips, captions: remapCues(p.captions, oldTl, tl, ranges) }));
+      editClips(tl.clips);
       setWordSel(null);
     }
     return removed;
@@ -567,15 +698,6 @@ export function Editor({
     setStatus(removed ? `cut “${sel.map((w) => w.text).join(' ')}” (${removed.toFixed(1)}s)` : 'nothing cut');
   };
 
-  const seekOutput = (outT: number) => {
-    const srcT = timeline.sourceTime(outT);
-    if (srcT !== null) {
-      if (videoRef.current) videoRef.current.currentTime = srcT;
-      if (camRef.current) camRef.current.currentTime = srcT;
-    }
-    setPlayhead(outT);
-  };
-
   const cutCue = (cue: { start: number; end: number }) => {
     const s = timeline.sourceTime(cue.start);
     const e = timeline.sourceTime(cue.end);
@@ -588,20 +710,16 @@ export function Editor({
   };
 
   const undo = () => {
-    const h = historyRef.current;
-    const prev = h.undo.pop();
+    const prev = historyRef.current.undo(projRef.current);
     if (prev) {
-      h.redo.push(projRef.current);
       applyingHistory.current = true;
       setProj(prev);
     }
   };
 
   const redo = () => {
-    const h = historyRef.current;
-    const next = h.redo.pop();
+    const next = historyRef.current.redo(projRef.current);
     if (next) {
-      h.undo.push(projRef.current);
       applyingHistory.current = true;
       setProj(next);
     }
@@ -610,16 +728,17 @@ export function Editor({
   // Keyboard shortcuts: space = play/pause, S = split, ⌘Z = undo, ⌘⇧Z = redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
+      if (pendingLeave) {
+        if (e.key === 'Escape') void answerLeave('cancel');
         return;
       }
+      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      // ⌘Z / ⇧⌘Z come from the app menu (Edit > Undo/Redo) so one press is one undo.
+      // ⌘S, ⌘⌫ and friends belong to the menu, not to split and delete.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.code === 'Space') {
         e.preventDefault();
-        videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause();
+        togglePlay();
       } else if (e.key === 's' || e.key === 'S') {
         splitAtPlayhead();
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
@@ -635,6 +754,38 @@ export function Editor({
     return () => window.removeEventListener('keydown', onKey);
   });
 
+  // App-menu commands arrive as `openscreen:menu` events.
+  useEffect(() => {
+    const onMenu = (e: Event) => {
+      if (pendingLeave) return;
+      switch ((e as CustomEvent<string>).detail) {
+        case 'newRecording':
+          return leave(onNewRecording);
+        case 'openProject':
+          return leave(onOpenProject);
+        case 'save':
+          return void saveProject();
+        case 'exportMp4':
+          if (!exporting) void exportVideo();
+          return;
+        case 'exportGif':
+          if (!exporting) void exportVideo(true);
+          return;
+        case 'undo':
+        case 'redo':
+          return menuHistory((e as CustomEvent<string>).detail as 'undo' | 'redo');
+        case 'playPause':
+          if (!exporting) togglePlay();
+          return;
+        case 'split':
+          if (!exporting) splitAtPlayhead();
+          return;
+      }
+    };
+    window.addEventListener('openscreen:menu', onMenu);
+    return () => window.removeEventListener('openscreen:menu', onMenu);
+  });
+
   /**
    * Frame-diff the recording for sustained local motion (taps/swipes on an
    * iPhone/iPad capture, where no cursor events exist). Sustained-motion
@@ -642,7 +793,9 @@ export function Editor({
    */
   const detectMotion = async () => {
     const video = videoRef.current;
-    if (!video || !duration) return;
+    // WebM from MediaRecorder can report an Infinity duration; never loop on it.
+    const total = mediaDuration(duration, proj.recording.duration);
+    if (!video || !total) return;
     const origT = video.currentTime;
     video.pause();
     setStatus('detecting motion…');
@@ -658,7 +811,8 @@ export function Editor({
       let prev: ImageData | null = null;
       const step = 0.4;
       const area = W2 * H2;
-      for (let t = step; t < duration; t += step) {
+      for (let t = step; t < total; t += step) {
+        if (disposed.current) return;
         await seekVideo(video, t);
         dctx.drawImage(video, 0, 0, W2, H2);
         const img = dctx.getImageData(0, 0, W2, H2);
@@ -684,13 +838,13 @@ export function Editor({
           }
         }
         prev = img;
-        setStatus(`detecting motion ${Math.round((t / duration) * 100)}%`);
+        setStatus(`detecting motion ${Math.round((t / total) * 100)}%`);
       }
       const ev = dwellFocusEvents(samples, { radius: 0.06, minDur: 0.6, debounce: 2 });
-      setMotionEv(ev);
+      setZoom({ motionEvents: ev });
       setStatus(ev.length ? `${ev.length} motion focus region(s)` : 'no sustained motion detected');
     } finally {
-      await seekVideo(video, origT);
+      if (!disposed.current) await seekVideo(video, origT);
     }
   };
 
@@ -744,8 +898,47 @@ export function Editor({
   };
 
   const saveProject = async () => {
-    await api.saveProject(bundleDir, proj);
-    setStatus('project saved');
+    try {
+      await persist(proj);
+      setStatus('project saved');
+    } catch (e) {
+      setStatus(`save failed: ${e}`);
+    }
+  };
+
+  /** Run `go` (which unmounts this editor), first asking about unsaved
+   *  changes. An export in flight has to finish or be cancelled first. */
+  const leave = (go: () => void) => {
+    if (exporting) {
+      setStatus('cancel the export before leaving');
+      return;
+    }
+    if (saveTracker.current.isDirty(projRef.current)) setPendingLeave(() => go);
+    else go();
+  };
+
+  const answerLeave = async (choice: 'save' | 'discard' | 'cancel') => {
+    const go = pendingLeave;
+    setPendingLeave(null);
+    if (!go || choice === 'cancel') return;
+    if (choice === 'save') {
+      try {
+        await persist(projRef.current);
+      } catch (e) {
+        setStatus(`save failed: ${e}`);
+        return;
+      }
+    }
+    go();
+  };
+
+  /** Undo/redo from the menu: a focused text field gets the native edit,
+   *  anything else (sliders, switches, the canvas) the project history. */
+  const menuHistory = (dir: 'undo' | 'redo') => {
+    if (isTextEntry(document.activeElement as HTMLInputElement | null)) {
+      document.execCommand(dir);
+    } else if (dir === 'undo') undo();
+    else redo();
   };
 
   // Repaint the waveform whenever peaks or the cut layout changes.
@@ -864,13 +1057,16 @@ export function Editor({
             title="Use desktop wallpaper"
             className="tile"
             onClick={async () => {
-              const path = await api.wallpaperPath();
-              if (path) {
-                setProj((p) => ({
-                  ...p,
-                  style: { ...p.style, background: { kind: 'imageFile', path } },
-                }));
-              } else setStatus('wallpaper unavailable');
+              const noWallpaper = "Couldn't read your wallpaper, choose an image instead";
+              const path = await api.wallpaperPath().catch(() => null);
+              if (!path || !(await backgroundReady(path))) {
+                setStatus(noWallpaper);
+                return;
+              }
+              setProj((p) => ({
+                ...p,
+                style: { ...p.style, background: { kind: 'imageFile', path } },
+              }));
             }}
           >
             <span className="tile-swatch tile-text">Desktop</span>
@@ -943,7 +1139,7 @@ export function Editor({
           label="Auto-focus"
           hint="Zoom toward each click"
           checked={autofocusOn}
-          onChange={setAutofocusOn}
+          onChange={(v) => setZoom({ autofocus: v })}
         />
         {autofocusOn && (
           <Switch
@@ -951,7 +1147,7 @@ export function Editor({
             hint="Also zoom where the cursor lingers"
             title="Also zoom where the cursor lingers, not just clicks"
             checked={dwellOn}
-            onChange={setDwellOn}
+            onChange={(v) => setZoom({ dwell: v })}
           />
         )}
         {autofocusOn && (
@@ -963,7 +1159,7 @@ export function Editor({
             step={0.1}
             value={zoomDepth}
             format={(v) => `${v.toFixed(1)}×`}
-            onChange={setZoomDepth}
+            onChange={(v) => setZoom({ depth: v })}
           />
         )}
         {autofocusOn && (
@@ -1083,14 +1279,14 @@ export function Editor({
         hint="Mix a click sound at each click"
         title="Mix a click sound at each click"
         checked={clickSfx}
-        onChange={setClickSfx}
+        onChange={(v) => setAudio({ clickSounds: v })}
       />
       <Switch
         label="Voice cleanup"
         hint="Denoise and level the voice on export, locally with ffmpeg"
         title="Denoise + level the voice track on export (highpass, afftdn, compressor, limiter — all local ffmpeg)"
         checked={voiceCleanup}
-        onChange={setVoiceCleanup}
+        onChange={(v) => setAudio({ voiceCleanup: v })}
       />
     </Section>
   );
@@ -1435,14 +1631,26 @@ export function Editor({
         className="hidden"
         preload="auto"
         muted={exporting}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-        onLoadedData={(e) => renderAt(e.currentTarget.currentTime)}
+        onLoadedMetadata={(e) => setDuration(mediaDuration(e.currentTarget.duration, proj.recording.duration))}
+        onDurationChange={(e) => setDuration(mediaDuration(e.currentTarget.duration, proj.recording.duration))}
+        onLoadedData={() => renderAt(playheadRef.current)}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
       />
       {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
 
       <header className="topbar ed-top">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="back-btn"
+          title="Back to the source picker (⌘N)"
+          disabled={exporting}
+          onClick={() => leave(onNewRecording)}
+        >
+          {Icon.chevronLeft(12)}
+          New recording
+        </Button>
         <span className="doc-title" title={bundleDir}>{bundleName}</span>
         <div className="history no-drag">
           <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
@@ -1533,7 +1741,7 @@ export function Editor({
               onMouseDown={onCanvasDown}
               onMouseMove={onCanvasMove}
               onMouseUp={onCanvasUp}
-              onMouseLeave={onCanvasUp}
+              onMouseLeave={onCanvasLeave}
             />
           </div>
         </div>
@@ -1581,10 +1789,7 @@ export function Editor({
               size="sm"
               variant="ghost"
               className={cropMode ? 'is-on' : ''}
-              onClick={() => {
-                setCropMode((c) => !c);
-                if (!cropMode) renderAt(videoRef.current?.currentTime ?? 0);
-              }}
+              onClick={() => setCropMode((c) => !c)}
             >
               {cropMode ? 'Drag on preview…' : 'Crop'}
             </Button>
@@ -1651,7 +1856,7 @@ export function Editor({
                     if (from === null || to < 0 || from === to) return;
                     const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
                     tl.reorder(from, to);
-                    setProj((p) => ({ ...p, clips: tl.clips }));
+                    editClips(tl.clips);
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1683,7 +1888,7 @@ export function Editor({
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    setManualSegments((m) => m.filter((x) => x !== s));
+                    setProj((p) => ({ ...p, manualZooms: p.manualZooms.filter((x) => x !== s) }));
                   }}
                   style={{
                     left: `${(s.inStart / (timeline.outputDuration || duration || 1)) * 100}%`,
@@ -1731,6 +1936,31 @@ export function Editor({
           />
         </div>
       </footer>
+
+      {pendingLeave && (
+        <div className="modal-scrim" onMouseDown={() => void answerLeave('cancel')}>
+          <div
+            className="modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="leave-title"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 id="leave-title">Save changes to {bundleName}?</h2>
+            <p>Your latest edits aren't saved yet. If you don't save, they're lost.</p>
+            <div className="modal-actions">
+              <Button variant="ghost" onClick={() => void answerLeave('discard')}>
+                Don't save
+              </Button>
+              <div className="spacer" />
+              <Button onClick={() => void answerLeave('cancel')}>Cancel</Button>
+              <Button variant="primary" autoFocus onClick={() => void answerLeave('save')}>
+                Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

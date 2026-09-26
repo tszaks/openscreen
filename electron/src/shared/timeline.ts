@@ -124,3 +124,14 @@ export class Timeline {
     return true;
   }
 }
+
+/** Source-time samples (clicks, dwells, touches) moved onto the output
+ *  timeline, sorted; samples in removed footage are dropped. */
+export function toOutputTime<T extends { time: number }>(samples: T[], tl: Timeline): T[] {
+  return samples
+    .flatMap((s) => {
+      const t = tl.outputTime(s.time);
+      return t === null ? [] : [{ ...s, time: t }];
+    })
+    .sort((a, b) => a.time - b.time);
+}

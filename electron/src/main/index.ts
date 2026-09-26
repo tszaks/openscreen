@@ -1,13 +1,127 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen } from 'electron';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, screen, shell, systemPreferences } from 'electron';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createCursorTracker, type CursorTracker } from './cursor';
-import { disposeIosHelper, listIosDevices, startIosRecording, stopIosRecording } from './ios';
-import type { CursorSample, KeystrokeSample, Project } from '../shared/types';
+import { startFfmpegJob, type FfmpegJob } from './ffmpegJob';
+import { disposeIosHelper, listIosDevices, onIosEnded, startIosRecording, stopIosRecording } from './ios';
+import { buildAppMenu } from './menu';
+import type { MenuPhase } from '../shared/menu';
+import { normalizeProject, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
+import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
+import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
+import {
+  alignToVideoStart,
+  cursorModeFor,
+  findWhisperCli,
+  correctDuration,
+  parseFfmpegDuration,
+  parseFfmpegProgressTime,
+  parseFfmpegVideoSize,
+  partialPath,
+  withProbedDuration,
+} from '../shared/recording';
+
+// Dev runs take the name from package.json ("openscreen"); the menu wants the product name.
+app.setName('OpenScreen');
 
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
+let exportJob: FfmpegJob | null = null;
+let trackerStartedAtMs = 0;
+// The in-flight iPhone take's bundle, so a failed take can be salvaged or removed.
+let iosBundleDir: string | null = null;
+
+// What the renderer is in the middle of ('recording', 'saving', …), so
+// closing or quitting can ask before throwing it away.
+let rendererBusy: string | null = null;
+let quitConfirmed = false;
+// export:begin sets exportJob; export:end/abort clear it.
+const exportRunning = () => exportJob !== null;
+const busyReason = () => rendererBusy ?? (exportRunning() ? 'exporting' : null);
+
+/** True when nothing is running, or the user chose to throw it away. */
+const confirmDiscard = (action: 'close' | 'quit') => {
+  const reason = busyReason();
+  if (!reason) return true;
+  const what =
+    reason === 'exporting'
+      ? ['An export is still running.', 'it stops the export and leaves an unfinished file']
+      : reason === 'saving'
+        ? ['A recording is still being saved.', 'the recording may be lost']
+        : ['A recording is in progress.', 'the recording is lost'];
+  const verb = action === 'quit' ? 'Quit' : 'Close';
+  const opts = {
+    type: 'warning' as const,
+    buttons: ['Keep Working', `${verb} Anyway`],
+    defaultId: 0,
+    cancelId: 0,
+    message: what[0],
+    detail: `If you ${verb.toLowerCase()} now, ${what[1]}.`,
+  };
+  const choice = win ? dialog.showMessageBoxSync(win, opts) : dialog.showMessageBoxSync(opts);
+  return choice === 1;
+};
+
+/** Stop cursor tracking (and its input hook) if a take is left running. */
+const stopTracker = () => {
+  tracker?.stop();
+  tracker = null;
+};
+
+/** ffmpeg's banner for a file (it exits non-zero with no output; that's fine). */
+const probe = async (file: string) => {
+  const { execFile } = await import('node:child_process');
+  const bin = await ffmpegPath();
+  return new Promise<string>((resolve) => execFile(bin, ['-hide_banner', '-i', file], (_e, _so, se) => resolve(se ?? '')));
+};
+
+/**
+ * A file's real duration: from its header, or, when the header has none
+ * (MediaRecorder WebM), by reading every packet without decoding.
+ */
+const probeDuration = async (file: string): Promise<number | null> => {
+  const fromHeader = parseFfmpegDuration(await probe(file));
+  if (fromHeader !== null) return fromHeader;
+  const { execFile } = await import('node:child_process');
+  const bin = await ffmpegPath();
+  const stderr = await new Promise<string>((resolve) =>
+    execFile(bin, ['-hide_banner', '-i', file, '-map', '0:v:0', '-c', 'copy', '-f', 'null', '-'], (_e, _so, se) => resolve(se ?? '')),
+  );
+  return parseFfmpegProgressTime(stderr);
+};
+
+/**
+ * MediaRecorder WebM has no duration and no cues. Remux it (stream copy, so
+ * it is quick and lossless) so players get a real duration and fast seeks.
+ * Returns the probed duration; on any failure the original file is kept.
+ */
+const finalizeWebm = async (file: string): Promise<number | null> => {
+  const { execFile } = await import('node:child_process');
+  const bin = await ffmpegPath();
+  const raw = file.replace(/\.webm$/, '.raw.webm');
+  try {
+    renameSync(file, raw);
+    await new Promise<void>((resolve, reject) =>
+      execFile(bin, ['-y', '-v', 'error', '-i', raw, '-c', 'copy', file], (e) => (e ? reject(e) : resolve())),
+    );
+    const d = parseFfmpegDuration(await probe(file));
+    if (d === null) throw new Error('remuxed file has no duration');
+    rmSync(raw, { force: true });
+    return d;
+  } catch (e) {
+    console.error('webm finalize failed, keeping the original:', e);
+    if (existsSync(raw)) renameSync(raw, file);
+    return probeDuration(file);
+  }
+};
+
+const fileUrl = (p: string) => pathToFileURL(p).href;
+
+// What the renderer is showing, so the menu enables only what applies.
+let menuState: { phase: MenuPhase; bundleDir?: string } = { phase: 'picker' };
+const refreshMenu = () => Menu.setApplicationMenu(buildAppMenu(() => win, menuState));
 
 const recordingsRoot = () =>
   join(app.getPath('videos'), 'OpenScreen');
@@ -77,21 +191,75 @@ function createWindow() {
     },
   });
   win.loadFile(join(__dirname, '../renderer/index.html'));
+  win.on('close', (e) => {
+    if (!quitConfirmed && !confirmDiscard('close')) e.preventDefault();
+  });
+  // The take lived in this renderer: stop tracking and any iPhone take.
+  const abandonTake = () => {
+    rendererBusy = null;
+    stopTracker();
+    if (iosBundleDir) {
+      const dir = iosBundleDir;
+      iosBundleDir = null;
+      stopIosRecording()
+        .catch(() => {})
+        .finally(() => rmSync(dir, { recursive: true, force: true }));
+    }
+  };
+  win.webContents.on('render-process-gone', abandonTake);
+  win.on('closed', () => {
+    abandonTake();
+    win = null;
+    menuState = { phase: 'picker' };
+    refreshMenu();
+  });
 }
 
 app.whenReady().then(() => {
+  refreshMenu();
+  ipcMain.on('menu:phase', (_e, next: { phase: MenuPhase; bundleDir?: string }) => {
+    menuState = { phase: next.phase, bundleDir: next.bundleDir };
+    refreshMenu();
+  });
+
   // Permission status so the UI can warn before a doomed recording:
   // screen capture needs Screen Recording; click/keystroke tracking needs
-  // Accessibility (unprobeable — inferred from whether uiohook loads).
-  ipcMain.handle('permissions:status', async () => {
-    const { systemPreferences } = await import('electron');
-    const screen = systemPreferences.getMediaAccessStatus('screen'); // 'granted' | 'denied' | 'not-determined' | 'restricted'
-    let hooks = false;
+  // Accessibility (and the uiohook module to load).
+  const accessibilityGranted = () =>
+    process.platform !== 'darwin' || systemPreferences.isTrustedAccessibilityClient(false);
+  const hooksAvailable = async () => {
+    if (!accessibilityGranted()) return false;
     try {
       await import('uiohook-napi');
-      hooks = true;
-    } catch {}
-    return { screen, hooks };
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  ipcMain.handle('permissions:status', async () => {
+    const screen = systemPreferences.getMediaAccessStatus('screen'); // 'granted' | 'denied' | 'not-determined' | 'restricted'
+    return { screen, hooks: await hooksAvailable() };
+  });
+
+  // Shows macOS's Accessibility prompt (once; after that it only reports).
+  ipcMain.handle('permissions:requestAccessibility', () =>
+    process.platform !== 'darwin' || systemPreferences.isTrustedAccessibilityClient(true),
+  );
+
+  // Asks from the app itself so the prompt names OpenScreen. Camera labels
+  // stay empty in the renderer until this is granted.
+  ipcMain.handle('permissions:requestCamera', async () =>
+    process.platform !== 'darwin' || systemPreferences.askForMediaAccess('camera'),
+  );
+
+  // macOS only applies a new Screen Recording grant after a relaunch.
+  ipcMain.handle('app:relaunch', () => {
+    app.relaunch();
+    app.quit();
+  });
+
+  ipcMain.on('app:busy', (_e, reason: string | null) => {
+    rendererBusy = reason || null;
   });
 
   ipcMain.handle('permissions:openScreenSettings', async () => {
@@ -112,31 +280,62 @@ app.whenReady().then(() => {
       id: s.id,
       name: s.name,
       kind: s.id.startsWith('screen') ? 'screen' : 'window',
+      displayId: s.display_id || undefined,
       thumbnailDataUrl: s.thumbnail.toDataURL(),
     }));
   });
 
-  ipcMain.handle('recording:start', async (_e, _sourceId: string) => {
-    tracker = createCursorTracker(120);
-    await tracker.start();
-    return true;
+  // Starts cursor/click tracking for a take. The renderer starts its
+  // recorders after this resolves and reports the video's start time on
+  // stop, so the samples can be shifted onto the video's clock.
+  // Whether a capture source still exists. macOS keeps a closed window's
+  // capture track "live" (it just stops sending frames), so the renderer
+  // polls this during a take to notice a window or display going away.
+  ipcMain.handle('sources:alive', async (_e, sourceId: string) => {
+    const types: ('screen' | 'window')[] = [sourceId.startsWith('screen:') ? 'screen' : 'window'];
+    try {
+      const sources = await desktopCapturer.getSources({ types, thumbnailSize: { width: 0, height: 0 } });
+      return sources.some((s) => s.id === sourceId);
+    } catch {
+      return true; // can't tell; don't end a take on a failed query
+    }
   });
 
-  ipcMain.handle('recording:stop', async () => {
+  ipcMain.handle('recording:start', async (_e, args: { sourceId: string; displayId?: string }) => {
+    stopTracker();
+    tracker = createCursorTracker({
+      hz: 120,
+      mode: cursorModeFor(args.sourceId),
+      displayId: args.displayId,
+      hooksAllowed: await hooksAvailable(),
+    });
+    const started = await tracker.start();
+    trackerStartedAtMs = started.startedAtMs;
+    return started;
+  });
+
+  ipcMain.handle('recording:stop', async (_e, args?: { videoStartedAtMs?: number }) => {
     const out = tracker?.stop() ?? { samples: [], keys: [] };
     tracker = null;
-    return out;
+    if (!args?.videoStartedAtMs || !trackerStartedAtMs) return out;
+    const offset = (args.videoStartedAtMs - trackerStartedAtMs) / 1000;
+    return { samples: alignToVideoStart(out.samples, offset), keys: alignToVideoStart(out.keys, offset) };
   });
 
   // Save a finished recording: webm blob + cursor track + project.json.
+  // The duration in project.json comes from the file itself, not a timer.
   ipcMain.handle(
     'bundle:save',
     async (_e, args: { videoBytes: ArrayBuffer; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) => {
       const dir = newBundleDir();
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'screen.webm'), Buffer.from(args.videoBytes));
-      writeBundleSidecars(dir, args);
-      return dir;
+      const video = join(dir, 'screen.webm');
+      writeFileSync(video, Buffer.from(args.videoBytes));
+      const project = withProbedDuration(args.project, await finalizeWebm(video));
+      writeBundleSidecars(dir, { ...args, project });
+      const cam = join(dir, 'cam.webm');
+      if (existsSync(cam)) await finalizeWebm(cam);
+      return { dir, project, videoUrl: fileUrl(video), camUrl: existsSync(cam) ? fileUrl(cam) : undefined };
     },
   );
 
@@ -148,8 +347,16 @@ app.whenReady().then(() => {
       if (!isInRecordingsRoot(args.dir)) throw new Error('bundle is outside the recordings folder');
       const video = join(args.dir, args.project.recording.screenVideoFile);
       if (!existsSync(video)) throw new Error(`recording is missing ${args.project.recording.screenVideoFile}`);
+      args = { ...args, project: withProbedDuration(args.project, await probeDuration(video)) };
       writeBundleSidecars(args.dir, args);
-      return args.dir;
+      const cam = join(args.dir, 'cam.webm');
+      if (existsSync(cam)) await finalizeWebm(cam);
+      return {
+        dir: args.dir,
+        project: args.project,
+        videoUrl: fileUrl(video),
+        camUrl: existsSync(cam) ? fileUrl(cam) : undefined,
+      };
     },
   );
 
@@ -167,6 +374,7 @@ app.whenReady().then(() => {
     mkdirSync(dir, { recursive: true });
     try {
       const size = await startIosRecording(deviceId, join(dir, 'screen.mov'));
+      iosBundleDir = dir;
       return { bundleDir: dir, ...size };
     } catch (e) {
       rmSync(dir, { recursive: true, force: true });
@@ -174,7 +382,38 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('ios:stop', () => stopIosRecording());
+  // A take that failed keeps its screen.mov if the file plays (it has a
+  // duration); otherwise the bundle is removed so no orphan is left.
+  ipcMain.handle('ios:stop', async () => {
+    const dir = iosBundleDir;
+    iosBundleDir = null;
+    try {
+      return await stopIosRecording();
+    } catch (e) {
+      const mov = dir ? join(dir, 'screen.mov') : null;
+      if (mov && existsSync(mov)) {
+        const banner = await probe(mov);
+        const duration = parseFfmpegDuration(banner);
+        if (duration !== null) {
+          const size = parseFfmpegVideoSize(banner);
+          return { path: mov, duration, ...(size ?? {}), partial: true };
+        }
+      }
+      if (dir) rmSync(dir, { recursive: true, force: true });
+      throw e;
+    }
+  });
+
+  // Push an early end (cable pulled, helper died) so the renderer stops now.
+  onIosEnded((ended) => {
+    win?.webContents.send('ios:ended', 'err' in ended ? { message: ended.err } : { message: null });
+  });
+
+  // Remove a take's bundle that could not be saved.
+  ipcMain.handle('bundle:discard', (_e, dir: string) => {
+    if (isInRecordingsRoot(dir) && !existsSync(join(dir, 'project.json'))) rmSync(dir, { recursive: true, force: true });
+    return true;
+  });
 
   // Persist editor changes back into an existing bundle.
   ipcMain.handle('bundle:saveProject', async (_e, args: { dir: string; project: Project }) => {
@@ -196,21 +435,53 @@ app.whenReady().then(() => {
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
     const dir = picked.filePaths[0];
-    const project = JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'));
-    project.annotations ??= [];
-    project.captions ??= [];
-    project.chapters ??= [];
-    if (project.style) project.style.deviceFrame ??= 'none';
-    const cursor = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8')).samples ?? [];
+    if (!existsSync(join(dir, 'project.json'))) {
+      throw new Error('That folder is not an OpenScreen recording. Pick a folder ending in .openscreen.');
+    }
+    let project: Project;
+    try {
+      project = JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'));
+    } catch {
+      throw new Error('This recording\'s project.json is damaged and cannot be opened.');
+    }
+    project = normalizeProject(project);
+    let cursor: unknown[] = [];
+    try {
+      cursor = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8')).samples ?? [];
+    } catch {}
     let keys: unknown[] = [];
     try {
       keys = JSON.parse(readFileSync(join(dir, 'keystrokes.json'), 'utf8')).keys ?? [];
     } catch {}
     const videoPath = join(dir, project.recording?.screenVideoFile ?? 'screen.webm');
+    if (!existsSync(videoPath)) throw new Error('This recording is missing its video file.');
+    // Older takes stored a wall-clock duration. Correct it from the file and
+    // write it back here, before the editor loads it, so the fix isn't an
+    // unsaved change.
+    if (project.recording) {
+      const corrected = correctDuration(project, await probeDuration(videoPath));
+      if (corrected !== project) {
+        project = corrected;
+        try {
+          writeFileSync(join(dir, 'project.json'), JSON.stringify(project, null, 2));
+        } catch (e) {
+          console.error('could not write corrected duration:', e);
+        }
+      }
+    }
     const camPath = project.recording?.cameraVideoFile
       ? join(dir, project.recording.cameraVideoFile)
       : undefined;
-    return { bundleDir: dir, project, cursor, keys, videoPath, camPath };
+    return {
+      bundleDir: dir,
+      project,
+      cursor,
+      keys,
+      videoPath,
+      camPath,
+      videoUrl: fileUrl(videoPath),
+      camUrl: camPath ? fileUrl(camPath) : undefined,
+    };
   });
 
   // Pick an image file for the background.
@@ -218,20 +489,66 @@ app.whenReady().then(() => {
     const picked = await dialog.showOpenDialog(win!, {
       title: 'Background image',
       properties: ['openFile'],
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'heif'] }],
     });
     return picked.canceled ? null : picked.filePaths[0];
   });
 
-  // Current macOS desktop wallpaper path (for the 'wallpaper' background).
+  // Where converted backgrounds live: a JPEG per source file, keyed by path +
+  // mtime so an edited file converts again.
+  const backgroundCachePath = async (source: string) => {
+    const { statSync } = await import('node:fs');
+    const { createHash } = await import('node:crypto');
+    const dir = join(app.getPath('userData'), 'backgrounds');
+    mkdirSync(dir, { recursive: true });
+    const key = createHash('sha1').update(`${source}:${statSync(source).mtimeMs}`).digest('hex');
+    return join(dir, `${key}.jpg`);
+  };
+
+  // An image file for the current macOS wallpaper, or null when there isn't
+  // one to use. NSWorkspace needs no Automation permission (Finder does).
+  // Aerials and videos become a still frame; HEIC is converted when drawn.
   ipcMain.handle('background:wallpaper', async () => {
     if (process.platform !== 'darwin') return null;
     const { execFile } = await import('node:child_process');
-    return new Promise<string | null>((resolve) => {
-      execFile(
-        'osascript',
-        ['-e', 'tell application "Finder" to get POSIX path of (get desktop picture as alias)'],
-        (_err, stdout) => resolve(stdout.trim() || null),
+    const { statSync } = await import('node:fs');
+    const found = await new Promise<{ path: string; video: string } | null>((resolve) =>
+      execFile('osascript', ['-l', 'JavaScript', '-e', WALLPAPER_JXA], (err, stdout) => {
+        try {
+          resolve(err ? null : JSON.parse(stdout));
+        } catch {
+          resolve(null);
+        }
+      }),
+    );
+    if (!found) return null;
+    const isDirectory = !!found.path && existsSync(found.path) && statSync(found.path).isDirectory();
+    const plan = planWallpaper({ ...found, isDirectory });
+    if (plan.kind === 'image') return existsSync(plan.path) ? plan.path : null;
+    if (plan.kind === 'none' || !existsSync(plan.video)) return null;
+    const out = await backgroundCachePath(plan.video);
+    if (existsSync(out)) return out;
+    const bin = await ffmpegPath();
+    // A few seconds in: Aerials can open on a fade.
+    const grab = (at: string) =>
+      new Promise<boolean>((resolve) =>
+        execFile(bin, ['-y', '-ss', at, '-i', plan.video, '-frames:v', '1', '-q:v', '2', out], (err) =>
+          resolve(!err && existsSync(out)),
+        ),
+      );
+    return (await grab('3')) || (await grab('0')) ? out : null;
+  });
+
+  // Chromium can't decode HEIC (the usual macOS wallpaper format): hand the
+  // renderer a JPEG copy made with sips.
+  ipcMain.handle('background:prepare', async (_e, path: string) => {
+    if (!/\.hei[cf]$/i.test(path)) return path;
+    const { execFile } = await import('node:child_process');
+    const out = await backgroundCachePath(path);
+    if (existsSync(out)) return out;
+    return new Promise<string | null>((done) => {
+      execFile('sips', ['-s', 'format', 'jpeg', path, '--out', out], (err) =>
+        done(err || !existsSync(out) ? null : out),
       );
     });
   });
@@ -240,46 +557,50 @@ app.whenReady().then(() => {
   // The ggml model auto-downloads on first use (~148MB, into ~/models).
   ipcMain.handle('captions:transcribe', async (_e, args: { dir: string; videoFile: string }) => {
     const { execFile } = await import('node:child_process');
-    const { existsSync, readFileSync } = await import('node:fs');
-    const wav = await extractWav(args.dir, args.videoFile);
-    const jsonOut = join(args.dir, 'transcript.json');
     const run = (cmd: string, argv: string[]) =>
       new Promise<void>((resolve, reject) =>
         execFile(cmd, argv, (e) => (e ? reject(e) : resolve())),
       );
 
+    // Check for whisper-cli first, so nothing is downloaded for a tool that
+    // isn't installed. A Finder-launched app's PATH misses Homebrew.
+    const cli = findWhisperCli(existsSync, (process.env.PATH ?? '').split(delimiter));
+    if (!cli) throw new Error('Transcription needs whisper-cpp. Install it with: brew install whisper-cpp');
+
+    // Download to .part and rename, so an interrupted download is retried
+    // instead of being mistaken for a model.
     const modelDir = join(app.getPath('home'), 'models');
     const model = process.env.OPENSCREEN_WHISPER_MODEL ?? join(modelDir, 'ggml-base.en.bin');
     if (!existsSync(model)) {
       mkdirSync(modelDir, { recursive: true });
+      const part = partialPath(model);
       try {
         await run('curl', [
-          '-fL', '--progress-bar',
+          '-fL', '--silent', '--show-error',
           'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin',
-          '-o', model,
+          '-o', part,
         ]);
+        renameSync(part, model);
       } catch {
-        throw new Error('whisper model missing and download failed (set OPENSCREEN_WHISPER_MODEL)');
+        rmSync(part, { force: true });
+        throw new Error('Could not download the speech model (148 MB). Check your connection and try again.');
       }
     }
 
-    // whisper-cli from PATH or the common homebrew install spot.
-    let cli = 'whisper-cli';
-    if (!existsSync('/opt/homebrew/bin/whisper-cli')) {
-      try {
-        await run('which', ['whisper-cli']);
-      } catch {
-        throw new Error('whisper-cli not found — brew install whisper-cpp');
-      }
-    } else {
-      cli = '/opt/homebrew/bin/whisper-cli';
-    }
+    const wav = await extractWav(args.dir, args.videoFile).catch(() => {
+      throw new Error('Could not read the audio from this recording.');
+    });
+    const jsonOut = join(args.dir, 'transcript.json');
     // -ojf adds per-token offsets (ms) so the editor gets word-level timing.
-    await run(cli, [
-      '-m', model, '-f', wav, '--output-json-full', '--output-file', jsonOut.replace(/\.json$/, ''),
-      '-t', '4',
-    ]);
-    if (!existsSync(jsonOut)) throw new Error('whisper produced no output');
+    try {
+      await run(cli, [
+        '-m', model, '-f', wav, '--output-json-full', '--output-file', jsonOut.replace(/\.json$/, ''),
+        '-t', '4',
+      ]);
+    } catch {
+      throw new Error('whisper-cli failed to transcribe this recording.');
+    }
+    if (!existsSync(jsonOut)) throw new Error('whisper-cli produced no transcript.');
     const parsed = JSON.parse(readFileSync(jsonOut, 'utf8'));
     // whisper-cli --output-json-full emits { transcription: [{ offsets: {from,to}, text, tokens }] }
     const segs = parsed.transcription ?? parsed.result ?? [];
@@ -361,10 +682,10 @@ app.whenReady().then(() => {
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
-  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean }) => {
-    const { spawn } = await import('node:child_process');
+  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number }) => {
+    await exportJob?.abort(); // a previous export that never ended
+    exportJob = null;
     const ffmpegBin = await ffmpegPath();
-    let audioArgs: string[] = [];
     // Confirm the source actually has an audio stream before filtering
     // (filter_complex on a missing stream aborts the whole encode).
     let hasAudio = false;
@@ -375,136 +696,84 @@ app.whenReady().then(() => {
       );
       hasAudio = /Stream #\d+:\d+.*Audio:/.test(probe);
     }
-
-    // Click sfx: a decaying-sine tick per output-time click, mixed into
-    // whatever program audio exists (or as the whole track when none).
-    const clicks = (args.clicks ?? []).filter((t) => t >= 0).slice(0, 300);
-    const sfxParts: string[] = [];
-    let sfxOut = '';
-    if (clicks.length) {
-      // short decaying sine ping per click
-      sfxParts.push(`[sfxin]asplit=${clicks.length}${clicks.map((_, i) => `[s${i}]`).join('')}`);
-      clicks.forEach((t, i) => {
-        const ms = Math.round(t * 1000);
-        sfxParts.push(`[s${i}]adelay=${ms}|${ms},volume=0.6[c${i}]`);
-      });
-      sfxParts.push(`${clicks.map((_, i) => `[c${i}]`).join('')}amix=inputs=${clicks.length}:normalize=0[sfx]`);
-      sfxOut = '[sfx]';
-    }
-
-    // Voice cleanup: rumble cut → FFT denoise → gentle compression → limiter.
-    const CLEANUP =
-      'highpass=f=70,afftdn=nf=-24,acompressor=threshold=-20dB:ratio=2.5:attack=10:release=150:makeup=3,alimiter=limit=0.891';
-    const cleanup = args.voiceCleanup === true;
-
-    const filters: string[] = [];
-    let programPad = ''; // labeled pad feeding program audio into amix, or ''
-    if (hasAudio && args.audioIn && args.audioClips?.length) {
-      const clips = args.audioClips;
-      filters.push(
-        ...clips.map(
-          (c, i) =>
-            `[1:a]atrim=start=${c.start.toFixed(3)}:end=${c.end.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${Math.min(100, Math.max(0.5, c.speed))}${cleanup ? ',' + CLEANUP : ''}[a${i}]`,
-        ),
-        `${clips.map((_, i) => `[a${i}]`).join('')}concat=n=${clips.length}:v=0:a=1[prog]`,
-      );
-      programPad = '[prog]';
-    } else if (hasAudio && args.audioIn && cleanup) {
-      filters.push(`[1:a]${CLEANUP}[prog]`);
-      programPad = '[prog]';
-    } else if (hasAudio && args.audioIn) {
-      programPad = '[1:a]'; // pad specifier works directly as a filter input
-    }
-
-    const lavfiIndex = args.audioIn ? 2 : 1;
-    const lavfiInputs: string[] = clicks.length
-      ? ['-f', 'lavfi', '-i', 'aevalsrc=0.5*sin(1900*2*PI*t)*exp(-t*70):s=44100:d=0.09']
-      : [];
-    const mapArgs: string[] = [];
-    if (clicks.length && programPad) {
-      filters.unshift(`[${lavfiIndex}:a]anull[sfxin]`, ...sfxParts);
-      filters.push(`${programPad}[sfx]amix=inputs=2:normalize=0[aout]`);
-      mapArgs.push('-map', '0:v', '-map', '[aout]');
-    } else if (clicks.length) {
-      filters.unshift(`[${lavfiIndex}:a]anull[sfxin]`, ...sfxParts);
-      mapArgs.push('-map', '0:v', '-map', '[sfx]');
-    } else if (hasAudio && args.audioClips?.length) {
-      mapArgs.push('-map', '0:v', '-map', '[prog]');
-    } else if (hasAudio && cleanup) {
-      mapArgs.push('-map', '0:v', '-map', '[prog]');
-    } else if (hasAudio) {
-      // identity timeline, no cleanup — passthrough, no filter_complex needed
-      audioArgs = ['-i', args.audioIn!, '-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-shortest'];
-    }
-
-    if (audioArgs.length === 0 && filters.length) {
-      audioArgs = [
-        ...(args.audioIn ? ['-i', args.audioIn] : []),
-        ...lavfiInputs,
-        '-filter_complex', filters.join(';'),
-        ...mapArgs,
-        '-c:a', 'aac', '-shortest',
-      ];
-    }
-    const argv = [
-      '-y',
-      '-f', 'rawvideo',
-      '-pix_fmt', 'rgba',
-      '-s', `${args.w}x${args.h}`,
-      '-r', String(args.fps),
-      '-i', 'pipe:0',
-      ...audioArgs,
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-crf', '18',
-      args.outPath,
-    ];
-    const ff = spawn(ffmpegBin, argv);
-    const errChunks: Buffer[] = [];
-    ff.stdin.on('error', (e) => console.error('ffmpeg stdin:', e));
-    ff.stderr.on('data', (d: Buffer) => {
-      errChunks.push(d);
-      if (errChunks.length > 30) errChunks.shift();
-    });
-    ff.on('error', (e) => console.error('ffmpeg spawn:', e));
-    ff.on('exit', (code) => {
-      if (code !== 0) console.error('ffmpeg exited', code, Buffer.concat(errChunks).toString());
-    });
-    (globalThis as any).__ffmpeg = ff;
+    mkdirSync(dirname(args.outPath), { recursive: true });
+    exportJob = await startFfmpegJob(ffmpegBin, buildExportArgs({ ...args, hasAudio }), args.outPath);
     return true;
   });
 
-  // Convert an exported mp4 into an optimized gif (two-pass palette).
+  // Where to save: a save dialog opened on ~/Movies/OpenScreen/<project>.<ext>.
+  // Resolves null when the user cancels.
+  ipcMain.handle('export:pickPath', async (_e, args: { bundleDir: string; kind: 'mp4' | 'gif' }) => {
+    const name = basename(args.bundleDir).replace(/\.openscreen$/, '') || 'OpenScreen export';
+    mkdirSync(recordingsRoot(), { recursive: true });
+    const picked = await dialog.showSaveDialog(win!, {
+      title: args.kind === 'gif' ? 'Export GIF' : 'Export MP4',
+      defaultPath: join(recordingsRoot(), `${name}.${args.kind}`),
+      filters: [args.kind === 'gif' ? { name: 'GIF', extensions: ['gif'] } : { name: 'MP4 video', extensions: ['mp4'] }],
+    });
+    if (picked.canceled || !picked.filePath) return null;
+    // ffmpeg picks the container from the extension, so make sure it has one.
+    return extname(picked.filePath).toLowerCase() === `.${args.kind}` ? picked.filePath : `${picked.filePath}.${args.kind}`;
+  });
+
+  ipcMain.handle('export:reveal', (_e, path: string) => {
+    shell.showItemInFolder(path);
+    return true;
+  });
+
+  // Convert an exported mp4 into an optimized gif (two-pass palette). The
+  // mp4 is an intermediate and is removed either way.
   ipcMain.handle('export:gif', async (_e, args: { inMp4: string; outGif: string }) => {
     const { execFile } = await import('node:child_process');
     const bin = await ffmpegPath();
-    await new Promise<void>((resolve, reject) =>
-      execFile(
-        bin,
-        [
-          '-y', '-i', args.inMp4,
-          '-vf', 'fps=12,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer',
-          '-loop', '0', args.outGif,
-        ],
-        (e) => (e ? reject(e) : resolve()),
-      ),
-    );
+    try {
+      await new Promise<void>((resolve, reject) =>
+        execFile(
+          bin,
+          [
+            '-hide_banner', '-loglevel', 'error',
+            '-y', '-i', args.inMp4,
+            '-vf', 'fps=12,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer',
+            '-loop', '0', args.outGif,
+          ],
+          (e, _so, se) => {
+            if (!e) return resolve();
+            const code = typeof e.code === 'number' ? e.code : null;
+            const error = typeof e.code === 'string' ? e : undefined;
+            reject(new Error(ffmpegFailure({ code, signal: e.signal ?? null, error }, se ?? '') ?? e.message));
+          },
+        ),
+      );
+    } catch (e) {
+      rmSync(args.outGif, { force: true });
+      throw e;
+    } finally {
+      rmSync(args.inMp4, { force: true });
+    }
     return true;
   });
 
   ipcMain.handle('export:frame', async (_e, bytes: ArrayBuffer) => {
-    const ff = (globalThis as any).__ffmpeg;
-    if (!ff) return false;
-    return ff.stdin.write(Buffer.from(bytes));
+    if (!exportJob) throw new Error('export not started');
+    await exportJob.write(new Uint8Array(bytes));
+    return true;
   });
 
+  // Finish the file. Throws with ffmpeg's reason when the encode failed.
   ipcMain.handle('export:end', async () => {
-    const ff = (globalThis as any).__ffmpeg;
-    if (!ff) return false;
-    return new Promise<boolean>((resolve) => {
-      ff.on('exit', () => resolve(true));
-      ff.stdin.end();
-    });
+    const job = exportJob;
+    exportJob = null;
+    if (!job) throw new Error('export not started');
+    await job.end();
+    return true;
+  });
+
+  // Cancel or renderer-side failure: stop ffmpeg and delete the partial file.
+  ipcMain.handle('export:abort', async () => {
+    const job = exportJob;
+    exportJob = null;
+    await job?.abort();
+    return true;
   });
 
   ipcMain.handle('display:info', () =>
@@ -526,7 +795,28 @@ app.whenReady().then(() => {
   }
 });
 
-app.on('will-quit', () => disposeIosHelper());
+// Ask before quitting over a recording or export. The window's own close
+// guard is skipped once this has been answered.
+app.on('before-quit', (e) => {
+  if (quitConfirmed) return;
+  if (!confirmDiscard('quit')) {
+    e.preventDefault();
+    return;
+  }
+  quitConfirmed = true;
+  // Don't leave ffmpeg running or a half-written export behind.
+  void exportJob?.abort();
+});
+
+app.on('will-quit', () => {
+  stopTracker();
+  disposeIosHelper();
+});
+
+// macOS keeps the app alive with no window; clicking the Dock icon brings one back.
+app.on('activate', () => {
+  if (!win && app.isReady()) createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
