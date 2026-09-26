@@ -56,6 +56,8 @@ export interface TapDetectOptions {
   blockSize: number;
   /** Per-pixel luma difference that counts as change (absorbs codec noise). */
   pixelThreshold: number;
+  /** Raise pixelThreshold above the recording's measured noise floor. */
+  adaptiveThreshold: boolean;
   /** Fraction of a block's pixels that must change for the block to count. */
   blockFraction: number;
   /** Ignore the status bar band (fraction of height). The clock ticks there. */
@@ -81,6 +83,7 @@ export interface TapDetectOptions {
 export const defaultTapDetect: TapDetectOptions = {
   blockSize: 6,
   pixelThreshold: 16,
+  adaptiveThreshold: true,
   blockFraction: 0.1,
   ignoreTop: 0.055,
   minTouchArea: 0.002,
@@ -166,6 +169,7 @@ export function analyzeFrames(frames: GrayFrame[], options: Partial<TapDetectOpt
   const churn = new Uint8Array(cols * rows);
   const history: number[][] = [];
   const transitions: Transition[] = [];
+  const threshold = o.adaptiveThreshold ? Math.max(o.pixelThreshold, noiseThreshold(frames)) : o.pixelThreshold;
 
   for (let i = 0; i + 1 < frames.length; i++) {
     const a = frames[i].data;
@@ -176,7 +180,7 @@ export function analyzeFrames(frames: GrayFrame[], options: Partial<TapDetectOpt
       const off = y * w;
       for (let x = 0; x < w; x++) {
         const d = a[off + x] - b[off + x];
-        if (d > o.pixelThreshold || d < -o.pixelThreshold) counts[rowBase + ((x / B) | 0)]++;
+        if (d > threshold || d < -threshold) counts[rowBase + ((x / B) | 0)]++;
       }
     }
     const need = Math.max(2, Math.round(B * B * o.blockFraction));
@@ -190,7 +194,7 @@ export function analyzeFrames(frames: GrayFrame[], options: Partial<TapDetectOpt
     }
 
     const components = nChanged > 0 ? findComponents(changed, counts, cols, rows, B, w, h, analysed) : [];
-    for (const c of components) c.dl = c.area <= 0.05 ? meanLumaChange(a, b, w, h, c, o.pixelThreshold) : 0;
+    for (const c of components) c.dl = c.area <= 0.05 ? meanLumaChange(a, b, w, h, c, threshold) : 0;
     const frac = nChanged / analysed;
     let kind: TransitionKind = 'static';
     let dx = 0;
@@ -221,7 +225,7 @@ export function analyzeFrames(frames: GrayFrame[], options: Partial<TapDetectOpt
         if (inTop || inBottom) band.set(changed.subarray(r * cols, (r + 1) * cols), r * cols);
       }
       bars = findComponents(band, counts, cols, rows, B, w, h, analysed, 1);
-      for (const c of bars) c.dl = meanLumaChange(a, b, w, h, c, o.pixelThreshold);
+      for (const c of bars) c.dl = meanLumaChange(a, b, w, h, c, threshold);
     }
 
     // Masked blocks keep counting while they churn, so a spinner stays masked.
@@ -236,6 +240,37 @@ export function analyzeFrames(frames: GrayFrame[], options: Partial<TapDetectOpt
     });
   }
   return { w, h, times: frames.map((f) => f.t), transitions, cols, rows, blockSize: B };
+}
+
+/**
+ * Pixel threshold that sits above the recording's noise. A still screen
+ * differs from the previous frame only by codec noise, so the median pixel
+ * difference of the quietest quarter of transitions measures it; UI changes
+ * are local and barely move a median.
+ */
+export function noiseThreshold(frames: GrayFrame[]): number {
+  if (frames.length < 2) return 0;
+  const medians: number[] = [];
+  const step = Math.max(1, Math.floor(frames.length / 120));
+  for (let i = 0; i + 1 < frames.length; i += step) {
+    const a = frames[i].data;
+    const b = frames[i + 1].data;
+    const hist = new Uint32Array(256);
+    const stride = Math.max(1, Math.floor(a.length / 4000));
+    let n = 0;
+    for (let k = 0; k < a.length; k += stride) {
+      const d = a[k] - b[k];
+      hist[d < 0 ? -d : d]++;
+      n++;
+    }
+    let acc = 0;
+    let med = 0;
+    while (med < 255 && acc + hist[med] <= n / 2) acc += hist[med++];
+    medians.push(med);
+  }
+  medians.sort((x, y) => x - y);
+  const floor = medians[Math.floor(medians.length / 4)];
+  return Math.round(floor * 3 + 6);
 }
 
 function dilate(list: number[], cols: number, rows: number): number[] {

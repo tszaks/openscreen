@@ -3,6 +3,7 @@ import {
   analysisFrameSize,
   analyzeFrames,
   detectTaps,
+  noiseThreshold,
   estimateTranslation,
   findDeadTime,
   splitRawGray,
@@ -171,6 +172,35 @@ describe('detectTaps on synthetic recordings', () => {
     expect(recall).toBeGreaterThanOrEqual(0.9);
     expect(kindAccuracy).toBeGreaterThanOrEqual(0.9);
   }, 60_000);
+
+  it('adapts to heavy codec noise', () => {
+    let pred = 0;
+    let truthN = 0;
+    let matched = 0;
+    for (const seed of [31, 32, 33]) {
+      const sim = new PhoneSim(seed * 7919, 10);
+      sim.randomScript(8);
+      const taps = detectTaps(sim.frames);
+      const s = score(taps, sim.truth);
+      pred += taps.length;
+      truthN += sim.truth.length;
+      matched += s.matched;
+    }
+    console.log(`tap detection at noise +-10: ${truthN} gestures, precision ${((matched / pred) * 100).toFixed(1)}%, recall ${((matched / truthN) * 100).toFixed(1)}%`);
+    expect(matched / pred).toBeGreaterThanOrEqual(0.85);
+    expect(matched / truthN).toBeGreaterThanOrEqual(0.85);
+  }, 60_000);
+
+  it('measures the noise floor', () => {
+    const quiet = new PhoneSim(1, 2);
+    quiet.hold(1);
+    expect(noiseThreshold(quiet.frames)).toBeLessThanOrEqual(16);
+    const noisy = new PhoneSim(1, 10);
+    noisy.hold(1);
+    const thr = noiseThreshold(noisy.frames);
+    expect(thr).toBeGreaterThan(20); // pure noise reaches +-20 between frames
+    expect(thr).toBeLessThan(32); // a row highlight (32 levels) must stay visible
+  });
 
   it('suggests nothing for a static recording', () => {
     const sim = new PhoneSim(1);
