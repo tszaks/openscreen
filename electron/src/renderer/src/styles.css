@@ -26,7 +26,6 @@
   --red: #ff453a;
   --red-tint: rgba(255, 69, 58, 0.22);
   --amber: #ffb340;
-  --blue: #64d2ff;
 
   /* shape */
   --r-xs: 6px;
@@ -1624,8 +1623,8 @@ input[type='color']::-webkit-color-swatch {
   letter-spacing: 0.02em;
 }
 .tag.silence {
-  background: rgba(100, 210, 255, 0.12);
-  color: var(--blue);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-2);
 }
 .tag.filler {
   background: rgba(255, 179, 64, 0.12);
