@@ -954,6 +954,15 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   font-weight: 500;
   color: var(--text);
 }
+.inline-switch.disabled {
+  color: var(--text-3);
+}
+.inline-switch.disabled .switch {
+  opacity: 0.4;
+}
+.subhead + .hint {
+  margin-top: -8px;
+}
 
 /* ───────────────────────── countdown ───────────────────────── */
 

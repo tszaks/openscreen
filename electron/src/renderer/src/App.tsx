@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type SourceInfo } from './api';
+import { api, type IosDevice, type SourceInfo } from './api';
 import type { CursorSample, KeystrokeSample, Project } from '../../shared/types';
 import { defaultProject } from '../../shared/types';
 import { Editor } from './Editor';
@@ -29,8 +29,8 @@ async function captureStream(sourceId: string): Promise<MediaStream> {
   return stream as MediaStream;
 }
 
-/** Capture a device camera (wired iPhone/iPad appear as continuity video
- *  devices on macOS) at up to 1080p60. */
+/** Capture a camera (webcam, or an iPhone's camera via Continuity Camera)
+ *  at up to 1080p60. iPhone/iPad SCREENS go through the ios-capture helper. */
 async function captureDevice(deviceId: string): Promise<MediaStream> {
   return navigator.mediaDevices.getUserMedia({
     audio: false,
@@ -43,12 +43,26 @@ async function captureDevice(deviceId: string): Promise<MediaStream> {
   });
 }
 
+/** IPC errors arrive wrapped ("Error invoking remote method 'x': Error: ..."). */
+const ipcMessage = (e: unknown) =>
+  String((e as Error)?.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+
+const recorderMime = () =>
+  MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+
 export function App() {
   const [phase, setPhase] = useState<Phase>({ name: 'picker' });
   const [sources, setSources] = useState<SourceInfo[]>([]);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selected, setSelected] = useState<SourceInfo | null>(null);
   const [selectedDevice, setSelectedDevice] = useState<MediaDeviceInfo | null>(null);
+  // Wired iPhone/iPad screens from the native helper (not MediaDevices).
+  const [ios, setIos] = useState<{ devices: IosDevice[]; ready: boolean; error: string | null }>({
+    devices: [],
+    ready: false,
+    error: null,
+  });
+  const [selectedIos, setSelectedIos] = useState<IosDevice | null>(null);
   const [micOn, setMicOn] = useState(false);
   const [camOn, setCamOn] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -63,6 +77,8 @@ export function App() {
   const camStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const camChunksRef = useRef<Blob[]>([]);
+  // The in-flight iPhone take: its bundle and the size from the first frame.
+  const iosTakeRef = useRef<{ bundleDir: string; width: number; height: number } | null>(null);
 
   useEffect(() => {
     api.listSources().then(setSources).catch((e) => setStatus(`sources: ${e}`));
@@ -72,6 +88,28 @@ export function App() {
     }).catch(() => {});
   }, []);
 
+  // Poll the helper's device list while the picker is open, so a phone
+  // plugged in (or trusted) shows up without reopening the app.
+  useEffect(() => {
+    if (phase.name !== 'picker') return;
+    let live = true;
+    const poll = () =>
+      api.iosList().then((r) => live && setIos(r)).catch((e) => {
+        if (live) setIos((prev) => ({ ...prev, error: ipcMessage(e) }));
+      });
+    void poll();
+    const t = setInterval(poll, 2000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [phase.name]);
+
+  // Drop a selected iPhone that was unplugged.
+  useEffect(() => {
+    if (selectedIos && ios.ready && !ios.devices.some((d) => d.id === selectedIos.id)) setSelectedIos(null);
+  }, [ios, selectedIos]);
+
   useEffect(() => {
     if (phase.name !== 'recording') return;
     const t = setInterval(() => setElapsed((performance.now() - phase.startedAt) / 1000), 250);
@@ -79,11 +117,54 @@ export function App() {
   }, [phase]);
 
   const start = useCallback(() => {
-    if (!selected && !selectedDevice) return;
+    if (!selected && !selectedDevice && !selectedIos) return;
     setCountdown(3);
-  }, [selected, selectedDevice]);
+  }, [selected, selectedDevice, selectedIos]);
+
+  // Optional camera overlay, recorded alongside whichever source runs.
+  const startCamOverlay = useCallback(async () => {
+    if (!camOn || devices.length === 0) return;
+    try {
+      const camStream = await captureDevice(devices[0].deviceId);
+      camStreamRef.current = camStream;
+      camChunksRef.current = [];
+      const camRec = new MediaRecorder(camStream, { mimeType: recorderMime(), videoBitsPerSecond: 6_000_000 });
+      camRec.ondataavailable = (e) => e.data.size && camChunksRef.current.push(e.data);
+      camRec.start(250);
+      camRecRef.current = camRec;
+    } catch {
+      setStatus('camera unavailable — recording screen only');
+    }
+  }, [camOn, devices]);
+
+  const stopCamOverlay = useCallback(async (): Promise<Blob | undefined> => {
+    const camRec = camRecRef.current;
+    if (!camRec) return undefined;
+    const camDone = new Promise<void>((r) => (camRec.onstop = () => r()));
+    camRec.stop();
+    camStreamRef.current?.getTracks().forEach((t) => t.stop());
+    await camDone;
+    camRecRef.current = null;
+    camStreamRef.current = null;
+    return new Blob(camChunksRef.current, { type: camRec.mimeType });
+  }, []);
 
   const reallyStart = useCallback(async () => {
+    if (selectedIos) {
+      // iPhone/iPad screen: the helper records straight to disk. Audio comes
+      // from the device, so the mic switch doesn't apply.
+      try {
+        setStatus(`Starting ${selectedIos.name}…`);
+        iosTakeRef.current = await api.iosStart(selectedIos.id);
+        setStatus('');
+        await startCamOverlay();
+        setPhase({ name: 'recording', startedAt: performance.now() });
+      } catch (e) {
+        iosTakeRef.current = null;
+        setStatus(ipcMessage(e));
+      }
+      return;
+    }
     try {
       const stream = selectedDevice
         ? await captureDevice(selectedDevice.deviceId)
@@ -98,32 +179,17 @@ export function App() {
       }
       streamRef.current = stream;
       chunksRef.current = [];
-      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : 'video/webm';
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
+      const rec = new MediaRecorder(stream, { mimeType: recorderMime(), videoBitsPerSecond: 12_000_000 });
       rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
       rec.start(250);
       recorderRef.current = rec;
-      if (camOn && devices.length > 0) {
-        try {
-          const camStream = await captureDevice(devices[0].deviceId);
-          camStreamRef.current = camStream;
-          camChunksRef.current = [];
-          const camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
-          camRec.ondataavailable = (e) => e.data.size && camChunksRef.current.push(e.data);
-          camRec.start(250);
-          camRecRef.current = camRec;
-        } catch {
-          setStatus('camera unavailable — recording screen only');
-        }
-      }
+      await startCamOverlay();
       await api.startRecording(selectedDevice?.deviceId ?? selected!.id);
       setPhase({ name: 'recording', startedAt: performance.now() });
     } catch (e) {
       setStatus(`record: ${e}`);
     }
-  }, [selected, selectedDevice, micOn, camOn, devices]);
+  }, [selected, selectedDevice, selectedIos, micOn, startCamOverlay]);
 
   useEffect(() => {
     if (countdown === null) return;
@@ -136,7 +202,44 @@ export function App() {
     return () => clearTimeout(t);
   }, [countdown, reallyStart]);
 
+  const stopIos = useCallback(async () => {
+    const take = iosTakeRef.current;
+    if (!take) return;
+    iosTakeRef.current = null;
+    let done;
+    try {
+      done = await api.iosStop();
+    } catch (e) {
+      await stopCamOverlay();
+      setStatus(`recording failed: ${ipcMessage(e)}`);
+      setPhase({ name: 'picker' });
+      return;
+    }
+    const camBlob = await stopCamOverlay();
+    const camBytes = camBlob ? await camBlob.arrayBuffer() : undefined;
+    const project = defaultProject({
+      screenVideoFile: 'screen.mov',
+      cameraVideoFile: camBytes ? 'cam.webm' : undefined,
+      sourceKind: 'iosDevice',
+      // The finished file's size wins: the phone may have rotated mid-take.
+      sourceSize: { width: done.width ?? take.width, height: done.height ?? take.height },
+      duration: done.duration ?? elapsed,
+    });
+    if (camBytes) project.cameraOverlay.enabled = true;
+    const bundleDir = await api.saveBundleWithVideoFile(take.bundleDir, [], project, camBytes, []);
+    setPhase({
+      name: 'editor',
+      bundleDir,
+      videoUrl: `file://${bundleDir}/screen.mov`,
+      camUrl: camBlob ? URL.createObjectURL(camBlob) : undefined,
+      project,
+      cursor: [],
+      keys: [],
+    });
+  }, [elapsed, stopCamOverlay]);
+
   const stop = useCallback(async () => {
+    if (iosTakeRef.current) return stopIos();
     const rec = recorderRef.current;
     const stream = streamRef.current;
     if (!rec || !stream) return;
@@ -146,17 +249,7 @@ export function App() {
     await done;
     const { samples: cursor, keys } = await api.stopRecording();
     // Stop the camera recorder too, if it ran.
-    let camBlob: Blob | undefined;
-    if (camRecRef.current) {
-      const camRec = camRecRef.current;
-      const camDone = new Promise<void>((r) => (camRec.onstop = () => r()));
-      camRec.stop();
-      camStreamRef.current?.getTracks().forEach((t) => t.stop());
-      await camDone;
-      camRecRef.current = null;
-      camStreamRef.current = null;
-      camBlob = new Blob(camChunksRef.current, { type: camRec.mimeType });
-    }
+    const camBlob = await stopCamOverlay();
     const blob = new Blob(chunksRef.current, { type: rec.mimeType });
     const videoBytes = await blob.arrayBuffer();
     const camBytes = camBlob ? await camBlob.arrayBuffer() : undefined;
@@ -164,7 +257,7 @@ export function App() {
     const project = defaultProject({
       screenVideoFile: 'screen.webm',
       cameraVideoFile: camBytes ? 'cam.webm' : undefined,
-      sourceKind: selectedDevice ? 'iosDevice' : 'display',
+      sourceKind: 'display',
       sourceSize: { width: track?.width ?? 1920, height: track?.height ?? 1080 },
       duration: elapsed,
     });
@@ -173,7 +266,7 @@ export function App() {
     const videoUrl = URL.createObjectURL(blob);
     const camUrl = camBlob ? URL.createObjectURL(camBlob) : undefined;
     setPhase({ name: 'editor', bundleDir, videoUrl, camUrl, project, cursor, keys });
-  }, [elapsed]);
+  }, [elapsed, stopIos, stopCamOverlay]);
 
   const openProject = async () => {
     const b = await api.openBundle();
@@ -192,9 +285,10 @@ export function App() {
   if (phase.name === 'picker') {
     const displays = sources.filter((s) => s.id.startsWith('screen:'));
     const windows = sources.filter((s) => s.id.startsWith('window:'));
-    // Every camera is a device, but only iPhones and iPads are the headline.
-    const iosDevices = devices.filter((d) => /iphone|ipad/i.test(d.label));
-    const otherCameras = devices.filter((d) => !/iphone|ipad/i.test(d.label));
+    // iPhone/iPad screens come from the helper. Every MediaDevices camera,
+    // Continuity Camera included, is a camera, not a screen.
+    const iosDevices = ios.devices;
+    const otherCameras = devices;
     const tab: PickerTab = pickerTab ?? (iosDevices.length ? 'devices' : 'displays');
     const tabOptions = [
       { value: 'displays' as const, label: <>Displays<span className="count">{displays.length}</span></> },
@@ -204,8 +298,8 @@ export function App() {
     // The iPhone/iPad path is the headline feature: lead with it when one is plugged in.
     if (iosDevices.length) tabOptions.unshift(tabOptions.pop()!);
     const shown = tab === 'displays' ? displays : tab === 'windows' ? windows : [];
-    const selectedName = selectedDevice?.label ?? selected?.name;
-    const deviceCard = (d: MediaDeviceInfo, art: 'phone' | 'tablet' | 'camera') => (
+    const selectedName = selectedIos?.name ?? selectedDevice?.label ?? selected?.name;
+    const cameraCard = (d: MediaDeviceInfo) => (
       <button
         key={d.deviceId}
         type="button"
@@ -213,12 +307,30 @@ export function App() {
         onClick={() => {
           setSelectedDevice(d);
           setSelected(null);
+          setSelectedIos(null);
         }}
       >
         <div className="card-thumb device-thumb">
-          {art === 'camera' ? <div className="webcam" /> : <div className={`device-outline${art === 'tablet' ? ' tablet' : ''}`} />}
+          <div className="webcam" />
         </div>
         <div className="card-name">{d.label}</div>
+      </button>
+    );
+    const iosCard = (d: IosDevice) => (
+      <button
+        key={d.id}
+        type="button"
+        className={`card${selectedIos?.id === d.id ? ' selected' : ''}`}
+        onClick={() => {
+          setSelectedIos(d);
+          setSelected(null);
+          setSelectedDevice(null);
+        }}
+      >
+        <div className="card-thumb device-thumb">
+          <div className={`device-outline${/ipad/i.test(d.name) ? ' tablet' : ''}`} />
+        </div>
+        <div className="card-name">{d.name}</div>
       </button>
     );
 
@@ -266,22 +378,27 @@ export function App() {
           {tab === 'devices' ? (
             <>
               {iosDevices.length ? (
-                <div className="cards">
-                  {iosDevices.map((d) => deviceCard(d, /ipad/i.test(d.label) ? 'tablet' : 'phone'))}
-                </div>
+                <div className="cards">{iosDevices.map(iosCard)}</div>
+              ) : ios.error ? (
+                <EmptyState art={<div className="device-outline large" />} title="iPhone capture is unavailable">
+                  {ios.error}
+                </EmptyState>
               ) : (
                 <EmptyState
                   art={<div className="device-outline large" />}
-                  title="No iPhone or iPad connected"
+                  title={ios.ready ? 'No iPhone or iPad connected' : 'Looking for iPhone and iPad…'}
                 >
-                  Connect it with a USB cable, unlock it, and tap Trust if asked. Then
-                  reopen OpenScreen to refresh this list.
+                  Connect it with a USB cable, unlock it, and tap Trust on the device if
+                  asked. It shows up here within a few seconds.
                 </EmptyState>
               )}
               {otherCameras.length > 0 && (
                 <>
                   <h2 className="subhead">Other cameras</h2>
-                  <div className="cards">{otherCameras.map((d) => deviceCard(d, 'camera'))}</div>
+                  <p className="hint">
+                    These record a camera, not a screen. Continuity Camera is your iPhone's camera.
+                  </p>
+                  <div className="cards">{otherCameras.map(cameraCard)}</div>
                 </>
               )}
             </>
@@ -295,6 +412,7 @@ export function App() {
                   onClick={() => {
                     setSelected(s);
                     setSelectedDevice(null);
+                    setSelectedIos(null);
                   }}
                 >
                   <div className="card-thumb">
@@ -322,9 +440,20 @@ export function App() {
         </main>
 
         <footer className="picker-foot">
-          <label className="inline-switch">
-            <input type="checkbox" role="switch" className="switch" checked={micOn} onChange={(e) => setMicOn(e.target.checked)} />
+          <label
+            className={`inline-switch${selectedIos ? ' disabled' : ''}`}
+            title={selectedIos ? 'iPhone and iPad recordings use the device audio' : undefined}
+          >
+            <input
+              type="checkbox"
+              role="switch"
+              className="switch"
+              checked={micOn && !selectedIos}
+              disabled={!!selectedIos}
+              onChange={(e) => setMicOn(e.target.checked)}
+            />
             Microphone
+            {selectedIos && <span className="hint">Uses device audio</span>}
           </label>
           <label className="inline-switch">
             <input type="checkbox" role="switch" className="switch" checked={camOn} onChange={(e) => setCamOn(e.target.checked)} />
@@ -334,7 +463,7 @@ export function App() {
           <span className="status" title={status}>
             {status || (selectedName ? selectedName : 'Nothing selected')}
           </span>
-          <Button variant="primary" size="lg" disabled={!selected && !selectedDevice} onClick={start}>
+          <Button variant="primary" size="lg" disabled={!selected && !selectedDevice && !selectedIos} onClick={start}>
             Start recording
           </Button>
         </footer>
@@ -366,7 +495,7 @@ export function App() {
             <span className="rec-time">
               {String(mm).padStart(2, '0')}:{String(ss).padStart(2, '0')}
             </span>
-            <span className="rec-source">{selectedDevice?.label ?? selected?.name ?? 'Recording'}</span>
+            <span className="rec-source">{selectedIos?.name ?? selectedDevice?.label ?? selected?.name ?? 'Recording'}</span>
             <Button variant="record" onClick={stop}>
               <span className="stop-glyph" />
               Stop
