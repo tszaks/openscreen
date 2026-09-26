@@ -22,6 +22,9 @@ export interface ExportProgressProps {
   startedAt: number;
   /** Failed: the error to show. Done: optional detail such as the file name. */
   message?: string;
+  /** Running or failed: replaces the "N of M frames" line, for progress that
+   *  isn't counted in frames (a multi-format export). */
+  detail?: string;
   onCancel: () => void;
   onReveal: () => void;
   onRetry: () => void;
@@ -86,6 +89,7 @@ export function ExportProgress({
   total,
   startedAt,
   message,
+  detail,
   onCancel,
   onReveal,
   onRetry,
@@ -104,10 +108,10 @@ export function ExportProgress({
     sub = message ?? `${frames.format(total)} frames in ${clock}`;
   } else if (state === 'failed') {
     title = 'Export failed';
-    sub = `Stopped at ${frames.format(done)} of ${frames.format(total)} frames`;
+    sub = detail ?? `Stopped at ${frames.format(done)} of ${frames.format(total)} frames`;
   } else {
     title = 'Exporting';
-    sub = `${frames.format(done)} of ${frames.format(total)} frames`;
+    sub = detail ?? `${frames.format(done)} of ${frames.format(total)} frames`;
   }
 
   return (
