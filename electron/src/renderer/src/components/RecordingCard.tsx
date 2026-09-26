@@ -1,11 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import { Button } from '../ui';
 import { formatElapsed } from './iosSetup';
+import { IosLivePreview } from './IosLivePreview';
+import type { IosPreview } from '../api';
 import './recording-ux.css';
 
 // The recording screen's card: a live preview of what is being recorded
 // under a title bar with a pulsing REC badge, the timer, the source name
-// and Stop. The look (framed screen card, red-tint REC pill with a pulsing
+// and Stop. An iPhone take shows the phone's own frames from the helper. The look (framed screen card, red-tint REC pill with a pulsing
 // dot) is borrowed from "Agent Screen" in Beautiful UI - Code Examples
 // (21-agent-screen.tsx, MIT), rebuilt in plain CSS.
 
@@ -24,9 +26,9 @@ export function RecordingCard({
   onStop: () => void;
   /** The capture stream already being recorded, shown muted. Never a second capture. */
   stream?: MediaStream | null;
-  /** An iPhone/iPad take: the helper writes straight to disk, so there are no
-   *  live pixels here, only the device outline. */
-  device?: { name: string; tablet: boolean } | null;
+  /** An iPhone/iPad take: its live frames come from the helper's preview,
+   *  shown in the device outline. */
+  device?: { id: string; name: string; tablet: boolean; preview: IosPreview | null } | null;
   /** A calm mid-take warning, e.g. the phone may be locked. */
   warning?: string | null;
 }) {
@@ -68,10 +70,14 @@ export function RecordingCard({
       <div className="rec-card-stage">
         {device ? (
           <div className="rec-card-device">
-            <div className={`device-outline rec-device${device.tablet ? ' tablet' : ''}${warning ? ' is-stalled' : ''}`} />
-            <p className="rec-card-device-note">
-              Recording straight from {device.name}. Watch the phone itself; there's no live preview here.
-            </p>
+            <IosLivePreview
+              deviceId={device.id}
+              deviceName={device.name}
+              tablet={device.tablet}
+              preview={device.preview}
+              size="stage"
+              dimmed={!!warning}
+            />
           </div>
         ) : stream ? (
           <video ref={videoRef} className="rec-card-video" muted playsInline autoPlay />
@@ -85,6 +91,9 @@ export function RecordingCard({
           </div>
         )}
       </div>
+      <p className="rec-card-hint">
+        OpenScreen is hidden from screen captures while recording so it stays out of your video.
+      </p>
     </section>
   );
 }

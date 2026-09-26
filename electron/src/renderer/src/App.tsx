@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type IosDevice, type SourceInfo } from './api';
+import { api, type IosDevice, type IosPreview, type OpenedBundle, type SourceInfo } from './api';
 import type { CursorSample, KeystrokeSample, Project } from '../../shared/types';
 import { defaultProject } from '../../shared/types';
 import {
@@ -14,6 +14,8 @@ import { decodeIosError } from '../../shared/iosErrors';
 import { Editor } from './Editor';
 import { Button, EmptyState, Segmented } from './ui';
 import { IosSetupCard } from './components/IosSetupCard';
+import { IosLivePreview } from './components/IosLivePreview';
+import { recoveryNotice } from '../../shared/recovery';
 import { RecordingCard } from './components/RecordingCard';
 import { checklistFor, readSetupPrefs, recordingWarning, writeSetupPref, type SetupPrefs, type SetupTrigger } from './components/iosSetup';
 
@@ -105,6 +107,12 @@ export function App() {
   const [inlineSetup, setInlineSetup] = useState(() => !readSetupPrefs(localStorage).hidden);
   // Mid-take iPhone warning ("may be locked"), read from the helper while recording.
   const [iosWarning, setIosWarning] = useState<string | null>(null);
+  // The live preview of the selected iPhone, as the helper reports it.
+  // Bumped to retry a preview that failed (clicking the card again).
+  const [iosPreview, setIosPreview] = useState<IosPreview | null>(null);
+  const [previewAttempt, setPreviewAttempt] = useState(0);
+  // Interrupted takes recovered this session, newest last, until opened or dismissed.
+  const [recovered, setRecovered] = useState<string[]>([]);
   // The stream being recorded, shown muted on the recording card.
   const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -147,6 +155,14 @@ export function App() {
     setInlineSetup(false);
   }, []);
   const closeSetupDialog = useCallback(() => setSetupDialog(null), []);
+
+  // The preview got no picture (locked phone, fresh Trust, Stop Mirroring):
+  // open the checklist at the step that fixes it, as a failed start does.
+  const previewErr = phase.name === 'picker' && iosPreview?.state === 'error' ? iosPreview : null;
+  useEffect(() => {
+    if (previewErr?.code === 'no-frames') openSetup({ kind: 'startError', code: previewErr.code, message: previewErr.message ?? '' });
+    // Once per failed preview, not whenever openSetup changes.
+  }, [previewErr]);
 
   // Cameras stay listed before permission gives them labels.
   const refreshCameras = useCallback(async () => {
@@ -196,6 +212,43 @@ export function App() {
     return () => {
       live = false;
       clearInterval(t);
+    };
+  }, [phase.name]);
+
+  // UI only: the picker tab shown. The iPhone tab leads when one is plugged in.
+  const tab: PickerTab = pickerTab ?? (ios.devices.length ? 'devices' : 'displays');
+
+  // Show the selected iPhone live while its card is on screen, and through
+  // its take: the take reuses the preview's session, and its frames fill the
+  // recording card. Leaving the tab, deselecting or opening the editor stops it.
+  useEffect(() => api.onIosPreviewState(setIosPreview), []);
+  const previewId =
+    (phase.name === 'picker' && tab === 'devices') || phase.name === 'recording' ? selectedIos?.id : undefined;
+  useEffect(() => {
+    if (!previewId) return;
+    let live = true;
+    api
+      .iosPreview(previewId)
+      .then((p) => live && p && setIosPreview(p))
+      .catch((e) => live && setIosPreview({ id: previewId, state: 'error', message: ipcMessage(e) }));
+    return () => {
+      live = false;
+      setIosPreview(null);
+      void api.iosUnpreview().catch(() => {});
+    };
+  }, [previewId, previewAttempt]);
+
+  // Interrupted takes (a crash or a quit mid-take) get a project on picker
+  // entry, so they open in the editor.
+  useEffect(() => {
+    if (phase.name !== 'picker') return;
+    let live = true;
+    api
+      .recoverInterrupted()
+      .then((dirs) => live && dirs.length && setRecovered((prev) => [...prev, ...dirs.filter((d) => !prev.includes(d))]))
+      .catch(() => {});
+    return () => {
+      live = false;
     };
   }, [phase.name]);
 
@@ -552,22 +605,31 @@ export function App() {
   );
 
   // Replaces whatever is open. The editor asks about unsaved changes first.
-  const openProject = useCallback(async () => {
-    try {
-      const b = await api.openBundle();
-      if (!b) return;
-      openEditor({
-        bundleDir: b.bundleDir,
-        videoUrl: b.videoUrl,
-        camUrl: b.camUrl,
-        project: b.project,
-        cursor: b.cursor,
-        keys: b.keys,
-      });
-    } catch (e) {
-      setNotice(`Couldn't open that project. ${ipcMessage(e)}`);
-    }
-  }, [openEditor]);
+  const openBundle = useCallback(
+    async (load: () => Promise<OpenedBundle | null>) => {
+      try {
+        const b = await load();
+        if (!b) return;
+        openEditor({
+          bundleDir: b.bundleDir,
+          videoUrl: b.videoUrl,
+          camUrl: b.camUrl,
+          project: b.project,
+          cursor: b.cursor,
+          keys: b.keys,
+        });
+      } catch (e) {
+        setNotice(`Couldn't open that project. ${ipcMessage(e)}`);
+      }
+    },
+    [openEditor],
+  );
+  const openProject = useCallback(() => openBundle(api.openBundle), [openBundle]);
+  const openRecovered = useCallback(() => {
+    const dir = recovered[recovered.length - 1];
+    setRecovered([]);
+    if (dir) void openBundle(() => api.openBundleDir(dir));
+  }, [recovered, openBundle]);
 
   const backToPicker = useCallback(() => setPhase({ name: 'picker' }), []);
 
@@ -621,7 +683,6 @@ export function App() {
     // Continuity Camera included, is a camera, not a screen.
     const iosDevices = ios.devices;
     const otherCameras = devices;
-    const tab: PickerTab = pickerTab ?? (iosDevices.length ? 'devices' : 'displays');
     const tabOptions = [
       { value: 'displays' as const, label: <>Displays<span className="count">{displays.length}</span></> },
       { value: 'windows' as const, label: <>Windows<span className="count">{windows.length}</span></> },
@@ -654,6 +715,8 @@ export function App() {
         type="button"
         className={`card${selectedIos?.id === d.id ? ' selected' : ''}`}
         onClick={() => {
+          // Clicking a phone whose preview failed tries again.
+          if (selectedIos?.id === d.id && iosPreview?.state === 'error') setPreviewAttempt((n) => n + 1);
           setSelectedIos(d);
           setSelected(null);
           setSelectedDevice(null);
@@ -661,7 +724,17 @@ export function App() {
         }}
       >
         <div className="card-thumb device-thumb">
-          <div className={`device-outline${/ipad/i.test(d.name) ? ' tablet' : ''}`} />
+          {selectedIos?.id === d.id ? (
+            <IosLivePreview
+              deviceId={d.id}
+              deviceName={d.name}
+              tablet={/ipad/i.test(d.name)}
+              preview={iosPreview?.id === d.id ? iosPreview : null}
+              size="card"
+            />
+          ) : (
+            <div className={`device-outline${/ipad/i.test(d.name) ? ' tablet' : ''}`} />
+          )}
         </div>
         <div className="card-name">{d.name}</div>
       </button>
@@ -709,6 +782,19 @@ export function App() {
                 }}
               >
                 Grant Access
+              </Button>
+            </div>
+          )}
+
+          {recovered.length > 0 && (
+            <div className="banner is-info" role="status">
+              <span className="banner-dot" />
+              <p>{recoveryNotice(recovered.length)} It was cut off before it could be saved, and opens in the editor.</p>
+              <Button size="sm" onClick={openRecovered}>
+                Open
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setRecovered([])}>
+                Dismiss
               </Button>
             </div>
           )}
@@ -899,7 +985,16 @@ export function App() {
             saving={saving}
             onStop={() => void stop()}
             stream={selectedIos ? null : liveStream}
-            device={selectedIos ? { name: selectedIos.name, tablet: /ipad/i.test(selectedIos.name) } : null}
+            device={
+              selectedIos
+                ? {
+                    id: selectedIos.id,
+                    name: selectedIos.name,
+                    tablet: /ipad/i.test(selectedIos.name),
+                    preview: iosPreview?.id === selectedIos.id ? iosPreview : null,
+                  }
+                : null
+            }
             warning={selectedIos ? iosWarning : null}
           />
           <p className="rec-hint">{saving ? 'Saving the recording…' : 'Recording. Stop to open the editor.'}</p>

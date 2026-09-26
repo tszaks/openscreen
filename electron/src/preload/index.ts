@@ -18,6 +18,24 @@ const api = {
   iosList: () => ipcRenderer.invoke('ios:list'),
   iosStart: (deviceId: string) => ipcRenderer.invoke('ios:start', deviceId),
   iosStop: () => ipcRenderer.invoke('ios:stop'),
+  iosPreview: (deviceId: string) => ipcRenderer.invoke('ios:preview', deviceId),
+  iosUnpreview: () => ipcRenderer.invoke('ios:unpreview'),
+  onIosPreviewState: (cb: (p: unknown) => void) => {
+    const listener = (_e: IpcRendererEvent, p: unknown) => cb(p);
+    ipcRenderer.on('ios:previewState', listener);
+    return () => {
+      ipcRenderer.removeListener('ios:previewState', listener);
+    };
+  },
+  onIosPreviewFrame: (cb: (f: { id: string; jpeg: Uint8Array }) => void) => {
+    const listener = (_e: IpcRendererEvent, f: { id: string; jpeg: Uint8Array }) => cb(f);
+    ipcRenderer.on('ios:previewFrame', listener);
+    return () => {
+      ipcRenderer.removeListener('ios:previewFrame', listener);
+    };
+  },
+  recoverInterrupted: () => ipcRenderer.invoke('recovery:scan'),
+  openBundleDir: (dir: string) => ipcRenderer.invoke('bundle:openDir', dir),
   discardBundle: (dir: string) => ipcRenderer.invoke('bundle:discard', dir),
   onIosEnded: (cb: (e: { message: string | null }) => void) => {
     const listener = (_e: IpcRendererEvent, ended: { message: string | null }) => cb(ended);
