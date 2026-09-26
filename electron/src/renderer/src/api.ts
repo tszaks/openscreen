@@ -1,4 +1,7 @@
 import type { CursorSample, KeystrokeSample, Project, TranscriptWord } from '../../shared/types';
+import type { IosDevice, IosFinished } from '../../shared/iosCapture';
+
+export type { IosDevice };
 
 export interface SourceInfo {
   id: string;
@@ -16,6 +19,12 @@ declare global {
       startRecording(sourceId: string): Promise<boolean>;
       stopRecording(): Promise<{ samples: CursorSample[]; keys: KeystrokeSample[] }>;
       saveBundle(videoBytes: ArrayBuffer, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer, keys?: KeystrokeSample[]): Promise<string>;
+      saveBundleWithVideoFile(dir: string, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer, keys?: KeystrokeSample[]): Promise<string>;
+      /** Wired iPhone/iPad screens. `ready` is false until the helper's first scan. */
+      iosList(): Promise<{ devices: IosDevice[]; ready: boolean; error: string | null }>;
+      /** Starts recording into a new bundle's screen.mov; resolves on the first frame. */
+      iosStart(deviceId: string): Promise<{ bundleDir: string; width: number; height: number }>;
+      iosStop(): Promise<IosFinished>;
       openBundle(): Promise<{ bundleDir: string; project: Project; cursor: CursorSample[]; keys: KeystrokeSample[]; videoPath: string; camPath?: string } | null>;
       saveProject(dir: string, project: Project): Promise<boolean>;
       writeText(path: string, text: string): Promise<boolean>;

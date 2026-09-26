@@ -8,6 +8,11 @@ const api = {
   stopRecording: () => ipcRenderer.invoke('recording:stop'),
   saveBundle: (videoBytes: ArrayBuffer, cursor: unknown, project: unknown, camBytes?: ArrayBuffer, keys?: unknown) =>
     ipcRenderer.invoke('bundle:save', { videoBytes, camBytes, cursor, project, keys }),
+  saveBundleWithVideoFile: (dir: string, cursor: unknown, project: unknown, camBytes?: ArrayBuffer, keys?: unknown) =>
+    ipcRenderer.invoke('bundle:saveWithVideoFile', { dir, camBytes, cursor, project, keys }),
+  iosList: () => ipcRenderer.invoke('ios:list'),
+  iosStart: (deviceId: string) => ipcRenderer.invoke('ios:start', deviceId),
+  iosStop: () => ipcRenderer.invoke('ios:stop'),
   openBundle: () => ipcRenderer.invoke('bundle:open'),
   saveProject: (dir: string, project: unknown) =>
     ipcRenderer.invoke('bundle:saveProject', { dir, project }),
