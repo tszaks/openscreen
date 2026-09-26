@@ -204,6 +204,12 @@ export function App() {
     // The iPhone/iPad path is the headline feature: lead with it when one is plugged in.
     if (iosDevices.length) tabOptions.unshift(tabOptions.pop()!);
     const shown = tab === 'displays' ? displays : tab === 'windows' ? windows : [];
+    // A selection made on another tab isn't visible; dropping it keeps Start honest.
+    const chooseTab = (t: PickerTab) => {
+      setPickerTab(t);
+      setSelected(null);
+      setSelectedDevice(null);
+    };
     const selectedName = selectedDevice?.label ?? selected?.name;
     const deviceCard = (d: MediaDeviceInfo, art: 'phone' | 'tablet' | 'camera') => (
       <button
@@ -260,7 +266,7 @@ export function App() {
               <h1>New recording</h1>
               <p>Choose a display, a window, or a connected iPhone or iPad.</p>
             </div>
-            <Segmented value={tab} options={tabOptions} onChange={setPickerTab} label="Source type" />
+            <Segmented value={tab} options={tabOptions} onChange={chooseTab} label="Source type" />
           </div>
 
           {tab === 'devices' ? (
