@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.openscreen.ios-capture</string>
+	<key>CFBundleName</key>
+	<string>OpenScreen iOS Capture</string>
+	<key>NSCameraUsageDescription</key>
+	<string>OpenScreen records the screen of a connected iPhone or iPad.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OpenScreen records the audio of a connected iPhone or iPad.</string>
+</dict>
+</plist>
