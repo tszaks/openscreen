@@ -91,6 +91,39 @@ export function withProbedDuration(project: Project, duration: number | null): P
   };
 }
 
+/** The last "time=00:00:54.46" progress stamp from an ffmpeg run; used
+ *  for files whose header has no duration (MediaRecorder WebM). */
+export function parseFfmpegProgressTime(stderr: string): number | null {
+  const all = [...stderr.matchAll(/time=\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)/g)];
+  const m = all[all.length - 1];
+  if (!m) return null;
+  const s = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+  return Number.isFinite(s) && s > 0 ? s : null;
+}
+
+/** Stored durations within this of the file's real one are left alone. */
+export const DURATION_TOLERANCE = 0.1;
+
+/**
+ * Correct an opened project whose stored duration disagrees with its file
+ * (older takes were timed by wall clock). Clips that ran to the old end
+ * follow the new one; clips past the real end are clamped or dropped.
+ * Returns the same object when nothing needs to change.
+ */
+export function correctDuration(project: Project, probed: number | null): Project {
+  const old = project.recording.duration;
+  if (probed === null || !(probed > 0) || Math.abs(probed - old) <= DURATION_TOLERANCE) return project;
+  const eps = 1e-6;
+  const clips = project.clips
+    .filter((c) => c.sourceStart < probed - eps)
+    .map((c) => ({ ...c, sourceEnd: Math.abs(c.sourceEnd - old) < eps ? probed : Math.min(c.sourceEnd, probed) }));
+  return {
+    ...project,
+    recording: { ...project.recording, duration: probed },
+    clips: clips.length ? clips : [{ id: project.clips[0]?.id ?? 'clip-1', sourceStart: 0, sourceEnd: probed, speed: 1 }],
+  };
+}
+
 /** The bit of MediaRecorder the stop logic needs. */
 export interface StoppableRecorder {
   state: 'inactive' | 'recording' | 'paused';
