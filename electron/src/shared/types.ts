@@ -66,11 +66,28 @@ export type Background =
   | { kind: 'imageFile'; path: string; blur?: number }
   | { kind: 'wallpaper' };
 
+/** One word of a transcript with its own time range (whisper token-level). */
+export interface TranscriptWord {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface CaptionCue {
   id: string;
   start: number;
   end: number;
   text: string;
+  /** Word-level timing when the transcript came from whisper -ojf. */
+  words?: TranscriptWord[];
+}
+
+/** A named section marker on the output timeline (YouTube-style chapter). */
+export interface Chapter {
+  id: string;
+  /** Output-time seconds the chapter starts at. */
+  start: number;
+  title: string;
 }
 
 export interface Annotation {
@@ -109,6 +126,7 @@ export interface Project {
   style: StyleSettings;
   cameraOverlay: CameraOverlay;
   captions: CaptionCue[];
+  chapters: Chapter[];
   annotations: Annotation[];
   exportPreset: 'original' | 'p1080' | 'uhd4k';
   outputFPS: number;
@@ -134,6 +152,7 @@ export const defaultProject = (recording: RecordingRef): Project => ({
   style: defaultStyle(),
   cameraOverlay: { enabled: false, corner: 'bottomLeft', sizeFraction: 0.22, circular: true },
   captions: [],
+  chapters: [],
   annotations: [],
   exportPreset: 'p1080',
   outputFPS: 60,
