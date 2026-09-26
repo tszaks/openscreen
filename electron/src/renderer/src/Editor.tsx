@@ -582,7 +582,8 @@ export function Editor({
     }
   };
 
-  /** The compositor a preset renders with: its canvas, its layout, and the
+  /** A multi-format pass's compositor: the pass's own canvas (several presets
+   *  can't share the editor's single canvas), the preset's layout, and the
    *  editor's zooms only where the preset keeps them. */
   const presetCompositor = (preset: ExportPreset, size: Size = preset) =>
     new CanvasCompositor(
@@ -609,7 +610,9 @@ export function Editor({
     // A GIF is converted from an intermediate mp4 in the bundle.
     const mp4Path = wantGif ? `${bundleDir}/export-${Date.now()}.mp4` : outPath;
     const fps = preset ? preset.fps : proj.outputFPS;
-    const comp = preset ? presetCompositor(preset) : compositor;
+    // The editor's compositor is already sized and laid out for the project's
+    // preset (projectCanvasSize), so this export draws exactly the preview.
+    const comp = compositor;
     // A preset MP4 renders a master, then encodes it with the preset's settings.
     const transcode = preset !== null && !wantGif;
     const frames = Math.floor((timeline.outputDuration || duration) * fps);

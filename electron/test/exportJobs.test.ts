@@ -141,5 +141,13 @@ describe('projectForPreset', () => {
     expect(layoutPresetOf(project())).toBeNull();
     expect(layoutPresetOf(Object.assign(project(), { layout: { presetId: 'appstore-iphone' } }))?.width).toBe(886);
     expect(layoutPresetOf(Object.assign(project(), { layout: { presetId: 'nope' } }))).toBeNull();
+    expect(layoutPresetOf(Object.assign(project(), { layout: { presetId: 'none' } }))).toBeNull();
+  });
+
+  it("resolves 'appstore' to the recording's device and orientation", () => {
+    const appstore = { layout: { presetId: 'appstore' } };
+    expect(layoutPresetOf(Object.assign(project(), appstore))?.id).toBe('appstore-iphone');
+    expect(layoutPresetOf(Object.assign(project(2622, 1206), appstore))?.id).toBe('appstore-iphone-landscape');
+    expect(layoutPresetOf(Object.assign(project(2064, 2752), appstore))?.id).toBe('appstore-ipad');
   });
 });
