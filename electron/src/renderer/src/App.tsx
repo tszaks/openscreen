@@ -3,6 +3,9 @@ import { api, type SourceInfo } from './api';
 import type { CursorSample, KeystrokeSample, Project } from '../../shared/types';
 import { defaultProject } from '../../shared/types';
 import { Editor } from './Editor';
+import { Button, EmptyState, Segmented } from './ui';
+
+type PickerTab = 'displays' | 'windows' | 'devices';
 
 type Phase =
   | { name: 'picker' }
@@ -52,6 +55,8 @@ export function App() {
   const [status, setStatus] = useState('');
   const [perms, setPerms] = useState<{ screen: string; hooks: boolean } | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
+  // UI only: which source tab the picker shows (null = pick a sensible default).
+  const [pickerTab, setPickerTab] = useState<PickerTab | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const camRecRef = useRef<MediaRecorder | null>(null);
@@ -170,98 +175,185 @@ export function App() {
     setPhase({ name: 'editor', bundleDir, videoUrl, camUrl, project, cursor, keys });
   }, [elapsed]);
 
+  const openProject = async () => {
+    const b = await api.openBundle();
+    if (!b) return;
+    setPhase({
+      name: 'editor',
+      bundleDir: b.bundleDir,
+      videoUrl: `file://${b.videoPath}`,
+      camUrl: b.camPath ? `file://${b.camPath}` : undefined,
+      project: b.project,
+      cursor: b.cursor,
+      keys: b.keys,
+    });
+  };
+
   if (phase.name === 'picker') {
+    const displays = sources.filter((s) => s.id.startsWith('screen:'));
+    const windows = sources.filter((s) => s.id.startsWith('window:'));
+    const tab: PickerTab = pickerTab ?? (devices.length ? 'devices' : 'displays');
+    const tabOptions = [
+      { value: 'displays' as const, label: <>Displays<span className="count">{displays.length}</span></> },
+      { value: 'windows' as const, label: <>Windows<span className="count">{windows.length}</span></> },
+      { value: 'devices' as const, label: <>iPhone &amp; iPad<span className="count">{devices.length}</span></> },
+    ];
+    // The iPhone/iPad path is the headline feature: lead with it when one is plugged in.
+    if (devices.length) tabOptions.unshift(tabOptions.pop()!);
+    const shown = tab === 'displays' ? displays : tab === 'windows' ? windows : [];
+    const selectedName = selectedDevice?.label ?? selected?.name;
+
     return (
-      <div className="app">
-        <h2>OpenScreen</h2>
-        {perms && perms.screen !== 'granted' && (
-          <div className="permwarn">
-            Screen Recording permission is {perms.screen} — captures will come
-            out black until granted.{' '}
-            <button onClick={() => api.openScreenSettings()}>
-              Open System Settings
-            </button>
-          </div>
-        )}
-        {perms && !perms.hooks && (
-          <div className="permwarn">
-            Input hooks unavailable — clicks and keystrokes won't be tracked
-            (grant Accessibility + restart the app).
-          </div>
-        )}
-        <div className="sources">
-          {sources.map((s) => (
-            <button
-              key={s.id}
-              className={`source${selected?.id === s.id ? ' selected' : ''}`}
-              onClick={() => {
-                setSelected(s);
-                setSelectedDevice(null);
-              }}
-            >
-              <img src={s.thumbnailDataUrl} alt="" />
-              <div className="name">{s.name}</div>
-            </button>
-          ))}
-          {devices.map((d) => (
-            <button
-              key={d.deviceId}
-              className={`source${selectedDevice?.deviceId === d.deviceId ? ' selected' : ''}`}
-              onClick={() => {
-                setSelectedDevice(d);
-                setSelected(null);
-              }}
-            >
-              <div className="name" style={{ padding: '24px 8px', textAlign: 'center' }}>
-                {d.label}
-              </div>
-            </button>
-          ))}
-        </div>
-        <div>
-          <button className="primary" disabled={!selected && !selectedDevice} onClick={start}>
-            Start Recording
-          </button>{' '}
-          <button
-            onClick={async () => {
-              const b = await api.openBundle();
-              if (!b) return;
-              setPhase({
-                name: 'editor',
-                bundleDir: b.bundleDir,
-                videoUrl: `file://${b.videoPath}`,
-                camUrl: b.camPath ? `file://${b.camPath}` : undefined,
-                project: b.project,
-                cursor: b.cursor,
-                keys: b.keys,
-              });
-            }}
-          >
+      <div className="shell">
+        <header className="topbar">
+          <span className="wordmark">OpenScreen</span>
+          <div className="spacer" />
+          <Button variant="ghost" onClick={openProject}>
             Open project…
-          </button>{' '}
-          <label style={{ fontSize: 13 }}>
-            <input type="checkbox" checked={micOn} onChange={(e) => setMicOn(e.target.checked)} /> Mic
-          </label>{' '}
-          <label style={{ fontSize: 13 }}>
-            <input type="checkbox" checked={camOn} onChange={(e) => setCamOn(e.target.checked)} /> Cam
-          </label>{' '}
-          <span className="status">{status}</span>
-        </div>
+          </Button>
+        </header>
+
+        <main className="picker">
+          {perms && perms.screen !== 'granted' && (
+            <div className="banner">
+              <span className="banner-dot" />
+              <p>
+                Screen Recording permission is {perms.screen} — captures will come
+                out black until granted.
+              </p>
+              <Button size="sm" onClick={() => api.openScreenSettings()}>
+                Open System Settings
+              </Button>
+            </div>
+          )}
+          {perms && !perms.hooks && (
+            <div className="banner">
+              <span className="banner-dot" />
+              <p>
+                Input hooks unavailable — clicks and keystrokes won't be tracked
+                (grant Accessibility + restart the app).
+              </p>
+            </div>
+          )}
+
+          <div className="picker-head">
+            <div>
+              <h1>New recording</h1>
+              <p>Choose a display, a window, or a connected iPhone or iPad.</p>
+            </div>
+            <Segmented value={tab} options={tabOptions} onChange={setPickerTab} label="Source type" />
+          </div>
+
+          {tab === 'devices' ? (
+            devices.length ? (
+              <div className="cards">
+                {devices.map((d) => (
+                  <button
+                    key={d.deviceId}
+                    type="button"
+                    className={`card${selectedDevice?.deviceId === d.deviceId ? ' selected' : ''}`}
+                    onClick={() => {
+                      setSelectedDevice(d);
+                      setSelected(null);
+                    }}
+                  >
+                    <div className="card-thumb device-thumb">
+                      <div className="device-outline" />
+                    </div>
+                    <div className="card-name">{d.label}</div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                art={<div className="device-outline large" />}
+                title="No iPhone or iPad connected"
+              >
+                Connect it with a USB cable, unlock it, and tap Trust if asked. Then
+                reopen OpenScreen to refresh this list.
+              </EmptyState>
+            )
+          ) : shown.length ? (
+            <div className="cards">
+              {shown.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`card${selected?.id === s.id ? ' selected' : ''}`}
+                  onClick={() => {
+                    setSelected(s);
+                    setSelectedDevice(null);
+                  }}
+                >
+                  <div className="card-thumb">
+                    <img src={s.thumbnailDataUrl} alt="" />
+                  </div>
+                  <div className="card-name">{s.name}</div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title={tab === 'displays' ? 'No displays found' : 'No windows found'}>
+              {tab === 'windows'
+                ? 'Open the app you want to record, then reopen OpenScreen to refresh this list.'
+                : 'OpenScreen could not list any displays. Check the Screen Recording permission.'}
+            </EmptyState>
+          )}
+        </main>
+
+        <footer className="picker-foot">
+          <label className="inline-switch">
+            <input type="checkbox" role="switch" className="switch" checked={micOn} onChange={(e) => setMicOn(e.target.checked)} />
+            Microphone
+          </label>
+          <label className="inline-switch">
+            <input type="checkbox" role="switch" className="switch" checked={camOn} onChange={(e) => setCamOn(e.target.checked)} />
+            Camera
+          </label>
+          <div className="spacer" />
+          <span className="status" title={status}>
+            {status || (selectedName ? selectedName : 'Nothing selected')}
+          </span>
+          <Button variant="primary" size="lg" disabled={!selected && !selectedDevice} onClick={start}>
+            Start recording
+          </Button>
+        </footer>
+
         {countdown !== null && countdown > 0 && (
-          <div className="countdown">{countdown}</div>
+          <div className="countdown">
+            <div className="countdown-ring">
+              <svg viewBox="0 0 120 120" aria-hidden="true">
+                <circle className="track" cx="60" cy="60" r="54" />
+                <circle key={countdown} className="sweep" cx="60" cy="60" r="54" />
+              </svg>
+              <span key={countdown} className="countdown-num">{countdown}</span>
+            </div>
+          </div>
         )}
       </div>
     );
   }
 
   if (phase.name === 'recording') {
+    const mm = Math.floor(elapsed / 60);
+    const ss = Math.floor(elapsed % 60);
     return (
-      <div className="app">
-        <div className="rec-hud">
-          <div className="rec-dot" />
-          <span>Recording — {elapsed.toFixed(1)}s</span>
-        </div>
-        <button className="primary" onClick={stop}>Stop</button>
+      <div className="shell">
+        <header className="topbar" />
+        <main className="rec-screen">
+          <div className="rec-pill">
+            <span className="rec-dot" />
+            <span className="rec-time">
+              {String(mm).padStart(2, '0')}:{String(ss).padStart(2, '0')}
+            </span>
+            <span className="rec-source">{selectedDevice?.label ?? selected?.name ?? 'Recording'}</span>
+            <Button variant="record" onClick={stop}>
+              <span className="stop-glyph" />
+              Stop
+            </Button>
+          </div>
+          <p className="rec-hint">Recording. Stop to open the editor.</p>
+        </main>
       </div>
     );
   }
