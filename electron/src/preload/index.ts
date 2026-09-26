@@ -4,8 +4,13 @@ const api = {
   listSources: () => ipcRenderer.invoke('sources:list'),
   permissionsStatus: () => ipcRenderer.invoke('permissions:status'),
   openScreenSettings: () => ipcRenderer.invoke('permissions:openScreenSettings'),
-  startRecording: (sourceId: string) => ipcRenderer.invoke('recording:start', sourceId),
-  stopRecording: () => ipcRenderer.invoke('recording:stop'),
+  sourceAlive: (sourceId: string) => ipcRenderer.invoke('sources:alive', sourceId),
+  requestAccessibility: () => ipcRenderer.invoke('permissions:requestAccessibility'),
+  requestCamera: () => ipcRenderer.invoke('permissions:requestCamera'),
+  relaunch: () => ipcRenderer.invoke('app:relaunch'),
+  setBusy: (reason: string | null) => ipcRenderer.send('app:busy', reason),
+  startRecording: (sourceId: string, displayId?: string) => ipcRenderer.invoke('recording:start', { sourceId, displayId }),
+  stopRecording: (videoStartedAtMs?: number) => ipcRenderer.invoke('recording:stop', { videoStartedAtMs }),
   saveBundle: (videoBytes: ArrayBuffer, cursor: unknown, project: unknown, camBytes?: ArrayBuffer, keys?: unknown) =>
     ipcRenderer.invoke('bundle:save', { videoBytes, camBytes, cursor, project, keys }),
   saveBundleWithVideoFile: (dir: string, cursor: unknown, project: unknown, camBytes?: ArrayBuffer, keys?: unknown) =>
@@ -13,6 +18,14 @@ const api = {
   iosList: () => ipcRenderer.invoke('ios:list'),
   iosStart: (deviceId: string) => ipcRenderer.invoke('ios:start', deviceId),
   iosStop: () => ipcRenderer.invoke('ios:stop'),
+  discardBundle: (dir: string) => ipcRenderer.invoke('bundle:discard', dir),
+  onIosEnded: (cb: (e: { message: string | null }) => void) => {
+    const listener = (_e: IpcRendererEvent, ended: { message: string | null }) => cb(ended);
+    ipcRenderer.on('ios:ended', listener);
+    return () => {
+      ipcRenderer.removeListener('ios:ended', listener);
+    };
+  },
   openBundle: () => ipcRenderer.invoke('bundle:open'),
   saveProject: (dir: string, project: unknown) =>
     ipcRenderer.invoke('bundle:saveProject', { dir, project }),

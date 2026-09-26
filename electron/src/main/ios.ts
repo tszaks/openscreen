@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { join } from 'node:path';
-import { createLineSplitter, IosHelperClient } from '../shared/iosCapture';
+import { createLineSplitter, IosHelperClient, type IosFinished } from '../shared/iosCapture';
 
 // Owns the one long-lived `ios-capture serve` process. It is started on the
 // first device query and kept alive: the CMIO opt-in costs up to ~5s per
@@ -17,13 +17,20 @@ const RESPAWN_BACKOFF_MS = 10_000;
 
 let child: ChildProcessWithoutNullStreams | null = null;
 let lastExitAt = 0;
+let endedListener: ((ended: { ok: IosFinished } | { err: string }) => void) | null = null;
 
 const client = new IosHelperClient({
   write: (line) => {
     if (child?.stdin.writable) child.stdin.write(line + '\n');
   },
   kill: () => child?.kill('SIGKILL'),
+  onEnded: (ended) => endedListener?.(ended),
 });
+
+/** Called when a take ends without a stop (cable pulled, helper died). */
+export function onIosEnded(cb: typeof endedListener) {
+  endedListener = cb;
+}
 
 function ensureHelper() {
   if (child || Date.now() - lastExitAt < RESPAWN_BACKOFF_MS) return;
