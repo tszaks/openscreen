@@ -38,16 +38,31 @@ const api = {
     ipcRenderer.invoke('captions:transcribe', { dir, videoFile }),
   detectSilences: (dir: string, videoFile: string, thresholdDb?: number, minDur?: number) =>
     ipcRenderer.invoke('audio:detectSilences', { dir, videoFile, thresholdDb, minDur }),
+  analyzeTaps: (dir: string, videoFile: string) => ipcRenderer.invoke('taps:analyze', { dir, videoFile }),
   audioPeaks: (dir: string, videoFile: string, buckets?: number) =>
     ipcRenderer.invoke('audio:peaks', { dir, videoFile, buckets }),
-  exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: unknown, clicks?: number[], voiceCleanup?: boolean, duration?: number) =>
-    ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn, audioClips, clicks, voiceCleanup, duration }),
+  exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: unknown, clicks?: number[], voiceCleanup?: boolean, duration?: number, master?: boolean) =>
+    ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn, audioClips, clicks, voiceCleanup, duration, master }),
   exportFrame: (bytes: ArrayBuffer) => ipcRenderer.invoke('export:frame', bytes),
   exportEnd: () => ipcRenderer.invoke('export:end'),
   exportAbort: () => ipcRenderer.invoke('export:abort'),
   exportGif: (inMp4: string, outGif: string) => ipcRenderer.invoke('export:gif', { inMp4, outGif }),
   exportPickPath: (bundleDir: string, kind: 'mp4' | 'gif') => ipcRenderer.invoke('export:pickPath', { bundleDir, kind }),
   exportReveal: (path: string) => ipcRenderer.invoke('export:reveal', path),
+  setCaptureShield: (on: boolean) => ipcRenderer.send('app:captureShield', on),
+  exportPickFolder: (bundleDir: string) => ipcRenderer.invoke('export:pickFolder', { bundleDir }),
+  exportMasterPath: (key: string) => ipcRenderer.invoke('export:masterPath', key),
+  exportDiscardMaster: (path: string) => ipcRenderer.invoke('export:discardMaster', path),
+  exportHasAudio: (path: string) => ipcRenderer.invoke('export:hasAudio', path),
+  exportTranscode: (presetId: string, input: string, outBase: string, duration: number) =>
+    ipcRenderer.invoke('export:transcode', { presetId, input, outBase, duration }),
+  onTranscodeProgress: (cb: (e: { presetId: string; fraction: number }) => void) => {
+    const listener = (_e: IpcRendererEvent, p: { presetId: string; fraction: number }) => cb(p);
+    ipcRenderer.on('export:transcodeProgress', listener);
+    return () => {
+      ipcRenderer.removeListener('export:transcodeProgress', listener);
+    };
+  },
   setMenuPhase: (phase: string, bundleDir?: string) => ipcRenderer.send('menu:phase', { phase, bundleDir }),
   onMenu: (cb: (action: string) => void) => {
     const listener = (_e: IpcRendererEvent, action: string) => cb(action);

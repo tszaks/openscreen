@@ -1,16 +1,21 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, screen, shell, systemPreferences } from 'electron';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { createCursorTracker, type CursorTracker } from './cursor';
 import { startFfmpegJob, type FfmpegJob } from './ffmpegJob';
+import { transcodePreset, type TranscodeRun } from './transcodeJob';
 import { disposeIosHelper, listIosDevices, onIosEnded, startIosRecording, stopIosRecording } from './ios';
 import { buildAppMenu } from './menu';
 import type { MenuPhase } from '../shared/menu';
 import { normalizeProject, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
 import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
+import { getPreset, type PresetId } from '../shared/exportPresets';
 import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
+import { analysisFrameSize, analyzeFrames, detectTaps, findDeadTime, splitRawGray, tapAnalysisFfmpegArgs } from '../shared/taps';
 import {
   alignToVideoStart,
   cursorModeFor,
@@ -29,6 +34,8 @@ app.setName('OpenScreen');
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
 let exportJob: FfmpegJob | null = null;
+// A preset transcode (multi-format export) in flight.
+let transcodeRun: TranscodeRun | null = null;
 let trackerStartedAtMs = 0;
 // The in-flight iPhone take's bundle, so a failed take can be salvaged or removed.
 let iosBundleDir: string | null = null;
@@ -37,8 +44,9 @@ let iosBundleDir: string | null = null;
 // closing or quitting can ask before throwing it away.
 let rendererBusy: string | null = null;
 let quitConfirmed = false;
-// export:begin sets exportJob; export:end/abort clear it.
-const exportRunning = () => exportJob !== null;
+// export:begin sets exportJob; export:end/abort clear it. export:transcode
+// holds transcodeRun while it runs.
+const exportRunning = () => exportJob !== null || transcodeRun !== null;
 const busyReason = () => rendererBusy ?? (exportRunning() ? 'exporting' : null);
 
 /** True when nothing is running, or the user chose to throw it away. */
@@ -156,6 +164,13 @@ const ffmpegPath = async () => {
   return 'ffmpeg';
 };
 
+/** Whether a media file has an audio stream. */
+const probeHasAudio = async (bin: string, path: string) => {
+  const { execFile } = await import('node:child_process');
+  const probe = await new Promise<string>((resolve) => execFile(bin, ['-i', path], (_e, _so, se) => resolve(se ?? '')));
+  return /Stream #\d+:\d+.*Audio:/.test(probe);
+};
+
 // Extract 16kHz mono wav from a bundle video for analysis (shared by
 // transcription and silence detection).
 const extractWav = async (dir: string, videoFile: string) => {
@@ -260,6 +275,12 @@ app.whenReady().then(() => {
 
   ipcMain.on('app:busy', (_e, reason: string | null) => {
     rendererBusy = reason || null;
+  });
+
+  // Keep OpenScreen's own window (countdown, recording card) out of the
+  // capture: macOS then omits it from screen and window recordings.
+  ipcMain.on('app:captureShield', (_e, on: boolean) => {
+    win?.setContentProtection(!!on);
   });
 
   ipcMain.handle('permissions:openScreenSettings', async () => {
@@ -680,22 +701,46 @@ app.whenReady().then(() => {
     },
   );
 
+  // Tap analysis for phone recordings: ffmpeg streams small grayscale
+  // frames, taps.ts turns their differences into tap/swipe suggestions and
+  // still stretches. Everything is in source seconds.
+  ipcMain.handle('taps:analyze', async (_e, args: { dir: string; videoFile: string }) => {
+    const { spawn } = await import('node:child_process');
+    const file = join(args.dir, args.videoFile);
+    const banner = await probe(file);
+    const size = parseFfmpegVideoSize(banner);
+    if (!size) throw new Error('could not read the video size');
+    // Long takes analyse at 15 fps so the frames stay in memory comfortably.
+    const fps = (parseFfmpegDuration(banner) ?? 0) > 240 ? 15 : 30;
+    const { w, h } = analysisFrameSize(size.width, size.height);
+    const bin = await ffmpegPath();
+    const raw = await new Promise<Buffer>((resolvePromise, reject) => {
+      const chunks: Buffer[] = [];
+      let err = '';
+      const ff = spawn(bin, tapAnalysisFfmpegArgs(file, { fps }));
+      ff.stdout.on('data', (c: Buffer) => chunks.push(c));
+      ff.stderr.on('data', (c: Buffer) => (err += c.toString()));
+      ff.on('error', reject);
+      ff.on('close', (code) =>
+        code === 0 ? resolvePromise(Buffer.concat(chunks)) : reject(new Error(err.trim() || `ffmpeg exited ${code}`)),
+      );
+    });
+    const frames = splitRawGray(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength), w, h, fps);
+    const analysis = analyzeFrames(frames);
+    const taps = detectTaps(analysis).map((t) => ({ ...t, id: randomUUID() }));
+    const deadTime = findDeadTime(analysis).map((d) => ({ start: d.start, end: d.end, ...(d.edge ? { edge: d.edge } : {}) }));
+    return { taps, deadTime };
+  });
+
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
-  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number }) => {
+  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number; master?: boolean }) => {
     await exportJob?.abort(); // a previous export that never ended
     exportJob = null;
     const ffmpegBin = await ffmpegPath();
     // Confirm the source actually has an audio stream before filtering
     // (filter_complex on a missing stream aborts the whole encode).
-    let hasAudio = false;
-    if (args.audioIn) {
-      const { execFile } = await import('node:child_process');
-      const probe = await new Promise<string>((resolve) =>
-        execFile(ffmpegBin, ['-i', args.audioIn!], (_e, _so, se) => resolve(se ?? '')),
-      );
-      hasAudio = /Stream #\d+:\d+.*Audio:/.test(probe);
-    }
+    const hasAudio = args.audioIn ? await probeHasAudio(ffmpegBin, args.audioIn) : false;
     mkdirSync(dirname(args.outPath), { recursive: true });
     exportJob = await startFfmpegJob(ffmpegBin, buildExportArgs({ ...args, hasAudio }), args.outPath);
     return true;
@@ -714,6 +759,56 @@ app.whenReady().then(() => {
     if (picked.canceled || !picked.filePath) return null;
     // ffmpeg picks the container from the extension, so make sure it has one.
     return extname(picked.filePath).toLowerCase() === `.${args.kind}` ? picked.filePath : `${picked.filePath}.${args.kind}`;
+  });
+
+  // Multi-format export: one folder for every file, opened on
+  // ~/Movies/OpenScreen/<project>/. Resolves null when the user cancels.
+  ipcMain.handle('export:pickFolder', async (_e, args: { bundleDir: string }) => {
+    const name = basename(args.bundleDir).replace(/\.openscreen$/, '') || 'OpenScreen export';
+    const defaultPath = join(recordingsRoot(), name.replace(/[/:]/g, '-'));
+    mkdirSync(defaultPath, { recursive: true });
+    const picked = await dialog.showOpenDialog(win!, {
+      title: 'Export formats to…',
+      buttonLabel: 'Export Here',
+      defaultPath,
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (picked.canceled || !picked.filePaths[0]) return null;
+    return picked.filePaths[0];
+  });
+
+  // Rendered masters live in a temp folder of their own, and only files in it
+  // can be discarded through export:discardMaster.
+  const mastersDir = () => join(tmpdir(), 'openscreen-export');
+  ipcMain.handle('export:masterPath', (_e, key: string) => {
+    mkdirSync(mastersDir(), { recursive: true });
+    return join(mastersDir(), `master-${Date.now()}-${key.replace(/[^a-z0-9]+/gi, '_')}.mov`);
+  });
+  ipcMain.handle('export:discardMaster', (_e, path: string) => {
+    if (dirname(resolve(path)) === mastersDir()) rmSync(path, { force: true });
+    return true;
+  });
+
+  // Whether a file has an audio stream (for the Export panel's warnings).
+  ipcMain.handle('export:hasAudio', async (_e, path: string) => probeHasAudio(await ffmpegPath(), path));
+
+  // Transcode a rendered master into one preset's files. Progress arrives as
+  // export:transcodeProgress; export:abort cancels it.
+  ipcMain.handle('export:transcode', async (_e, args: { presetId: PresetId; input: string; outBase: string; duration: number }) => {
+    await transcodeRun?.cancel();
+    const bin = await ffmpegPath();
+    const preset = getPreset(args.presetId);
+    const hasAudio = await probeHasAudio(bin, args.input);
+    mkdirSync(dirname(args.outBase), { recursive: true });
+    const run = transcodePreset(bin, preset, args.input, args.outBase, hasAudio, args.duration, (fraction) =>
+      win?.webContents.send('export:transcodeProgress', { presetId: args.presetId, fraction }),
+    );
+    transcodeRun = run;
+    try {
+      return await run.done;
+    } finally {
+      if (transcodeRun === run) transcodeRun = null;
+    }
   });
 
   ipcMain.handle('export:reveal', (_e, path: string) => {
@@ -772,7 +867,9 @@ app.whenReady().then(() => {
   ipcMain.handle('export:abort', async () => {
     const job = exportJob;
     exportJob = null;
-    await job?.abort();
+    const run = transcodeRun;
+    transcodeRun = null;
+    await Promise.all([job?.abort(), run?.cancel()]);
     return true;
   });
 
@@ -806,6 +903,7 @@ app.on('before-quit', (e) => {
   quitConfirmed = true;
   // Don't leave ffmpeg running or a half-written export behind.
   void exportJob?.abort();
+  void transcodeRun?.cancel();
 });
 
 app.on('will-quit', () => {
