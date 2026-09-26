@@ -1,5 +1,5 @@
 import type { CursorSample, KeystrokeSample, Project, TranscriptWord } from '../../shared/types';
-import type { IosDevice, IosFinished } from '../../shared/iosCapture';
+import type { IosDevice, IosFinished, IosWarning } from '../../shared/iosCapture';
 import type { MenuAction, MenuPhase } from '../../shared/menu';
 
 export type { IosDevice };
@@ -21,8 +21,8 @@ declare global {
       stopRecording(): Promise<{ samples: CursorSample[]; keys: KeystrokeSample[] }>;
       saveBundle(videoBytes: ArrayBuffer, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer, keys?: KeystrokeSample[]): Promise<string>;
       saveBundleWithVideoFile(dir: string, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer, keys?: KeystrokeSample[]): Promise<string>;
-      /** Wired iPhone/iPad screens. `ready` is false until the helper's first scan. */
-      iosList(): Promise<{ devices: IosDevice[]; ready: boolean; error: string | null }>;
+      /** Wired iPhone/iPad screens. `ready` is false until the helper's first scan. `warning` is set mid-take (e.g. "stalled"). */
+      iosList(): Promise<{ devices: IosDevice[]; ready: boolean; error: string | null; warning: IosWarning | null }>;
       /** Starts recording into a new bundle's screen.mov; resolves on the first frame. */
       iosStart(deviceId: string): Promise<{ bundleDir: string; width: number; height: number }>;
       iosStop(): Promise<IosFinished>;

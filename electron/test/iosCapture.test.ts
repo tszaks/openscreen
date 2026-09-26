@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  IosCaptureError,
   IosHelperClient,
   createLineSplitter,
   parseDeviceList,
@@ -23,6 +24,22 @@ describe('parseHelperLine', () => {
     expect(
       parseHelperLine('{"devices":[{"id":"abc","modelID":"iOS Device","name":"Tyler\'s iPhone"}],"event":"devices"}'),
     ).toEqual({ event: 'devices', devices: [{ id: 'abc', name: "Tyler's iPhone", modelID: 'iOS Device' }] });
+  });
+
+  it('parses error codes and warnings', () => {
+    expect(parseHelperLine('{"code":"no-frames","event":"error","message":"No picture from your iPhone."}')).toEqual({
+      event: 'error',
+      message: 'No picture from your iPhone.',
+      code: 'no-frames',
+    });
+    expect(parseHelperLine('{"code":"stalled","event":"warning","message":"Your iPhone may be locked."}')).toEqual({
+      event: 'warning',
+      code: 'stalled',
+      message: 'Your iPhone may be locked.',
+    });
+    expect(parseHelperLine('{"code":"resumed","event":"warning"}')).toEqual({ event: 'warning', code: 'resumed' });
+    expect(parseHelperLine('{"event":"warning","message":"no code"}')).toBeNull();
+    expect(parseHelperLine('{"code":7,"event":"error","message":"x"}')).toEqual({ event: 'error', message: 'x' });
   });
 
   it('rejects junk, partial and malformed lines', () => {
@@ -171,6 +188,34 @@ describe('IosHelperClient', () => {
     await check;
     expect(kill).toHaveBeenCalledOnce();
     expect(client.busy).toBe(false);
+  });
+
+  it('rejects start with the no-frames code when the phone sends no picture', async () => {
+    const { client } = make();
+    const started = client.start('a', '/tmp/a.mov');
+    client.handleLine('{"code":"no-frames","event":"error","message":"No picture from your iPhone."}');
+    const err = await started.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IosCaptureError);
+    expect(err).toMatchObject({ message: 'No picture from your iPhone.', code: 'no-frames' });
+    expect(client.busy).toBe(false);
+  });
+
+  it('tracks stalled/resumed warnings without ending the take', async () => {
+    const { client } = make();
+    const started = client.start('a', '/tmp/a.mov');
+    client.handleLine('{"event":"started","width":10,"height":20}');
+    await started;
+    client.handleLine('{"code":"stalled","event":"warning","message":"Your iPhone may be locked."}');
+    expect(client.warning).toEqual({ code: 'stalled', message: 'Your iPhone may be locked.' });
+    expect(client.busy).toBe(true);
+    client.handleLine('{"code":"resumed","event":"warning"}');
+    expect(client.warning).toBeNull();
+
+    client.handleLine('{"code":"stalled","event":"warning","message":"m"}');
+    const stopped = client.stop();
+    client.handleLine('{"event":"finished","path":"/tmp/a.mov","duration":9}');
+    await expect(stopped).resolves.toMatchObject({ path: '/tmp/a.mov', duration: 9 });
+    expect(client.warning).toBeNull();
   });
 
   it('keeps stray idle errors as lastError', () => {
