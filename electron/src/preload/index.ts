@@ -20,6 +20,7 @@ const api = {
   displays: () => ipcRenderer.invoke('display:info'),
   pickBackground: () => ipcRenderer.invoke('background:pick'),
   wallpaperPath: () => ipcRenderer.invoke('background:wallpaper'),
+  prepareBackground: (path: string) => ipcRenderer.invoke('background:prepare', path),
   transcribe: (dir: string, videoFile: string) =>
     ipcRenderer.invoke('captions:transcribe', { dir, videoFile }),
   detectSilences: (dir: string, videoFile: string, thresholdDb?: number, minDur?: number) =>
