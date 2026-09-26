@@ -41,7 +41,11 @@ export function TapsLane({
   const onDown = (e: React.PointerEvent, s: TapSuggestion) => {
     if (e.button !== 0) return;
     e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // not an active pointer (synthetic events): the drag still tracks moves over the marker
+    }
     drag.current = { id: s.id, pointer: e.pointerId, x: e.clientX, t: s.t, moved: false };
   };
   const onMovePointer = (e: React.PointerEvent) => {
