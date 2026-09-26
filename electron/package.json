@@ -47,7 +47,11 @@
       ],
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSCameraUsageDescription": "OpenScreen records the screen of a connected iPhone or iPad, and your camera when the camera overlay is on.",
+        "NSMicrophoneUsageDescription": "OpenScreen records your microphone when it is turned on."
+      }
     }
   },
   "devDependencies": {
