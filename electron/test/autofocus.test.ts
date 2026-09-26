@@ -82,4 +82,18 @@ describe('AutofocusPlanner', () => {
     const cam = cameraAt(t, segs);
     expect(cam.scale).toBeGreaterThan(1.2);
   });
+
+  it('handles a glide-in after a coverage gap (no stack overflow)', () => {
+    // Two clicks far apart: segment 1 fully ends long before segment 2's
+    // glide-in begins. cameraAt must not recurse back into itself.
+    const segs = planner.planSegments([click(1, 0.2, 0.2), click(10, 0.8, 0.8)], 15);
+    expect(segs).toHaveLength(2);
+    const t = segs[1].inStart + 0.1;
+    const cam = cameraAt(t, segs);
+    expect(Number.isFinite(cam.scale)).toBe(true);
+    expect(cam.scale).toBeGreaterThan(1); // gliding in from idle
+    // In the gap itself the camera rests at idle.
+    const gapT = (segs[0].outEnd + segs[1].inStart) / 2;
+    expect(cameraAt(gapT, segs).scale).toBe(1);
+  });
 });
