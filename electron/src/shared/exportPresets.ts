@@ -397,7 +397,17 @@ export function ffmpegArgsFor(p: ExportPreset, o: FfmpegExportOptions): string[]
     if (p.video.level) args.push('-level:v', p.video.level);
     if (p.video.bitrateKbps) {
       const { target, max } = p.video.bitrateKbps;
-      args.push('-b:v', `${target}k`, '-maxrate', `${max}k`, '-bufsize', `${max * 2}k`);
+      if (p.id.startsWith('appstore')) {
+        // App Store Connect's spec is 10-12 Mbps. Single-pass VBR drops to
+        // ~1 Mbps on mostly static app footage, so hold a constant rate
+        // (HRD CBR pads with filler) to stay inside the published range.
+        args.push(
+          '-b:v', `${target}k`, '-minrate', `${target}k`, '-maxrate', `${target}k`,
+          '-bufsize', `${target}k`, '-x264-params', 'nal-hrd=cbr:force-cfr=1',
+        );
+      } else {
+        args.push('-b:v', `${target}k`, '-maxrate', `${max}k`, '-bufsize', `${max * 2}k`);
+      }
     } else {
       args.push('-crf', String(p.video.crf ?? 23));
     }
