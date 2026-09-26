@@ -279,6 +279,7 @@ export const Icon = {
     ),
   undo: (s?: number) => svg(<path d="M6 3 2.75 6.25 6 9.5M3.25 6.25H10a3.25 3.25 0 0 1 0 6.5H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />, s),
   redo: (s?: number) => svg(<path d="M10 3l3.25 3.25L10 9.5M12.75 6.25H6a3.25 3.25 0 0 0 0 6.5h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />, s),
+  chevronLeft: (s?: number) => svg(<path d="m10 4-4 4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />, s),
   chevronDown: (s?: number) => svg(<path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />, s),
   close: (s?: number) => svg(<path d="m4.5 4.5 7 7m0-7-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />, s),
   scissors: (s?: number) =>

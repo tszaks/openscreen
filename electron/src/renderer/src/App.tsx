@@ -10,7 +10,10 @@ type PickerTab = 'displays' | 'windows' | 'devices';
 type Phase =
   | { name: 'picker' }
   | { name: 'recording'; startedAt: number }
-  | { name: 'editor'; bundleDir: string; videoUrl: string; camUrl?: string; project: Project; cursor: CursorSample[]; keys: KeystrokeSample[] };
+  // `session` is new on every entry, so reopening remounts a fresh editor.
+  | { name: 'editor'; session: number; bundleDir: string; videoUrl: string; camUrl?: string; project: Project; cursor: CursorSample[]; keys: KeystrokeSample[] };
+
+type EditorPhase = Extract<Phase, { name: 'editor' }>;
 
 /** Capture one source (screen or window) at 60fps via getDisplayMedia. */
 async function captureStream(sourceId: string): Promise<MediaStream> {
@@ -79,6 +82,12 @@ export function App() {
   const camChunksRef = useRef<Blob[]>([]);
   // The in-flight iPhone take: its bundle and the size from the first frame.
   const iosTakeRef = useRef<{ bundleDir: string; width: number; height: number } | null>(null);
+  const sessionRef = useRef(0);
+  const openEditor = useCallback(
+    (p: Omit<EditorPhase, 'name' | 'session'>) =>
+      setPhase({ name: 'editor', session: ++sessionRef.current, ...p }),
+    [],
+  );
 
   useEffect(() => {
     api.listSources().then(setSources).catch((e) => setStatus(`sources: ${e}`));
@@ -227,8 +236,7 @@ export function App() {
     });
     if (camBytes) project.cameraOverlay.enabled = true;
     const bundleDir = await api.saveBundleWithVideoFile(take.bundleDir, [], project, camBytes, []);
-    setPhase({
-      name: 'editor',
+    openEditor({
       bundleDir,
       videoUrl: `file://${bundleDir}/screen.mov`,
       camUrl: camBlob ? URL.createObjectURL(camBlob) : undefined,
@@ -236,7 +244,7 @@ export function App() {
       cursor: [],
       keys: [],
     });
-  }, [elapsed, stopCamOverlay]);
+  }, [elapsed, stopCamOverlay, openEditor]);
 
   const stop = useCallback(async () => {
     if (iosTakeRef.current) return stopIos();
@@ -265,14 +273,14 @@ export function App() {
     const bundleDir = await api.saveBundle(videoBytes, cursor, project, camBytes, keys);
     const videoUrl = URL.createObjectURL(blob);
     const camUrl = camBlob ? URL.createObjectURL(camBlob) : undefined;
-    setPhase({ name: 'editor', bundleDir, videoUrl, camUrl, project, cursor, keys });
-  }, [elapsed, stopIos, stopCamOverlay]);
+    openEditor({ bundleDir, videoUrl, camUrl, project, cursor, keys });
+  }, [elapsed, stopIos, stopCamOverlay, openEditor]);
 
-  const openProject = async () => {
+  // Replaces whatever is open. The editor asks about unsaved changes first.
+  const openProject = useCallback(async () => {
     const b = await api.openBundle();
     if (!b) return;
-    setPhase({
-      name: 'editor',
+    openEditor({
       bundleDir: b.bundleDir,
       videoUrl: `file://${b.videoPath}`,
       camUrl: b.camPath ? `file://${b.camPath}` : undefined,
@@ -280,7 +288,32 @@ export function App() {
       cursor: b.cursor,
       keys: b.keys,
     });
-  };
+  }, [openEditor]);
+
+  const backToPicker = useCallback(() => setPhase({ name: 'picker' }), []);
+
+  // The app menu dispatches `openscreen:menu` events. The editor handles
+  // its own; the picker only opens projects.
+  useEffect(() => {
+    if (phase.name !== 'picker') return;
+    const onMenu = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === 'openProject') void openProject();
+    };
+    window.addEventListener('openscreen:menu', onMenu);
+    return () => window.removeEventListener('openscreen:menu', onMenu);
+  }, [phase.name, openProject]);
+
+  // A fresh recording plays from blob URLs; release them when its editor goes.
+  const editorVideoUrl = phase.name === 'editor' ? phase.videoUrl : undefined;
+  const editorCamUrl = phase.name === 'editor' ? phase.camUrl : undefined;
+  useEffect(
+    () => () => {
+      for (const url of [editorVideoUrl, editorCamUrl]) {
+        if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+      }
+    },
+    [editorVideoUrl, editorCamUrl],
+  );
 
   if (phase.name === 'picker') {
     const displays = sources.filter((s) => s.id.startsWith('screen:'));
@@ -509,12 +542,15 @@ export function App() {
 
   return (
     <Editor
+      key={phase.session}
       videoUrl={phase.videoUrl}
       camUrl={phase.camUrl}
       project={phase.project}
       cursor={phase.cursor}
       keys={phase.keys}
       bundleDir={phase.bundleDir}
+      onNewRecording={backToPicker}
+      onOpenProject={openProject}
     />
   );
 }
