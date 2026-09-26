@@ -1057,13 +1057,16 @@ export function Editor({
             title="Use desktop wallpaper"
             className="tile"
             onClick={async () => {
-              const path = await api.wallpaperPath();
-              if (path) {
-                setProj((p) => ({
-                  ...p,
-                  style: { ...p.style, background: { kind: 'imageFile', path } },
-                }));
-              } else setStatus('wallpaper unavailable');
+              const noWallpaper = "Couldn't read your wallpaper, choose an image instead";
+              const path = await api.wallpaperPath().catch(() => null);
+              if (!path || !(await backgroundReady(path))) {
+                setStatus(noWallpaper);
+                return;
+              }
+              setProj((p) => ({
+                ...p,
+                style: { ...p.style, background: { kind: 'imageFile', path } },
+              }));
             }}
           >
             <span className="tile-swatch tile-text">Desktop</span>

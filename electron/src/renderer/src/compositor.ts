@@ -10,22 +10,22 @@ import { api } from './api';
 // Background images by raw path, shared by every compositor: the editor
 // builds a new compositor on each edit, and reloading the image each time
 // would flash the fallback.
-const bgImages = new Map<string, { img: HTMLImageElement; ready: Promise<void> }>();
+const bgImages = new Map<string, { img: HTMLImageElement; ready: Promise<boolean> }>();
 
 function backgroundImage(path: string) {
   let entry = bgImages.get(path);
   if (!entry) {
     const img = new Image();
-    const ready = new Promise<void>((resolve) => {
-      img.onload = () => resolve();
-      img.onerror = () => resolve();
+    const ready = new Promise<boolean>((resolve) => {
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
       // HEIC goes through main for a JPEG copy; null means it can't be shown.
       api.prepareBackground(path).then(
         (usable) => {
           if (usable) img.src = fileUrl(usable);
-          else resolve();
+          else resolve(false);
         },
-        () => resolve(),
+        () => resolve(false),
       );
     });
     entry = { img, ready };
@@ -34,8 +34,9 @@ function backgroundImage(path: string) {
   return entry;
 }
 
-/** Resolves once the background image at `path` has loaded (or failed). */
-export function backgroundReady(path: string): Promise<void> {
+/** Resolves once the background image at `path` has loaded (true) or
+ *  couldn't be (false). */
+export function backgroundReady(path: string): Promise<boolean> {
   return backgroundImage(path).ready;
 }
 
