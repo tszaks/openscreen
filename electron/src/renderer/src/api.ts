@@ -1,5 +1,6 @@
 import type { CursorSample, KeystrokeSample, Project, TranscriptWord } from '../../shared/types';
 import type { IosDevice, IosFinished } from '../../shared/iosCapture';
+import type { MenuAction, MenuPhase } from '../../shared/menu';
 
 export type { IosDevice };
 
@@ -38,6 +39,10 @@ declare global {
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       exportEnd(): Promise<boolean>;
       exportGif(inMp4: string, outGif: string): Promise<boolean>;
+      /** Tell main what is on screen, so the menu enables what applies. */
+      setMenuPhase(phase: MenuPhase, bundleDir?: string): void;
+      /** Subscribe to app-menu clicks; returns the unsubscribe. */
+      onMenu(cb: (action: MenuAction) => void): () => void;
     };
   }
 }

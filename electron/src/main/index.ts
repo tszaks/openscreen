@@ -1,13 +1,19 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, screen } from 'electron';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createCursorTracker, type CursorTracker } from './cursor';
 import { disposeIosHelper, listIosDevices, startIosRecording, stopIosRecording } from './ios';
+import { buildAppMenu } from './menu';
+import type { MenuPhase } from '../shared/menu';
 import type { CursorSample, KeystrokeSample, Project } from '../shared/types';
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
 
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
+
+// What the renderer is showing, so the menu enables only what applies.
+let menuState: { phase: MenuPhase; bundleDir?: string } = { phase: 'picker' };
+const refreshMenu = () => Menu.setApplicationMenu(buildAppMenu(() => win, menuState));
 
 const recordingsRoot = () =>
   join(app.getPath('videos'), 'OpenScreen');
@@ -77,9 +83,20 @@ function createWindow() {
     },
   });
   win.loadFile(join(__dirname, '../renderer/index.html'));
+  win.on('closed', () => {
+    win = null;
+    menuState = { phase: 'picker' };
+    refreshMenu();
+  });
 }
 
 app.whenReady().then(() => {
+  refreshMenu();
+  ipcMain.on('menu:phase', (_e, next: { phase: MenuPhase; bundleDir?: string }) => {
+    menuState = { phase: next.phase, bundleDir: next.bundleDir };
+    refreshMenu();
+  });
+
   // Permission status so the UI can warn before a doomed recording:
   // screen capture needs Screen Recording; click/keystroke tracking needs
   // Accessibility (unprobeable — inferred from whether uiohook loads).
@@ -527,6 +544,11 @@ app.whenReady().then(() => {
 });
 
 app.on('will-quit', () => disposeIosHelper());
+
+// macOS keeps the app alive with no window; clicking the Dock icon brings one back.
+app.on('activate', () => {
+  if (!win && app.isReady()) createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

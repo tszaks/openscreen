@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 const api = {
   listSources: () => ipcRenderer.invoke('sources:list'),
@@ -31,6 +31,14 @@ const api = {
   exportFrame: (bytes: ArrayBuffer) => ipcRenderer.invoke('export:frame', bytes),
   exportEnd: () => ipcRenderer.invoke('export:end'),
   exportGif: (inMp4: string, outGif: string) => ipcRenderer.invoke('export:gif', { inMp4, outGif }),
+  setMenuPhase: (phase: string, bundleDir?: string) => ipcRenderer.send('menu:phase', { phase, bundleDir }),
+  onMenu: (cb: (action: string) => void) => {
+    const listener = (_e: IpcRendererEvent, action: string) => cb(action);
+    ipcRenderer.on('menu:action', listener);
+    return () => {
+      ipcRenderer.removeListener('menu:action', listener);
+    };
+  },
 };
 
 export type OpenScreenApi = typeof api;
