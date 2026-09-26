@@ -177,8 +177,25 @@ export function cameraAt(
 
     // Gliding into this segment (from previous state — or idle).
     if (time < seg.holdStart) {
-      // Anchor = camera state the instant this glide begins.
-      const from = i === 0 ? idle : cameraAt(seg.inStart - 1e-9, segments, opts);
+      // Anchor = camera state the instant this glide begins. When the previous
+      // segment's glide-out reaches into our glide-in, it is panning straight
+      // at this focus — evaluate that blend directly; otherwise we're in a
+      // coverage gap and the anchor is idle.
+      let from = idle;
+      const prev = segments[i - 1];
+      if (prev && prev.outEnd >= seg.inStart) {
+        const pt = clamp01(
+          (seg.inStart - prev.holdEnd) / Math.max(prev.outEnd - prev.holdEnd, 1e-6),
+        );
+        const pe = butterEase(pt);
+        from = {
+          center: {
+            x: lerp(prev.center.x, seg.center.x, pe),
+            y: lerp(prev.center.y, seg.center.y, pe),
+          },
+          scale: lerp(prev.scale, seg.scale, pe),
+        };
+      }
       const t = clamp01((time - seg.inStart) / Math.max(seg.holdStart - seg.inStart, 1e-6));
       const e = butterEase(t);
       return {

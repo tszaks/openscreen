@@ -344,32 +344,45 @@ export function Editor({
     video.pause();
 
     cancelExport.current = false;
-    for (let i = 0; i < total; i++) {
-      if (cancelExport.current) break;
-      const outT = i / fps;
-      const srcT = timeline.sourceTime(outT);
-      if (srcT === null) continue;
-      await seekVideo(video, srcT);
-      const cam = camRef.current;
-      if (cam) await seekVideo(cam, srcT);
-      compositor.render(outT, {
-        cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, outT) : undefined,
-        frame: video,
-        cursor: cursorAt(smoothed, outT),
-        keystrokes: keysAt(outT, keys),
-        ripples: ripplesAt(outT, clickEv),
-        cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
-      });
-      const ctx = compositor.canvas.getContext('2d')!;
-      const rgba = ctx.getImageData(0, 0, W, H);
-      await api.exportFrame(rgba.data.buffer);
-      if (i % 10 === 0) {
-        setStatus(`exporting ${i}/${total}`);
-        await new Promise((r) => setTimeout(r, 0)); // let UI paint
+    let failed: unknown = null;
+    try {
+      for (let i = 0; i < total; i++) {
+        if (cancelExport.current) break;
+        const outT = i / fps;
+        const srcT = timeline.sourceTime(outT);
+        if (srcT === null) continue;
+        await seekVideo(video, srcT);
+        const cam = camRef.current;
+        if (cam) await seekVideo(cam, srcT);
+        compositor.render(outT, {
+          cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, outT) : undefined,
+          frame: video,
+          cursor: cursorAt(smoothed, outT),
+          keystrokes: keysAt(outT, keys),
+          ripples: ripplesAt(outT, clickEv),
+          cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
+        });
+        const ctx = compositor.canvas.getContext('2d')!;
+        const rgba = ctx.getImageData(0, 0, W, H);
+        await api.exportFrame(rgba.data.buffer);
+        if (i % 10 === 0) {
+          setStatus(`exporting ${i}/${total}`);
+          await new Promise((r) => setTimeout(r, 0)); // let UI paint
+        }
       }
+    } catch (e) {
+      failed = e;
     }
-    await api.exportEnd();
+    try {
+      await api.exportEnd(); // always ends the ffmpeg pipe, even on failure
+    } catch {
+      // ffmpeg already exited or never started — nothing to end
+    }
     setExporting(false);
+    if (failed !== null) {
+      setStatus(`export failed: ${failed instanceof Error ? failed.message : String(failed)}`);
+      return;
+    }
     if (cancelExport.current) {
       setStatus('export cancelled');
       return;
