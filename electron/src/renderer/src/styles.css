@@ -1948,3 +1948,52 @@ input[type='color']::-webkit-color-swatch {
     backdrop-filter: none;
   }
 }
+
+/* ───────────────────────── leave the editor ───────────────────────── */
+
+.back-btn {
+  margin-left: -6px;
+  padding-left: 8px;
+  color: var(--text-2);
+}
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 8, 10, 0.5);
+  animation: fade-in var(--t2) var(--ease);
+}
+
+.modal {
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  border-radius: var(--r-lg);
+  background: rgba(36, 36, 41, 0.86);
+  backdrop-filter: blur(28px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    var(--shadow-3);
+  animation: menu-in 180ms var(--ease);
+}
+.modal h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.modal p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}

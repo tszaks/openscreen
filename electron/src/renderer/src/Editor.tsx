@@ -18,6 +18,7 @@ import {
 } from '../../shared/editcuts';
 import { suggestChapters, toChapterList } from '../../shared/chapters';
 import type { TranscriptWord } from '../../shared/types';
+import { SaveTracker, isTextEntry } from '../../shared/editorSession';
 import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Slider, Switch, Tabs } from './ui';
 
 type InspectorTab = 'background' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'text';
@@ -36,6 +37,8 @@ export function Editor({
   cursor,
   keys,
   bundleDir,
+  onNewRecording,
+  onOpenProject,
 }: {
   videoUrl: string;
   camUrl?: string;
@@ -43,6 +46,10 @@ export function Editor({
   cursor: CursorSample[];
   keys: KeystrokeSample[];
   bundleDir: string;
+  /** Leave for the source picker. Called only once changes are dealt with. */
+  onNewRecording: () => void;
+  /** Pick and open another project in place of this one. */
+  onOpenProject: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const camRef = useRef<HTMLVideoElement>(null);
@@ -88,6 +95,34 @@ export function Editor({
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  // What's on disk, so leaving can warn about edits the autosave hasn't
+  // written yet (or couldn't write).
+  const saveTracker = useRef(new SaveTracker(project));
+  // Where to go once the unsaved-changes confirm is answered.
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
+  const disposed = useRef(false);
+
+  /** Write a snapshot into the bundle and record it as saved. */
+  const persist = async (snapshot: Project) => {
+    await api.saveProject(bundleDir, snapshot);
+    saveTracker.current.markSaved(snapshot);
+  };
+
+  // Leaving stops playback and lets go of the decoders; App releases any
+  // blob URLs behind them.
+  useEffect(() => {
+    const media = [videoRef.current, camRef.current];
+    disposed.current = false;
+    return () => {
+      disposed.current = true;
+      for (const v of media) {
+        if (!v) continue;
+        v.pause();
+        v.removeAttribute('src');
+        v.load();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let dead = false;
@@ -105,7 +140,7 @@ export function Editor({
   // Autosave edits into the bundle (debounced; undo/redo snapshots included).
   useEffect(() => {
     const t = setTimeout(() => {
-      void api.saveProject(bundleDir, proj).catch(() => {});
+      void persist(proj).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -610,6 +645,10 @@ export function Editor({
   // Keyboard shortcuts: space = play/pause, S = split, ⌘Z = undo, ⌘⇧Z = redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (pendingLeave) {
+        if (e.key === 'Escape') void answerLeave('cancel');
+        return;
+      }
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -617,6 +656,8 @@ export function Editor({
         else undo();
         return;
       }
+      // ⌘S, ⌘⌫ and friends belong to the menu, not to split and delete.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.code === 'Space') {
         e.preventDefault();
         videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause();
@@ -633,6 +674,38 @@ export function Editor({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  });
+
+  // App-menu commands arrive as `openscreen:menu` events.
+  useEffect(() => {
+    const onMenu = (e: Event) => {
+      if (pendingLeave) return;
+      switch ((e as CustomEvent<string>).detail) {
+        case 'newRecording':
+          return leave(onNewRecording);
+        case 'openProject':
+          return leave(onOpenProject);
+        case 'save':
+          return void saveProject();
+        case 'exportMp4':
+          if (!exporting) void exportVideo();
+          return;
+        case 'exportGif':
+          if (!exporting) void exportVideo(true);
+          return;
+        case 'undo':
+        case 'redo':
+          return menuHistory((e as CustomEvent<string>).detail as 'undo' | 'redo');
+        case 'playPause':
+          if (!exporting) togglePlay();
+          return;
+        case 'split':
+          if (!exporting) splitAtPlayhead();
+          return;
+      }
+    };
+    window.addEventListener('openscreen:menu', onMenu);
+    return () => window.removeEventListener('openscreen:menu', onMenu);
   });
 
   /**
@@ -659,6 +732,7 @@ export function Editor({
       const step = 0.4;
       const area = W2 * H2;
       for (let t = step; t < duration; t += step) {
+        if (disposed.current) return;
         await seekVideo(video, t);
         dctx.drawImage(video, 0, 0, W2, H2);
         const img = dctx.getImageData(0, 0, W2, H2);
@@ -690,7 +764,7 @@ export function Editor({
       setMotionEv(ev);
       setStatus(ev.length ? `${ev.length} motion focus region(s)` : 'no sustained motion detected');
     } finally {
-      await seekVideo(video, origT);
+      if (!disposed.current) await seekVideo(video, origT);
     }
   };
 
@@ -744,8 +818,47 @@ export function Editor({
   };
 
   const saveProject = async () => {
-    await api.saveProject(bundleDir, proj);
-    setStatus('project saved');
+    try {
+      await persist(proj);
+      setStatus('project saved');
+    } catch (e) {
+      setStatus(`save failed: ${e}`);
+    }
+  };
+
+  /** Run `go` (which unmounts this editor), first asking about unsaved
+   *  changes. An export in flight has to finish or be cancelled first. */
+  const leave = (go: () => void) => {
+    if (exporting) {
+      setStatus('cancel the export before leaving');
+      return;
+    }
+    if (saveTracker.current.isDirty(projRef.current)) setPendingLeave(() => go);
+    else go();
+  };
+
+  const answerLeave = async (choice: 'save' | 'discard' | 'cancel') => {
+    const go = pendingLeave;
+    setPendingLeave(null);
+    if (!go || choice === 'cancel') return;
+    if (choice === 'save') {
+      try {
+        await persist(projRef.current);
+      } catch (e) {
+        setStatus(`save failed: ${e}`);
+        return;
+      }
+    }
+    go();
+  };
+
+  /** Undo/redo from the menu: a focused text field gets the native edit,
+   *  anything else (sliders, switches, the canvas) the project history. */
+  const menuHistory = (dir: 'undo' | 'redo') => {
+    if (isTextEntry(document.activeElement as HTMLInputElement | null)) {
+      document.execCommand(dir);
+    } else if (dir === 'undo') undo();
+    else redo();
   };
 
   // Repaint the waveform whenever peaks or the cut layout changes.
@@ -1443,6 +1556,17 @@ export function Editor({
       {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
 
       <header className="topbar ed-top">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="back-btn"
+          title="Back to the source picker (⌘N)"
+          disabled={exporting}
+          onClick={() => leave(onNewRecording)}
+        >
+          {Icon.chevronLeft(12)}
+          New recording
+        </Button>
         <span className="doc-title" title={bundleDir}>{bundleName}</span>
         <div className="history no-drag">
           <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
@@ -1731,6 +1855,31 @@ export function Editor({
           />
         </div>
       </footer>
+
+      {pendingLeave && (
+        <div className="modal-scrim" onMouseDown={() => void answerLeave('cancel')}>
+          <div
+            className="modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="leave-title"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 id="leave-title">Save changes to {bundleName}?</h2>
+            <p>Your latest edits aren't saved yet. If you don't save, they're lost.</p>
+            <div className="modal-actions">
+              <Button variant="ghost" onClick={() => void answerLeave('discard')}>
+                Don't save
+              </Button>
+              <div className="spacer" />
+              <Button onClick={() => void answerLeave('cancel')}>Cancel</Button>
+              <Button variant="primary" autoFocus onClick={() => void answerLeave('save')}>
+                Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
