@@ -1,16 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
-import type { CursorSample, KeystrokeSample, Project } from '../../shared/types';
+import { normalizeProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
 import { AutofocusPlanner, cameraAt, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
-import { Timeline } from '../../shared/timeline';
-import { CanvasCompositor } from './compositor';
+import { Timeline, toOutputTime } from '../../shared/timeline';
+import { locate, mediaDuration, playbackTick, type PlaybackTick } from '../../shared/playback';
+import { remapProject, remapTime } from '../../shared/remap';
+import { History } from '../../shared/history';
+import { CanvasCompositor, backgroundReady } from './compositor';
 import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
 import {
   planSmartCuts,
-  remapCues,
   removedRanges,
   firstKeptAtOrAfter,
   lastKeptAtOrBefore,
@@ -18,9 +20,65 @@ import {
 } from '../../shared/editcuts';
 import { suggestChapters, toChapterList } from '../../shared/chapters';
 import type { TranscriptWord } from '../../shared/types';
+import type { TapSuggestion } from '../../shared/taps';
+import { SaveTracker, isTextEntry } from '../../shared/editorSession';
+import { exportCanvasSize, ipcErrorMessage } from '../../shared/exportArgs';
+import { getPreset, type ExportPreset, type PresetId } from '../../shared/exportPresets';
+import {
+  ENCODE_WEIGHT,
+  batchUnits,
+  croppedSource,
+  layoutPresetOf,
+  outputBase,
+  outputFiles,
+  planRenders,
+  presetChoices,
+  presetUsesZoom,
+  presetWarnings,
+  projectForPreset,
+  shortName,
+} from '../../shared/exportJobs';
+import { ExportProgress, type ExportProgressState } from './components/ExportProgress';
+import { ExportPanel, ExportTasks, type TaskRowState } from './components/ExportPanel';
 import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Slider, Switch, Tabs } from './ui';
+import { ScrubField } from './components/ScrubField';
+import { planTapZoom } from '../../shared/autozoomTaps';
+import {
+  isPhoneProject,
+  layoutPreset,
+  pendingWaits,
+  presetAllowsZoom,
+  projectCanvasSize,
+  rangesToOutput,
+  resolveDevice,
+  speedUpRanges,
+  tapSourceTime,
+  tapsToOutput,
+  waitCore,
+} from '../../shared/mobileProject';
+import { TapsLane } from './mobile/TapsLane';
+import { DevicePanel } from './mobile/DevicePanel';
+import { LayoutSection } from './mobile/LayoutSection';
 
-type InspectorTab = 'background' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'text';
+type InspectorTab = 'background' | 'device' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'text';
+
+/** The export shown in the progress overlay: one file, or a batch of formats. */
+interface ExportRun {
+  kind: 'single' | 'batch';
+  state: ExportProgressState;
+  startedAt: number;
+  /** Progress units: frames, plus weighted encode work for preset transcodes. */
+  done: number;
+  total: number;
+  detail?: string;
+  message?: string;
+  /** Single: the file Show in Finder reveals. */
+  reveal?: string;
+  retry: () => void;
+  /** Batch only. */
+  rows?: TaskRowState[];
+  folder?: string;
+}
 
 const SWATCHES = [
   { name: 'Aurora', bg: { kind: 'gradient' as const, startHex: '#3a1c71', endHex: '#d76d77', angle: 120 } },
@@ -36,6 +94,8 @@ export function Editor({
   cursor,
   keys,
   bundleDir,
+  onNewRecording,
+  onOpenProject,
 }: {
   videoUrl: string;
   camUrl?: string;
@@ -43,35 +103,59 @@ export function Editor({
   cursor: CursorSample[];
   keys: KeystrokeSample[];
   bundleDir: string;
+  /** Leave for the source picker. Called only once changes are dealt with. */
+  onNewRecording: () => void;
+  /** Pick and open another project in place of this one. */
+  onOpenProject: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const camRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [proj, setProj] = useState(project);
-  // Undo/redo: snapshot the previous project on every change (cap 60).
-  const historyRef = useRef<{ undo: Project[]; redo: Project[] }>({ undo: [], redo: [] });
+  const [proj, setProj] = useState(() => normalizeProject(project));
+  // Undo/redo: one step per burst of edits (a slider drag is one step, not
+  // one per tick). Mount and no-op updates record nothing.
+  const historyRef = useRef(new History<Project>());
   const projRef = useRef(proj);
   const applyingHistory = useRef(false);
   useEffect(() => {
+    if (proj === projRef.current) return;
     if (applyingHistory.current) {
       applyingHistory.current = false;
     } else {
-      historyRef.current.undo.push(projRef.current);
-      if (historyRef.current.undo.length > 60) historyRef.current.undo.shift();
-      historyRef.current.redo = [];
+      historyRef.current.record(projRef.current, performance.now());
     }
     projRef.current = proj;
   }, [proj]);
+  // Each pointer gesture (a click, a drag) is its own undo step.
+  useEffect(() => {
+    const seal = () => historyRef.current.seal();
+    window.addEventListener('pointerdown', seal, true);
+    window.addEventListener('pointerup', seal, true);
+    return () => {
+      window.removeEventListener('pointerdown', seal, true);
+      window.removeEventListener('pointerup', seal, true);
+    };
+  }, []);
+  // Output time, always. The video element only knows source time.
   const [playhead, setPlayhead] = useState(0);
+  const playheadRef = useRef(0);
+  // Index of the clip being played (a source moment can sit in two clips).
+  const playIndex = useRef(0);
+  const movePlayhead = (t: number) => {
+    playheadRef.current = t;
+    setPlayhead(t);
+  };
   const [duration, setDuration] = useState(project.recording.duration || 0);
   const [status, setStatus] = useState('');
-  const [autofocusOn, setAutofocusOn] = useState(true);
-  const [dwellOn, setDwellOn] = useState(true);
-  const [clickSfx, setClickSfx] = useState(true);
-  const [zoomDepth, setZoomDepth] = useState(2);
-  const [manualSegments, setManualSegments] = useState<FocusSegment[]>([]);
+  // Zoom and audio settings live in the project, so they save and undo.
+  const { autofocus: autofocusOn, dwell: dwellOn, depth: zoomDepth, motionEvents: motionEv } = proj.zoom;
+  const { clickSounds: clickSfx, voiceCleanup } = proj.audio;
+  const manualSegments = proj.manualZooms;
+  const setZoom = (patch: Partial<ZoomSettings>) =>
+    setProj((p) => ({ ...p, zoom: { ...p.zoom, ...patch } }));
+  const setAudio = (patch: Partial<AudioSettings>) =>
+    setProj((p) => ({ ...p, audio: { ...p.audio, ...patch } }));
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
-  const [motionEv, setMotionEv] = useState<CursorSample[]>([]);
   const [exporting, setExporting] = useState(false);
   const [cropMode, setCropMode] = useState(false);
   const cropDrag = useRef<{ x: number; y: number } | null>(null);
@@ -82,12 +166,46 @@ export function Editor({
   // Transcript edit mode: click/shift-click selects word ranges to cut.
   const [editTranscript, setEditTranscript] = useState(false);
   const [wordSel, setWordSel] = useState<{ cueId: string; anchor: number; end: number } | null>(null);
-  const [voiceCleanup, setVoiceCleanup] = useState(false);
   // UI only: inspector tab, export menu, and a mirror of the video's play state.
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('background');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  // What's on disk, so leaving can warn about edits the autosave hasn't
+  // written yet (or couldn't write).
+  const saveTracker = useRef(new SaveTracker(proj));
+  // Where to go once the unsaved-changes confirm is answered.
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
+  const disposed = useRef(false);
+  // Phone recordings: the tap selected on the taps lane (clicking the preview
+  // places it), a tap analysis in flight, and whether the title field has
+  // focus (the preview shows safe-zone guides meanwhile).
+  const isPhone = isPhoneProject(proj);
+  const [selectedTap, setSelectedTap] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [titleFocus, setTitleFocus] = useState(false);
+
+  /** Write a snapshot into the bundle and record it as saved. */
+  const persist = async (snapshot: Project) => {
+    await api.saveProject(bundleDir, snapshot);
+    saveTracker.current.markSaved(snapshot);
+  };
+
+  // Leaving stops playback and lets go of the decoders; App releases any
+  // blob URLs behind them.
+  useEffect(() => {
+    const media = [videoRef.current, camRef.current];
+    disposed.current = false;
+    return () => {
+      disposed.current = true;
+      for (const v of media) {
+        if (!v) continue;
+        v.pause();
+        v.removeAttribute('src');
+        v.load();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let dead = false;
@@ -100,46 +218,73 @@ export function Editor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bundleDir]);
 
-  const timeline = useMemo(() => new Timeline(proj.recording.duration, proj.clips), [proj]);
+  const timeline = useMemo(
+    () => new Timeline(proj.recording.duration, proj.clips),
+    [proj.recording.duration, proj.clips],
+  );
+  const timelineRef = useRef(timeline);
+  timelineRef.current = timeline;
 
   // Autosave edits into the bundle (debounced; undo/redo snapshots included).
   useEffect(() => {
     const t = setTimeout(() => {
-      void api.saveProject(bundleDir, proj).catch(() => {});
+      void persist(proj).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proj, bundleDir]);
 
   const cancelExport = useRef(false);
+  // The export overlay, and whoever is listening for transcode progress.
+  const [xp, setXp] = useState<ExportRun | null>(null);
+  const transcodeProgress = useRef<((e: { presetId: PresetId; fraction: number }) => void) | null>(null);
+  useEffect(() => api.onTranscodeProgress((e) => transcodeProgress.current?.(e)), []);
+  // Formats ticked in the Export menu (null until the user changes the default).
+  const [formatPick, setFormatPick] = useState<PresetId[] | null>(null);
+  const [recordingHasAudio, setRecordingHasAudio] = useState<boolean | undefined>(undefined);
+  useEffect(() => {
+    let dead = false;
+    api.exportHasAudio(`${bundleDir}/${proj.recording.screenVideoFile}`).then(
+      (has) => !dead && setRecordingHasAudio(has),
+      () => {},
+    );
+    return () => {
+      dead = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundleDir]);
 
   const smoothed = useMemo(() => new CursorSmoother().smoothedPath(cursor), [cursor]);
   const clickEv = useMemo(() => clickEvents(cursor, timeline), [cursor, timeline]);
 
+  const preset = useMemo(() => layoutPreset(proj), [proj.layout, proj.recording, proj.device]);
+  const resolvedDevice = useMemo(() => resolveDevice(proj), [proj.recording, proj.device]);
+  // Taps are source time; the lane, the zoom and the preview play in output time.
+  const outTaps = useMemo(() => tapsToOutput(proj.taps, timeline), [proj.taps, timeline]);
+  const fromTaps = isPhone && proj.zoom.fromTaps;
+
   const segments = useMemo<FocusSegment[]>(() => {
+    // App Store previews stay on the native UI.
+    if (!presetAllowsZoom(preset)) return [];
+    const taps = fromTaps ? planTapZoom(outTaps, timeline.outputDuration || duration, { scale: zoomDepth }) : [];
     const auto = autofocusOn
       ? new AutofocusPlanner({ ...defaultAutofocus, maxScale: zoomDepth }).planSegments(
-          [
-            ...cursor.filter((s) => s.kind === 'clickDown'),
-            ...(dwellOn ? dwellFocusEvents(cursor) : []),
-            ...motionEv,
-          ].sort((a, b) => a.time - b.time),
+          // Clicks, dwells and touches are source time; zooms play in output time.
+          toOutputTime(
+            [
+              ...cursor.filter((s) => s.kind === 'clickDown'),
+              ...(dwellOn ? dwellFocusEvents(cursor) : []),
+              ...motionEv,
+            ],
+            timeline,
+          ),
           timeline.outputDuration || duration,
         )
       : [];
-    return [...auto, ...manualSegments].sort((a, b) => a.inStart - b.inStart);
-  }, [cursor, timeline, autofocusOn, dwellOn, duration, manualSegments, zoomDepth, motionEv]);
+    return [...auto, ...taps, ...manualSegments].sort((a, b) => a.inStart - b.inStart);
+  }, [cursor, timeline, autofocusOn, dwellOn, duration, manualSegments, zoomDepth, motionEv, preset, fromTaps, outTaps]);
 
-  const canvasSize = useMemo(() => {
-    const src = proj.recording.sourceSize;
-    const h =
-      proj.exportPreset === 'uhd4k'
-        ? 2160
-        : proj.exportPreset === 'original'
-          ? src.height
-          : 1080;
-    return { width: Math.round((h * src.width) / src.height), height: h };
-  }, [proj]);
+  const canvasSize = useMemo(() => projectCanvasSize(proj), [proj]);
 
   const compositor = useMemo(
     () => new CanvasCompositor(proj, canvasSize, segments),
@@ -174,7 +319,34 @@ export function Editor({
     return { x: (px - rx) / rw, y: (py - ry) / rh };
   };
 
+  /** Canvas client coords → canvas pixels. */
+  const canvasPoint = (clientX: number, clientY: number) => {
+    const r = canvasRef.current?.getBoundingClientRect();
+    if (!r) return null;
+    return { x: ((clientX - r.left) / r.width) * canvasSize.width, y: ((clientY - r.top) / r.height) * canvasSize.height };
+  };
+
   const onCanvasDown = (e: React.MouseEvent) => {
+    if (!cropMode && selectedTap) {
+      // Place the selected tap where the preview was clicked (zoom included).
+      const px = canvasPoint(e.clientX, e.clientY);
+      const at = px && compositor.canvasToSource(px.x, px.y);
+      if (!at) return;
+      const x = Math.min(1, Math.max(0, at.x));
+      const y = Math.min(1, Math.max(0, at.y));
+      setProj((p) => ({
+        ...p,
+        taps: p.taps.map((t) => {
+          if (t.id !== selectedTap) return t;
+          // A swipe moves as a whole, keeping its direction.
+          const moved = { ...t, x, y };
+          if (t.endX !== undefined) moved.endX = Math.min(1, Math.max(0, t.endX + x - t.x));
+          if (t.endY !== undefined) moved.endY = Math.min(1, Math.max(0, t.endY + y - t.y));
+          return moved;
+        }),
+      }));
+      return;
+    }
     if (!cropMode) return;
     const p = canvasToSource(e.clientX, e.clientY);
     if (p) cropDrag.current = p;
@@ -210,9 +382,16 @@ export function Editor({
     setCropMode(false);
   };
 
-  // Draw the composited frame for `time` onto the preview canvas.
+  // Leaving the canvas only ends crop mode mid-drag, not on the way in.
+  const onCanvasLeave = () => {
+    if (cropDrag.current) onCanvasUp();
+  };
+
+  // Draw the composited frame at output time `outT` onto the preview canvas.
+  // The video is already on the matching source frame; cursor and keys are
+  // recorded in source time, so they follow the video.
   const renderAt = useCallback(
-    (time: number) => {
+    (outT: number) => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2) return;
@@ -220,18 +399,20 @@ export function Editor({
       if (!ctx) return;
       canvas.width = canvasSize.width;
       canvas.height = canvasSize.height;
-      const cursorPos = cursorAt(smoothed, time);
-      const keyCaps = keysAt(time, keys);
+      const srcT = video.currentTime;
+      const cursorPos = cursorAt(smoothed, srcT);
+      const keyCaps = keysAt(srcT, keys);
       const cam = camRef.current;
-      compositor.render(time, {
+      compositor.render(outT, {
         frame: video,
         cursor: cursorPos,
-        cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, time) : undefined,
+        cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, srcT) : undefined,
         keystrokes: keyCaps,
-        ripples: ripplesAt(time, clickEv),
+        ripples: ripplesAt(outT, clickEv),
         cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
       });
       ctx.drawImage(compositor.canvas, 0, 0);
+      drawEditorGuides(ctx);
       // In crop mode, dim outside the current crop rect (in source space).
       if (cropMode) {
         const src = proj.recording.sourceSize;
@@ -245,14 +426,15 @@ export function Editor({
         ctx.fillStyle = 'rgba(0,0,0,0.45)';
         ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
         const c = proj.style.cropRect;
+        // The whole uncropped frame, dimmed, so there's something to drag over.
         ctx.drawImage(video, 0, 0, src.width, src.height, rx, ry, rw, rh);
+        ctx.fillRect(rx, ry, rw, rh);
         if (c) {
           const cx0 = rx + c.x * rw;
           const cy0 = ry + c.y * rh;
           const cx1 = rx + (c.x + c.w) * rw;
           const cy1 = ry + (c.y + c.h) * rh;
-          // cut the hole back out so the selection stays bright
-          ctx.clearRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+          // redraw the selection undimmed
           ctx.drawImage(
             video,
             (c.x * src.width), (c.y * src.height), (c.w * src.width), (c.h * src.height),
@@ -264,49 +446,160 @@ export function Editor({
         }
       }
     },
-    [compositor, canvasSize, smoothed, clickEv, cropMode, proj],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compositor, canvasSize, smoothed, keys, clickEv, cropMode, proj, selectedTap, titleFocus],
   );
 
-  // Keep preview in sync while video plays or after seeks.
+  /** Preview-only marks, never exported: the selected tap and, while the
+   *  title is being edited, the platform safe zone and title box. */
+  const drawEditorGuides = (ctx: CanvasRenderingContext2D) => {
+    const unit = Math.max(canvasSize.width, canvasSize.height) / 900;
+    const tap = selectedTap ? proj.taps.find((t) => t.id === selectedTap) : undefined;
+    const at = tap && compositor.sourceToCanvas(tap);
+    if (at) {
+      ctx.save();
+      ctx.strokeStyle = '#FF8A3D';
+      ctx.lineWidth = 2.5 * unit;
+      ctx.setLineDash([6 * unit, 5 * unit]);
+      ctx.beginPath();
+      ctx.arc(at.x, at.y, 22 * unit, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#FF8A3D';
+      ctx.beginPath();
+      ctx.arc(at.x, at.y, 3 * unit, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    const layout = compositor.phoneLayout;
+    if (titleFocus && layout) {
+      ctx.save();
+      ctx.lineWidth = 1.5 * unit;
+      ctx.setLineDash([8 * unit, 6 * unit]);
+      const s = layout.safe;
+      if (s.w < canvasSize.width || s.h < canvasSize.height) {
+        // Dim what platform UI covers, outline what stays clear.
+        ctx.fillStyle = 'rgba(0,0,0,0.28)';
+        ctx.beginPath();
+        ctx.rect(0, 0, canvasSize.width, canvasSize.height);
+        ctx.rect(s.x, s.y + s.h, s.w, -s.h);
+        ctx.fill('evenodd');
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.strokeRect(s.x, s.y, s.w, s.h);
+      }
+      if (layout.title) {
+        const t = layout.title;
+        ctx.strokeStyle = '#FF8A3D';
+        ctx.strokeRect(t.x, t.y, t.w, t.h);
+      }
+      ctx.restore();
+    }
+  };
+
+  /** Move the playhead to output time `outT` and put the video (and camera)
+   *  on the source frame that plays there, at that clip's speed. */
+  const seekOutput = (outT: number) => {
+    const tl = timelineRef.current;
+    const t = Math.min(Math.max(0, outT), tl.outputDuration);
+    const at = locate(tl, t);
+    playIndex.current = at.index;
+    for (const v of [videoRef.current, camRef.current]) {
+      if (!v) continue;
+      if (Math.abs(v.currentTime - at.srcT) > 1e-3) v.currentTime = at.srcT;
+      v.playbackRate = tl.clips[at.index].speed;
+    }
+    movePlayhead(t);
+    if (videoRef.current?.paused) renderAt(t);
+  };
+
+  // Playback follows the timeline: each frame maps the video's source time to
+  // output time, hops over removed footage to the next clip, plays each clip
+  // at its speed, and stops at the end.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     let raf = 0;
+    const apply = (tick: PlaybackTick) => {
+      const cam = camRef.current;
+      if (tick.kind === 'jump') {
+        playIndex.current = tick.index;
+        video.currentTime = tick.seekTo;
+        if (cam) cam.currentTime = tick.seekTo;
+      }
+      if (tick.kind !== 'end' && video.playbackRate !== tick.rate) {
+        video.playbackRate = tick.rate;
+        if (cam) cam.playbackRate = tick.rate;
+      }
+      movePlayhead(tick.outT);
+      renderAt(tick.outT);
+    };
     const loop = () => {
-      renderAt(video.currentTime);
-      setPlayhead(video.currentTime);
-      raf = requestAnimationFrame(loop);
+      const tick = playbackTick(timelineRef.current, playIndex.current, video.currentTime);
+      apply(tick);
+      if (tick.kind === 'end') video.pause();
+      else raf = requestAnimationFrame(loop);
     };
-    const onSeeked = () => {
-      if (camRef.current) camRef.current.currentTime = video.currentTime;
-      renderAt(video.currentTime);
-    };
-    video.addEventListener('seeked', onSeeked);
-    if (!video.paused) raf = requestAnimationFrame(loop);
+    const onSeeked = () => renderAt(playheadRef.current);
     const onPlay = () => {
+      // Play from the playhead; from the end, start over.
+      const atEnd = playheadRef.current >= timelineRef.current.outputDuration - 0.02;
+      seekOutput(atEnd ? 0 : playheadRef.current);
       camRef.current?.play();
+      cancelAnimationFrame(raf);
       raf = requestAnimationFrame(loop);
     };
     const onPause = () => {
       camRef.current?.pause();
       cancelAnimationFrame(raf);
+      const tick = playbackTick(timelineRef.current, playIndex.current, video.currentTime);
+      if (tick.kind !== 'jump') movePlayhead(tick.outT);
+      else if (video.ended) {
+        // The file ended between frames, but a later clip still has to play.
+        apply(tick);
+        void video.play();
+      }
     };
+    video.addEventListener('seeked', onSeeked);
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
+    if (!video.paused) raf = requestAnimationFrame(loop);
+    // Paused edits (style, crop, undo…) redraw right away.
+    else renderAt(playheadRef.current);
     return () => {
       cancelAnimationFrame(raf);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderAt]);
+
+  // A clip edit or undo moves footage under the playhead: keep the playhead
+  // on the timeline and show the frame that now plays there.
+  useEffect(() => {
+    seekOutput(Math.min(playheadRef.current, timeline.outputDuration));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeline]);
+
+  // Redraw once a background image finishes loading.
+  const bgPath = proj.style.background.kind === 'imageFile' ? proj.style.background.path : null;
+  useEffect(() => {
+    if (!bgPath) return;
+    let live = true;
+    void backgroundReady(bgPath).then(() => {
+      if (live && videoRef.current?.paused) renderAt(playheadRef.current);
+    });
+    return () => {
+      live = false;
+    };
+  }, [bgPath, renderAt]);
 
   const seekTimeline = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const t = ((e.clientX - rect.left) / rect.width) * (timeline.outputDuration || duration);
     if (e.altKey) {
       // Alt+click: add a manual zoom centered on the cursor at that time.
-      const c = cursorAt(smoothed, t) ?? { x: 0.5, y: 0.5 };
+      const c = cursorAt(smoothed, locate(timeline, t).srcT) ?? { x: 0.5, y: 0.5 };
       const seg: FocusSegment = {
         inStart: t,
         holdStart: t + 0.5,
@@ -315,45 +608,48 @@ export function Editor({
         center: { x: c.x, y: c.y },
         scale: 2,
       };
-      setManualSegments((m) => [...m, seg]);
+      setProj((p) => ({ ...p, manualZooms: [...p.manualZooms, seg] }));
       return;
     }
-    const srcT = timeline.sourceTime(t) ?? t;
-    if (videoRef.current) videoRef.current.currentTime = srcT;
-    if (camRef.current) camRef.current.currentTime = srcT;
-    setPlayhead(t);
+    seekOutput(t);
   };
 
-  const exportVideo = async (wantGif = false) => {
+  /** Render every output frame through `comp` and pipe it into ffmpeg at
+   *  `outPath` (a finished mp4, or a master .mov for preset transcodes).
+   *  Resolves false when cancelled; throws with ffmpeg's reason on failure. */
+  const renderFrames = async (
+    comp: CanvasCompositor,
+    outPath: string,
+    fps: number,
+    master: boolean,
+    onFrame: (i: number, total: number) => void,
+  ): Promise<boolean> => {
     const video = videoRef.current;
-    if (!video) return;
-    setStatus('exporting…');
-    const fps = proj.outputFPS;
+    if (!video) throw new Error('the recording is not loaded');
     const total = Math.floor((timeline.outputDuration || duration) * fps);
-    const { width: W, height: H } = canvasSize;
-    setExporting(true);
-    const outPath = `${bundleDir}/export-${Date.now()}.mp4`;
+    const { width: W, height: H } = comp.canvasSize;
     const audioIn = `${bundleDir}/${proj.recording.screenVideoFile}`;
-    // Cut timelines get filtered audio (atrim+atempo+concat); identity gets
-    // passthrough. Main probes for a real audio stream either way.
+    // Cut timelines get filtered audio (atrim+atempo+concat); identity uses
+    // the track as is. Main probes for a real audio stream either way.
     const audioClips = timeline.isIdentity
       ? undefined
       : proj.clips.map((c) => ({ start: c.sourceStart, end: c.sourceEnd, speed: c.speed }));
-    await api.exportBegin(
-      outPath,
-      W,
-      H,
-      fps,
-      audioIn,
-      audioClips,
-      clickSfx ? clickEv.map((e) => e.time) : undefined,
-      voiceCleanup,
-    );
-    video.pause();
-
-    cancelExport.current = false;
-    let failed: unknown = null;
+    let encoding = false; // ffmpeg is running and owns a partial file
     try {
+      await api.exportBegin(
+        outPath,
+        W,
+        H,
+        fps,
+        audioIn,
+        audioClips,
+        clickSfx ? clickEv.map((e) => e.time) : undefined,
+        voiceCleanup,
+        total / fps,
+        master,
+      );
+      encoding = true;
+      video.pause();
       for (let i = 0; i < total; i++) {
         if (cancelExport.current) break;
         const outT = i / fps;
@@ -362,56 +658,242 @@ export function Editor({
         await seekVideo(video, srcT);
         const cam = camRef.current;
         if (cam) await seekVideo(cam, srcT);
-        compositor.render(outT, {
-          cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, outT) : undefined,
+        comp.render(outT, {
+          cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, srcT) : undefined,
           frame: video,
-          cursor: cursorAt(smoothed, outT),
-          keystrokes: keysAt(outT, keys),
+          cursor: cursorAt(smoothed, srcT),
+          keystrokes: keysAt(srcT, keys),
           ripples: ripplesAt(outT, clickEv),
           cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
         });
-        const ctx = compositor.canvas.getContext('2d')!;
+        const ctx = comp.canvas.getContext('2d')!;
         const rgba = ctx.getImageData(0, 0, W, H);
-        await api.exportFrame(rgba.data.buffer);
+        await api.exportFrame(rgba.data.buffer); // rejects once ffmpeg has stopped
         if (i % 10 === 0) {
-          setStatus(`exporting ${i}/${total}`);
+          onFrame(i, total);
           await new Promise((r) => setTimeout(r, 0)); // let UI paint
         }
       }
+      if (cancelExport.current) {
+        encoding = false;
+        await api.exportAbort();
+        return false;
+      }
+      encoding = false; // end() cleans up after itself on failure
+      await api.exportEnd();
+      onFrame(total, total);
+      return true;
     } catch (e) {
-      failed = e;
+      if (encoding) await api.exportAbort().catch(() => {});
+      throw e;
     }
+  };
+
+  /** A multi-format pass's compositor: the preset's layout, the editor's
+   *  zooms only where the preset keeps them, and a canvas exactly the size
+   *  the compositor lays that preset out at (App Store ids resolve to the
+   *  recording's orientation). Transcoding scales it to each preset's size. */
+  const presetCompositor = (preset: ExportPreset) => {
+    const copy = projectForPreset(proj, preset);
+    const drawn = layoutPresetOf(copy) ?? preset;
+    return new CanvasCompositor(
+      copy,
+      { width: drawn.width, height: drawn.height },
+      presetUsesZoom(preset) ? segments : [],
+    );
+  };
+
+  const writeSidecars = async (basePath: string) => {
+    if (proj.captions.length) await api.writeText(`${basePath}.srt`, toSrt(proj.captions));
+    if (proj.chapters.length) await api.writeText(`${basePath}.chapters.txt`, toChapterList(proj.chapters) + '\n');
+  };
+
+  /** This project's export: MP4 or GIF, drawn with the project's layout preset
+   *  when one is set (and then encoded to that preset's spec), otherwise at
+   *  the Resolution and Frame rate picked in the Export menu. */
+  const exportVideo = async (wantGif = false) => {
+    const video = videoRef.current;
+    if (!video || exporting) return;
+    setExportMenuOpen(false);
+    const outPath = await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4');
+    if (!outPath) return;
+    const preset = layoutPresetOf(proj);
+    // A GIF is converted from an intermediate mp4 in the bundle.
+    const mp4Path = wantGif ? `${bundleDir}/export-${Date.now()}.mp4` : outPath;
+    const fps = preset ? preset.fps : proj.outputFPS;
+    // The editor's compositor is already sized and laid out for the project's
+    // preset (projectCanvasSize), so this export draws exactly the preview.
+    const comp = compositor;
+    // A preset MP4 renders a master, then encodes it with the preset's settings.
+    const transcode = preset !== null && !wantGif;
+    const frames = Math.floor((timeline.outputDuration || duration) * fps);
+    const total = frames + (transcode ? frames * ENCODE_WEIGHT : 0);
+    const basePath = outPath.replace(/\.[^./]*$/, '');
+    const count = new Intl.NumberFormat('en-US');
+    const rendering = (i: number) => (transcode ? `Rendering ${count.format(i)} of ${count.format(frames)} frames` : undefined);
+    const startedAt = Date.now();
+    let phase = 'rendering';
+    setXp({ kind: 'single', state: 'running', startedAt, done: 0, total, detail: rendering(0), retry: () => void exportVideo(wantGif) });
+    setExporting(true);
+    setStatus('');
+    cancelExport.current = false;
+    let master: string | null = null;
     try {
-      await api.exportEnd(); // always ends the ffmpeg pipe, even on failure
-    } catch {
-      // ffmpeg already exited or never started — nothing to end
+      if (transcode) master = await api.exportMasterPath(preset.id);
+      const ok = await renderFrames(comp, master ?? mp4Path, fps, transcode, (i) =>
+        setXp((x) => x && { ...x, done: i, detail: rendering(i) }),
+      );
+      if (!ok) {
+        setXp(null);
+        setStatus('export cancelled');
+        return;
+      }
+      let reveal = outPath;
+      if (transcode && master) {
+        phase = 'encoding';
+        setXp((x) => x && { ...x, done: frames, detail: `Encoding for ${preset.label}` });
+        transcodeProgress.current = ({ fraction }) =>
+          setXp((x) => x && { ...x, done: frames + fraction * frames * ENCODE_WEIGHT });
+        const files = await api.exportTranscode(preset.id, master, basePath, frames / fps);
+        reveal = files[0] ?? outPath;
+      }
+      await writeSidecars(basePath);
+      if (wantGif) {
+        phase = 'converting to GIF';
+        setXp((x) => x && { ...x, detail: 'Converting to GIF' });
+        await api.exportGif(mp4Path, outPath);
+      }
+      setXp((x) => x && { ...x, state: 'done', done: total, message: reveal.split('/').pop(), reveal });
+    } catch (e) {
+      if (cancelExport.current) {
+        setXp(null);
+        setStatus('export cancelled');
+      } else {
+        const message = ipcErrorMessage(e);
+        setXp((x) => x && { ...x, state: 'failed', message, detail: transcode || wantGif ? `Stopped while ${phase}` : undefined });
+      }
+    } finally {
+      transcodeProgress.current = null;
+      if (master) void api.exportDiscardMaster(master);
+      setExporting(false);
     }
-    setExporting(false);
-    if (failed !== null) {
-      setStatus(`export failed: ${failed instanceof Error ? failed.message : String(failed)}`);
-      return;
+  };
+
+  /**
+   * Export several presets into one folder. Presets that draw the same
+   * picture share one rendered master (planRenders); each preset is then
+   * encoded from it with its own settings, one at a time. Cancel stops the
+   * running step and skips the rest; finished files are kept.
+   */
+  const exportFormats = async (ids: PresetId[], folderIn?: string, prevRows?: TaskRowState[]) => {
+    if (!videoRef.current || exporting || ids.length === 0) return;
+    setExportMenuOpen(false);
+    const folder = folderIn ?? (await api.exportPickFolder(bundleDir));
+    if (!folder) return;
+    const presets = ids.map(getPreset);
+    const passes = planRenders(presets);
+    const dur = timeline.outputDuration || duration;
+    const total = batchUnits(passes, dur);
+    const name = bundleName;
+    const fresh = (p: ExportPreset): TaskRowState => ({
+      preset: p,
+      status: 'queued',
+      progress: 0,
+      files: outputFiles(outputBase(folder, name, p), p),
+    });
+    let rows = prevRows ? prevRows.map((r) => (ids.includes(r.preset.id) ? fresh(r.preset) : r)) : presets.map(fresh);
+    const setRow = (id: PresetId, patch: Partial<TaskRowState>) => {
+      rows = rows.map((r) => (r.preset.id === id ? { ...r, ...patch } : r));
+    };
+    const startedAt = Date.now();
+    let done = 0;
+    let detail = '';
+    const publish = (state: ExportProgressState = 'running', message?: string) =>
+      setXp({ kind: 'batch', state, startedAt, done, total, detail, message, rows, folder, retry: () => {} });
+    // Render and encode split each row's ring in proportion to their cost.
+    const renderShare = 1 / (1 + ENCODE_WEIGHT);
+
+    setExporting(true);
+    setStatus('');
+    cancelExport.current = false;
+    publish();
+    try {
+      for (const pass of passes) {
+        if (cancelExport.current) break;
+        const frames = Math.floor(dur * pass.fps);
+        const passStart = done;
+        const comp = presetCompositor(getPreset(pass.layoutPreset));
+        for (const id of pass.presetIds) setRow(id, { status: 'rendering', progress: 0 });
+        detail = `Rendering ${pass.presetIds.map(shortName).join(' and ')}`;
+        publish();
+        let master: string | null = null;
+        try {
+          master = await api.exportMasterPath(pass.key);
+          const ok = await renderFrames(comp, master, pass.fps, true, (i) => {
+            done = passStart + i;
+            for (const id of pass.presetIds) setRow(id, { progress: (i / Math.max(1, frames)) * renderShare });
+            publish();
+          });
+          if (!ok) break;
+          for (const id of pass.presetIds) {
+            if (cancelExport.current) break;
+            const encStart = done;
+            setRow(id, { status: 'encoding', progress: renderShare });
+            detail = `Encoding ${shortName(id)}`;
+            publish();
+            transcodeProgress.current = (e) => {
+              if (e.presetId !== id) return;
+              done = encStart + e.fraction * frames * ENCODE_WEIGHT;
+              setRow(id, { progress: renderShare + (1 - renderShare) * e.fraction });
+              publish();
+            };
+            try {
+              const files = await api.exportTranscode(id, master, outputBase(folder, name, getPreset(id)), frames / pass.fps);
+              setRow(id, { status: 'done', progress: 1, files });
+            } catch (e) {
+              if (cancelExport.current) break;
+              setRow(id, { status: 'failed', error: ipcErrorMessage(e) });
+            }
+            done = encStart + frames * ENCODE_WEIGHT;
+            publish();
+          }
+        } catch (e) {
+          if (cancelExport.current) break;
+          for (const id of pass.presetIds) setRow(id, { status: 'failed', error: ipcErrorMessage(e) });
+          done = passStart + frames * (1 + ENCODE_WEIGHT * pass.presetIds.length);
+          publish();
+        } finally {
+          transcodeProgress.current = null;
+          if (master) void api.exportDiscardMaster(master);
+        }
+      }
+      const mine = () => rows.filter((r) => ids.includes(r.preset.id));
+      const saved = mine().filter((r) => r.status === 'done').length;
+      if (saved > 0) await writeSidecars(`${folder}/${name}`).catch(() => {});
+      if (cancelExport.current) {
+        for (const r of mine()) {
+          if (r.status === 'rendering' || r.status === 'encoding') setRow(r.preset.id, { status: 'cancelled' });
+          else if (r.status === 'queued') setRow(r.preset.id, { status: 'skipped' });
+        }
+        detail = `${saved} of ${ids.length} formats finished`;
+        publish('failed', 'Export cancelled. Finished formats were kept.');
+      } else if (saved < ids.length) {
+        const failed = ids.length - saved;
+        detail = `${saved} of ${ids.length} formats saved`;
+        publish('failed', `${failed} format${failed === 1 ? '' : 's'} failed. Retry runs just ${failed === 1 ? 'that one' : 'those'}.`);
+      } else {
+        detail = '';
+        publish('done', `${ids.length} format${ids.length === 1 ? '' : 's'} saved to ${folder.split('/').pop()}`);
+      }
+    } finally {
+      transcodeProgress.current = null;
+      setExporting(false);
     }
-    if (cancelExport.current) {
-      setStatus('export cancelled');
-      return;
-    }
-    if (proj.captions.length) {
-      const srtPath = outPath.replace(/\.mp4$/, '.srt');
-      await api.writeText(srtPath, toSrt(proj.captions));
-    }
-    if (proj.chapters.length) {
-      const chPath = outPath.replace(/\.mp4$/, '.chapters.txt');
-      await api.writeText(chPath, toChapterList(proj.chapters) + '\n');
-    }
-    if (wantGif) {
-      const gifPath = outPath.replace(/\.mp4$/, '.gif');
-      setStatus('converting gif…');
-      await api.exportGif(outPath, gifPath);
-      setStatus(`exported → ${outPath} + gif`);
-    } else {
-      setStatus(`exported → ${outPath}`);
-    }
-    setExporting(false);
+  };
+
+  const cancelRunningExport = () => {
+    cancelExport.current = true;
+    void api.exportAbort(); // stops an encode right away; the frame loop checks the flag
   };
 
   /** Output-time range of each clip for the timeline strip. */
@@ -425,18 +907,29 @@ export function Editor({
     });
   }, [timeline]);
 
+  /** Replace the clip list. Captions, text overlays, chapters, manual zooms
+   *  and the playhead move with their footage. */
+  const editClips = (clips: Clip[]) => {
+    const oldTl = timeline;
+    const newTl = new Timeline(proj.recording.duration, clips);
+    setProj((p) => remapProject(p, oldTl, newTl));
+    movePlayhead(
+      remapTime(playheadRef.current, oldTl, newTl) ?? Math.min(playheadRef.current, newTl.outputDuration),
+    );
+  };
+
   const splitAtPlayhead = () => {
     const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
     if (!tl.split(playhead)) {
       setStatus('cannot split here');
       return;
     }
-    setProj((p) => ({ ...p, clips: tl.clips }));
+    editClips(tl.clips);
   };
 
   const deleteSelectedClip = () => {
     if (!selectedClip || proj.clips.length <= 1) return;
-    setProj((p) => ({ ...p, clips: p.clips.filter((c) => c.id !== selectedClip) }));
+    editClips(proj.clips.filter((c) => c.id !== selectedClip));
     setSelectedClip(null);
   };
 
@@ -447,9 +940,8 @@ export function Editor({
       setStatus('playhead is outside a kept clip');
       return;
     }
-    setProj((p) => ({
-      ...p,
-      clips: p.clips.map((c) => {
+    editClips(
+      proj.clips.map((c) => {
         if (c.id !== selectedClip) return c;
         if (edge === 'start' && src > c.sourceStart && src < c.sourceEnd) {
           return { ...c, sourceStart: src };
@@ -459,28 +951,23 @@ export function Editor({
         }
         return c;
       }),
-    }));
+    );
   };
 
   const setClipSpeed = (speed: number) => {
     if (!selectedClip) return;
-    setProj((p) => ({
-      ...p,
-      clips: p.clips.map((c) => (c.id === selectedClip ? { ...c, speed } : c)),
-    }));
+    editClips(proj.clips.map((c) => (c.id === selectedClip ? { ...c, speed } : c)));
   };
 
   const dragFrom = useRef<number | null>(null);
 
   /** Remove source-time ranges from the timeline; returns seconds removed.
-   *  Captions/words are remapped through the cut so the transcript stays
-   *  aligned to the new output timeline. */
+   *  Captions, words and the rest follow the cut via `editClips`. */
   const cutSourceRanges = (ranges: { start: number; end: number }[]) => {
-    const oldTl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
     const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
     const removed = tl.cutRanges(ranges);
     if (removed > 0) {
-      setProj((p) => ({ ...p, clips: tl.clips, captions: remapCues(p.captions, oldTl, tl, ranges) }));
+      editClips(tl.clips);
       setWordSel(null);
     }
     return removed;
@@ -567,15 +1054,6 @@ export function Editor({
     setStatus(removed ? `cut “${sel.map((w) => w.text).join(' ')}” (${removed.toFixed(1)}s)` : 'nothing cut');
   };
 
-  const seekOutput = (outT: number) => {
-    const srcT = timeline.sourceTime(outT);
-    if (srcT !== null) {
-      if (videoRef.current) videoRef.current.currentTime = srcT;
-      if (camRef.current) camRef.current.currentTime = srcT;
-    }
-    setPlayhead(outT);
-  };
-
   const cutCue = (cue: { start: number; end: number }) => {
     const s = timeline.sourceTime(cue.start);
     const e = timeline.sourceTime(cue.end);
@@ -588,20 +1066,16 @@ export function Editor({
   };
 
   const undo = () => {
-    const h = historyRef.current;
-    const prev = h.undo.pop();
+    const prev = historyRef.current.undo(projRef.current);
     if (prev) {
-      h.redo.push(projRef.current);
       applyingHistory.current = true;
       setProj(prev);
     }
   };
 
   const redo = () => {
-    const h = historyRef.current;
-    const next = h.redo.pop();
+    const next = historyRef.current.redo(projRef.current);
     if (next) {
-      h.undo.push(projRef.current);
       applyingHistory.current = true;
       setProj(next);
     }
@@ -610,22 +1084,29 @@ export function Editor({
   // Keyboard shortcuts: space = play/pause, S = split, ⌘Z = undo, ⌘⇧Z = redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
+      if (pendingLeave) {
+        if (e.key === 'Escape') void answerLeave('cancel');
         return;
       }
+      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if ((e.target as HTMLElement)?.getAttribute?.('role') === 'spinbutton') return;
+      // ⌘Z / ⇧⌘Z come from the app menu (Edit > Undo/Redo) so one press is one undo.
+      // ⌘S, ⌘⌫ and friends belong to the menu, not to split and delete.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.code === 'Space') {
         e.preventDefault();
-        videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause();
+        togglePlay();
+      } else if (e.key === 'Escape' && selectedTap) {
+        setSelectedTap(null);
       } else if (e.key === 's' || e.key === 'S') {
         splitAtPlayhead();
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
         if (editTranscript && wordSel) {
           e.preventDefault();
           cutSelectedWords();
+        } else if (selectedTap) {
+          e.preventDefault();
+          removeTap(selectedTap);
         } else {
           deleteSelectedClip();
         }
@@ -635,62 +1116,112 @@ export function Editor({
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  /**
-   * Frame-diff the recording for sustained local motion (taps/swipes on an
-   * iPhone/iPad capture, where no cursor events exist). Sustained-motion
-   * centroids become autofocus events through the same dwell pipeline.
-   */
-  const detectMotion = async () => {
-    const video = videoRef.current;
-    if (!video || !duration) return;
-    const origT = video.currentTime;
-    video.pause();
-    setStatus('detecting motion…');
-    try {
-      const src = proj.recording.sourceSize;
-      const W2 = 192;
-      const H2 = Math.max(8, Math.round((W2 * src.height) / src.width));
-      const det = document.createElement('canvas');
-      det.width = W2;
-      det.height = H2;
-      const dctx = det.getContext('2d', { willReadFrequently: true })!;
-      const samples: CursorSample[] = [];
-      let prev: ImageData | null = null;
-      const step = 0.4;
-      const area = W2 * H2;
-      for (let t = step; t < duration; t += step) {
-        await seekVideo(video, t);
-        dctx.drawImage(video, 0, 0, W2, H2);
-        const img = dctx.getImageData(0, 0, W2, H2);
-        if (prev) {
-          const d = img.data;
-          const p = prev.data;
-          let sx = 0;
-          let sy = 0;
-          let n = 0;
-          for (let i = 0; i < d.length; i += 4) {
-            const diff =
-              Math.abs(d[i] - p[i]) + Math.abs(d[i + 1] - p[i + 1]) + Math.abs(d[i + 2] - p[i + 2]);
-            if (diff > 90) {
-              sx += i / 4 % W2;
-              sy += Math.floor(i / 4 / W2);
-              n++;
-            }
-          }
-          // Sustained local motion only — ignore noise and whole-frame changes
-          // (scrolls, transitions) which would yank the zoom around.
-          if (n > area * 0.003 && n < area * 0.35) {
-            samples.push({ time: t - step / 2, x: sx / n / W2, y: sy / n / H2, kind: 'move' });
-          }
-        }
-        prev = img;
-        setStatus(`detecting motion ${Math.round((t / duration) * 100)}%`);
+  // App-menu commands arrive as `openscreen:menu` events.
+  useEffect(() => {
+    const onMenu = (e: Event) => {
+      if (pendingLeave) return;
+      switch ((e as CustomEvent<string>).detail) {
+        case 'newRecording':
+          return leave(onNewRecording);
+        case 'openProject':
+          return leave(onOpenProject);
+        case 'save':
+          return void saveProject();
+        case 'exportMp4':
+          if (!exporting) void exportVideo();
+          return;
+        case 'exportGif':
+          if (!exporting) void exportVideo(true);
+          return;
+        case 'undo':
+        case 'redo':
+          return menuHistory((e as CustomEvent<string>).detail as 'undo' | 'redo');
+        case 'playPause':
+          if (!exporting) togglePlay();
+          return;
+        case 'split':
+          if (!exporting) splitAtPlayhead();
+          return;
       }
-      const ev = dwellFocusEvents(samples, { radius: 0.06, minDur: 0.6, debounce: 2 });
-      setMotionEv(ev);
-      setStatus(ev.length ? `${ev.length} motion focus region(s)` : 'no sustained motion detected');
+    };
+    window.addEventListener('openscreen:menu', onMenu);
+    return () => window.removeEventListener('openscreen:menu', onMenu);
+  });
+
+  /**
+   * Phone recordings have no cursor track: read taps, swipes and still
+   * stretches from the video itself (main runs ffmpeg + taps.ts). They land
+   * on the taps track as editable suggestions, in source time. `auto` is the
+   * first-open run, which isn't an undo step of its own.
+   */
+  const analyzeTaps = async (auto = false) => {
+    if (analyzing) return;
+    setAnalyzing(true);
+    setStatus('Finding taps…');
+    try {
+      const found = await api.analyzeTaps(bundleDir, proj.recording.screenVideoFile);
+      if (disposed.current) return;
+      if (auto) applyingHistory.current = true;
+      setProj((p) => ({ ...p, taps: found.taps, waits: found.deadTime, tapsAnalyzed: true }));
+      setSelectedTap(null);
+      const n = found.taps.length;
+      setStatus(n ? `${n} tap${n === 1 ? '' : 's'} found` : 'No taps found. Option-click the taps lane to add one');
+    } catch (e) {
+      if (!disposed.current) setStatus(`Couldn't find taps: ${ipcErrorMessage(e)}`);
     } finally {
-      await seekVideo(video, origT);
+      if (!disposed.current) setAnalyzing(false);
+    }
+  };
+
+  // The first time a phone recording opens, find its taps.
+  useEffect(() => {
+    if (isPhone && !proj.tapsAnalyzed && proj.taps.length === 0) void analyzeTaps(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const updateTap = (id: string, patch: Partial<TapSuggestion>) =>
+    setProj((p) => ({ ...p, taps: p.taps.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
+
+  const removeTap = (id: string) => {
+    setProj((p) => ({ ...p, taps: p.taps.filter((t) => t.id !== id) }));
+    if (selectedTap === id) setSelectedTap(null);
+  };
+
+  /** Option-click on the taps lane: a tap at the playhead, mid-screen until placed. */
+  const addTapAtPlayhead = () => {
+    const tap: TapSuggestion = {
+      id: crypto.randomUUID(),
+      t: tapSourceTime(playheadRef.current, timeline),
+      x: 0.5,
+      y: 0.5,
+      kind: 'tap',
+      confidence: 1,
+    };
+    setProj((p) => ({ ...p, taps: [...p.taps, tap].sort((a, b) => a.t - b.t) }));
+    setSelectedTap(tap.id);
+    setStatus('Tap added. Click the preview to place it');
+  };
+
+  const selectTap = (id: string) => {
+    setSelectedTap(id);
+    const t = outTaps.find((x) => x.id === id);
+    // Just after touch-down, where the indicator is fully pressed.
+    if (t) seekOutput(Math.min(timeline.outputDuration, t.t + 0.1));
+  };
+
+  const waitsLeft = useMemo(() => pendingWaits(proj.waits, timeline), [proj.waits, timeline]);
+  const waitCores = waitsLeft.map((w) => waitCore(w)).filter((r): r is { start: number; end: number } => r !== null);
+
+  /** Play every still stretch at 3x (clip speed + split), or cut them. */
+  const handleWaits = (how: 'speed' | 'cut') => {
+    if (!waitCores.length) return;
+    const secs = waitCores.reduce((n, r) => n + r.end - r.start, 0);
+    if (how === 'speed') {
+      editClips(speedUpRanges(proj.clips, waitCores, 3));
+      setStatus(`${waitCores.length} wait${waitCores.length === 1 ? '' : 's'} sped up 3×, ${(secs * (2 / 3)).toFixed(1)}s saved`);
+    } else {
+      const removed = cutSourceRanges(waitCores);
+      setStatus(`${waitCores.length} wait${waitCores.length === 1 ? '' : 's'} cut, ${removed.toFixed(1)}s removed`);
     }
   };
 
@@ -744,8 +1275,47 @@ export function Editor({
   };
 
   const saveProject = async () => {
-    await api.saveProject(bundleDir, proj);
-    setStatus('project saved');
+    try {
+      await persist(proj);
+      setStatus('project saved');
+    } catch (e) {
+      setStatus(`save failed: ${e}`);
+    }
+  };
+
+  /** Run `go` (which unmounts this editor), first asking about unsaved
+   *  changes. An export in flight has to finish or be cancelled first. */
+  const leave = (go: () => void) => {
+    if (exporting) {
+      setStatus('cancel the export before leaving');
+      return;
+    }
+    if (saveTracker.current.isDirty(projRef.current)) setPendingLeave(() => go);
+    else go();
+  };
+
+  const answerLeave = async (choice: 'save' | 'discard' | 'cancel') => {
+    const go = pendingLeave;
+    setPendingLeave(null);
+    if (!go || choice === 'cancel') return;
+    if (choice === 'save') {
+      try {
+        await persist(projRef.current);
+      } catch (e) {
+        setStatus(`save failed: ${e}`);
+        return;
+      }
+    }
+    go();
+  };
+
+  /** Undo/redo from the menu: a focused text field gets the native edit,
+   *  anything else (sliders, switches, the canvas) the project history. */
+  const menuHistory = (dir: 'undo' | 'redo') => {
+    if (isTextEntry(document.activeElement as HTMLInputElement | null)) {
+      document.execCommand(dir);
+    } else if (dir === 'undo') undo();
+    else redo();
   };
 
   // Repaint the waveform whenever peaks or the cut layout changes.
@@ -790,20 +1360,35 @@ export function Editor({
   // ── presentation only below: derived display values and UI-only state ──
   const outDur = timeline.outputDuration || duration || 1;
   const bundleName = (bundleDir.split('/').filter(Boolean).pop() ?? 'Untitled').replace(/\.openscreen$/, '');
-  const exportProgress = /exporting (\d+)\/(\d+)/.exec(status);
+  const formatChoices = presetChoices(proj.recording.sourceSize);
+  const selectedFormats =
+    formatPick ?? [formatChoices[0].id, 'social-9x16' as const].filter((id) => formatChoices.some((p) => p.id === id));
+  const exportLayoutPreset = layoutPresetOf(proj);
+  const audibleExport = recordingHasAudio === undefined ? undefined : recordingHasAudio || (clickSfx && clickEv.length > 0);
+  const formatWarnings = Object.fromEntries(
+    [...formatChoices, ...(exportLayoutPreset ? [exportLayoutPreset] : [])].map((p) => [
+      p.id,
+      presetWarnings(p, { duration: outDur, source: croppedSource(proj), hasAudio: audibleExport }),
+    ]),
+  );
   const selectedSpeed = proj.clips.find((c) => c.id === selectedClip)?.speed ?? 1;
   const togglePlay = () =>
     videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause();
 
+  // Phone recordings have no cursor; they get the Device tab instead.
   const inspectorTabs = [
     { value: 'background' as const, label: 'Background' },
+    ...(isPhone ? [{ value: 'device' as const, label: 'Device' }] : []),
     { value: 'zoom' as const, label: 'Zoom' },
-    { value: 'cursor' as const, label: 'Cursor' },
+    ...(isPhone ? [] : [{ value: 'cursor' as const, label: 'Cursor' }]),
     ...(camUrl ? [{ value: 'camera' as const, label: 'Camera' }] : []),
     { value: 'audio' as const, label: 'Audio' },
     { value: 'text' as const, label: 'Text' },
   ];
-  const activeTab: InspectorTab = !camUrl && inspectorTab === 'camera' ? 'background' : inspectorTab;
+  const activeTab: InspectorTab = inspectorTabs.some((t) => t.value === inspectorTab) ? inspectorTab : 'background';
+  /** Ends the undo step a scrub gesture made. */
+  const sealHistory = () => historyRef.current.seal();
+  const blurredBg = isPhone && proj.layout.background === 'blurred';
 
   const importCaptionsButton = (variant: 'secondary' | 'ghost', size: 'sm' | 'md') => (
     <label className={`btn btn-${variant} btn-${size}`}>
@@ -819,16 +1404,28 @@ export function Editor({
 
   const backgroundPanel = (
     <>
+      {isPhone && <LayoutSection proj={proj} setProj={setProj} onTitleFocus={setTitleFocus} />}
       <Section title="Backdrop">
         <div className="tiles">
+          {isPhone && (
+            <button
+              type="button"
+              title="A soft blur of the recording itself"
+              className={`tile${blurredBg ? ' selected' : ''}`}
+              onClick={() => setProj((p) => ({ ...p, layout: { ...p.layout, background: 'blurred' } }))}
+            >
+              <span className="tile-swatch blurred" />
+              <span className="tile-label">Blurred</span>
+            </button>
+          )}
           {SWATCHES.map((s) => (
             <button
               key={s.name}
               type="button"
               title={s.name}
-              className={`tile${sameBackground(s.bg, proj.style.background) ? ' selected' : ''}`}
+              className={`tile${!blurredBg && sameBackground(s.bg, proj.style.background) ? ' selected' : ''}`}
               onClick={() =>
-                setProj((p) => ({ ...p, style: { ...p.style, background: s.bg } }))
+                setProj((p) => ({ ...p, style: { ...p.style, background: s.bg }, layout: { ...p.layout, background: 'style' } }))
               }
             >
               <span
@@ -852,6 +1449,7 @@ export function Editor({
                 setProj((p) => ({
                   ...p,
                   style: { ...p.style, background: { kind: 'imageFile', path } },
+                  layout: { ...p.layout, background: 'style' },
                 }));
               }
             }}
@@ -864,27 +1462,32 @@ export function Editor({
             title="Use desktop wallpaper"
             className="tile"
             onClick={async () => {
-              const path = await api.wallpaperPath();
-              if (path) {
-                setProj((p) => ({
-                  ...p,
-                  style: { ...p.style, background: { kind: 'imageFile', path } },
-                }));
-              } else setStatus('wallpaper unavailable');
+              const noWallpaper = "Couldn't read your wallpaper, choose an image instead";
+              const path = await api.wallpaperPath().catch(() => null);
+              if (!path || !(await backgroundReady(path))) {
+                setStatus(noWallpaper);
+                return;
+              }
+              setProj((p) => ({
+                ...p,
+                style: { ...p.style, background: { kind: 'imageFile', path } },
+                layout: { ...p.layout, background: 'style' },
+              }));
             }}
           >
             <span className="tile-swatch tile-text">Desktop</span>
             <span className="tile-label">Wallpaper</span>
           </button>
         </div>
-        {proj.style.background.kind === 'imageFile' && (
-          <Slider
+        {proj.style.background.kind === 'imageFile' && !blurredBg && (
+          <ScrubField
             label="Image blur"
             min={0}
             max={60}
             step={1}
+            unit="px"
             value={proj.style.background.blur ?? 0}
-            format={(v) => `${v}px`}
+            onCommit={sealHistory}
             onChange={(v) =>
               setProj((p) => ({
                 ...p,
@@ -897,91 +1500,87 @@ export function Editor({
           />
         )}
       </Section>
-      <Section title="Frame">
-        {(
-          [
-            ['Padding', 'paddingFraction', 0, 0.4, 0.01, (v: number) => `${Math.round(v * 100)}%`],
-            ['Corner radius', 'cornerRadius', 0, 120, 1, (v: number) => `${v}px`],
-            ['Shadow', 'shadowRadius', 0, 200, 1, (v: number) => `${v}px`],
-            ['Shadow opacity', 'shadowOpacity', 0, 1, 0.01, (v: number) => `${Math.round(v * 100)}%`],
-          ] as const
-        ).map(([label, key, min, max, step, format]) => (
-          <Slider
-            key={key}
-            label={label}
-            title={key}
-            min={min}
-            max={max}
-            step={step}
-            value={proj.style[key]}
-            format={format}
-            onChange={(v) => setProj((p) => ({ ...p, style: { ...p.style, [key]: v } }))}
-          />
-        ))}
-        {proj.recording.sourceKind === 'iosDevice' && (
-          <Switch
-            label="Phone frame"
-            hint="Wrap the frame in iPhone hardware"
-            title="Wrap the frame in iPhone hardware chrome"
-            checked={proj.style.deviceFrame === 'phone'}
-            onChange={(v) =>
-              setProj((p) => ({
-                ...p,
-                style: { ...p.style, deviceFrame: v ? 'phone' : 'none' },
-              }))
-            }
-          />
-        )}
-      </Section>
+      {!preset && (
+        <Section title="Frame">
+          {(
+            [
+              ['Padding', 'paddingFraction', 0, 0.4, 0.01, '%', 100],
+              ['Corner radius', 'cornerRadius', 0, 120, 1, 'px', 1],
+              ['Shadow', 'shadowRadius', 0, 200, 1, 'px', 1],
+              ['Shadow opacity', 'shadowOpacity', 0, 1, 0.01, '%', 100],
+            ] as const
+          ).map(([label, key, min, max, step, unit, mul]) => (
+            <ScrubField
+              key={key}
+              label={label}
+              // Percentages scrub and type as whole numbers.
+              min={min * mul}
+              max={max * mul}
+              step={step * mul}
+              unit={unit}
+              value={Math.round(proj.style[key] * mul * 100) / 100}
+              onCommit={sealHistory}
+              onChange={(v) => setProj((p) => ({ ...p, style: { ...p.style, [key]: v / mul } }))}
+            />
+          ))}
+        </Section>
+      )}
     </>
   );
 
   const zoomPanel = (
     <>
-      <Section title="Automatic">
-        <Switch
-          label="Auto-focus"
-          hint="Zoom toward each click"
-          checked={autofocusOn}
-          onChange={setAutofocusOn}
-        />
-        {autofocusOn && (
-          <Switch
-            label="Dwell zoom"
-            hint="Also zoom where the cursor lingers"
-            title="Also zoom where the cursor lingers, not just clicks"
-            checked={dwellOn}
-            onChange={setDwellOn}
-          />
-        )}
-        {autofocusOn && (
-          <Slider
-            label="Zoom depth"
-            title="Max zoom on click"
-            min={1.2}
-            max={4}
-            step={0.1}
-            value={zoomDepth}
-            format={(v) => `${v.toFixed(1)}×`}
-            onChange={setZoomDepth}
-          />
-        )}
-        {autofocusOn && (
-          <div className="row">
-            <span className="row-text">
-              <span className="row-label">Touches</span>
-              <span className="row-hint">iPhone and iPad captures have no cursor track</span>
-            </span>
-            <Button
-              size="sm"
-              onClick={detectMotion}
-              title="Frame-diff the video for taps/swipes (iPhone/iPad captures have no cursor track)"
-            >
-              Detect touches
-            </Button>
-          </div>
-        )}
-      </Section>
+      {!presetAllowsZoom(preset) && (
+        <Section title="Automatic">
+          <p className="hint">
+            App Store previews don't zoom: Apple recommends showing the app's native UI. Pick another
+            canvas to zoom.
+          </p>
+        </Section>
+      )}
+      {presetAllowsZoom(preset) && (
+        <Section title="Automatic">
+          {isPhone ? (
+            <Switch
+              label="Zoom to taps"
+              hint="Glide in on each tap, pan between quick ones, pull out for swipes"
+              checked={proj.zoom.fromTaps}
+              onChange={(v) => setZoom({ fromTaps: v })}
+            />
+          ) : (
+            <>
+              <Switch
+                label="Auto-focus"
+                hint="Zoom toward each click"
+                checked={autofocusOn}
+                onChange={(v) => setZoom({ autofocus: v })}
+              />
+              {autofocusOn && (
+                <Switch
+                  label="Dwell zoom"
+                  hint="Also zoom where the cursor lingers"
+                  title="Also zoom where the cursor lingers, not just clicks"
+                  checked={dwellOn}
+                  onChange={(v) => setZoom({ dwell: v })}
+                />
+              )}
+            </>
+          )}
+          {(isPhone ? proj.zoom.fromTaps : autofocusOn) && (
+            <ScrubField
+              label="Zoom depth"
+              min={1.2}
+              max={4}
+              step={0.1}
+              unit="×"
+              value={zoomDepth}
+              format={(v) => v.toFixed(1)}
+              onCommit={sealHistory}
+              onChange={(v) => setZoom({ depth: v })}
+            />
+          )}
+        </Section>
+      )}
       <Section title="Manual zooms">
         <p className="hint">
           <Kbd>⌥</Kbd> Option-click the timeline to add a zoom at that moment. Right-click a
@@ -998,15 +1597,14 @@ export function Editor({
 
   const cursorPanel = (
     <Section title="Cursor">
-      <Slider
+      <ScrubField
         label="Size"
-        title="Software cursor size (fraction of frame height)"
-        min={0.005}
-        max={0.03}
-        step={0.001}
-        value={proj.style.cursorSize}
-        format={(v) => (v * 1000).toFixed(0)}
-        onChange={(v) => setProj((p) => ({ ...p, style: { ...p.style, cursorSize: v } }))}
+        min={5}
+        max={30}
+        step={1}
+        value={Math.round(proj.style.cursorSize * 1000)}
+        onCommit={sealHistory}
+        onChange={(v) => setProj((p) => ({ ...p, style: { ...p.style, cursorSize: v / 1000 } }))}
       />
       <Switch
         label="Trail"
@@ -1083,14 +1681,14 @@ export function Editor({
         hint="Mix a click sound at each click"
         title="Mix a click sound at each click"
         checked={clickSfx}
-        onChange={setClickSfx}
+        onChange={(v) => setAudio({ clickSounds: v })}
       />
       <Switch
         label="Voice cleanup"
         hint="Denoise and level the voice on export, locally with ffmpeg"
         title="Denoise + level the voice track on export (highpass, afftdn, compressor, limiter — all local ffmpeg)"
         checked={voiceCleanup}
-        onChange={setVoiceCleanup}
+        onChange={(v) => setAudio({ voiceCleanup: v })}
       />
     </Section>
   );
@@ -1435,37 +2033,35 @@ export function Editor({
         className="hidden"
         preload="auto"
         muted={exporting}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-        onLoadedData={(e) => renderAt(e.currentTarget.currentTime)}
+        onLoadedMetadata={(e) => setDuration(mediaDuration(e.currentTarget.duration, proj.recording.duration))}
+        onDurationChange={(e) => setDuration(mediaDuration(e.currentTarget.duration, proj.recording.duration))}
+        onLoadedData={() => renderAt(playheadRef.current)}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
       />
       {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
 
       <header className="topbar ed-top">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="back-btn"
+          title="Back to the source picker (⌘N)"
+          disabled={exporting}
+          onClick={() => leave(onNewRecording)}
+        >
+          {Icon.chevronLeft(12)}
+          New recording
+        </Button>
         <span className="doc-title" title={bundleDir}>{bundleName}</span>
         <div className="history no-drag">
           <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
           <IconButton label="Redo (⌘⇧Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
         </div>
         <div className="spacer" />
-        {(status || exporting) && (
-          <div className={`status-pill no-drag${exporting ? ' busy' : ''}`} title={status}>
-            {exportProgress && (
-              <span className="progress">
-                <span style={{ width: `${(+exportProgress[1] / Math.max(1, +exportProgress[2])) * 100}%` }} />
-              </span>
-            )}
-            <span className="status-text tnum">
-              {exportProgress
-                ? `Exporting ${Math.round((+exportProgress[1] / Math.max(1, +exportProgress[2])) * 100)}%`
-                : status}
-            </span>
-            {exporting && (
-              <button type="button" className="pill-cancel" onClick={() => { cancelExport.current = true; }}>
-                Cancel
-              </button>
-            )}
+        {status && !xp && (
+          <div className="status-pill no-drag" title={status}>
+            <span className="status-text tnum">{status}</span>
           </div>
         )}
         <div className="spacer" />
@@ -1484,41 +2080,48 @@ export function Editor({
             {Icon.chevronDown(12)}
           </Button>
           {exportMenuOpen && (
-            <div className="menu" role="dialog" aria-label="Export options">
-              <div className="field-block">
-                <span className="row-label">Resolution</span>
-                <Segmented
-                  label="Resolution"
-                  value={proj.exportPreset}
-                  options={[
-                    { value: 'original', label: 'Original' },
-                    { value: 'p1080', label: '1080p' },
-                    { value: 'uhd4k', label: '4K' },
-                  ]}
-                  onChange={(v) => setProj((p) => ({ ...p, exportPreset: v }))}
-                />
-              </div>
-              <div className="field-block">
-                <span className="row-label">Frame rate</span>
-                <Segmented
-                  label="Frame rate"
-                  value={proj.outputFPS}
-                  options={[24, 30, 60].map((f) => ({ value: f, label: `${f} fps` }))}
-                  onChange={(v) => setProj((p) => ({ ...p, outputFPS: v }))}
-                />
-              </div>
-              <div className="menu-sep" />
-              <Button
-                disabled={exporting}
-                onClick={() => {
-                  setExportMenuOpen(false);
-                  void exportVideo(true);
-                }}
-              >
-                Export GIF
-              </Button>
-              <p className="hint">The GIF is made from the MP4, which is kept alongside it.</p>
-            </div>
+            <ExportPanel
+              layoutPreset={exportLayoutPreset}
+              singleSettings={
+                <>
+                  <div className="field-block">
+                    <span className="row-label">Resolution</span>
+                    <Segmented
+                      label="Resolution"
+                      value={proj.exportPreset}
+                      options={[
+                        { value: 'original', label: 'Original' },
+                        { value: 'p1080', label: '1080p' },
+                        { value: 'uhd4k', label: '4K' },
+                      ]}
+                      onChange={(v) => setProj((p) => ({ ...p, exportPreset: v }))}
+                    />
+                  </div>
+                  <div className="field-block">
+                    <span className="row-label">Frame rate</span>
+                    <Segmented
+                      label="Frame rate"
+                      value={proj.outputFPS}
+                      options={[24, 30, 60].map((f) => ({ value: f, label: `${f} fps` }))}
+                      onChange={(v) => setProj((p) => ({ ...p, outputFPS: v }))}
+                    />
+                  </div>
+                </>
+              }
+              choices={formatChoices}
+              selected={selectedFormats}
+              warnings={formatWarnings}
+              disabled={exporting}
+              onToggle={(id, on) =>
+                setFormatPick(
+                  formatChoices
+                    .map((p) => p.id)
+                    .filter((x) => (x === id ? on : selectedFormats.includes(x))),
+                )
+              }
+              onExportSingle={(gif) => void exportVideo(gif)}
+              onExportFormats={() => void exportFormats(selectedFormats)}
+            />
           )}
         </div>
       </header>
@@ -1529,11 +2132,12 @@ export function Editor({
             <canvas
               ref={canvasRef}
               className={`preview${cropMode ? ' cropping' : ''}`}
-              style={{ cursor: cropMode ? 'crosshair' : undefined }}
+              style={{ cursor: cropMode || selectedTap ? 'crosshair' : undefined }}
+              title={selectedTap ? 'Click to place the selected tap' : undefined}
               onMouseDown={onCanvasDown}
               onMouseMove={onCanvasMove}
               onMouseUp={onCanvasUp}
-              onMouseLeave={onCanvasUp}
+              onMouseLeave={onCanvasLeave}
             />
           </div>
         </div>
@@ -1576,28 +2180,27 @@ export function Editor({
               />
             )}
           </div>
-          <div className="transport-group">
-            <Button
-              size="sm"
-              variant="ghost"
-              className={cropMode ? 'is-on' : ''}
-              onClick={() => {
-                setCropMode((c) => !c);
-                if (!cropMode) renderAt(videoRef.current?.currentTime ?? 0);
-              }}
-            >
-              {cropMode ? 'Drag on preview…' : 'Crop'}
-            </Button>
-            {proj.style.cropRect && !cropMode && (
+          {!preset && (
+            <div className="transport-group">
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => setProj((p) => ({ ...p, style: { ...p.style, cropRect: null } }))}
+                className={cropMode ? 'is-on' : ''}
+                onClick={() => setCropMode((c) => !c)}
               >
-                Reset crop
+                {cropMode ? 'Drag on preview…' : 'Crop'}
               </Button>
-            )}
-          </div>
+              {proj.style.cropRect && !cropMode && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setProj((p) => ({ ...p, style: { ...p.style, cropRect: null } }))}
+                >
+                  Reset crop
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </main>
 
@@ -1605,6 +2208,19 @@ export function Editor({
         <Tabs value={activeTab} tabs={inspectorTabs} onChange={setInspectorTab} />
         <div className="inspector-body" key={activeTab}>
           {activeTab === 'background' && backgroundPanel}
+          {activeTab === 'device' && (
+            <DevicePanel
+              proj={proj}
+              setProj={setProj}
+              onCommit={sealHistory}
+              resolved={resolvedDevice}
+              analyzing={analyzing}
+              onRedetect={() => void analyzeTaps()}
+              pendingWaits={{ count: waitCores.length, seconds: waitCores.reduce((n, r) => n + r.end - r.start, 0) }}
+              onSpeedUpWaits={() => handleWaits('speed')}
+              onCutWaits={() => handleWaits('cut')}
+            />
+          )}
           {activeTab === 'zoom' && zoomPanel}
           {activeTab === 'cursor' && cursorPanel}
           {activeTab === 'camera' && cameraPanel}
@@ -1613,11 +2229,12 @@ export function Editor({
         </div>
       </aside>
 
-      <footer className="ed-timeline">
+      <footer className={`ed-timeline${isPhone ? ' has-taps' : ''}`}>
         <div className="tl-labels" aria-hidden="true">
           <span />
           <span>Clips</span>
           <span>Zoom</span>
+          {isPhone && <span>Taps</span>}
           <span>Audio</span>
         </div>
         {/* The seek target spans exactly the lanes, so click % = time %. */}
@@ -1651,11 +2268,12 @@ export function Editor({
                     if (from === null || to < 0 || from === to) return;
                     const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
                     tl.reorder(from, to);
-                    setProj((p) => ({ ...p, clips: tl.clips }));
+                    editClips(tl.clips);
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedClip(b.id);
+                    setSelectedTap(null);
                   }}
                   style={{
                     left: `${(b.start / (timeline.outputDuration || duration || 1)) * 100}%`,
@@ -1683,7 +2301,7 @@ export function Editor({
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    setManualSegments((m) => m.filter((x) => x !== s));
+                    setProj((p) => ({ ...p, manualZooms: p.manualZooms.filter((x) => x !== s) }));
                   }}
                   style={{
                     left: `${(s.inStart / (timeline.outputDuration || duration || 1)) * 100}%`,
@@ -1695,6 +2313,24 @@ export function Editor({
               );
             })}
           </div>
+          {isPhone && (
+            <TapsLane
+              taps={outTaps}
+              waits={rangesToOutput(proj.waits, timeline).map((r) => ({
+                ...r,
+                pending: r.speed < 1.5,
+              }))}
+              outDur={outDur}
+              selectedId={selectedTap}
+              onSelect={(id) => {
+                setSelectedClip(null);
+                selectTap(id);
+              }}
+              onMove={(id, outT) => updateTap(id, { t: tapSourceTime(outT, timeline) })}
+              onRemove={removeTap}
+              onAdd={addTapAtPlayhead}
+            />
+          )}
           <div className="lane lane-audio">
             <canvas ref={waveRef} className="wave" />
             {peaks.length > 0 && Math.max(...peaks) < 0.03 && (
@@ -1731,6 +2367,66 @@ export function Editor({
           />
         </div>
       </footer>
+
+      {xp && (
+        <div className="xp-overlay no-drag">
+          {xp.kind === 'batch' && xp.rows ? (
+            <ExportTasks
+              rows={xp.rows}
+              progress={{
+                state: xp.state,
+                done: xp.done,
+                total: xp.total,
+                startedAt: xp.startedAt,
+                message: xp.message,
+                detail: xp.detail,
+                onCancel: cancelRunningExport,
+                onClose: () => setXp(null),
+              }}
+              onReveal={(path) => void api.exportReveal(path)}
+              onRetry={(ids) => void exportFormats(ids, xp.folder, xp.rows)}
+            />
+          ) : (
+            <ExportProgress
+              state={xp.state}
+              done={xp.done}
+              total={xp.total}
+              startedAt={xp.startedAt}
+              message={xp.message}
+              detail={xp.detail}
+              onCancel={cancelRunningExport}
+              onReveal={() => xp.reveal && void api.exportReveal(xp.reveal)}
+              onRetry={xp.retry}
+              onClose={() => setXp(null)}
+            />
+          )}
+        </div>
+      )}
+
+      {pendingLeave && (
+        <div className="modal-scrim" onMouseDown={() => void answerLeave('cancel')}>
+          <div
+            className="modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="leave-title"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 id="leave-title">Save changes to {bundleName}?</h2>
+            <p>Your latest edits aren't saved yet. If you don't save, they're lost.</p>
+            <div className="modal-actions">
+              <Button variant="ghost" onClick={() => void answerLeave('discard')}>
+                Don't save
+              </Button>
+              <div className="spacer" />
+              <Button onClick={() => void answerLeave('cancel')}>Cancel</Button>
+              <Button variant="primary" autoFocus onClick={() => void answerLeave('save')}>
+                Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1761,8 +2457,9 @@ function rulerTicks(total: number) {
 
 /** m:ss.t for the transport readout. */
 function fmtPrecise(t: number) {
-  const m = Math.floor(t / 60);
-  const s = t - m * 60;
+  const tenths = Math.round(t * 10);
+  const m = Math.floor(tenths / 600);
+  const s = (tenths % 600) / 10;
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 

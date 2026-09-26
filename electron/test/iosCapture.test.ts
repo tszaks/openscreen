@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  IosCaptureError,
   IosHelperClient,
   createLineSplitter,
   parseDeviceList,
@@ -23,6 +24,22 @@ describe('parseHelperLine', () => {
     expect(
       parseHelperLine('{"devices":[{"id":"abc","modelID":"iOS Device","name":"Tyler\'s iPhone"}],"event":"devices"}'),
     ).toEqual({ event: 'devices', devices: [{ id: 'abc', name: "Tyler's iPhone", modelID: 'iOS Device' }] });
+  });
+
+  it('parses error codes and warnings', () => {
+    expect(parseHelperLine('{"code":"no-frames","event":"error","message":"No picture from your iPhone."}')).toEqual({
+      event: 'error',
+      message: 'No picture from your iPhone.',
+      code: 'no-frames',
+    });
+    expect(parseHelperLine('{"code":"stalled","event":"warning","message":"Your iPhone may be locked."}')).toEqual({
+      event: 'warning',
+      code: 'stalled',
+      message: 'Your iPhone may be locked.',
+    });
+    expect(parseHelperLine('{"code":"resumed","event":"warning"}')).toEqual({ event: 'warning', code: 'resumed' });
+    expect(parseHelperLine('{"event":"warning","message":"no code"}')).toBeNull();
+    expect(parseHelperLine('{"code":7,"event":"error","message":"x"}')).toEqual({ event: 'error', message: 'x' });
   });
 
   it('rejects junk, partial and malformed lines', () => {
@@ -173,9 +190,83 @@ describe('IosHelperClient', () => {
     expect(client.busy).toBe(false);
   });
 
+  it('rejects start with the no-frames code when the phone sends no picture', async () => {
+    const { client } = make();
+    const started = client.start('a', '/tmp/a.mov');
+    client.handleLine('{"code":"no-frames","event":"error","message":"No picture from your iPhone."}');
+    const err = await started.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IosCaptureError);
+    expect(err).toMatchObject({ message: 'No picture from your iPhone.', code: 'no-frames' });
+    expect(client.busy).toBe(false);
+  });
+
+  it('tracks stalled/resumed warnings without ending the take', async () => {
+    const { client } = make();
+    const started = client.start('a', '/tmp/a.mov');
+    client.handleLine('{"event":"started","width":10,"height":20}');
+    await started;
+    client.handleLine('{"code":"stalled","event":"warning","message":"Your iPhone may be locked."}');
+    expect(client.warning).toEqual({ code: 'stalled', message: 'Your iPhone may be locked.' });
+    expect(client.busy).toBe(true);
+    client.handleLine('{"code":"resumed","event":"warning"}');
+    expect(client.warning).toBeNull();
+
+    client.handleLine('{"code":"stalled","event":"warning","message":"m"}');
+    const stopped = client.stop();
+    client.handleLine('{"event":"finished","path":"/tmp/a.mov","duration":9}');
+    await expect(stopped).resolves.toMatchObject({ path: '/tmp/a.mov', duration: 9 });
+    expect(client.warning).toBeNull();
+  });
+
   it('keeps stray idle errors as lastError', () => {
     const { client } = make();
     client.handleLine('{"event":"error","message":"Unknown command: x"}');
     expect(client.lastError).toBe('Unknown command: x');
+  });
+});
+
+describe('IosHelperClient early end notification (BH-19)', () => {
+  const setup = () => {
+    const onEnded = vi.fn();
+    const client = new IosHelperClient({ write: () => {}, kill: vi.fn(), onEnded });
+    return { client, onEnded };
+  };
+  const recording = async (client: IosHelperClient) => {
+    const started = client.start('a', '/tmp/a.mov');
+    client.handleLine('{"event":"started","width":10,"height":20}');
+    await started;
+  };
+
+  it('reports a helper crash mid-take right away, and stop() still returns it', async () => {
+    const { client, onEnded } = setup();
+    await recording(client);
+    client.handleExit('iPhone capture helper exited (SIGKILL)');
+    expect(onEnded).toHaveBeenCalledWith({ err: 'iPhone capture helper exited (SIGKILL)' });
+    await expect(client.stop()).rejects.toThrow(/SIGKILL/);
+  });
+
+  it('reports a take the helper finished on its own (cable pulled)', async () => {
+    const { client, onEnded } = setup();
+    await recording(client);
+    client.handleLine('{"event":"finished","path":"/tmp/a.mov","duration":4.2}');
+    expect(onEnded).toHaveBeenCalledWith({ ok: { path: '/tmp/a.mov', width: undefined, height: undefined, duration: 4.2 } });
+    await expect(client.stop()).resolves.toMatchObject({ duration: 4.2 });
+  });
+
+  it('reports a device error mid-take', async () => {
+    const { client, onEnded } = setup();
+    await recording(client);
+    client.handleLine('{"event":"error","message":"Device disconnected."}');
+    expect(onEnded).toHaveBeenCalledWith({ err: 'Device disconnected.' });
+  });
+
+  it('does not report a normal stop', async () => {
+    const { client, onEnded } = setup();
+    await recording(client);
+    const stopped = client.stop();
+    client.handleLine('{"event":"finished","path":"/tmp/a.mov"}');
+    await stopped;
+    client.handleExit('quit');
+    expect(onEnded).not.toHaveBeenCalled();
   });
 });
