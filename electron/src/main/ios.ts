@@ -1,7 +1,8 @@
 import { app } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { join } from 'node:path';
-import { createLineSplitter, IosHelperClient, type IosFinished } from '../shared/iosCapture';
+import { createLineSplitter, IosCaptureError, IosHelperClient, type IosFinished } from '../shared/iosCapture';
+import { encodeIosError } from '../shared/iosErrors';
 
 // Owns the one long-lived `ios-capture serve` process. It is started on the
 // first device query and kept alive: the CMIO opt-in costs up to ~5s per
@@ -69,7 +70,12 @@ export function listIosDevices() {
 export function startIosRecording(deviceId: string, outPath: string) {
   ensureHelper();
   if (!child) return Promise.reject(new Error(client.lastError ?? 'iPhone capture helper is not running.'));
-  return client.start(deviceId, outPath);
+  // IPC drops everything but the message, so the code (e.g. "no-frames",
+  // which opens the setup checklist) rides inside it.
+  return client.start(deviceId, outPath).catch((e: unknown) => {
+    if (e instanceof IosCaptureError && e.code) throw new Error(encodeIosError(e.message, e.code));
+    throw e;
+  });
 }
 
 export function stopIosRecording() {
