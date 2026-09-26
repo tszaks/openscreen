@@ -1,0 +1,121 @@
+/* ───────────────────────── live iPhone preview ───────────────────────── */
+
+/* Sizes the phone to fit its box at the frame's aspect (--ar), whichever
+   way round the phone is held. */
+.live-fit {
+  container-type: size;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+.live-fit.size-card {
+  height: 82%;
+}
+
+/* The drawn phone body (same look as .device-outline) with the screen
+   inset in it. */
+.live-phone {
+  position: relative;
+  width: min(100cqw, 100cqh * var(--ar));
+  aspect-ratio: var(--ar);
+  border-radius: 12px;
+  background: linear-gradient(160deg, #202026, #111114);
+  box-shadow:
+    inset 0 0 0 1.5px #4a4a52,
+    inset 0 0 0 4px #0c0c0e,
+    0 6px 18px rgba(0, 0, 0, 0.5);
+  transition: opacity var(--t3) var(--ease);
+}
+.card.selected .live-phone {
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent),
+    inset 0 0 0 4px #0c0c0e,
+    0 6px 18px rgba(0, 0, 0, 0.5);
+}
+.live-phone.size-stage {
+  border-radius: 26px;
+  box-shadow:
+    inset 0 0 0 2px #4a4a52,
+    inset 0 0 0 7px #0c0c0e,
+    0 10px 30px rgba(0, 0, 0, 0.55);
+}
+.live-phone.tablet {
+  border-radius: 10px;
+}
+.live-phone.size-stage.tablet {
+  border-radius: 18px;
+}
+.live-phone.is-dimmed {
+  opacity: 0.45;
+}
+
+.live-screen {
+  position: absolute;
+  inset: 4px;
+  width: calc(100% - 8px);
+  height: calc(100% - 8px);
+  border-radius: 8.5px;
+  background: #000;
+  opacity: 0;
+  transition: opacity var(--t2) var(--ease);
+}
+.live-phone.size-stage .live-screen {
+  inset: 7px;
+  width: calc(100% - 14px);
+  height: calc(100% - 14px);
+  border-radius: 20px;
+}
+.live-phone.tablet .live-screen {
+  border-radius: 6.5px;
+}
+.live-phone.size-stage.tablet .live-screen {
+  border-radius: 12px;
+}
+.live-phone.has-frame .live-screen {
+  opacity: 1;
+}
+
+.live-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0 10%;
+  font-size: 10px;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--text-3);
+  text-wrap: balance;
+  animation: live-breathe 1.8s ease-in-out infinite;
+}
+.live-phone.size-stage .live-status {
+  font-size: 12.5px;
+}
+.live-status.is-error {
+  color: var(--amber);
+  animation: none;
+}
+
+@keyframes live-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-status {
+    animation: none;
+  }
+  .live-phone,
+  .live-screen {
+    transition: none;
+  }
+}
+.live-fit.size-stage {
+  flex: 1;
+  min-height: 0;
+}
