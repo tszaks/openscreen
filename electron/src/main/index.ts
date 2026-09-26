@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCursorTracker, type CursorTracker } from './cursor';
 import type { CursorSample, KeystrokeSample, Project } from '../shared/types';
+import { tokensToWords, type WhisperToken } from '../shared/transcript';
 
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
@@ -138,6 +139,7 @@ app.whenReady().then(() => {
     const project = JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'));
     project.annotations ??= [];
     project.captions ??= [];
+    project.chapters ??= [];
     if (project.style) project.style.deviceFrame ??= 'none';
     const cursor = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8')).samples ?? [];
     let keys: unknown[] = [];
@@ -212,19 +214,21 @@ app.whenReady().then(() => {
     } else {
       cli = '/opt/homebrew/bin/whisper-cli';
     }
+    // -ojf adds per-token offsets (ms) so the editor gets word-level timing.
     await run(cli, [
-      '-m', model, '-f', wav, '--output-json', '--output-file', jsonOut.replace(/\.json$/, ''),
+      '-m', model, '-f', wav, '--output-json-full', '--output-file', jsonOut.replace(/\.json$/, ''),
       '-t', '4',
     ]);
     if (!existsSync(jsonOut)) throw new Error('whisper produced no output');
     const parsed = JSON.parse(readFileSync(jsonOut, 'utf8'));
-    // whisper-cli --output-json emits { transcription: [{ offsets: {from,to}, text }] }
+    // whisper-cli --output-json-full emits { transcription: [{ offsets: {from,to}, text, tokens }] }
     const segs = parsed.transcription ?? parsed.result ?? [];
     return segs
-      .map((s: { offsets?: { from: number; to: number }; timestamps?: { from: string; to: string }; text: string }) => {
+      .map((s: { offsets?: { from: number; to: number }; timestamps?: { from: string; to: string }; text: string; tokens?: WhisperToken[] }) => {
         const from = s.offsets?.from ?? 0;
         const to = s.offsets?.to ?? 0;
-        return { start: from / 1000, end: to / 1000, text: (s.text ?? '').trim() };
+        const words = s.tokens ? tokensToWords(s.tokens) : [];
+        return { start: from / 1000, end: to / 1000, text: (s.text ?? '').trim(), words };
       })
       .filter((c: { start: number; end: number; text: string }) => c.end > c.start && c.text);
   });
@@ -297,7 +301,7 @@ app.whenReady().then(() => {
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
-  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[] }) => {
+  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean }) => {
     const { spawn } = await import('node:child_process');
     const ffmpegBin = await ffmpegPath();
     let audioArgs: string[] = [];
@@ -328,6 +332,11 @@ app.whenReady().then(() => {
       sfxOut = '[sfx]';
     }
 
+    // Voice cleanup: rumble cut → FFT denoise → gentle compression → limiter.
+    const CLEANUP =
+      'highpass=f=70,afftdn=nf=-24,acompressor=threshold=-20dB:ratio=2.5:attack=10:release=150:makeup=3,alimiter=limit=0.891';
+    const cleanup = args.voiceCleanup === true;
+
     const filters: string[] = [];
     let programPad = ''; // labeled pad feeding program audio into amix, or ''
     if (hasAudio && args.audioIn && args.audioClips?.length) {
@@ -335,10 +344,13 @@ app.whenReady().then(() => {
       filters.push(
         ...clips.map(
           (c, i) =>
-            `[1:a]atrim=start=${c.start.toFixed(3)}:end=${c.end.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${Math.min(100, Math.max(0.5, c.speed))}[a${i}]`,
+            `[1:a]atrim=start=${c.start.toFixed(3)}:end=${c.end.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${Math.min(100, Math.max(0.5, c.speed))}${cleanup ? ',' + CLEANUP : ''}[a${i}]`,
         ),
         `${clips.map((_, i) => `[a${i}]`).join('')}concat=n=${clips.length}:v=0:a=1[prog]`,
       );
+      programPad = '[prog]';
+    } else if (hasAudio && args.audioIn && cleanup) {
+      filters.push(`[1:a]${CLEANUP}[prog]`);
       programPad = '[prog]';
     } else if (hasAudio && args.audioIn) {
       programPad = '[1:a]'; // pad specifier works directly as a filter input
@@ -358,8 +370,10 @@ app.whenReady().then(() => {
       mapArgs.push('-map', '0:v', '-map', '[sfx]');
     } else if (hasAudio && args.audioClips?.length) {
       mapArgs.push('-map', '0:v', '-map', '[prog]');
+    } else if (hasAudio && cleanup) {
+      mapArgs.push('-map', '0:v', '-map', '[prog]');
     } else if (hasAudio) {
-      // identity timeline — passthrough, no filter_complex needed
+      // identity timeline, no cleanup — passthrough, no filter_complex needed
       audioArgs = ['-i', args.audioIn!, '-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-shortest'];
     }
 
