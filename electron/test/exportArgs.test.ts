@@ -113,3 +113,21 @@ describe('ipcErrorMessage', () => {
     expect(ipcErrorMessage('plain')).toBe('plain');
   });
 });
+
+describe('buildExportArgs master (preset transcode input)', () => {
+  const base = { outPath: '/m.mov', w: 886, h: 1920, fps: 30, duration: 6, audioIn: '/s.mp4', hasAudio: true };
+  const after = (argv: string[], flag: string) => argv[argv.indexOf(flag) + 1];
+
+  it('keeps near-lossless video and PCM audio so the second encode starts clean', () => {
+    const argv = buildExportArgs({ ...base, master: true });
+    expect(after(argv, '-crf')).toBe('10');
+    expect(after(argv, '-c:a')).toBe('pcm_s16le');
+  });
+
+  it('leaves a normal export as it was', () => {
+    const argv = buildExportArgs(base);
+    expect(after(argv, '-crf')).toBe('18');
+    expect(after(argv, '-c:a')).toBe('aac');
+    expect(argv).not.toContain('veryfast');
+  });
+});

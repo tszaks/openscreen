@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
-import { normalizeProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
+import { normalizeProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type Size, type ZoomSettings } from '../../shared/types';
 import { AutofocusPlanner, cameraAt, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
@@ -22,9 +22,44 @@ import { suggestChapters, toChapterList } from '../../shared/chapters';
 import type { TranscriptWord } from '../../shared/types';
 import { SaveTracker, isTextEntry } from '../../shared/editorSession';
 import { exportCanvasSize, ipcErrorMessage } from '../../shared/exportArgs';
+import { getPreset, type ExportPreset, type PresetId } from '../../shared/exportPresets';
+import {
+  ENCODE_WEIGHT,
+  batchUnits,
+  croppedSource,
+  layoutPresetOf,
+  outputBase,
+  outputFiles,
+  planRenders,
+  presetChoices,
+  presetUsesZoom,
+  presetWarnings,
+  projectForPreset,
+  shortName,
+} from '../../shared/exportJobs';
+import { ExportProgress, type ExportProgressState } from './components/ExportProgress';
+import { ExportPanel, ExportTasks, type TaskRowState } from './components/ExportPanel';
 import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Slider, Switch, Tabs } from './ui';
 
 type InspectorTab = 'background' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'text';
+
+/** The export shown in the progress overlay: one file, or a batch of formats. */
+interface ExportRun {
+  kind: 'single' | 'batch';
+  state: ExportProgressState;
+  startedAt: number;
+  /** Progress units: frames, plus weighted encode work for preset transcodes. */
+  done: number;
+  total: number;
+  detail?: string;
+  message?: string;
+  /** Single: the file Show in Finder reveals. */
+  reveal?: string;
+  retry: () => void;
+  /** Batch only. */
+  rows?: TaskRowState[];
+  folder?: string;
+}
 
 const SWATCHES = [
   { name: 'Aurora', bg: { kind: 'gradient' as const, startHex: '#3a1c71', endHex: '#d76d77', angle: 120 } },
@@ -174,6 +209,24 @@ export function Editor({
   }, [proj, bundleDir]);
 
   const cancelExport = useRef(false);
+  // The export overlay, and whoever is listening for transcode progress.
+  const [xp, setXp] = useState<ExportRun | null>(null);
+  const transcodeProgress = useRef<((e: { presetId: PresetId; fraction: number }) => void) | null>(null);
+  useEffect(() => api.onTranscodeProgress((e) => transcodeProgress.current?.(e)), []);
+  // Formats ticked in the Export menu (null until the user changes the default).
+  const [formatPick, setFormatPick] = useState<PresetId[] | null>(null);
+  const [recordingHasAudio, setRecordingHasAudio] = useState<boolean | undefined>(undefined);
+  useEffect(() => {
+    let dead = false;
+    api.exportHasAudio(`${bundleDir}/${proj.recording.screenVideoFile}`).then(
+      (has) => !dead && setRecordingHasAudio(has),
+      () => {},
+    );
+    return () => {
+      dead = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundleDir]);
 
   const smoothed = useMemo(() => new CursorSmoother().smoothedPath(cursor), [cursor]);
   const clickEv = useMemo(() => clickEvents(cursor, timeline), [cursor, timeline]);
@@ -454,29 +507,30 @@ export function Editor({
     seekOutput(t);
   };
 
-  const exportVideo = async (wantGif = false) => {
+  /** Render every output frame through `comp` and pipe it into ffmpeg at
+   *  `outPath` (a finished mp4, or a master .mov for preset transcodes).
+   *  Resolves false when cancelled; throws with ffmpeg's reason on failure. */
+  const renderFrames = async (
+    comp: CanvasCompositor,
+    outPath: string,
+    fps: number,
+    master: boolean,
+    onFrame: (i: number, total: number) => void,
+  ): Promise<boolean> => {
     const video = videoRef.current;
-    if (!video || exporting) return;
-    const outPath = await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4');
-    if (!outPath) return;
-    // A GIF is converted from an intermediate mp4 in the bundle.
-    const mp4Path = wantGif ? `${bundleDir}/export-${Date.now()}.mp4` : outPath;
-    const fps = proj.outputFPS;
+    if (!video) throw new Error('the recording is not loaded');
     const total = Math.floor((timeline.outputDuration || duration) * fps);
-    const { width: W, height: H } = canvasSize;
+    const { width: W, height: H } = comp.canvasSize;
     const audioIn = `${bundleDir}/${proj.recording.screenVideoFile}`;
     // Cut timelines get filtered audio (atrim+atempo+concat); identity uses
     // the track as is. Main probes for a real audio stream either way.
     const audioClips = timeline.isIdentity
       ? undefined
       : proj.clips.map((c) => ({ start: c.sourceStart, end: c.sourceEnd, speed: c.speed }));
-    setExporting(true);
-    setStatus('exporting…');
-    cancelExport.current = false;
     let encoding = false; // ffmpeg is running and owns a partial file
     try {
       await api.exportBegin(
-        mp4Path,
+        outPath,
         W,
         H,
         fps,
@@ -485,6 +539,7 @@ export function Editor({
         clickSfx ? clickEv.map((e) => e.time) : undefined,
         voiceCleanup,
         total / fps,
+        master,
       );
       encoding = true;
       video.pause();
@@ -496,7 +551,7 @@ export function Editor({
         await seekVideo(video, srcT);
         const cam = camRef.current;
         if (cam) await seekVideo(cam, srcT);
-        compositor.render(outT, {
+        comp.render(outT, {
           cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, srcT) : undefined,
           frame: video,
           cursor: cursorAt(smoothed, srcT),
@@ -504,40 +559,227 @@ export function Editor({
           ripples: ripplesAt(outT, clickEv),
           cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
         });
-        const ctx = compositor.canvas.getContext('2d')!;
+        const ctx = comp.canvas.getContext('2d')!;
         const rgba = ctx.getImageData(0, 0, W, H);
         await api.exportFrame(rgba.data.buffer); // rejects once ffmpeg has stopped
         if (i % 10 === 0) {
-          setStatus(`exporting ${i}/${total}`);
+          onFrame(i, total);
           await new Promise((r) => setTimeout(r, 0)); // let UI paint
         }
       }
       if (cancelExport.current) {
         encoding = false;
         await api.exportAbort();
-        setStatus('export cancelled');
-        return;
+        return false;
       }
       encoding = false; // end() cleans up after itself on failure
       await api.exportEnd();
-      if (proj.captions.length) {
-        await api.writeText(outPath.replace(/\.[^./]*$/, '.srt'), toSrt(proj.captions));
-      }
-      if (proj.chapters.length) {
-        await api.writeText(outPath.replace(/\.[^./]*$/, '.chapters.txt'), toChapterList(proj.chapters) + '\n');
-      }
-      if (wantGif) {
-        setStatus('converting gif…');
-        await api.exportGif(mp4Path, outPath);
-      }
-      setStatus(`exported ${outPath.split('/').pop()}`);
-      void api.exportReveal(outPath);
+      onFrame(total, total);
+      return true;
     } catch (e) {
       if (encoding) await api.exportAbort().catch(() => {});
-      setStatus(`export failed: ${ipcErrorMessage(e)}`);
+      throw e;
+    }
+  };
+
+  /** The compositor a preset renders with: its canvas, its layout, and the
+   *  editor's zooms only where the preset keeps them. */
+  const presetCompositor = (preset: ExportPreset, size: Size = preset) =>
+    new CanvasCompositor(
+      projectForPreset(proj, preset),
+      { width: size.width, height: size.height },
+      presetUsesZoom(preset) ? segments : [],
+    );
+
+  const writeSidecars = async (basePath: string) => {
+    if (proj.captions.length) await api.writeText(`${basePath}.srt`, toSrt(proj.captions));
+    if (proj.chapters.length) await api.writeText(`${basePath}.chapters.txt`, toChapterList(proj.chapters) + '\n');
+  };
+
+  /** This project's export: MP4 or GIF, drawn with the project's layout preset
+   *  when one is set (and then encoded to that preset's spec), otherwise at
+   *  the Resolution and Frame rate picked in the Export menu. */
+  const exportVideo = async (wantGif = false) => {
+    const video = videoRef.current;
+    if (!video || exporting) return;
+    setExportMenuOpen(false);
+    const outPath = await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4');
+    if (!outPath) return;
+    const preset = layoutPresetOf(proj);
+    // A GIF is converted from an intermediate mp4 in the bundle.
+    const mp4Path = wantGif ? `${bundleDir}/export-${Date.now()}.mp4` : outPath;
+    const fps = preset ? preset.fps : proj.outputFPS;
+    const comp = preset ? presetCompositor(preset) : compositor;
+    // A preset MP4 renders a master, then encodes it with the preset's settings.
+    const transcode = preset !== null && !wantGif;
+    const frames = Math.floor((timeline.outputDuration || duration) * fps);
+    const total = frames + (transcode ? frames * ENCODE_WEIGHT : 0);
+    const basePath = outPath.replace(/\.[^./]*$/, '');
+    const count = new Intl.NumberFormat('en-US');
+    const rendering = (i: number) => (transcode ? `Rendering ${count.format(i)} of ${count.format(frames)} frames` : undefined);
+    const startedAt = Date.now();
+    let phase = 'rendering';
+    setXp({ kind: 'single', state: 'running', startedAt, done: 0, total, detail: rendering(0), retry: () => void exportVideo(wantGif) });
+    setExporting(true);
+    setStatus('');
+    cancelExport.current = false;
+    let master: string | null = null;
+    try {
+      if (transcode) master = await api.exportMasterPath(preset.id);
+      const ok = await renderFrames(comp, master ?? mp4Path, fps, transcode, (i) =>
+        setXp((x) => x && { ...x, done: i, detail: rendering(i) }),
+      );
+      if (!ok) {
+        setXp(null);
+        setStatus('export cancelled');
+        return;
+      }
+      let reveal = outPath;
+      if (transcode && master) {
+        phase = 'encoding';
+        setXp((x) => x && { ...x, done: frames, detail: `Encoding for ${preset.label}` });
+        transcodeProgress.current = ({ fraction }) =>
+          setXp((x) => x && { ...x, done: frames + fraction * frames * ENCODE_WEIGHT });
+        const files = await api.exportTranscode(preset.id, master, basePath, frames / fps);
+        reveal = files[0] ?? outPath;
+      }
+      await writeSidecars(basePath);
+      if (wantGif) {
+        phase = 'converting to GIF';
+        setXp((x) => x && { ...x, detail: 'Converting to GIF' });
+        await api.exportGif(mp4Path, outPath);
+      }
+      setXp((x) => x && { ...x, state: 'done', done: total, message: reveal.split('/').pop(), reveal });
+    } catch (e) {
+      if (cancelExport.current) {
+        setXp(null);
+        setStatus('export cancelled');
+      } else {
+        const message = ipcErrorMessage(e);
+        setXp((x) => x && { ...x, state: 'failed', message, detail: transcode || wantGif ? `Stopped while ${phase}` : undefined });
+      }
     } finally {
+      transcodeProgress.current = null;
+      if (master) void api.exportDiscardMaster(master);
       setExporting(false);
     }
+  };
+
+  /**
+   * Export several presets into one folder. Presets that draw the same
+   * picture share one rendered master (planRenders); each preset is then
+   * encoded from it with its own settings, one at a time. Cancel stops the
+   * running step and skips the rest; finished files are kept.
+   */
+  const exportFormats = async (ids: PresetId[], folderIn?: string, prevRows?: TaskRowState[]) => {
+    if (!videoRef.current || exporting || ids.length === 0) return;
+    setExportMenuOpen(false);
+    const folder = folderIn ?? (await api.exportPickFolder(bundleDir));
+    if (!folder) return;
+    const presets = ids.map(getPreset);
+    const passes = planRenders(presets);
+    const dur = timeline.outputDuration || duration;
+    const total = batchUnits(passes, dur);
+    const name = bundleName;
+    const fresh = (p: ExportPreset): TaskRowState => ({
+      preset: p,
+      status: 'queued',
+      progress: 0,
+      files: outputFiles(outputBase(folder, name, p), p),
+    });
+    let rows = prevRows ? prevRows.map((r) => (ids.includes(r.preset.id) ? fresh(r.preset) : r)) : presets.map(fresh);
+    const setRow = (id: PresetId, patch: Partial<TaskRowState>) => {
+      rows = rows.map((r) => (r.preset.id === id ? { ...r, ...patch } : r));
+    };
+    const startedAt = Date.now();
+    let done = 0;
+    let detail = '';
+    const publish = (state: ExportProgressState = 'running', message?: string) =>
+      setXp({ kind: 'batch', state, startedAt, done, total, detail, message, rows, folder, retry: () => {} });
+    // Render and encode split each row's ring in proportion to their cost.
+    const renderShare = 1 / (1 + ENCODE_WEIGHT);
+
+    setExporting(true);
+    setStatus('');
+    cancelExport.current = false;
+    publish();
+    try {
+      for (const pass of passes) {
+        if (cancelExport.current) break;
+        const frames = Math.floor(dur * pass.fps);
+        const passStart = done;
+        const comp = presetCompositor(getPreset(pass.layoutPreset), pass);
+        for (const id of pass.presetIds) setRow(id, { status: 'rendering', progress: 0 });
+        detail = `Rendering ${pass.presetIds.map(shortName).join(' and ')}`;
+        publish();
+        let master: string | null = null;
+        try {
+          master = await api.exportMasterPath(pass.key);
+          const ok = await renderFrames(comp, master, pass.fps, true, (i) => {
+            done = passStart + i;
+            for (const id of pass.presetIds) setRow(id, { progress: (i / Math.max(1, frames)) * renderShare });
+            publish();
+          });
+          if (!ok) break;
+          for (const id of pass.presetIds) {
+            if (cancelExport.current) break;
+            const encStart = done;
+            setRow(id, { status: 'encoding', progress: renderShare });
+            detail = `Encoding ${shortName(id)}`;
+            publish();
+            transcodeProgress.current = (e) => {
+              if (e.presetId !== id) return;
+              done = encStart + e.fraction * frames * ENCODE_WEIGHT;
+              setRow(id, { progress: renderShare + (1 - renderShare) * e.fraction });
+              publish();
+            };
+            try {
+              const files = await api.exportTranscode(id, master, outputBase(folder, name, getPreset(id)), frames / pass.fps);
+              setRow(id, { status: 'done', progress: 1, files });
+            } catch (e) {
+              if (cancelExport.current) break;
+              setRow(id, { status: 'failed', error: ipcErrorMessage(e) });
+            }
+            done = encStart + frames * ENCODE_WEIGHT;
+            publish();
+          }
+        } catch (e) {
+          if (cancelExport.current) break;
+          for (const id of pass.presetIds) setRow(id, { status: 'failed', error: ipcErrorMessage(e) });
+          done = passStart + frames * (1 + ENCODE_WEIGHT * pass.presetIds.length);
+          publish();
+        } finally {
+          transcodeProgress.current = null;
+          if (master) void api.exportDiscardMaster(master);
+        }
+      }
+      const mine = () => rows.filter((r) => ids.includes(r.preset.id));
+      const saved = mine().filter((r) => r.status === 'done').length;
+      if (saved > 0) await writeSidecars(`${folder}/${name}`).catch(() => {});
+      if (cancelExport.current) {
+        for (const r of mine()) {
+          if (r.status === 'rendering' || r.status === 'encoding') setRow(r.preset.id, { status: 'cancelled' });
+          else if (r.status === 'queued') setRow(r.preset.id, { status: 'skipped' });
+        }
+        detail = `${saved} of ${ids.length} formats finished`;
+        publish('failed', 'Export cancelled. Finished formats were kept.');
+      } else if (saved < ids.length) {
+        const failed = ids.length - saved;
+        detail = `${saved} of ${ids.length} formats saved`;
+        publish('failed', `${failed} format${failed === 1 ? '' : 's'} failed. Retry runs just ${failed === 1 ? 'that one' : 'those'}.`);
+      } else {
+        detail = '';
+        publish('done', `${ids.length} format${ids.length === 1 ? '' : 's'} saved to ${folder.split('/').pop()}`);
+      }
+    } finally {
+      transcodeProgress.current = null;
+      setExporting(false);
+    }
+  };
+
+  const cancelRunningExport = () => {
+    cancelExport.current = true;
+    void api.exportAbort(); // stops an encode right away; the frame loop checks the flag
   };
 
   /** Output-time range of each clip for the timeline strip. */
@@ -983,7 +1225,17 @@ export function Editor({
   // ── presentation only below: derived display values and UI-only state ──
   const outDur = timeline.outputDuration || duration || 1;
   const bundleName = (bundleDir.split('/').filter(Boolean).pop() ?? 'Untitled').replace(/\.openscreen$/, '');
-  const exportProgress = /exporting (\d+)\/(\d+)/.exec(status);
+  const formatChoices = presetChoices(proj.recording.sourceSize);
+  const selectedFormats =
+    formatPick ?? [formatChoices[0].id, 'social-9x16' as const].filter((id) => formatChoices.some((p) => p.id === id));
+  const layoutPreset = layoutPresetOf(proj);
+  const audibleExport = recordingHasAudio === undefined ? undefined : recordingHasAudio || (clickSfx && clickEv.length > 0);
+  const formatWarnings = Object.fromEntries(
+    [...formatChoices, ...(layoutPreset ? [layoutPreset] : [])].map((p) => [
+      p.id,
+      presetWarnings(p, { duration: outDur, source: croppedSource(proj), hasAudio: audibleExport }),
+    ]),
+  );
   const selectedSpeed = proj.clips.find((c) => c.id === selectedClip)?.speed ?? 1;
   const togglePlay = () =>
     videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause();
@@ -1657,23 +1909,9 @@ export function Editor({
           <IconButton label="Redo (⌘⇧Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
         </div>
         <div className="spacer" />
-        {(status || exporting) && (
-          <div className={`status-pill no-drag${exporting ? ' busy' : ''}`} title={status}>
-            {exportProgress && (
-              <span className="progress">
-                <span style={{ width: `${(+exportProgress[1] / Math.max(1, +exportProgress[2])) * 100}%` }} />
-              </span>
-            )}
-            <span className="status-text tnum">
-              {exportProgress
-                ? `Exporting ${Math.round((+exportProgress[1] / Math.max(1, +exportProgress[2])) * 100)}%`
-                : status}
-            </span>
-            {exporting && (
-              <button type="button" className="pill-cancel" onClick={() => { cancelExport.current = true; }}>
-                Cancel
-              </button>
-            )}
+        {status && !xp && (
+          <div className="status-pill no-drag" title={status}>
+            <span className="status-text tnum">{status}</span>
           </div>
         )}
         <div className="spacer" />
@@ -1692,41 +1930,48 @@ export function Editor({
             {Icon.chevronDown(12)}
           </Button>
           {exportMenuOpen && (
-            <div className="menu" role="dialog" aria-label="Export options">
-              <div className="field-block">
-                <span className="row-label">Resolution</span>
-                <Segmented
-                  label="Resolution"
-                  value={proj.exportPreset}
-                  options={[
-                    { value: 'original', label: 'Original' },
-                    { value: 'p1080', label: '1080p' },
-                    { value: 'uhd4k', label: '4K' },
-                  ]}
-                  onChange={(v) => setProj((p) => ({ ...p, exportPreset: v }))}
-                />
-              </div>
-              <div className="field-block">
-                <span className="row-label">Frame rate</span>
-                <Segmented
-                  label="Frame rate"
-                  value={proj.outputFPS}
-                  options={[24, 30, 60].map((f) => ({ value: f, label: `${f} fps` }))}
-                  onChange={(v) => setProj((p) => ({ ...p, outputFPS: v }))}
-                />
-              </div>
-              <div className="menu-sep" />
-              <Button
-                disabled={exporting}
-                onClick={() => {
-                  setExportMenuOpen(false);
-                  void exportVideo(true);
-                }}
-              >
-                Export GIF
-              </Button>
-              <p className="hint">The GIF is made from the MP4, which is kept alongside it.</p>
-            </div>
+            <ExportPanel
+              layoutPreset={layoutPreset}
+              singleSettings={
+                <>
+                  <div className="field-block">
+                    <span className="row-label">Resolution</span>
+                    <Segmented
+                      label="Resolution"
+                      value={proj.exportPreset}
+                      options={[
+                        { value: 'original', label: 'Original' },
+                        { value: 'p1080', label: '1080p' },
+                        { value: 'uhd4k', label: '4K' },
+                      ]}
+                      onChange={(v) => setProj((p) => ({ ...p, exportPreset: v }))}
+                    />
+                  </div>
+                  <div className="field-block">
+                    <span className="row-label">Frame rate</span>
+                    <Segmented
+                      label="Frame rate"
+                      value={proj.outputFPS}
+                      options={[24, 30, 60].map((f) => ({ value: f, label: `${f} fps` }))}
+                      onChange={(v) => setProj((p) => ({ ...p, outputFPS: v }))}
+                    />
+                  </div>
+                </>
+              }
+              choices={formatChoices}
+              selected={selectedFormats}
+              warnings={formatWarnings}
+              disabled={exporting}
+              onToggle={(id, on) =>
+                setFormatPick(
+                  formatChoices
+                    .map((p) => p.id)
+                    .filter((x) => (x === id ? on : selectedFormats.includes(x))),
+                )
+              }
+              onExportSingle={(gif) => void exportVideo(gif)}
+              onExportFormats={() => void exportFormats(selectedFormats)}
+            />
           )}
         </div>
       </header>
@@ -1936,6 +2181,41 @@ export function Editor({
           />
         </div>
       </footer>
+
+      {xp && (
+        <div className="xp-overlay no-drag">
+          {xp.kind === 'batch' && xp.rows ? (
+            <ExportTasks
+              rows={xp.rows}
+              progress={{
+                state: xp.state,
+                done: xp.done,
+                total: xp.total,
+                startedAt: xp.startedAt,
+                message: xp.message,
+                detail: xp.detail,
+                onCancel: cancelRunningExport,
+                onClose: () => setXp(null),
+              }}
+              onReveal={(path) => void api.exportReveal(path)}
+              onRetry={(ids) => void exportFormats(ids, xp.folder, xp.rows)}
+            />
+          ) : (
+            <ExportProgress
+              state={xp.state}
+              done={xp.done}
+              total={xp.total}
+              startedAt={xp.startedAt}
+              message={xp.message}
+              detail={xp.detail}
+              onCancel={cancelRunningExport}
+              onReveal={() => xp.reveal && void api.exportReveal(xp.reveal)}
+              onRetry={xp.retry}
+              onClose={() => setXp(null)}
+            />
+          )}
+        </div>
+      )}
 
       {pendingLeave && (
         <div className="modal-scrim" onMouseDown={() => void answerLeave('cancel')}>

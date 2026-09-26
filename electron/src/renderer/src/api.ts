@@ -1,6 +1,7 @@
 import type { CursorSample, KeystrokeSample, Project, TranscriptWord } from '../../shared/types';
 import type { IosDevice, IosFinished, IosWarning } from '../../shared/iosCapture';
 import type { MenuAction, MenuPhase } from '../../shared/menu';
+import type { PresetId } from '../../shared/exportPresets';
 
 export type { IosDevice };
 
@@ -64,7 +65,7 @@ declare global {
       transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string; words: TranscriptWord[] }[]>;
       detectSilences(dir: string, videoFile: string, thresholdDb?: number, minDur?: number): Promise<{ start: number; end: number }[]>;
       audioPeaks(dir: string, videoFile: string, buckets?: number): Promise<number[]>;
-      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number): Promise<boolean>;
+      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number, master?: boolean): Promise<boolean>;
       /** Rejects with ffmpeg's reason once ffmpeg has stopped. */
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       /** Finishes the file; rejects (and deletes it) when the encode failed. */
@@ -76,6 +77,18 @@ declare global {
       /** Save dialog for the export; null when cancelled. */
       exportPickPath(bundleDir: string, kind: 'mp4' | 'gif'): Promise<string | null>;
       exportReveal(path: string): Promise<boolean>;
+      /** Folder picker for a multi-format export; null when cancelled. */
+      exportPickFolder(bundleDir: string): Promise<string | null>;
+      /** A temp path for a rendered master (.mov). */
+      exportMasterPath(key: string): Promise<string>;
+      /** Deletes a master made by exportMasterPath. */
+      exportDiscardMaster(path: string): Promise<boolean>;
+      exportHasAudio(path: string): Promise<boolean>;
+      /** Transcodes a master into one preset's files; resolves with their paths.
+       *  Rejects with ffmpeg's reason, or 'cancelled' after exportAbort. */
+      exportTranscode(presetId: PresetId, input: string, outBase: string, duration: number): Promise<string[]>;
+      /** Subscribe to transcode progress (0..1); returns the unsubscribe. */
+      onTranscodeProgress(cb: (e: { presetId: PresetId; fraction: number }) => void): () => void;
       /** Tell main what is on screen, so the menu enables what applies. */
       setMenuPhase(phase: MenuPhase, bundleDir?: string): void;
       /** Subscribe to app-menu clicks; returns the unsubscribe. */
