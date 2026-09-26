@@ -29,8 +29,11 @@
 //       arrived within 3s (phone locked, trust revoked, "Stop Mirroring"
 //       tapped). The take is torn down and no file is left behind.
 //   {"event":"warning","code":"stalled","message":..}
-//       no new frame for 5s mid-take, usually because the phone locked.
-//       Recording carries on; sent once per stall.
+//       no new frame for 5s, or the same picture for 8s, mid-take. A locked
+//       phone keeps repeating its last frame (~53 fps measured), so it's
+//       the picture check that usually catches it; a screen that simply
+//       isn't changing trips it too, so it's only a warning. Recording
+//       carries on; sent once per stall.
 //   {"event":"warning","code":"resumed"}
 //       frames are arriving again after "stalled".
 // serve reads one command per line on stdin:
@@ -41,6 +44,13 @@
 // picture out (gamma, FB22281424), and rotating the phone mid-take ends the
 // recording and saves nothing (FB21253500). Decoded frames go through
 // AVAssetWriter instead, as H.264 High + AAC, tagged Rec.709.
+//
+// Audio: the phone sends no audio buffers at all while nothing plays
+// (measured: 0 buffers over a 6s take). A take that got no audio at all
+// gets a silent stereo AAC track for its full length, so every file has
+// the stereo AAC track App Store previews expect. A take whose sound
+// starts part-way keeps the real audio from that point; the gap before it
+// is an empty edit that players and ffmpeg read as silence.
 //
 // Rotation: the file keeps the first frame's size for the whole take. A
 // frame of any other size (the phone rotated) is scaled to fit and centred
@@ -140,6 +150,64 @@ func writerError(_ message: String) -> Error {
     NSError(domain: "ios-capture", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
 }
 
+/// `frames` of silence as 32-bit float interleaved LPCM at `pts`.
+func silentAudio(_ format: AudioFormat, at pts: CMTime, frames: Int) -> CMSampleBuffer? {
+    let bytesPerFrame = 4 * format.channels
+    var asbd = AudioStreamBasicDescription(
+        mSampleRate: format.sampleRate, mFormatID: kAudioFormatLinearPCM,
+        mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+        mBytesPerPacket: UInt32(bytesPerFrame), mFramesPerPacket: 1, mBytesPerFrame: UInt32(bytesPerFrame),
+        mChannelsPerFrame: UInt32(format.channels), mBitsPerChannel: 32, mReserved: 0)
+    var description: CMAudioFormatDescription?
+    CMAudioFormatDescriptionCreate(allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0,
+                                   magicCookie: nil, extensions: nil, formatDescriptionOut: &description)
+    let bytes = frames * bytesPerFrame
+    var block: CMBlockBuffer?
+    CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: bytes, blockAllocator: nil,
+                                       customBlockSource: nil, offsetToData: 0, dataLength: bytes,
+                                       flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block)
+    guard let description, let block else { return nil }
+    CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes)
+    var sample: CMSampleBuffer?
+    CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+        allocator: nil, dataBuffer: block, formatDescription: description, sampleCount: frames,
+        presentationTimeStamp: pts, packetDescriptions: nil, sampleBufferOut: &sample)
+    return sample
+}
+
+/// A cheap fingerprint of a frame: its luma on a 32x64 grid. Used to spot a
+/// frozen picture, since a locked phone keeps sending the same frame.
+enum LumaGrid {
+    static let columns = 32, rows = 64
+
+    static func sample(_ pixels: CVPixelBuffer) -> [UInt8] {
+        CVPixelBufferLockBaseAddress(pixels, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixels, .readOnly) }
+        let planar = CVPixelBufferIsPlanar(pixels)
+        guard let base = planar ? CVPixelBufferGetBaseAddressOfPlane(pixels, 0) : CVPixelBufferGetBaseAddress(pixels)
+        else { return [] }
+        let width = planar ? CVPixelBufferGetWidthOfPlane(pixels, 0) : CVPixelBufferGetWidth(pixels)
+        let height = planar ? CVPixelBufferGetHeightOfPlane(pixels, 0) : CVPixelBufferGetHeight(pixels)
+        let stride = planar ? CVPixelBufferGetBytesPerRowOfPlane(pixels, 0) : CVPixelBufferGetBytesPerRow(pixels)
+        let bytes = base.assumingMemoryBound(to: UInt8.self)
+        var grid = [UInt8]()
+        grid.reserveCapacity(columns * rows)
+        for r in 0..<rows {
+            let y = (2 * r + 1) * height / (2 * rows)
+            for c in 0..<columns {
+                grid.append(bytes[y * stride + (2 * c + 1) * width / (2 * columns)])
+            }
+        }
+        return grid
+    }
+
+    /// Changed if any point moved by more than a little: decoding noise
+    /// shifts values by a level or two, real content by far more.
+    static func differ(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+        a.count != b.count || zip(a, b).contains { abs(Int($0) - Int($1)) > 6 }
+    }
+}
+
 /// AVAssetWriter for one take: H.264 High + AAC in a .mov (or .mp4) at one
 /// fixed frame size; frames of another size are letterboxed into it. Not
 /// thread-safe: drive it from one serial queue.
@@ -151,6 +219,8 @@ final class MovieWriter {
     private let video: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
     private let audio: AVAssetWriterInput?
+    private let audioFormat: AudioFormat
+    private var audioWritten = false
     let startPTS: CMTime
     private var transfer: VTPixelTransferSession?
     private(set) var lastVideoPTS = CMTime.invalid
@@ -191,11 +261,13 @@ final class MovieWriter {
         guard writer.canAdd(video) else { throw writerError("The writer rejected the video track.") }
         writer.add(video)
 
-        if let f = audioFormat {
-            let channels = min(max(f.channels, 1), 2)
+        self.audioFormat = AudioFormat(sampleRate: audioFormat?.sampleRate ?? 48_000,
+                                       channels: min(max(audioFormat?.channels ?? 2, 1), 2))
+        if audioFormat != nil {
+            let channels = self.audioFormat.channels
             let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: f.sampleRate,
+                AVSampleRateKey: self.audioFormat.sampleRate,
                 AVNumberOfChannelsKey: channels,
                 AVEncoderBitRateKey: channels == 1 ? 96_000 : 160_000,
             ])
@@ -236,7 +308,31 @@ final class MovieWriter {
     func appendAudio(_ sample: CMSampleBuffer) -> Bool {
         guard let audio, writer.status == .writing, audio.isReadyForMoreMediaData,
               CMSampleBufferGetPresentationTimeStamp(sample) >= startPTS else { return false }
-        return audio.append(sample)
+        guard audio.append(sample) else { return false }
+        audioWritten = true
+        return true
+    }
+
+    /// Fill the audio track with silence from the first frame to `end`.
+    /// Only for a take that got no audio at all, so nothing overlaps.
+    private func padSilence(until end: CMTime) {
+        guard let audio else { return }
+        let rate = Int(audioFormat.sampleRate)
+        let total = Int((CMTimeGetSeconds(CMTimeSubtract(end, startPTS)) * audioFormat.sampleRate).rounded())
+        var written = 0
+        while written < total {
+            let frames = min(rate, total - written)
+            let pts = CMTimeAdd(startPTS, CMTime(value: CMTimeValue(written), timescale: CMTimeScale(rate)))
+            guard let sample = silentAudio(audioFormat, at: pts, frames: frames) else { return }
+            // Not real time any more: wait (briefly) for the encoder.
+            var waited = 0
+            while !audio.isReadyForMoreMediaData && waited < 2_000 && writer.status == .writing {
+                usleep(1_000)
+                waited += 1
+            }
+            guard audio.isReadyForMoreMediaData, audio.append(sample) else { return }
+            written += frames
+        }
     }
 
     /// Scale a frame of another size (the phone rotated) to fit the take's
@@ -261,7 +357,9 @@ final class MovieWriter {
     func finish(at end: CMTime, _ done: @escaping (Error?) -> Void) {
         guard writer.status == .writing else { return done(failure ?? writerError("The writer was not running.")) }
         if lastVideoPTS.isValid {
-            writer.endSession(atSourceTime: end.isValid && end > lastVideoPTS ? end : lastVideoPTS)
+            let sessionEnd = end.isValid && end > lastVideoPTS ? end : lastVideoPTS
+            if !audioWritten { padSilence(until: sessionEnd) }
+            writer.endSession(atSourceTime: sessionEnd)
         }
         video.markAsFinished()
         audio?.markAsFinished()
@@ -300,6 +398,7 @@ func finishedEvent(_ url: URL) -> [String: Any] {
 final class Recorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     static let firstFrameTimeout: TimeInterval = 3
     static let stallTimeout: TimeInterval = 5
+    static let frozenTimeout: TimeInterval = 8
     static let noFramesMessage = "No picture from your iPhone. Unlock it and keep the screen on. If you just tapped Trust, unplug and replug the cable. If that doesn't help, restart the iPhone."
     static let stalledMessage = "Your iPhone may be locked. Unlock it to keep recording."
 
@@ -321,6 +420,9 @@ final class Recorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
     private var audioFormat: AudioFormat?
     private var runningSince: Date?
     private var lastNewFrameAt = Date()
+    private var lastGrid: [UInt8] = []
+    private var lastGridAt = Date.distantPast
+    private var lastPictureChangeAt = Date()
     private var stalled = false
     private var watchdog: DispatchSourceTimer?
     private var stopping = false
@@ -419,11 +521,17 @@ final class Recorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
             if Date().timeIntervalSince(since) >= Self.firstFrameTimeout {
                 fail(Self.noFramesMessage, code: "no-frames")
             }
-        } else if !stalled && Date().timeIntervalSince(lastNewFrameAt) > Self.stallTimeout {
-            // A screen that simply isn't changing looks the same, so warn
-            // rather than fail.
-            stalled = true
-            emit(["event": "warning", "code": "stalled", "message": Self.stalledMessage])
+        } else {
+            // A screen that simply isn't changing looks the same as a locked
+            // phone, so warn rather than fail.
+            let now = Date()
+            let stuck = now.timeIntervalSince(lastNewFrameAt) > Self.stallTimeout
+                || now.timeIntervalSince(lastPictureChangeAt) > Self.frozenTimeout
+            if stuck != stalled {
+                stalled = stuck
+                emit(stuck ? ["event": "warning", "code": "stalled", "message": Self.stalledMessage]
+                           : ["event": "warning", "code": "resumed"])
+            }
         }
     }
 
@@ -448,6 +556,7 @@ final class Recorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
                 return fail("Could not start the recording: \(error.localizedDescription)")
             }
             lastNewFrameAt = Date()
+            lastPictureChangeAt = Date()
             emit(["event": "started", "width": width, "height": height])
         }
         guard let writer else { return }
@@ -457,9 +566,12 @@ final class Recorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
                 counts.letterboxed += 1
             }
             lastNewFrameAt = Date()
-            if stalled {
-                stalled = false
-                emit(["event": "warning", "code": "resumed"])
+            // Fingerprint the picture twice a second, not every frame.
+            if lastNewFrameAt.timeIntervalSince(lastGridAt) >= 0.5 {
+                lastGridAt = lastNewFrameAt
+                let grid = LumaGrid.sample(pixels)
+                if LumaGrid.differ(grid, lastGrid) { lastPictureChangeAt = lastNewFrameAt }
+                lastGrid = grid
             }
         } else if let error = writer.failure {
             fail("Recording failed: \(error.localizedDescription)")
@@ -681,7 +793,8 @@ func serve() -> Never {
 }
 
 /// Push a synthetic take through MovieWriter: 2s portrait, 1s landscape (a
-/// rotation), 1s portrait, plus silent stereo audio. The size is odd on
+/// rotation), 1s portrait, and no audio (like a silent phone), so the
+/// silent-track padding runs. Also checks LumaGrid. The size is odd on
 /// purpose, as real phones' are (1179x2556). Frames are flat white, so any
 /// letterbox bar that isn't black shows up in a brightness check.
 func selftest(path: String) -> Never {
@@ -689,43 +802,25 @@ func selftest(path: String) -> Never {
     let (width, height, fps) = (393, 851, 30)
     let start = CMTime(value: 90_000, timescale: 30) // not zero, like a real clock
 
-    func frame(_ w: Int, _ h: Int) -> CVPixelBuffer {
+    func frame(_ w: Int, _ h: Int, luma: Int32 = 235) -> CVPixelBuffer {
         var pb: CVPixelBuffer?
         CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
                             [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary, &pb)
         let buffer = pb!
         CVPixelBufferLockBaseAddress(buffer, [])
-        memset(CVPixelBufferGetBaseAddressOfPlane(buffer, 0), 235, CVPixelBufferGetBytesPerRowOfPlane(buffer, 0) * h)
+        memset(CVPixelBufferGetBaseAddressOfPlane(buffer, 0), luma, CVPixelBufferGetBytesPerRowOfPlane(buffer, 0) * h)
         memset(CVPixelBufferGetBaseAddressOfPlane(buffer, 1), 128, CVPixelBufferGetBytesPerRowOfPlane(buffer, 1) * ((h + 1) / 2))
         CVPixelBufferUnlockBaseAddress(buffer, [])
         return buffer
     }
 
-    var asbd = AudioStreamBasicDescription(
-        mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
-        mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-        mBytesPerPacket: 8, mFramesPerPacket: 1, mBytesPerFrame: 8, mChannelsPerFrame: 2,
-        mBitsPerChannel: 32, mReserved: 0)
-    var audioFormat: CMAudioFormatDescription?
-    CMAudioFormatDescriptionCreate(allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0,
-                                   magicCookie: nil, extensions: nil, formatDescriptionOut: &audioFormat)
-    func silence(at pts: CMTime, frames: Int) -> CMSampleBuffer {
-        let bytes = frames * 8
-        var block: CMBlockBuffer?
-        CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: bytes, blockAllocator: nil,
-                                           customBlockSource: nil, offsetToData: 0, dataLength: bytes,
-                                           flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block)
-        CMBlockBufferFillDataBytes(with: 0, blockBuffer: block!, offsetIntoDestination: 0, dataLength: bytes)
-        var sample: CMSampleBuffer?
-        CMAudioSampleBufferCreateReadyWithPacketDescriptions(
-            allocator: nil, dataBuffer: block!, formatDescription: audioFormat!, sampleCount: frames,
-            presentationTimeStamp: pts, packetDescriptions: nil, sampleBufferOut: &sample)
-        return sample!
-    }
-
     do {
         let writer = try MovieWriter(url: url, width: width, height: height, startPTS: start, audio: AudioFormat())
         let portrait = frame(width, height), landscape = frame(height, width)
+        let white = LumaGrid.sample(portrait)
+        guard white.count == LumaGrid.columns * LumaGrid.rows, !LumaGrid.differ(white, LumaGrid.sample(portrait)),
+              LumaGrid.differ(white, LumaGrid.sample(frame(width, height, luma: 200)))
+        else { throw writerError("LumaGrid can't tell a changed frame from a frozen one.") }
         for i in 0..<(4 * fps) {
             let pts = CMTimeAdd(start, CMTime(value: CMTimeValue(i), timescale: CMTimeScale(fps)))
             let source = (2 * fps..<3 * fps).contains(i) ? landscape : portrait
@@ -737,7 +832,6 @@ func selftest(path: String) -> Never {
                 if tries > 500 { throw writerError("Frame \(i) was never accepted.") }
                 usleep(2_000)
             }
-            writer.appendAudio(silence(at: pts, frames: 48_000 / fps))
         }
         let end = CMTimeAdd(start, CMTime(value: CMTimeValue(4 * fps), timescale: CMTimeScale(fps)))
         let done = DispatchSemaphore(value: 0)
