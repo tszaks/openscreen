@@ -1,4 +1,4 @@
-import type { CaptionCue, TranscriptWord } from './types';
+import type { TranscriptWord } from './types';
 import { bareWord } from './transcript';
 import type { Timeline } from './timeline';
 
@@ -160,55 +160,4 @@ export function planSmartCuts(opts: SmartCutOptions): CutProposal[] {
     }
   }
   return merged.map(({ fillers: _f, silenceSecs: _s, ...p }) => p);
-}
-
-/**
- * Re-time captions through a cut: output-time cues are mapped back to source
- * time via the old timeline, clamped around removed ranges, then forward to
- * output time via the new one. Cues (and words) fully inside a cut are
- * dropped; a cue's text is rebuilt from surviving words when word data exists.
- */
-export function remapCues(
-  cues: CaptionCue[],
-  oldTl: Timeline,
-  newTl: Timeline,
-  removed: TimeRange[],
-): CaptionCue[] {
-  if (!cues.length) return cues;
-  const cut = mergeRanges(removed);
-  const srcDur = oldTl.sourceDuration;
-  const out: CaptionCue[] = [];
-  for (const cue of cues) {
-    const s0 = oldTl.sourceTime(cue.start);
-    const e0 = oldTl.sourceTime(cue.end);
-    if (s0 === null || e0 === null) continue; // outside kept media already
-    const s1 = firstKeptAtOrAfter(s0, cut, srcDur);
-    const e1 = lastKeptAtOrBefore(e0, cut);
-    if (e1 - s1 < 0.03) continue; // cue fully inside a cut
-    const ns = newTl.outputTime(s1);
-    const ne = newTl.outputTime(e1);
-    if (ns === null || ne === null || !(ne > ns)) continue;
-
-    let text = cue.text;
-    let words: TranscriptWord[] | undefined;
-    if (cue.words?.length) {
-      words = [];
-      for (const w of cue.words) {
-        const ws = oldTl.sourceTime(w.start);
-        const we = oldTl.sourceTime(w.end);
-        if (ws === null || we === null) continue;
-        const ws1 = firstKeptAtOrAfter(ws, cut, srcDur);
-        const we1 = lastKeptAtOrBefore(we, cut);
-        if (we1 - ws1 < 0.02) continue; // word was cut
-        const nws = newTl.outputTime(ws1);
-        const nwe = newTl.outputTime(we1);
-        if (nws === null || nwe === null || !(nwe > nws)) continue;
-        words.push({ start: nws, end: nwe, text: w.text });
-      }
-      if (!words.length) continue;
-      text = words.map((w) => w.text).join(' ');
-    }
-    out.push({ ...cue, start: ns, end: ne, text, ...(words ? { words } : {}) });
-  }
-  return out;
 }
