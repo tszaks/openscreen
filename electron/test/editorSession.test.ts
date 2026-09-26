@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { SaveTracker, isTextEntry } from '../src/shared/editorSession';
 
 describe('SaveTracker', () => {
-  it('starts clean and goes dirty on any new snapshot', () => {
+  it('starts clean and goes dirty only when the contents change', () => {
     const a = { v: 1 };
     const t = new SaveTracker(a);
     expect(t.isDirty(a)).toBe(false);
-    expect(t.isDirty({ v: 1 })).toBe(true);
+    // A no-op state update (new object, same contents) must not prompt to save.
+    expect(t.isDirty({ v: 1 })).toBe(false);
+    expect(t.isDirty({ v: 9 })).toBe(true);
   });
 
   it('is clean again once the current snapshot is saved', () => {

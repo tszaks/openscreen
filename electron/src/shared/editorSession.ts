@@ -19,7 +19,9 @@ export class SaveTracker<T> {
   }
 
   isDirty(current: T) {
-    return current !== this.saved;
+    if (current === this.saved) return false;
+    // Same contents in a new object (a no-op state update) is not an edit.
+    return JSON.stringify(current) !== JSON.stringify(this.saved);
   }
 }
 
