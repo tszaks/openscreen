@@ -323,6 +323,12 @@ export function App() {
   // The latest stop(), for handlers attached when a take starts.
   const stopRef = useRef<(reason?: EndReason, detail?: string | null) => Promise<void>>(async () => {});
 
+  // While counting down or recording, keep our own window out of the capture.
+  const shielded = countdown !== null || phase.name === 'recording';
+  useEffect(() => {
+    api.setCaptureShield(shielded);
+  }, [shielded]);
+
   const beginRecordingPhase = () => {
     setElapsed(0);
     setSaving(false);

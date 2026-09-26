@@ -48,6 +48,7 @@ const api = {
   exportGif: (inMp4: string, outGif: string) => ipcRenderer.invoke('export:gif', { inMp4, outGif }),
   exportPickPath: (bundleDir: string, kind: 'mp4' | 'gif') => ipcRenderer.invoke('export:pickPath', { bundleDir, kind }),
   exportReveal: (path: string) => ipcRenderer.invoke('export:reveal', path),
+  setCaptureShield: (on: boolean) => ipcRenderer.send('app:captureShield', on),
   setMenuPhase: (phase: string, bundleDir?: string) => ipcRenderer.send('menu:phase', { phase, bundleDir }),
   onMenu: (cb: (action: string) => void) => {
     const listener = (_e: IpcRendererEvent, action: string) => cb(action);

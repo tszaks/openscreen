@@ -76,6 +76,8 @@ declare global {
       /** Save dialog for the export; null when cancelled. */
       exportPickPath(bundleDir: string, kind: 'mp4' | 'gif'): Promise<string | null>;
       exportReveal(path: string): Promise<boolean>;
+      /** Hide OpenScreen's window from screen capture (during countdown and recording). */
+      setCaptureShield(on: boolean): void;
       /** Tell main what is on screen, so the menu enables what applies. */
       setMenuPhase(phase: MenuPhase, bundleDir?: string): void;
       /** Subscribe to app-menu clicks; returns the unsubscribe. */

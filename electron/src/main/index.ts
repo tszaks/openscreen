@@ -262,6 +262,12 @@ app.whenReady().then(() => {
     rendererBusy = reason || null;
   });
 
+  // Keep OpenScreen's own window (countdown, recording card) out of the
+  // capture: macOS then omits it from screen and window recordings.
+  ipcMain.on('app:captureShield', (_e, on: boolean) => {
+    win?.setContentProtection(!!on);
+  });
+
   ipcMain.handle('permissions:openScreenSettings', async () => {
     const { shell } = await import('electron');
     shell.openExternal(
