@@ -179,3 +179,49 @@ describe('IosHelperClient', () => {
     expect(client.lastError).toBe('Unknown command: x');
   });
 });
+
+describe('IosHelperClient early end notification (BH-19)', () => {
+  const setup = () => {
+    const onEnded = vi.fn();
+    const client = new IosHelperClient({ write: () => {}, kill: vi.fn(), onEnded });
+    return { client, onEnded };
+  };
+  const recording = async (client: IosHelperClient) => {
+    const started = client.start('a', '/tmp/a.mov');
+    client.handleLine('{"event":"started","width":10,"height":20}');
+    await started;
+  };
+
+  it('reports a helper crash mid-take right away, and stop() still returns it', async () => {
+    const { client, onEnded } = setup();
+    await recording(client);
+    client.handleExit('iPhone capture helper exited (SIGKILL)');
+    expect(onEnded).toHaveBeenCalledWith({ err: 'iPhone capture helper exited (SIGKILL)' });
+    await expect(client.stop()).rejects.toThrow(/SIGKILL/);
+  });
+
+  it('reports a take the helper finished on its own (cable pulled)', async () => {
+    const { client, onEnded } = setup();
+    await recording(client);
+    client.handleLine('{"event":"finished","path":"/tmp/a.mov","duration":4.2}');
+    expect(onEnded).toHaveBeenCalledWith({ ok: { path: '/tmp/a.mov', width: undefined, height: undefined, duration: 4.2 } });
+    await expect(client.stop()).resolves.toMatchObject({ duration: 4.2 });
+  });
+
+  it('reports a device error mid-take', async () => {
+    const { client, onEnded } = setup();
+    await recording(client);
+    client.handleLine('{"event":"error","message":"Device disconnected."}');
+    expect(onEnded).toHaveBeenCalledWith({ err: 'Device disconnected.' });
+  });
+
+  it('does not report a normal stop', async () => {
+    const { client, onEnded } = setup();
+    await recording(client);
+    const stopped = client.stop();
+    client.handleLine('{"event":"finished","path":"/tmp/a.mov"}');
+    await stopped;
+    client.handleExit('quit');
+    expect(onEnded).not.toHaveBeenCalled();
+  });
+});

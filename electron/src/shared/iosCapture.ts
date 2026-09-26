@@ -133,7 +133,12 @@ export class IosHelperClient {
   private endedEarly: { ok: IosFinished } | { err: string } | null = null;
 
   constructor(
-    private io: { write: (line: string) => void; kill: () => void },
+    private io: {
+      write: (line: string) => void;
+      kill: () => void;
+      /** A take ended without stop() (cable pulled, helper died). */
+      onEnded?: (ended: { ok: IosFinished } | { err: string }) => void;
+    },
     private timeouts = { startMs: 20_000, stopMs: 30_000 },
   ) {}
 
@@ -207,7 +212,7 @@ export class IosHelperClient {
           clearTimeout(p.timer);
           p.resolve(done);
         } else {
-          this.endedEarly = { ok: done };
+          this.endEarly({ ok: done });
         }
         return;
       }
@@ -226,7 +231,7 @@ export class IosHelperClient {
           p.reject(err);
         } else if (this.recording) {
           this.recording = false;
-          this.endedEarly = { err: ev.message };
+          this.endEarly({ err: ev.message });
         } else {
           this.lastError = ev.message;
         }
@@ -246,9 +251,15 @@ export class IosHelperClient {
       clearTimeout(p.timer);
       p.reject(err);
     }
-    if (this.recording && !this.stopping) this.endedEarly = { err: reason };
+    const wasRecording = this.recording && !this.stopping;
     this.starting = null;
     this.stopping = null;
     this.recording = false;
+    if (wasRecording) this.endEarly({ err: reason });
+  }
+
+  private endEarly(ended: { ok: IosFinished } | { err: string }) {
+    this.endedEarly = ended;
+    this.io.onEnded?.(ended);
   }
 }
