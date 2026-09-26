@@ -119,6 +119,12 @@ export interface RecordingRef {
   sourceKind: SourceKind;
   sourceSize: Size;
   duration: number;
+  /** Seconds the video started after cursor tracking did. Already applied
+   *  to cursor.json/keystrokes.json times; kept for reference. */
+  cursorOffset?: number;
+  /** Seconds the camera recording started after the screen recording
+   *  (near zero: both recorders start together). Not applied anywhere. */
+  cameraOffset?: number;
 }
 
 export interface ZoomSettings {
