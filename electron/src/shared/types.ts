@@ -218,10 +218,12 @@ export const defaultStyle = (): StyleSettings => ({
   cursorHex: '#ffffff',
 });
 
-export const defaultZoom = (): ZoomSettings => ({
+// Phone footage zooms gentler: at 2x a tap target plus its context no longer
+// fits the screen, so the push-in crops the UI the viewer needs to see.
+export const defaultZoom = (r?: RecordingRef): ZoomSettings => ({
   autofocus: true,
   dwell: true,
-  depth: 2,
+  depth: isPhone(r) ? 1.6 : 2,
   motionEvents: [],
   fromTaps: true,
 });
@@ -244,7 +246,7 @@ export const defaultProject = (recording: RecordingRef): Project => ({
   clips: [{ id: crypto.randomUUID(), sourceStart: 0, sourceEnd: recording.duration, speed: 1 }],
   zoomKeyframes: [],
   manualZooms: [],
-  zoom: defaultZoom(),
+  zoom: defaultZoom(recording),
   audio: defaultAudio(),
   style: defaultStyle(),
   cameraOverlay: { enabled: false, corner: 'bottomLeft', sizeFraction: 0.22, circular: true },
@@ -269,7 +271,7 @@ export function normalizeProject(raw: Project): Project {
   p.chapters ??= [];
   p.zoomKeyframes ??= [];
   p.manualZooms ??= [];
-  p.zoom = { ...defaultZoom(), ...p.zoom };
+  p.zoom = { ...defaultZoom(p.recording), ...p.zoom };
   p.audio = { ...defaultAudio(), ...p.audio };
   if (p.style) p.style = { ...p.style, deviceFrame: p.style.deviceFrame ?? 'none' };
   // Older phone bundles: the frame switch lived in style.deviceFrame.
