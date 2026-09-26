@@ -1,10 +1,22 @@
 import type { CursorSample, KeystrokeSample, Project, TranscriptWord, WaitRange } from '../../shared/types';
 import type { TapSuggestion } from '../../shared/taps';
-import type { IosDevice, IosFinished, IosWarning } from '../../shared/iosCapture';
+import type { IosDevice, IosFinished, IosPreview, IosWarning } from '../../shared/iosCapture';
 import type { MenuAction, MenuPhase } from '../../shared/menu';
 import type { PresetId } from '../../shared/exportPresets';
 
-export type { IosDevice };
+export type { IosDevice, IosPreview };
+
+/** What bundle:open and bundle:openDir resolve with. */
+export interface OpenedBundle {
+  bundleDir: string;
+  project: Project;
+  cursor: CursorSample[];
+  keys: KeystrokeSample[];
+  videoPath: string;
+  camPath?: string;
+  videoUrl: string;
+  camUrl?: string;
+}
 
 export interface SourceInfo {
   id: string;
@@ -51,11 +63,23 @@ declare global {
       iosStart(deviceId: string): Promise<{ bundleDir: string; width: number; height: number }>;
       /** `partial` when the take failed but its file still plays. */
       iosStop(): Promise<IosFinished & { partial?: boolean }>;
+      /** Show a device live; resolves with the preview's state. Frames and
+       *  state changes arrive through onIosPreviewFrame/onIosPreviewState. */
+      iosPreview(deviceId: string): Promise<IosPreview | null>;
+      /** Stop the preview (during a take, once the take ends). */
+      iosUnpreview(): Promise<boolean>;
+      onIosPreviewState(cb: (p: IosPreview | null) => void): () => void;
+      /** A JPEG of the previewed device's screen, ~360 px, up to ~12 a second. */
+      onIosPreviewFrame(cb: (f: { id: string; jpeg: Uint8Array }) => void): () => void;
+      /** Give interrupted takes a project so they open; resolves with their bundles. */
+      recoverInterrupted(): Promise<string[]>;
+      /** Open a bundle in the recordings folder by path. */
+      openBundleDir(dir: string): Promise<OpenedBundle>;
       /** Remove a take's bundle that never got a project.json. */
       discardBundle(dir: string): Promise<boolean>;
       /** A take ended by itself (cable pulled, helper died); returns the unsubscribe. */
       onIosEnded(cb: (e: { message: string | null }) => void): () => void;
-      openBundle(): Promise<{ bundleDir: string; project: Project; cursor: CursorSample[]; keys: KeystrokeSample[]; videoPath: string; camPath?: string; videoUrl: string; camUrl?: string } | null>;
+      openBundle(): Promise<OpenedBundle | null>;
       saveProject(dir: string, project: Project): Promise<boolean>;
       writeText(path: string, text: string): Promise<boolean>;
       displays(): Promise<{ id: number; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]>;

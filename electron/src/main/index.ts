@@ -1,5 +1,5 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, screen, shell, systemPreferences } from 'electron';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -7,7 +7,17 @@ import { randomUUID } from 'node:crypto';
 import { createCursorTracker, type CursorTracker } from './cursor';
 import { startFfmpegJob, type FfmpegJob } from './ffmpegJob';
 import { transcodePreset, type TranscodeRun } from './transcodeJob';
-import { disposeIosHelper, listIosDevices, onIosEnded, startIosRecording, stopIosRecording } from './ios';
+import {
+  listIosDevices,
+  onIosEnded,
+  onIosPreview,
+  shutdownIosHelper,
+  startIosPreview,
+  startIosRecording,
+  stopIosPreview,
+  stopIosRecording,
+} from './ios';
+import { interruptedBundles, recoveredProject, RECOVERABLE_VIDEO, type BundleListing } from '../shared/recovery';
 import { buildAppMenu } from './menu';
 import type { MenuPhase } from '../shared/menu';
 import { normalizeProject, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
@@ -58,7 +68,9 @@ const confirmDiscard = (action: 'close' | 'quit') => {
       ? ['An export is still running.', 'it stops the export and leaves an unfinished file']
       : reason === 'saving'
         ? ['A recording is still being saved.', 'the recording may be lost']
-        : ['A recording is in progress.', 'the recording is lost'];
+        : iosBundleDir
+          ? ['A recording is in progress.', 'OpenScreen stops it and keeps what was recorded so far']
+          : ['A recording is in progress.', 'the recording is lost'];
   const verb = action === 'quit' ? 'Quit' : 'Close';
   const opts = {
     type: 'warning' as const,
@@ -131,8 +143,10 @@ const fileUrl = (p: string) => pathToFileURL(p).href;
 let menuState: { phase: MenuPhase; bundleDir?: string } = { phase: 'picker' };
 const refreshMenu = () => Menu.setApplicationMenu(buildAppMenu(() => win, menuState));
 
+// OPENSCREEN_RECORDINGS_DIR points a test run somewhere other than the
+// real recordings, which recovery would otherwise scan and write into.
 const recordingsRoot = () =>
-  join(app.getPath('videos'), 'OpenScreen');
+  process.env.OPENSCREEN_RECORDINGS_DIR || join(app.getPath('videos'), 'OpenScreen');
 
 const newBundleDir = () => join(recordingsRoot(), `rec-${Date.now()}.openscreen`);
 
@@ -187,6 +201,86 @@ const extractWav = async (dir: string, videoFile: string) => {
   return wav;
 };
 
+/** Whether a movie plays: its length and size, or null. */
+const probeMovie = async (file: string) => {
+  const banner = await probe(file);
+  const size = parseFfmpegVideoSize(banner);
+  const duration = parseFfmpegDuration(banner) ?? (size ? await probeDuration(file) : null);
+  return duration !== null && size ? { duration, size } : null;
+};
+
+/**
+ * Save a recording whose screen video is already in its bundle (the iPhone
+ * helper writes screen.mov straight to disk). The duration comes from the
+ * file itself.
+ */
+const saveWithVideoFile = async (args: { dir: string; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) => {
+  if (!isInRecordingsRoot(args.dir)) throw new Error('bundle is outside the recordings folder');
+  const video = join(args.dir, args.project.recording.screenVideoFile);
+  if (!existsSync(video)) throw new Error(`recording is missing ${args.project.recording.screenVideoFile}`);
+  args = { ...args, project: withProbedDuration(args.project, await probeDuration(video)) };
+  writeBundleSidecars(args.dir, args);
+  const cam = join(args.dir, 'cam.webm');
+  if (existsSync(cam)) await finalizeWebm(cam);
+  return {
+    dir: args.dir,
+    project: args.project,
+    videoUrl: fileUrl(video),
+    camUrl: existsSync(cam) ? fileUrl(cam) : undefined,
+  };
+};
+
+/**
+ * Give an interrupted take (screen.mov but no project.json) a project so
+ * it opens in the editor. Resolves false when its movie doesn't play; the
+ * bundle is then left as it is.
+ */
+const recoverBundle = async (dir: string) => {
+  const movie = await probeMovie(join(dir, RECOVERABLE_VIDEO));
+  const project = movie && recoveredProject(movie);
+  if (!project) return false;
+  await saveWithVideoFile({ dir, cursor: [], keys: [], project });
+  return true;
+};
+
+const listBundle = (dir: string): BundleListing => {
+  const files = readdirSync(dir);
+  let videoMtimeMs: number | undefined;
+  try {
+    if (files.includes(RECOVERABLE_VIDEO)) videoMtimeMs = statSync(join(dir, RECOVERABLE_VIDEO)).mtimeMs;
+  } catch {}
+  return { dir, files, videoMtimeMs };
+};
+
+/** Recover every interrupted take in the recordings folder; returns those that play. */
+const recoverInterrupted = async () => {
+  const root = recordingsRoot();
+  let listings: BundleListing[] = [];
+  try {
+    listings = readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.endsWith('.openscreen'))
+      .map((e) => listBundle(join(root, e.name)));
+  } catch {
+    return [];
+  }
+  const recovered: string[] = [];
+  for (const dir of interruptedBundles(listings, iosBundleDir, Date.now())) {
+    try {
+      if (await recoverBundle(dir)) recovered.push(dir);
+    } catch (e) {
+      console.error('could not recover', dir, e);
+    }
+  }
+  return recovered;
+};
+
+/** A take that can't be saved keeps its bundle if its movie plays (recovery picks it up); otherwise it goes. */
+const keepOrDiscardIosBundle = async (dir: string) => {
+  const mov = join(dir, RECOVERABLE_VIDEO);
+  if (existsSync(mov) && (await probeMovie(mov))) return;
+  rmSync(dir, { recursive: true, force: true });
+};
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -209,16 +303,18 @@ function createWindow() {
   win.on('close', (e) => {
     if (!quitConfirmed && !confirmDiscard('close')) e.preventDefault();
   });
-  // The take lived in this renderer: stop tracking and any iPhone take.
+  // The take lived in this renderer: stop tracking, the preview, and any
+  // iPhone take. The take's movie is kept if it plays, for recovery.
   const abandonTake = () => {
     rendererBusy = null;
     stopTracker();
+    stopIosPreview();
     if (iosBundleDir) {
       const dir = iosBundleDir;
       iosBundleDir = null;
       stopIosRecording()
         .catch(() => {})
-        .finally(() => rmSync(dir, { recursive: true, force: true }));
+        .finally(() => void keepOrDiscardIosBundle(dir));
     }
   };
   win.webContents.on('render-process-gone', abandonTake);
@@ -364,22 +460,12 @@ app.whenReady().then(() => {
   // iPhone helper writes screen.mov straight to disk).
   ipcMain.handle(
     'bundle:saveWithVideoFile',
-    async (_e, args: { dir: string; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) => {
-      if (!isInRecordingsRoot(args.dir)) throw new Error('bundle is outside the recordings folder');
-      const video = join(args.dir, args.project.recording.screenVideoFile);
-      if (!existsSync(video)) throw new Error(`recording is missing ${args.project.recording.screenVideoFile}`);
-      args = { ...args, project: withProbedDuration(args.project, await probeDuration(video)) };
-      writeBundleSidecars(args.dir, args);
-      const cam = join(args.dir, 'cam.webm');
-      if (existsSync(cam)) await finalizeWebm(cam);
-      return {
-        dir: args.dir,
-        project: args.project,
-        videoUrl: fileUrl(video),
-        camUrl: existsSync(cam) ? fileUrl(cam) : undefined,
-      };
-    },
+    (_e, args: { dir: string; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) =>
+      saveWithVideoFile(args),
   );
+
+  // Takes cut off by a crash or a quit, now openable. The picker asks on entry.
+  ipcMain.handle('recovery:scan', () => recoverInterrupted());
 
   // Wired iPhone/iPad screens, via the native ios-capture helper.
   ipcMain.handle('ios:list', () => listIosDevices());
@@ -420,10 +506,27 @@ app.whenReady().then(() => {
           return { path: mov, duration, ...(size ?? {}), partial: true };
         }
       }
-      if (dir) rmSync(dir, { recursive: true, force: true });
+      if (dir) await keepOrDiscardIosBundle(dir);
       throw e;
     }
   });
+
+  // Live preview of a phone. Camera access is asked for from the app itself,
+  // as for a take, so the prompt names OpenScreen.
+  ipcMain.handle('ios:preview', async (_e, deviceId: string) => {
+    if (!(await systemPreferences.askForMediaAccess('camera'))) {
+      throw new Error('Camera permission is needed to show your iPhone. Allow OpenScreen in System Settings > Privacy & Security > Camera.');
+    }
+    return startIosPreview(deviceId);
+  });
+  ipcMain.handle('ios:unpreview', () => {
+    stopIosPreview();
+    return true;
+  });
+  onIosPreview(
+    (preview) => win?.webContents.send('ios:previewState', preview),
+    (frame) => win?.webContents.send('ios:previewFrame', frame),
+  );
 
   // Push an early end (cable pulled, helper died) so the renderer stops now.
   onIosEnded((ended) => {
@@ -455,9 +558,26 @@ app.whenReady().then(() => {
       properties: ['openDirectory'],
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
-    const dir = picked.filePaths[0];
+    return loadBundle(picked.filePaths[0]);
+  });
+
+  // Open a bundle by path (e.g. one just recovered). Only our own bundles.
+  ipcMain.handle('bundle:openDir', (_e, dir: string) => {
+    if (!isInRecordingsRoot(dir)) throw new Error('That recording is outside the recordings folder.');
+    return loadBundle(dir);
+  });
+
+  const loadBundle = async (dir: string) => {
     if (!existsSync(join(dir, 'project.json'))) {
-      throw new Error('That folder is not an OpenScreen recording. Pick a folder ending in .openscreen.');
+      // An interrupted iPhone take: give it a project if its movie plays.
+      const interrupted = isInRecordingsRoot(dir) && interruptedBundles([listBundle(dir)], iosBundleDir, Date.now()).length > 0;
+      if (!interrupted || !(await recoverBundle(dir).catch(() => false))) {
+        throw new Error(
+          existsSync(join(dir, RECOVERABLE_VIDEO))
+            ? "This recording was interrupted and its video can't be played."
+            : 'That folder is not an OpenScreen recording. Pick a folder ending in .openscreen.',
+        );
+      }
     }
     let project: Project;
     try {
@@ -503,7 +623,7 @@ app.whenReady().then(() => {
       videoUrl: fileUrl(videoPath),
       camUrl: camPath ? fileUrl(camPath) : undefined,
     };
-  });
+  };
 
   // Pick an image file for the background.
   ipcMain.handle('background:pick', async () => {
@@ -906,9 +1026,15 @@ app.on('before-quit', (e) => {
   void transcodeRun?.cancel();
 });
 
-app.on('will-quit', () => {
+// Quitting mid-take keeps the take: the helper is asked to finish the file
+// (up to 3s) before it's let go. Recovery gives it a project next time.
+let iosShutDown = false;
+app.on('will-quit', (e) => {
   stopTracker();
-  disposeIosHelper();
+  if (iosShutDown) return;
+  e.preventDefault();
+  iosShutDown = true;
+  void shutdownIosHelper(3000).finally(() => app.quit());
 });
 
 // macOS keeps the app alive with no window; clicking the Dock icon brings one back.
