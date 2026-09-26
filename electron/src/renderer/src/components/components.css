@@ -1,0 +1,399 @@
+/* Styles for ScrubField and ExportProgress. Tokens come from styles.css. */
+
+/* ───────────────────────── scrub field ───────────────────────── */
+
+.scrub {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px 0 9px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+  overflow: hidden;
+  isolation: isolate;
+  transition:
+    box-shadow var(--t2) var(--ease),
+    background-color var(--t2) var(--ease);
+}
+
+.scrub:hover {
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+}
+
+.scrub:focus-visible,
+.scrub[data-state='editing'] {
+  outline: none;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow:
+    inset 0 0 0 2px var(--accent),
+    0 0 0 3px var(--accent-tint);
+}
+
+.scrub[data-state='scrubbing'] {
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+}
+
+.scrub[data-state='editing'] {
+  cursor: text;
+}
+
+.scrub[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* how far through its range the value sits: a quiet wash behind the text */
+.scrub-fill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: rgba(255, 255, 255, 0.035);
+  transform-origin: left center;
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    transform var(--t1) var(--ease),
+    background-color var(--t2) var(--ease),
+    opacity var(--t2) var(--ease);
+}
+
+.scrub:hover .scrub-fill,
+.scrub:focus-visible .scrub-fill,
+.scrub[data-state='scrubbing'] .scrub-fill {
+  opacity: 1;
+}
+
+.scrub[data-state='scrubbing'] .scrub-fill {
+  background: rgba(255, 138, 61, 0.1);
+  transition:
+    background-color var(--t2) var(--ease),
+    opacity var(--t2) var(--ease);
+}
+
+.scrub[data-state='editing'] .scrub-fill {
+  opacity: 0;
+}
+
+.scrub-label {
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color var(--t2) var(--ease);
+}
+
+.scrub:hover .scrub-label,
+.scrub:focus-visible .scrub-label {
+  color: var(--text-2);
+}
+
+.scrub[data-state='scrubbing'] .scrub-label {
+  color: var(--accent);
+}
+
+.scrub-value {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scrub-unit {
+  color: var(--text-3);
+}
+
+.scrub-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: text;
+  cursor: text;
+}
+
+.scrub-input:focus,
+.scrub-input:focus-visible {
+  outline: none;
+}
+
+/* while a scrub runs without pointer lock, keep the resize cursor everywhere */
+html.is-scrubbing,
+html.is-scrubbing * {
+  cursor: ew-resize !important;
+}
+
+/* ───────────────────────── export progress ───────────────────────── */
+
+.xp {
+  width: 380px;
+  max-width: 100%;
+  padding: 20px 20px 16px;
+  border-radius: var(--r-lg);
+  background: var(--raised);
+  box-shadow: var(--shadow-3), var(--lift);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.xp-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: xp-enter var(--t3) var(--ease) both;
+}
+
+.xp-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.xp-titles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.xp-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+.xp[data-state='running'] .xp-title {
+  color: transparent;
+  background: linear-gradient(90deg, var(--text-2) 30%, var(--text) 50%, var(--text-2) 70%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: xp-shimmer 1.8s linear infinite;
+}
+
+.xp-sub {
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.xp-clock {
+  align-self: flex-start;
+  padding: 3px 8px;
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+/* the dot grid: a chevron wavefront drives left to right */
+.xp-grid {
+  --dot: 5px;
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(5, var(--dot));
+  gap: 4px;
+  padding: 9px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: inset 0 0 0 1px var(--hairline), inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.xp-dot {
+  width: var(--dot);
+  height: var(--dot);
+  border-radius: 50%;
+  background: var(--text);
+  opacity: 0.1;
+  transition:
+    opacity var(--t3) var(--ease),
+    background-color var(--t3) var(--ease),
+    transform var(--t3) var(--ease);
+}
+
+.xp[data-state='running'] .xp-dot {
+  animation: xp-dot 1000ms ease-in-out infinite;
+}
+
+.xp-dot.is-on {
+  opacity: 1;
+}
+
+.xp[data-state='done'] .xp-dot.is-on {
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(255, 138, 61, 0.55);
+}
+
+.xp[data-state='failed'] .xp-dot.is-on {
+  background: var(--red);
+}
+
+.xp-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.xp-figures {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.xp-percent {
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.xp-percent-sign {
+  margin-left: 1px;
+  color: var(--text-3);
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.xp-eta {
+  color: var(--text-3);
+  font-size: 12px;
+  animation: fade-in var(--t3) var(--ease) both;
+}
+
+.xp-track {
+  position: relative;
+  height: 4px;
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.xp-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  box-shadow: 0 0 10px rgba(255, 138, 61, 0.45);
+  transform-origin: left center;
+  transition: transform var(--t3) var(--ease);
+}
+
+/* a soft light travelling along the filled part */
+.xp-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.45) 50%, transparent 100%);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: xp-sheen 1.8s var(--ease-move) infinite;
+}
+
+.xp-message {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.xp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@keyframes xp-dot {
+  0%,
+  100% {
+    opacity: 0.1;
+  }
+  30% {
+    opacity: 0.95;
+  }
+  60% {
+    opacity: 0.1;
+  }
+}
+
+@keyframes xp-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes xp-sheen {
+  from {
+    background-position: -60% 0;
+  }
+  to {
+    background-position: 160% 0;
+  }
+}
+
+@keyframes xp-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrub-fill {
+    transition: none;
+  }
+  .xp[data-state='running'] .xp-dot {
+    animation: none;
+    opacity: 0.28;
+  }
+  .xp[data-state='running'] .xp-title {
+    animation: none;
+    color: var(--text);
+    background: none;
+  }
+  .xp-fill {
+    transition: none;
+  }
+  .xp-fill::after {
+    display: none;
+  }
+  .xp-dot {
+    transition: opacity var(--t3) linear, background-color var(--t3) linear;
+  }
+  @keyframes xp-enter {
+    from {
+      opacity: 0;
+    }
+  }
+}
