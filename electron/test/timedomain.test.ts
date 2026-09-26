@@ -54,7 +54,7 @@ describe('normalizeProject (BH-14)', () => {
     } as unknown as Project;
     const p = normalizeProject(old);
     expect(p.manualZooms).toEqual([]);
-    expect(p.zoom).toEqual({ autofocus: true, dwell: true, depth: 2, motionEvents: [] });
+    expect(p.zoom).toEqual({ autofocus: true, dwell: true, depth: 2, motionEvents: [], fromTaps: true });
     expect(p.audio).toEqual({ clickSounds: true, voiceCleanup: false });
     expect(p.captions).toEqual([]);
     expect(p.style.deviceFrame).toBe('none');

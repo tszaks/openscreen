@@ -138,7 +138,8 @@ describe('projectForPreset', () => {
   });
 
   it('reads the layout preset only when it is a known one', () => {
-    expect(layoutPresetOf(project())).toBeNull();
+    // iPhone recordings default to the 9:16 layout; unknown and 'none' mean no preset.
+    expect(layoutPresetOf(project())?.id).toBe('social-9x16');
     expect(layoutPresetOf(Object.assign(project(), { layout: { presetId: 'appstore-iphone' } }))?.width).toBe(886);
     expect(layoutPresetOf(Object.assign(project(), { layout: { presetId: 'nope' } }))).toBeNull();
     expect(layoutPresetOf(Object.assign(project(), { layout: { presetId: 'none' } }))).toBeNull();
