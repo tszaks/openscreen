@@ -1,16 +1,31 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, screen, shell, systemPreferences } from 'electron';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { createCursorTracker, type CursorTracker } from './cursor';
 import { startFfmpegJob, type FfmpegJob } from './ffmpegJob';
-import { disposeIosHelper, listIosDevices, onIosEnded, startIosRecording, stopIosRecording } from './ios';
+import { transcodePreset, type TranscodeRun } from './transcodeJob';
+import {
+  listIosDevices,
+  onIosEnded,
+  onIosPreview,
+  shutdownIosHelper,
+  startIosPreview,
+  startIosRecording,
+  stopIosPreview,
+  stopIosRecording,
+} from './ios';
+import { interruptedBundles, recoveredProject, RECOVERABLE_VIDEO, type BundleListing } from '../shared/recovery';
 import { buildAppMenu } from './menu';
 import type { MenuPhase } from '../shared/menu';
 import { normalizeProject, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
 import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
+import { getPreset, type PresetId } from '../shared/exportPresets';
 import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
+import { analysisFrameSize, analyzeFrames, detectTaps, findDeadTime, splitRawGray, tapAnalysisFfmpegArgs } from '../shared/taps';
 import {
   alignToVideoStart,
   cursorModeFor,
@@ -29,6 +44,8 @@ app.setName('OpenScreen');
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
 let exportJob: FfmpegJob | null = null;
+// A preset transcode (multi-format export) in flight.
+let transcodeRun: TranscodeRun | null = null;
 let trackerStartedAtMs = 0;
 // The in-flight iPhone take's bundle, so a failed take can be salvaged or removed.
 let iosBundleDir: string | null = null;
@@ -37,8 +54,9 @@ let iosBundleDir: string | null = null;
 // closing or quitting can ask before throwing it away.
 let rendererBusy: string | null = null;
 let quitConfirmed = false;
-// export:begin sets exportJob; export:end/abort clear it.
-const exportRunning = () => exportJob !== null;
+// export:begin sets exportJob; export:end/abort clear it. export:transcode
+// holds transcodeRun while it runs.
+const exportRunning = () => exportJob !== null || transcodeRun !== null;
 const busyReason = () => rendererBusy ?? (exportRunning() ? 'exporting' : null);
 
 /** True when nothing is running, or the user chose to throw it away. */
@@ -50,7 +68,9 @@ const confirmDiscard = (action: 'close' | 'quit') => {
       ? ['An export is still running.', 'it stops the export and leaves an unfinished file']
       : reason === 'saving'
         ? ['A recording is still being saved.', 'the recording may be lost']
-        : ['A recording is in progress.', 'the recording is lost'];
+        : iosBundleDir
+          ? ['A recording is in progress.', 'OpenScreen stops it and keeps what was recorded so far']
+          : ['A recording is in progress.', 'the recording is lost'];
   const verb = action === 'quit' ? 'Quit' : 'Close';
   const opts = {
     type: 'warning' as const,
@@ -123,8 +143,10 @@ const fileUrl = (p: string) => pathToFileURL(p).href;
 let menuState: { phase: MenuPhase; bundleDir?: string } = { phase: 'picker' };
 const refreshMenu = () => Menu.setApplicationMenu(buildAppMenu(() => win, menuState));
 
+// OPENSCREEN_RECORDINGS_DIR points a test run somewhere other than the
+// real recordings, which recovery would otherwise scan and write into.
 const recordingsRoot = () =>
-  join(app.getPath('videos'), 'OpenScreen');
+  process.env.OPENSCREEN_RECORDINGS_DIR || join(app.getPath('videos'), 'OpenScreen');
 
 const newBundleDir = () => join(recordingsRoot(), `rec-${Date.now()}.openscreen`);
 
@@ -156,6 +178,13 @@ const ffmpegPath = async () => {
   return 'ffmpeg';
 };
 
+/** Whether a media file has an audio stream. */
+const probeHasAudio = async (bin: string, path: string) => {
+  const { execFile } = await import('node:child_process');
+  const probe = await new Promise<string>((resolve) => execFile(bin, ['-i', path], (_e, _so, se) => resolve(se ?? '')));
+  return /Stream #\d+:\d+.*Audio:/.test(probe);
+};
+
 // Extract 16kHz mono wav from a bundle video for analysis (shared by
 // transcription and silence detection).
 const extractWav = async (dir: string, videoFile: string) => {
@@ -170,6 +199,86 @@ const extractWav = async (dir: string, videoFile: string) => {
     ),
   );
   return wav;
+};
+
+/** Whether a movie plays: its length and size, or null. */
+const probeMovie = async (file: string) => {
+  const banner = await probe(file);
+  const size = parseFfmpegVideoSize(banner);
+  const duration = parseFfmpegDuration(banner) ?? (size ? await probeDuration(file) : null);
+  return duration !== null && size ? { duration, size } : null;
+};
+
+/**
+ * Save a recording whose screen video is already in its bundle (the iPhone
+ * helper writes screen.mov straight to disk). The duration comes from the
+ * file itself.
+ */
+const saveWithVideoFile = async (args: { dir: string; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) => {
+  if (!isInRecordingsRoot(args.dir)) throw new Error('bundle is outside the recordings folder');
+  const video = join(args.dir, args.project.recording.screenVideoFile);
+  if (!existsSync(video)) throw new Error(`recording is missing ${args.project.recording.screenVideoFile}`);
+  args = { ...args, project: withProbedDuration(args.project, await probeDuration(video)) };
+  writeBundleSidecars(args.dir, args);
+  const cam = join(args.dir, 'cam.webm');
+  if (existsSync(cam)) await finalizeWebm(cam);
+  return {
+    dir: args.dir,
+    project: args.project,
+    videoUrl: fileUrl(video),
+    camUrl: existsSync(cam) ? fileUrl(cam) : undefined,
+  };
+};
+
+/**
+ * Give an interrupted take (screen.mov but no project.json) a project so
+ * it opens in the editor. Resolves false when its movie doesn't play; the
+ * bundle is then left as it is.
+ */
+const recoverBundle = async (dir: string) => {
+  const movie = await probeMovie(join(dir, RECOVERABLE_VIDEO));
+  const project = movie && recoveredProject(movie);
+  if (!project) return false;
+  await saveWithVideoFile({ dir, cursor: [], keys: [], project });
+  return true;
+};
+
+const listBundle = (dir: string): BundleListing => {
+  const files = readdirSync(dir);
+  let videoMtimeMs: number | undefined;
+  try {
+    if (files.includes(RECOVERABLE_VIDEO)) videoMtimeMs = statSync(join(dir, RECOVERABLE_VIDEO)).mtimeMs;
+  } catch {}
+  return { dir, files, videoMtimeMs };
+};
+
+/** Recover every interrupted take in the recordings folder; returns those that play. */
+const recoverInterrupted = async () => {
+  const root = recordingsRoot();
+  let listings: BundleListing[] = [];
+  try {
+    listings = readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.endsWith('.openscreen'))
+      .map((e) => listBundle(join(root, e.name)));
+  } catch {
+    return [];
+  }
+  const recovered: string[] = [];
+  for (const dir of interruptedBundles(listings, iosBundleDir, Date.now())) {
+    try {
+      if (await recoverBundle(dir)) recovered.push(dir);
+    } catch (e) {
+      console.error('could not recover', dir, e);
+    }
+  }
+  return recovered;
+};
+
+/** A take that can't be saved keeps its bundle if its movie plays (recovery picks it up); otherwise it goes. */
+const keepOrDiscardIosBundle = async (dir: string) => {
+  const mov = join(dir, RECOVERABLE_VIDEO);
+  if (existsSync(mov) && (await probeMovie(mov))) return;
+  rmSync(dir, { recursive: true, force: true });
 };
 
 function createWindow() {
@@ -194,16 +303,18 @@ function createWindow() {
   win.on('close', (e) => {
     if (!quitConfirmed && !confirmDiscard('close')) e.preventDefault();
   });
-  // The take lived in this renderer: stop tracking and any iPhone take.
+  // The take lived in this renderer: stop tracking, the preview, and any
+  // iPhone take. The take's movie is kept if it plays, for recovery.
   const abandonTake = () => {
     rendererBusy = null;
     stopTracker();
+    stopIosPreview();
     if (iosBundleDir) {
       const dir = iosBundleDir;
       iosBundleDir = null;
       stopIosRecording()
         .catch(() => {})
-        .finally(() => rmSync(dir, { recursive: true, force: true }));
+        .finally(() => void keepOrDiscardIosBundle(dir));
     }
   };
   win.webContents.on('render-process-gone', abandonTake);
@@ -260,6 +371,12 @@ app.whenReady().then(() => {
 
   ipcMain.on('app:busy', (_e, reason: string | null) => {
     rendererBusy = reason || null;
+  });
+
+  // Keep OpenScreen's own window (countdown, recording card) out of the
+  // capture: macOS then omits it from screen and window recordings.
+  ipcMain.on('app:captureShield', (_e, on: boolean) => {
+    win?.setContentProtection(!!on);
   });
 
   ipcMain.handle('permissions:openScreenSettings', async () => {
@@ -343,22 +460,12 @@ app.whenReady().then(() => {
   // iPhone helper writes screen.mov straight to disk).
   ipcMain.handle(
     'bundle:saveWithVideoFile',
-    async (_e, args: { dir: string; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) => {
-      if (!isInRecordingsRoot(args.dir)) throw new Error('bundle is outside the recordings folder');
-      const video = join(args.dir, args.project.recording.screenVideoFile);
-      if (!existsSync(video)) throw new Error(`recording is missing ${args.project.recording.screenVideoFile}`);
-      args = { ...args, project: withProbedDuration(args.project, await probeDuration(video)) };
-      writeBundleSidecars(args.dir, args);
-      const cam = join(args.dir, 'cam.webm');
-      if (existsSync(cam)) await finalizeWebm(cam);
-      return {
-        dir: args.dir,
-        project: args.project,
-        videoUrl: fileUrl(video),
-        camUrl: existsSync(cam) ? fileUrl(cam) : undefined,
-      };
-    },
+    (_e, args: { dir: string; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) =>
+      saveWithVideoFile(args),
   );
+
+  // Takes cut off by a crash or a quit, now openable. The picker asks on entry.
+  ipcMain.handle('recovery:scan', () => recoverInterrupted());
 
   // Wired iPhone/iPad screens, via the native ios-capture helper.
   ipcMain.handle('ios:list', () => listIosDevices());
@@ -399,10 +506,27 @@ app.whenReady().then(() => {
           return { path: mov, duration, ...(size ?? {}), partial: true };
         }
       }
-      if (dir) rmSync(dir, { recursive: true, force: true });
+      if (dir) await keepOrDiscardIosBundle(dir);
       throw e;
     }
   });
+
+  // Live preview of a phone. Camera access is asked for from the app itself,
+  // as for a take, so the prompt names OpenScreen.
+  ipcMain.handle('ios:preview', async (_e, deviceId: string) => {
+    if (!(await systemPreferences.askForMediaAccess('camera'))) {
+      throw new Error('Camera permission is needed to show your iPhone. Allow OpenScreen in System Settings > Privacy & Security > Camera.');
+    }
+    return startIosPreview(deviceId);
+  });
+  ipcMain.handle('ios:unpreview', () => {
+    stopIosPreview();
+    return true;
+  });
+  onIosPreview(
+    (preview) => win?.webContents.send('ios:previewState', preview),
+    (frame) => win?.webContents.send('ios:previewFrame', frame),
+  );
 
   // Push an early end (cable pulled, helper died) so the renderer stops now.
   onIosEnded((ended) => {
@@ -434,9 +558,26 @@ app.whenReady().then(() => {
       properties: ['openDirectory'],
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
-    const dir = picked.filePaths[0];
+    return loadBundle(picked.filePaths[0]);
+  });
+
+  // Open a bundle by path (e.g. one just recovered). Only our own bundles.
+  ipcMain.handle('bundle:openDir', (_e, dir: string) => {
+    if (!isInRecordingsRoot(dir)) throw new Error('That recording is outside the recordings folder.');
+    return loadBundle(dir);
+  });
+
+  const loadBundle = async (dir: string) => {
     if (!existsSync(join(dir, 'project.json'))) {
-      throw new Error('That folder is not an OpenScreen recording. Pick a folder ending in .openscreen.');
+      // An interrupted iPhone take: give it a project if its movie plays.
+      const interrupted = isInRecordingsRoot(dir) && interruptedBundles([listBundle(dir)], iosBundleDir, Date.now()).length > 0;
+      if (!interrupted || !(await recoverBundle(dir).catch(() => false))) {
+        throw new Error(
+          existsSync(join(dir, RECOVERABLE_VIDEO))
+            ? "This recording was interrupted and its video can't be played."
+            : 'That folder is not an OpenScreen recording. Pick a folder ending in .openscreen.',
+        );
+      }
     }
     let project: Project;
     try {
@@ -482,7 +623,7 @@ app.whenReady().then(() => {
       videoUrl: fileUrl(videoPath),
       camUrl: camPath ? fileUrl(camPath) : undefined,
     };
-  });
+  };
 
   // Pick an image file for the background.
   ipcMain.handle('background:pick', async () => {
@@ -680,22 +821,46 @@ app.whenReady().then(() => {
     },
   );
 
+  // Tap analysis for phone recordings: ffmpeg streams small grayscale
+  // frames, taps.ts turns their differences into tap/swipe suggestions and
+  // still stretches. Everything is in source seconds.
+  ipcMain.handle('taps:analyze', async (_e, args: { dir: string; videoFile: string }) => {
+    const { spawn } = await import('node:child_process');
+    const file = join(args.dir, args.videoFile);
+    const banner = await probe(file);
+    const size = parseFfmpegVideoSize(banner);
+    if (!size) throw new Error('could not read the video size');
+    // Long takes analyse at 15 fps so the frames stay in memory comfortably.
+    const fps = (parseFfmpegDuration(banner) ?? 0) > 240 ? 15 : 30;
+    const { w, h } = analysisFrameSize(size.width, size.height);
+    const bin = await ffmpegPath();
+    const raw = await new Promise<Buffer>((resolvePromise, reject) => {
+      const chunks: Buffer[] = [];
+      let err = '';
+      const ff = spawn(bin, tapAnalysisFfmpegArgs(file, { fps }));
+      ff.stdout.on('data', (c: Buffer) => chunks.push(c));
+      ff.stderr.on('data', (c: Buffer) => (err += c.toString()));
+      ff.on('error', reject);
+      ff.on('close', (code) =>
+        code === 0 ? resolvePromise(Buffer.concat(chunks)) : reject(new Error(err.trim() || `ffmpeg exited ${code}`)),
+      );
+    });
+    const frames = splitRawGray(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength), w, h, fps);
+    const analysis = analyzeFrames(frames);
+    const taps = detectTaps(analysis).map((t) => ({ ...t, id: randomUUID() }));
+    const deadTime = findDeadTime(analysis).map((d) => ({ start: d.start, end: d.end, ...(d.edge ? { edge: d.edge } : {}) }));
+    return { taps, deadTime };
+  });
+
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
-  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number }) => {
+  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number; master?: boolean }) => {
     await exportJob?.abort(); // a previous export that never ended
     exportJob = null;
     const ffmpegBin = await ffmpegPath();
     // Confirm the source actually has an audio stream before filtering
     // (filter_complex on a missing stream aborts the whole encode).
-    let hasAudio = false;
-    if (args.audioIn) {
-      const { execFile } = await import('node:child_process');
-      const probe = await new Promise<string>((resolve) =>
-        execFile(ffmpegBin, ['-i', args.audioIn!], (_e, _so, se) => resolve(se ?? '')),
-      );
-      hasAudio = /Stream #\d+:\d+.*Audio:/.test(probe);
-    }
+    const hasAudio = args.audioIn ? await probeHasAudio(ffmpegBin, args.audioIn) : false;
     mkdirSync(dirname(args.outPath), { recursive: true });
     exportJob = await startFfmpegJob(ffmpegBin, buildExportArgs({ ...args, hasAudio }), args.outPath);
     return true;
@@ -714,6 +879,56 @@ app.whenReady().then(() => {
     if (picked.canceled || !picked.filePath) return null;
     // ffmpeg picks the container from the extension, so make sure it has one.
     return extname(picked.filePath).toLowerCase() === `.${args.kind}` ? picked.filePath : `${picked.filePath}.${args.kind}`;
+  });
+
+  // Multi-format export: one folder for every file, opened on
+  // ~/Movies/OpenScreen/<project>/. Resolves null when the user cancels.
+  ipcMain.handle('export:pickFolder', async (_e, args: { bundleDir: string }) => {
+    const name = basename(args.bundleDir).replace(/\.openscreen$/, '') || 'OpenScreen export';
+    const defaultPath = join(recordingsRoot(), name.replace(/[/:]/g, '-'));
+    mkdirSync(defaultPath, { recursive: true });
+    const picked = await dialog.showOpenDialog(win!, {
+      title: 'Export formats to…',
+      buttonLabel: 'Export Here',
+      defaultPath,
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (picked.canceled || !picked.filePaths[0]) return null;
+    return picked.filePaths[0];
+  });
+
+  // Rendered masters live in a temp folder of their own, and only files in it
+  // can be discarded through export:discardMaster.
+  const mastersDir = () => join(tmpdir(), 'openscreen-export');
+  ipcMain.handle('export:masterPath', (_e, key: string) => {
+    mkdirSync(mastersDir(), { recursive: true });
+    return join(mastersDir(), `master-${Date.now()}-${key.replace(/[^a-z0-9]+/gi, '_')}.mov`);
+  });
+  ipcMain.handle('export:discardMaster', (_e, path: string) => {
+    if (dirname(resolve(path)) === mastersDir()) rmSync(path, { force: true });
+    return true;
+  });
+
+  // Whether a file has an audio stream (for the Export panel's warnings).
+  ipcMain.handle('export:hasAudio', async (_e, path: string) => probeHasAudio(await ffmpegPath(), path));
+
+  // Transcode a rendered master into one preset's files. Progress arrives as
+  // export:transcodeProgress; export:abort cancels it.
+  ipcMain.handle('export:transcode', async (_e, args: { presetId: PresetId; input: string; outBase: string; duration: number }) => {
+    await transcodeRun?.cancel();
+    const bin = await ffmpegPath();
+    const preset = getPreset(args.presetId);
+    const hasAudio = await probeHasAudio(bin, args.input);
+    mkdirSync(dirname(args.outBase), { recursive: true });
+    const run = transcodePreset(bin, preset, args.input, args.outBase, hasAudio, args.duration, (fraction) =>
+      win?.webContents.send('export:transcodeProgress', { presetId: args.presetId, fraction }),
+    );
+    transcodeRun = run;
+    try {
+      return await run.done;
+    } finally {
+      if (transcodeRun === run) transcodeRun = null;
+    }
   });
 
   ipcMain.handle('export:reveal', (_e, path: string) => {
@@ -772,7 +987,9 @@ app.whenReady().then(() => {
   ipcMain.handle('export:abort', async () => {
     const job = exportJob;
     exportJob = null;
-    await job?.abort();
+    const run = transcodeRun;
+    transcodeRun = null;
+    await Promise.all([job?.abort(), run?.cancel()]);
     return true;
   });
 
@@ -806,11 +1023,18 @@ app.on('before-quit', (e) => {
   quitConfirmed = true;
   // Don't leave ffmpeg running or a half-written export behind.
   void exportJob?.abort();
+  void transcodeRun?.cancel();
 });
 
-app.on('will-quit', () => {
+// Quitting mid-take keeps the take: the helper is asked to finish the file
+// (up to 3s) before it's let go. Recovery gives it a project next time.
+let iosShutDown = false;
+app.on('will-quit', (e) => {
   stopTracker();
-  disposeIosHelper();
+  if (iosShutDown) return;
+  e.preventDefault();
+  iosShutDown = true;
+  void shutdownIosHelper(3000).finally(() => app.quit());
 });
 
 // macOS keeps the app alive with no window; clicking the Dock icon brings one back.

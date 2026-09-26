@@ -1,8 +1,22 @@
-import type { CursorSample, KeystrokeSample, Project, TranscriptWord } from '../../shared/types';
-import type { IosDevice, IosFinished, IosWarning } from '../../shared/iosCapture';
+import type { CursorSample, KeystrokeSample, Project, TranscriptWord, WaitRange } from '../../shared/types';
+import type { TapSuggestion } from '../../shared/taps';
+import type { IosDevice, IosFinished, IosPreview, IosWarning } from '../../shared/iosCapture';
 import type { MenuAction, MenuPhase } from '../../shared/menu';
+import type { PresetId } from '../../shared/exportPresets';
 
-export type { IosDevice };
+export type { IosDevice, IosPreview };
+
+/** What bundle:open and bundle:openDir resolve with. */
+export interface OpenedBundle {
+  bundleDir: string;
+  project: Project;
+  cursor: CursorSample[];
+  keys: KeystrokeSample[];
+  videoPath: string;
+  camPath?: string;
+  videoUrl: string;
+  camUrl?: string;
+}
 
 export interface SourceInfo {
   id: string;
@@ -49,11 +63,23 @@ declare global {
       iosStart(deviceId: string): Promise<{ bundleDir: string; width: number; height: number }>;
       /** `partial` when the take failed but its file still plays. */
       iosStop(): Promise<IosFinished & { partial?: boolean }>;
+      /** Show a device live; resolves with the preview's state. Frames and
+       *  state changes arrive through onIosPreviewFrame/onIosPreviewState. */
+      iosPreview(deviceId: string): Promise<IosPreview | null>;
+      /** Stop the preview (during a take, once the take ends). */
+      iosUnpreview(): Promise<boolean>;
+      onIosPreviewState(cb: (p: IosPreview | null) => void): () => void;
+      /** A JPEG of the previewed device's screen, ~360 px, up to ~12 a second. */
+      onIosPreviewFrame(cb: (f: { id: string; jpeg: Uint8Array }) => void): () => void;
+      /** Give interrupted takes a project so they open; resolves with their bundles. */
+      recoverInterrupted(): Promise<string[]>;
+      /** Open a bundle in the recordings folder by path. */
+      openBundleDir(dir: string): Promise<OpenedBundle>;
       /** Remove a take's bundle that never got a project.json. */
       discardBundle(dir: string): Promise<boolean>;
       /** A take ended by itself (cable pulled, helper died); returns the unsubscribe. */
       onIosEnded(cb: (e: { message: string | null }) => void): () => void;
-      openBundle(): Promise<{ bundleDir: string; project: Project; cursor: CursorSample[]; keys: KeystrokeSample[]; videoPath: string; camPath?: string; videoUrl: string; camUrl?: string } | null>;
+      openBundle(): Promise<OpenedBundle | null>;
       saveProject(dir: string, project: Project): Promise<boolean>;
       writeText(path: string, text: string): Promise<boolean>;
       displays(): Promise<{ id: number; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]>;
@@ -63,8 +89,10 @@ declare global {
       prepareBackground(path: string): Promise<string | null>;
       transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string; words: TranscriptWord[] }[]>;
       detectSilences(dir: string, videoFile: string, thresholdDb?: number, minDur?: number): Promise<{ start: number; end: number }[]>;
+      /** Tap/swipe suggestions and still stretches (source seconds) for a phone recording. */
+      analyzeTaps(dir: string, videoFile: string): Promise<{ taps: TapSuggestion[]; deadTime: WaitRange[] }>;
       audioPeaks(dir: string, videoFile: string, buckets?: number): Promise<number[]>;
-      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number): Promise<boolean>;
+      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number, master?: boolean): Promise<boolean>;
       /** Rejects with ffmpeg's reason once ffmpeg has stopped. */
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       /** Finishes the file; rejects (and deletes it) when the encode failed. */
@@ -76,6 +104,20 @@ declare global {
       /** Save dialog for the export; null when cancelled. */
       exportPickPath(bundleDir: string, kind: 'mp4' | 'gif'): Promise<string | null>;
       exportReveal(path: string): Promise<boolean>;
+      /** Hide OpenScreen's window from screen capture (during countdown and recording). */
+      setCaptureShield(on: boolean): void;
+      /** Folder picker for a multi-format export; null when cancelled. */
+      exportPickFolder(bundleDir: string): Promise<string | null>;
+      /** A temp path for a rendered master (.mov). */
+      exportMasterPath(key: string): Promise<string>;
+      /** Deletes a master made by exportMasterPath. */
+      exportDiscardMaster(path: string): Promise<boolean>;
+      exportHasAudio(path: string): Promise<boolean>;
+      /** Transcodes a master into one preset's files; resolves with their paths.
+       *  Rejects with ffmpeg's reason, or 'cancelled' after exportAbort. */
+      exportTranscode(presetId: PresetId, input: string, outBase: string, duration: number): Promise<string[]>;
+      /** Subscribe to transcode progress (0..1); returns the unsubscribe. */
+      onTranscodeProgress(cb: (e: { presetId: PresetId; fraction: number }) => void): () => void;
       /** Tell main what is on screen, so the menu enables what applies. */
       setMenuPhase(phase: MenuPhase, bundleDir?: string): void;
       /** Subscribe to app-menu clicks; returns the unsubscribe. */

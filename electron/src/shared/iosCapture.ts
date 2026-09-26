@@ -31,6 +31,22 @@ export interface IosWarning {
   message?: string;
 }
 
+export type IosPreviewState = 'connecting' | 'live' | 'stopped' | 'error';
+
+/**
+ * The live preview of one device. "connecting" until the first frame,
+ * "live" (with that frame's size) after, "error" when it can't run: `code`
+ * is "no-frames" when the phone sent no picture within 3s.
+ */
+export interface IosPreview {
+  id: string;
+  state: IosPreviewState;
+  width?: number;
+  height?: number;
+  message?: string;
+  code?: string;
+}
+
 /** An error from the helper. `code` is "no-frames" when the phone never sent a picture. */
 export class IosCaptureError extends Error {
   constructor(
@@ -47,7 +63,10 @@ export type HelperEvent =
   | ({ event: 'started' } & IosStarted)
   | ({ event: 'finished' } & IosFinished)
   | { event: 'error'; message: string; code?: string }
-  | ({ event: 'warning' } & IosWarning);
+  | ({ event: 'warning' } & IosWarning)
+  | ({ event: 'preview' } & IosPreview);
+
+const PREVIEW_STATES: readonly string[] = ['connecting', 'live', 'stopped', 'error'];
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const optNum = (v: unknown) => (isNum(v) ? v : undefined);
@@ -118,6 +137,18 @@ export function parseHelperLine(line: string): HelperEvent | null {
         code: o.code,
         ...(typeof o.message === 'string' ? { message: o.message } : {}),
       };
+    case 'preview':
+      if (typeof o.id !== 'string' || !o.id || typeof o.state !== 'string' || !PREVIEW_STATES.includes(o.state)) {
+        return null;
+      }
+      return {
+        event: 'preview',
+        id: o.id,
+        state: o.state as IosPreviewState,
+        ...(isNum(o.width) && isNum(o.height) ? { width: o.width, height: o.height } : {}),
+        ...(typeof o.message === 'string' ? { message: o.message } : {}),
+        ...(typeof o.code === 'string' && o.code ? { code: o.code } : {}),
+      };
     default:
       return null;
   }
@@ -137,6 +168,96 @@ export function createLineSplitter(onLine: (line: string) => void) {
   };
 }
 
+/** Longest preview frame accepted; anything bigger means the pipe is out of step. */
+export const MAX_PREVIEW_FRAME_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Split the helper's preview pipe (fd 3) into frames: each is a 4-byte
+ * big-endian length, then that many bytes of JPEG. Chunks can end anywhere.
+ * A length of zero or over `maxBytes` means the stream is corrupt: the
+ * parser calls `onCorrupt` once and ignores everything after it.
+ */
+export function createFrameParser(
+  onFrame: (jpeg: Uint8Array) => void,
+  opts: { maxBytes?: number; onCorrupt?: (reason: string) => void } = {},
+) {
+  const maxBytes = opts.maxBytes ?? MAX_PREVIEW_FRAME_BYTES;
+  let buf: Uint8Array = new Uint8Array(0);
+  let broken = false;
+  return (chunk: Uint8Array) => {
+    if (broken) return;
+    if (buf.length === 0) {
+      buf = chunk;
+    } else {
+      const joined = new Uint8Array(buf.length + chunk.length);
+      joined.set(buf);
+      joined.set(chunk, buf.length);
+      buf = joined;
+    }
+    let off = 0;
+    while (buf.length - off >= 4) {
+      const len = ((buf[off] << 24) | (buf[off + 1] << 16) | (buf[off + 2] << 8) | buf[off + 3]) >>> 0;
+      if (len === 0 || len > maxBytes) {
+        broken = true;
+        buf = new Uint8Array(0);
+        opts.onCorrupt?.(`bad preview frame length ${len}`);
+        return;
+      }
+      if (buf.length - off - 4 < len) break;
+      // A copy, so the frame doesn't pin the whole chunk it came in.
+      onFrame(buf.slice(off + 4, off + 4 + len));
+      off += 4 + len;
+    }
+    buf = off === 0 ? buf : buf.slice(off);
+  };
+}
+
+/**
+ * Pass on only the newest value, at most once per `intervalMs`. A value
+ * that arrives too soon waits for the rest of the interval, and is replaced
+ * by any newer one in the meantime (latest wins; nothing queues up).
+ */
+export function createLatestThrottle<T>(
+  send: (value: T) => void,
+  intervalMs: number,
+  clock: {
+    now: () => number;
+    setTimeout: (fn: () => void, ms: number) => unknown;
+    clearTimeout: (t: unknown) => void;
+  } = {
+    now: () => Date.now(),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+  },
+) {
+  let lastSent = -Infinity;
+  let pending: { value: T } | null = null;
+  let timer: unknown = null;
+  const flush = () => {
+    timer = null;
+    if (!pending) return;
+    const { value } = pending;
+    pending = null;
+    lastSent = clock.now();
+    send(value);
+  };
+  return {
+    push(value: T) {
+      pending = { value };
+      if (timer !== null) return;
+      const wait = lastSent + intervalMs - clock.now();
+      if (wait <= 0) flush();
+      else timer = clock.setTimeout(flush, wait);
+    },
+    /** Drop anything waiting. */
+    cancel() {
+      pending = null;
+      if (timer !== null) clock.clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
+
 interface Deferred<T> {
   resolve: (v: T) => void;
   reject: (e: Error) => void;
@@ -152,6 +273,11 @@ interface Deferred<T> {
  * A take that ends on its own (cable pulled) is remembered so the next
  * stop() returns it instead of hanging. `warning` holds the current
  * mid-take warning ("stalled"), cleared when frames resume or the take ends.
+ *
+ * The live preview runs alongside: startPreview()/stopPreview() send the
+ * commands and `preview` follows the helper's reports for that device. A
+ * take on the previewed device reuses its session (the helper sees to it),
+ * and stopPreview() during a take only closes the session once it ends.
  */
 export class IosHelperClient {
   devices: IosDevice[] = [];
@@ -160,6 +286,8 @@ export class IosHelperClient {
   /** Last error not tied to a pending call (helper crash, stray error). */
   lastError: string | null = null;
   warning: IosWarning | null = null;
+  /** The preview asked for, and how it's going; null when none is wanted. */
+  preview: IosPreview | null = null;
 
   private starting: Deferred<IosStarted> | null = null;
   private stopping: Deferred<IosFinished> | null = null;
@@ -172,6 +300,8 @@ export class IosHelperClient {
       kill: () => void;
       /** A take ended without stop() (cable pulled, helper died). */
       onEnded?: (ended: { ok: IosFinished } | { err: string }) => void;
+      /** `preview` changed. */
+      onPreview?: (preview: IosPreview | null) => void;
     },
     private timeouts = { startMs: 20_000, stopMs: 30_000 },
   ) {}
@@ -216,6 +346,24 @@ export class IosHelperClient {
     });
   }
 
+  /** Show `id` live. Options are passed to the helper (fps, maxEdge, quality). */
+  startPreview(id: string, opts: { fps?: number; maxEdge?: number; quality?: number } = {}) {
+    if (this.preview?.id === id && this.preview.state !== 'error' && this.preview.state !== 'stopped') return;
+    this.setPreview({ id, state: 'connecting' });
+    this.io.write(JSON.stringify({ cmd: 'preview', id, ...opts }));
+  }
+
+  stopPreview() {
+    if (!this.preview) return;
+    this.setPreview(null);
+    this.io.write(JSON.stringify({ cmd: 'unpreview' }));
+  }
+
+  private setPreview(p: IosPreview | null) {
+    this.preview = p;
+    this.io.onPreview?.(p);
+  }
+
   handleLine(line: string) {
     const ev = parseHelperLine(line);
     if (ev) this.handleEvent(ev);
@@ -255,6 +403,15 @@ export class IosHelperClient {
       case 'warning':
         this.warning = ev.code === 'resumed' ? null : { code: ev.code, ...(ev.message ? { message: ev.message } : {}) };
         return;
+      case 'preview': {
+        // Reports for a device we no longer want (switched or stopped) are stale.
+        if (this.preview?.id !== ev.id) return;
+        const { event: _e, ...p } = ev;
+        // "stopped" while still wanted (the helper closed it, e.g. for a
+        // take on another device) is not an error, but it isn't live either.
+        this.setPreview(p);
+        return;
+      }
       case 'error': {
         const err = new IosCaptureError(ev.message, ev.code);
         if (this.starting) {
@@ -292,6 +449,7 @@ export class IosHelperClient {
       clearTimeout(p.timer);
       p.reject(err);
     }
+    if (this.preview) this.setPreview({ id: this.preview.id, state: 'error', message: reason });
     const wasRecording = this.recording && !this.stopping;
     this.starting = null;
     this.stopping = null;
