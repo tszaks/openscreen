@@ -8,6 +8,15 @@ import { Timeline } from '../../shared/timeline';
 import { CanvasCompositor } from './compositor';
 import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
+import {
+  planSmartCuts,
+  remapCues,
+  removedRanges,
+  firstKeptAtOrAfter,
+  lastKeptAtOrBefore,
+  type CutProposal,
+} from '../../shared/editcuts';
+import type { TranscriptWord } from '../../shared/types';
 
 const SWATCHES = [
   { name: 'Aurora', bg: { kind: 'gradient' as const, startHex: '#3a1c71', endHex: '#d76d77', angle: 120 } },
@@ -64,6 +73,11 @@ export function Editor({
   const cropDrag = useRef<{ x: number; y: number } | null>(null);
   const [peaks, setPeaks] = useState<number[]>([]);
   const waveRef = useRef<HTMLCanvasElement>(null);
+  // Smart cut preview: proposed ranges sit here until applied/dismissed.
+  const [smartCuts, setSmartCuts] = useState<(CutProposal & { on: boolean })[] | null>(null);
+  // Transcript edit mode: click/shift-click selects word ranges to cut.
+  const [editTranscript, setEditTranscript] = useState(false);
+  const [wordSel, setWordSel] = useState<{ cueId: string; anchor: number; end: number } | null>(null);
 
   useEffect(() => {
     let dead = false;
@@ -315,7 +329,15 @@ export function Editor({
     const audioClips = timeline.isIdentity
       ? undefined
       : proj.clips.map((c) => ({ start: c.sourceStart, end: c.sourceEnd, speed: c.speed }));
-    await api.exportBegin(outPath, W, H, fps, audioIn, audioClips, clickSfx ? clickEv.map((e) => e.time) : undefined);
+    await api.exportBegin(
+      outPath,
+      W,
+      H,
+      fps,
+      audioIn,
+      audioClips,
+      clickSfx ? clickEv.map((e) => e.time) : undefined,
+    );
     video.pause();
 
     cancelExport.current = false;
@@ -422,28 +444,99 @@ export function Editor({
 
   const dragFrom = useRef<number | null>(null);
 
-  /** Remove source-time ranges from the timeline; returns seconds removed. */
+  /** Remove source-time ranges from the timeline; returns seconds removed.
+   *  Captions/words are remapped through the cut so the transcript stays
+   *  aligned to the new output timeline. */
   const cutSourceRanges = (ranges: { start: number; end: number }[]) => {
+    const oldTl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
     const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
     const removed = tl.cutRanges(ranges);
-    if (removed > 0) setProj((p) => ({ ...p, clips: tl.clips }));
+    if (removed > 0) {
+      setProj((p) => ({ ...p, clips: tl.clips, captions: remapCues(p.captions, oldTl, tl, ranges) }));
+      setWordSel(null);
+    }
     return removed;
   };
 
-  const cutSilences = async () => {
-    setStatus('detecting silences…');
+  /** Detect silences + filler words and stage them as previewable cut proposals. */
+  const smartCut = async () => {
+    setStatus('analyzing audio…');
     try {
       const sils = await api.detectSilences(bundleDir, proj.recording.screenVideoFile);
-      if (!sils.length) {
-        setStatus('no silence detected');
+      // Words are stored in output time — map back to source for cutting.
+      const srcWords: TranscriptWord[] = [];
+      for (const c of proj.captions) {
+        for (const w of c.words ?? []) {
+          const s = timeline.sourceTime(w.start);
+          const e = timeline.sourceTime(w.end);
+          if (s !== null && e !== null && e > s) srcWords.push({ start: s, end: e, text: w.text });
+        }
+      }
+      // Fallback for transcripts without word timing (e.g. imported SRT):
+      // cut whole cues that are nothing but a filler word.
+      const fillerCues = srcWords.length
+        ? []
+        : proj.captions
+            .filter((c) => FILLER.test(c.text))
+            .map((c) => {
+              const s = timeline.sourceTime(c.start);
+              const e = timeline.sourceTime(c.end);
+              return s !== null && e !== null && e > s ? { start: s, end: e } : null;
+            })
+            .filter((r): r is { start: number; end: number } => r !== null);
+      const proposals = planSmartCuts({
+        silences: sils,
+        words: srcWords,
+        fillerCues,
+        sourceDuration: proj.recording.duration,
+      });
+      if (!proposals.length) {
+        setStatus(
+          proj.captions.length ? 'nothing to cut' : 'no silence found — transcribe to also cut fillers',
+        );
         return;
       }
-      const removed = cutSourceRanges(sils);
-      const pct = Math.round((removed / proj.recording.duration) * 100);
-      setStatus(removed ? `cut ${removed.toFixed(1)}s of silence (${pct}%)` : 'silence was already cut');
+      setSmartCuts(proposals.map((p) => ({ ...p, on: true })));
+      const saved = proposals.reduce((s, p) => s + p.end - p.start, 0);
+      setStatus(`${proposals.length} cuts proposed, ${saved.toFixed(1)}s — review & apply`);
     } catch (e) {
-      setStatus(`silence detect failed: ${e}`);
+      setStatus(`smart cut failed: ${e}`);
     }
+  };
+
+  const applySmartCuts = () => {
+    const sel = (smartCuts ?? []).filter((p) => p.on);
+    setSmartCuts(null);
+    if (!sel.length) return;
+    const removed = cutSourceRanges(sel);
+    setStatus(`cut ${sel.length} span(s), ${removed.toFixed(1)}s removed — ⌘Z to undo`);
+  };
+
+  /** Proposals live in source time; display them in output-time coords. */
+  const proposalOutRange = (p: { start: number; end: number }) => {
+    const gone = removedRanges(timeline);
+    const s = timeline.outputTime(firstKeptAtOrAfter(p.start, gone, proj.recording.duration));
+    const e = timeline.outputTime(lastKeptAtOrBefore(p.end, gone));
+    return s !== null && e !== null && e > s ? { start: s, end: e } : null;
+  };
+
+  /** Cut the selected word range (edit-by-transcript). */
+  const cutSelectedWords = () => {
+    if (!wordSel) return;
+    const cue = proj.captions.find((c) => c.id === wordSel.cueId);
+    if (!cue?.words?.length) return;
+    const lo = Math.min(wordSel.anchor, wordSel.end);
+    const hi = Math.max(wordSel.anchor, wordSel.end);
+    const sel = cue.words.slice(lo, hi + 1);
+    if (!sel.length) return;
+    const s = timeline.sourceTime(sel[0].start);
+    const e = timeline.sourceTime(sel[sel.length - 1].end);
+    if (s === null || e === null || !(e > s)) {
+      setStatus('selection already cut');
+      return;
+    }
+    const removed = cutSourceRanges([{ start: s, end: e }]);
+    setStatus(removed ? `cut “${sel.map((w) => w.text).join(' ')}” (${removed.toFixed(1)}s)` : 'nothing cut');
   };
 
   const seekOutput = (outT: number) => {
@@ -464,23 +557,6 @@ export function Editor({
     }
     const removed = cutSourceRanges([{ start: s, end: e }]);
     setStatus(removed ? `cut ${removed.toFixed(1)}s` : 'nothing cut');
-  };
-
-  const cutFillers = () => {
-    const ranges = proj.captions
-      .filter((c) => FILLER.test(c.text))
-      .map((c) => {
-        const s = timeline.sourceTime(c.start);
-        const e = timeline.sourceTime(c.end);
-        return s !== null && e !== null && e > s ? { start: s, end: e } : null;
-      })
-      .filter((r): r is { start: number; end: number } => r !== null);
-    if (!ranges.length) {
-      setStatus('no filler cues');
-      return;
-    }
-    const removed = cutSourceRanges(ranges);
-    setStatus(`cut ${ranges.length} filler cue(s), ${removed.toFixed(1)}s`);
   };
 
   // Keyboard shortcuts: space = play/pause, S = split, ⌘Z = undo, ⌘⇧Z = redo.
@@ -513,7 +589,12 @@ export function Editor({
       } else if (e.key === 's' || e.key === 'S') {
         splitAtPlayhead();
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
-        deleteSelectedClip();
+        if (editTranscript && wordSel) {
+          e.preventDefault();
+          cutSelectedWords();
+        } else {
+          deleteSelectedClip();
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -589,7 +670,20 @@ export function Editor({
           const start = timeline.outputTime(s.start);
           const end = timeline.outputTime(s.end);
           if (start === null || end === null) return null;
-          return { id: crypto.randomUUID(), start, end, text: s.text };
+          const words = (s.words ?? [])
+            .map((w) => {
+              const ws = timeline.outputTime(w.start);
+              const we = timeline.outputTime(w.end);
+              return ws !== null && we !== null && we > ws
+                ? { start: ws, end: we, text: w.text }
+                : null;
+            })
+            .filter((w): w is NonNullable<typeof w> => w !== null);
+          // Cue text is rebuilt from surviving words so words already cut
+          // from the timeline don't linger in the transcript.
+          const text = words.length ? words.map((w) => w.text).join(' ') : s.text;
+          if (!text) return null;
+          return { id: crypto.randomUUID(), start, end, text, ...(words.length ? { words } : {}) };
         })
         .filter((c): c is NonNullable<typeof c> => c !== null);
       if (!cues.length) {
@@ -597,7 +691,9 @@ export function Editor({
         return;
       }
       setProj((p) => ({ ...p, captions: cues }));
-      setStatus(`${cues.length} captions transcribed`);
+      setWordSel(null);
+      const nWords = cues.reduce((n, c) => n + (c.words?.length ?? 0), 0);
+      setStatus(`${cues.length} captions transcribed${nWords ? ` (${nWords} words)` : ''}`);
     } catch (e) {
       setStatus(`transcribe failed: ${e}`);
     }
@@ -702,6 +798,22 @@ export function Editor({
             }}
           />
         ))}
+        {(smartCuts ?? []).map((p, i) => {
+          const r = proposalOutRange(p);
+          if (!r) return null;
+          const outDur = timeline.outputDuration || duration || 1;
+          return (
+            <div
+              key={`cut-${i}`}
+              className={`cutmark${p.on ? '' : ' off'}`}
+              title={`${p.kind === 'silence' ? 'Silence' : 'Filler'} ${p.label}`}
+              style={{
+                left: `${(r.start / outDur) * 100}%`,
+                width: `${((r.end - r.start) / outDur) * 100}%`,
+              }}
+            />
+          );
+        })}
         {zoomMarks.map((s, i) => (
           <div
             key={i}
@@ -1023,8 +1135,11 @@ export function Editor({
         <button onClick={transcribe} title="Auto-transcribe via whisper">
           Transcribe
         </button>
-        <button onClick={cutSilences} title="Detect and cut silent spans from the timeline">
-          Cut silences
+        <button
+          onClick={smartCut}
+          title="Detect silences + filler words and preview the cuts before applying"
+        >
+          Smart cut
         </button>
         <label style={{ cursor: 'pointer' }}>
           Captions…
@@ -1068,6 +1183,46 @@ export function Editor({
         <span className="status">{status}</span>
       </div>
       </div>
+      {smartCuts && (
+        <div className="transcript smartcuts">
+          <h3>
+            Smart cut — {smartCuts.filter((p) => p.on).length}/{smartCuts.length} selected
+          </h3>
+          {smartCuts.map((p, i) => {
+            const r = proposalOutRange(p);
+            return (
+              <div
+                className="cue"
+                key={i}
+                onClick={() => {
+                  if (r) seekOutput(r.start);
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={p.on}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() =>
+                    setSmartCuts((s) =>
+                      s ? s.map((x, xi) => (xi === i ? { ...x, on: !x.on } : x)) : s,
+                    )
+                  }
+                />
+                <span className="t">{r ? fmtTime(r.start) : '—'}</span>
+                <span className={p.kind}>
+                  {p.kind === 'silence' ? 'silence' : 'filler'} {p.label}
+                </span>
+              </div>
+            );
+          })}
+          <div className="sc-actions">
+            <button className="primary" onClick={applySmartCuts}>
+              Apply cuts
+            </button>
+            <button onClick={() => setSmartCuts(null)}>Dismiss</button>
+          </div>
+        </div>
+      )}
       {(proj.captions.length > 0 || proj.annotations.length > 0) && (
         <div className="transcript">
           {proj.annotations.length > 0 && (
@@ -1118,14 +1273,56 @@ export function Editor({
           )}
           {proj.captions.length > 0 && (
             <>
-              <h3>Transcript</h3>
-          <button className="cutall" onClick={cutFillers} title="Cut cues that are only filler words">
-            Cut fillers
-          </button>
+              <h3>
+                Transcript
+                <button
+                  className={`mini${editTranscript ? ' on' : ''}`}
+                  title="Edit mode: click a word, shift-click to extend, then delete to cut that span"
+                  onClick={() => {
+                    setEditTranscript((v) => !v);
+                    setWordSel(null);
+                  }}
+                >
+                  Edit
+                </button>
+              </h3>
+          {editTranscript && wordSel && (
+            <button className="cutall" onClick={cutSelectedWords} title="Cut the selected words' span from the video">
+              Cut selected words
+            </button>
+          )}
           {proj.captions.map((c) => (
-            <div className="cue" key={c.id} onClick={() => seekOutput(c.start)}>
+            <div className="cue" key={c.id} onClick={() => !editTranscript && seekOutput(c.start)}>
               <span className="t">{fmtTime(c.start)}</span>
-              <span>{c.text}</span>
+              {editTranscript && c.words?.length ? (
+                <span className="words">
+                  {c.words.map((w, wi) => {
+                    const sel =
+                      wordSel?.cueId === c.id &&
+                      wi >= Math.min(wordSel.anchor, wordSel.end) &&
+                      wi <= Math.max(wordSel.anchor, wordSel.end);
+                    return (
+                      <span
+                        key={wi}
+                        className={`tw${sel ? ' sel' : ''}`}
+                        title={fmtTime(w.start)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (e.shiftKey && wordSel?.cueId === c.id) {
+                            setWordSel({ cueId: c.id, anchor: wordSel.anchor, end: wi });
+                          } else {
+                            setWordSel({ cueId: c.id, anchor: wi, end: wi });
+                          }
+                        }}
+                      >
+                        {w.text}{' '}
+                      </span>
+                    );
+                  })}
+                </span>
+              ) : (
+                <span>{c.text}</span>
+              )}
               <span
                 className="x"
                 title="Cut this cue from the video"

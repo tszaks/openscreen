@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCursorTracker, type CursorTracker } from './cursor';
 import type { CursorSample, KeystrokeSample, Project } from '../shared/types';
+import { tokensToWords, type WhisperToken } from '../shared/transcript';
 
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
@@ -212,19 +213,21 @@ app.whenReady().then(() => {
     } else {
       cli = '/opt/homebrew/bin/whisper-cli';
     }
+    // -ojf adds per-token offsets (ms) so the editor gets word-level timing.
     await run(cli, [
-      '-m', model, '-f', wav, '--output-json', '--output-file', jsonOut.replace(/\.json$/, ''),
+      '-m', model, '-f', wav, '--output-json-full', '--output-file', jsonOut.replace(/\.json$/, ''),
       '-t', '4',
     ]);
     if (!existsSync(jsonOut)) throw new Error('whisper produced no output');
     const parsed = JSON.parse(readFileSync(jsonOut, 'utf8'));
-    // whisper-cli --output-json emits { transcription: [{ offsets: {from,to}, text }] }
+    // whisper-cli --output-json-full emits { transcription: [{ offsets: {from,to}, text, tokens }] }
     const segs = parsed.transcription ?? parsed.result ?? [];
     return segs
-      .map((s: { offsets?: { from: number; to: number }; timestamps?: { from: string; to: string }; text: string }) => {
+      .map((s: { offsets?: { from: number; to: number }; timestamps?: { from: string; to: string }; text: string; tokens?: WhisperToken[] }) => {
         const from = s.offsets?.from ?? 0;
         const to = s.offsets?.to ?? 0;
-        return { start: from / 1000, end: to / 1000, text: (s.text ?? '').trim() };
+        const words = s.tokens ? tokensToWords(s.tokens) : [];
+        return { start: from / 1000, end: to / 1000, text: (s.text ?? '').trim(), words };
       })
       .filter((c: { start: number; end: number; text: string }) => c.end > c.start && c.text);
   });
