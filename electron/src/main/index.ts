@@ -83,7 +83,7 @@ app.whenReady().then(() => {
   ipcMain.handle('sources:list', async () => {
     const sources = await desktopCapturer.getSources({
       types: ['screen', 'window'],
-      thumbnailSize: { width: 240, height: 140 },
+      thumbnailSize: { width: 640, height: 400 },
       fetchWindowIcons: true,
     });
     return sources.map((s) => ({
