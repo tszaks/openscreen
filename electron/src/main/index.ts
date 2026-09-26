@@ -8,6 +8,9 @@ import type { MenuPhase } from '../shared/menu';
 import type { CursorSample, KeystrokeSample, Project } from '../shared/types';
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
 
+// Dev runs take the name from package.json ("openscreen"); the menu wants the product name.
+app.setName('OpenScreen');
+
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
 
