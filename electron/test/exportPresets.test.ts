@@ -115,7 +115,10 @@ describe('ffmpegArgsFor', () => {
     expect(val('-profile:v')).toBe('high');
     expect(val('-level:v')).toBe('4.0');
     expect(val('-b:v')).toBe('11000k');
-    expect(val('-maxrate')).toBe('12000k');
+    // Constant rate so static footage doesn't undershoot Apple's 10-12 Mbps range.
+    expect(val('-minrate')).toBe('11000k');
+    expect(val('-maxrate')).toBe('11000k');
+    expect(val('-x264-params')).toContain('nal-hrd=cbr');
     expect(val('-r')).toBe('30');
     expect(val('-fps_mode')).toBe('cfr');
     expect(val('-vf')).toContain('scale=886:1920');
