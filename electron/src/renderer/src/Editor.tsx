@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
-import { normalizeProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type Size, type ZoomSettings } from '../../shared/types';
+import { normalizeProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
 import { AutofocusPlanner, cameraAt, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
@@ -582,15 +582,19 @@ export function Editor({
     }
   };
 
-  /** A multi-format pass's compositor: the pass's own canvas (several presets
-   *  can't share the editor's single canvas), the preset's layout, and the
-   *  editor's zooms only where the preset keeps them. */
-  const presetCompositor = (preset: ExportPreset, size: Size = preset) =>
-    new CanvasCompositor(
-      projectForPreset(proj, preset),
-      { width: size.width, height: size.height },
+  /** A multi-format pass's compositor: the preset's layout, the editor's
+   *  zooms only where the preset keeps them, and a canvas exactly the size
+   *  the compositor lays that preset out at (App Store ids resolve to the
+   *  recording's orientation). Transcoding scales it to each preset's size. */
+  const presetCompositor = (preset: ExportPreset) => {
+    const copy = projectForPreset(proj, preset);
+    const drawn = layoutPresetOf(copy) ?? preset;
+    return new CanvasCompositor(
+      copy,
+      { width: drawn.width, height: drawn.height },
       presetUsesZoom(preset) ? segments : [],
     );
+  };
 
   const writeSidecars = async (basePath: string) => {
     if (proj.captions.length) await api.writeText(`${basePath}.srt`, toSrt(proj.captions));
@@ -711,7 +715,7 @@ export function Editor({
         if (cancelExport.current) break;
         const frames = Math.floor(dur * pass.fps);
         const passStart = done;
-        const comp = presetCompositor(getPreset(pass.layoutPreset), pass);
+        const comp = presetCompositor(getPreset(pass.layoutPreset));
         for (const id of pass.presetIds) setRow(id, { status: 'rendering', progress: 0 });
         detail = `Rendering ${pass.presetIds.map(shortName).join(' and ')}`;
         publish();
