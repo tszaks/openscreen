@@ -7,6 +7,7 @@ import { buildAppMenu } from './menu';
 import type { MenuPhase } from '../shared/menu';
 import { normalizeProject, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
+import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
 
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
@@ -236,30 +237,57 @@ app.whenReady().then(() => {
     return picked.canceled ? null : picked.filePaths[0];
   });
 
-  // Current macOS desktop wallpaper path (for the 'wallpaper' background).
-  ipcMain.handle('background:wallpaper', async () => {
-    if (process.platform !== 'darwin') return null;
-    const { execFile } = await import('node:child_process');
-    return new Promise<string | null>((resolve) => {
-      execFile(
-        'osascript',
-        ['-e', 'tell application "Finder" to get POSIX path of (get desktop picture as alias)'],
-        (_err, stdout) => resolve(stdout.trim() || null),
-      );
-    });
-  });
-
-  // Chromium can't decode HEIC (the usual macOS wallpaper format): hand the
-  // renderer a JPEG copy made with sips, cached by path + mtime.
-  ipcMain.handle('background:prepare', async (_e, path: string) => {
-    if (!/\.hei[cf]$/i.test(path)) return path;
-    const { execFile } = await import('node:child_process');
+  // Where converted backgrounds live: a JPEG per source file, keyed by path +
+  // mtime so an edited file converts again.
+  const backgroundCachePath = async (source: string) => {
     const { statSync } = await import('node:fs');
     const { createHash } = await import('node:crypto');
     const dir = join(app.getPath('userData'), 'backgrounds');
     mkdirSync(dir, { recursive: true });
-    const key = createHash('sha1').update(`${path}:${statSync(path).mtimeMs}`).digest('hex');
-    const out = join(dir, `${key}.jpg`);
+    const key = createHash('sha1').update(`${source}:${statSync(source).mtimeMs}`).digest('hex');
+    return join(dir, `${key}.jpg`);
+  };
+
+  // An image file for the current macOS wallpaper, or null when there isn't
+  // one to use. NSWorkspace needs no Automation permission (Finder does).
+  // Aerials and videos become a still frame; HEIC is converted when drawn.
+  ipcMain.handle('background:wallpaper', async () => {
+    if (process.platform !== 'darwin') return null;
+    const { execFile } = await import('node:child_process');
+    const { statSync } = await import('node:fs');
+    const found = await new Promise<{ path: string; video: string } | null>((resolve) =>
+      execFile('osascript', ['-l', 'JavaScript', '-e', WALLPAPER_JXA], (err, stdout) => {
+        try {
+          resolve(err ? null : JSON.parse(stdout));
+        } catch {
+          resolve(null);
+        }
+      }),
+    );
+    if (!found) return null;
+    const isDirectory = !!found.path && existsSync(found.path) && statSync(found.path).isDirectory();
+    const plan = planWallpaper({ ...found, isDirectory });
+    if (plan.kind === 'image') return existsSync(plan.path) ? plan.path : null;
+    if (plan.kind === 'none' || !existsSync(plan.video)) return null;
+    const out = await backgroundCachePath(plan.video);
+    if (existsSync(out)) return out;
+    const bin = await ffmpegPath();
+    // A few seconds in: Aerials can open on a fade.
+    const grab = (at: string) =>
+      new Promise<boolean>((resolve) =>
+        execFile(bin, ['-y', '-ss', at, '-i', plan.video, '-frames:v', '1', '-q:v', '2', out], (err) =>
+          resolve(!err && existsSync(out)),
+        ),
+      );
+    return (await grab('3')) || (await grab('0')) ? out : null;
+  });
+
+  // Chromium can't decode HEIC (the usual macOS wallpaper format): hand the
+  // renderer a JPEG copy made with sips.
+  ipcMain.handle('background:prepare', async (_e, path: string) => {
+    if (!/\.hei[cf]$/i.test(path)) return path;
+    const { execFile } = await import('node:child_process');
+    const out = await backgroundCachePath(path);
     if (existsSync(out)) return out;
     return new Promise<string | null>((done) => {
       execFile('sips', ['-s', 'format', 'jpeg', path, '--out', out], (err) =>
