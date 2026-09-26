@@ -61,13 +61,13 @@ type LayoutFields = { layout?: { presetId?: unknown } & Record<string, unknown> 
 
 /**
  * The layout preset chosen in the editor, or null for 'none' and unknown ids.
- * 'appstore' means the App Store size for the recording's device and
- * orientation. Mirrors md-editor's layoutPreset() in shared/mobileProject.ts;
+ * Any 'appstore…' id means the App Store size for the recording's device and
+ * orientation, as the compositor draws it. Mirrors md-editor's layoutPreset() in shared/mobileProject.ts;
  * switch to that once both branches are merged.
  */
 export function layoutPresetOf(proj: Project): ExportPreset | null {
   const id = (proj as Project & LayoutFields).layout?.presetId;
-  if (id === 'appstore') {
+  if (typeof id === 'string' && id.startsWith('appstore')) {
     const { width, height } = proj.recording.sourceSize;
     const match = detectDevice(width, height);
     const family = match.device.family === 'ipad' && match.confidence >= 0.8 ? 'ipad' : 'iphone';

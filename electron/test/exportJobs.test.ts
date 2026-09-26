@@ -149,5 +149,8 @@ describe('projectForPreset', () => {
     expect(layoutPresetOf(Object.assign(project(), appstore))?.id).toBe('appstore-iphone');
     expect(layoutPresetOf(Object.assign(project(2622, 1206), appstore))?.id).toBe('appstore-iphone-landscape');
     expect(layoutPresetOf(Object.assign(project(2064, 2752), appstore))?.id).toBe('appstore-ipad');
+    // a concrete App Store id follows the recording too, as the compositor does
+    const landscapeId = { layout: { presetId: 'appstore-iphone-landscape' } };
+    expect(layoutPresetOf(Object.assign(project(), landscapeId))?.id).toBe('appstore-iphone');
   });
 });
