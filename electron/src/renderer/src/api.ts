@@ -25,7 +25,7 @@ declare global {
       transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string; words: TranscriptWord[] }[]>;
       detectSilences(dir: string, videoFile: string, thresholdDb?: number, minDur?: number): Promise<{ start: number; end: number }[]>;
       audioPeaks(dir: string, videoFile: string, buckets?: number): Promise<number[]>;
-      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: { start: number; end: number; speed: number }[], clicks?: number[]): Promise<boolean>;
+      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: { start: number; end: number; speed: number }[], clicks?: number[], voiceCleanup?: boolean): Promise<boolean>;
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       exportEnd(): Promise<boolean>;
       exportGif(inMp4: string, outGif: string): Promise<boolean>;

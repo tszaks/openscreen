@@ -79,6 +79,7 @@ export function Editor({
   // Transcript edit mode: click/shift-click selects word ranges to cut.
   const [editTranscript, setEditTranscript] = useState(false);
   const [wordSel, setWordSel] = useState<{ cueId: string; anchor: number; end: number } | null>(null);
+  const [voiceCleanup, setVoiceCleanup] = useState(false);
 
   useEffect(() => {
     let dead = false;
@@ -338,6 +339,7 @@ export function Editor({
       audioIn,
       audioClips,
       clickSfx ? clickEv.map((e) => e.time) : undefined,
+      voiceCleanup,
     );
     video.pause();
 
@@ -867,6 +869,14 @@ export function Editor({
             onChange={(e) => setClickSfx(e.target.checked)}
           />
           Click sfx
+        </label>
+        <label title="Denoise + level the voice track on export (highpass, afftdn, compressor, limiter — all local ffmpeg)">
+          <input
+            type="checkbox"
+            checked={voiceCleanup}
+            onChange={(e) => setVoiceCleanup(e.target.checked)}
+          />
+          Voice cleanup
         </label>
         {autofocusOn && (
           <button onClick={detectMotion} title="Frame-diff the video for taps/swipes (iPhone/iPad captures have no cursor track)">

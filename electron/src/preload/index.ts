@@ -21,8 +21,8 @@ const api = {
     ipcRenderer.invoke('audio:detectSilences', { dir, videoFile, thresholdDb, minDur }),
   audioPeaks: (dir: string, videoFile: string, buckets?: number) =>
     ipcRenderer.invoke('audio:peaks', { dir, videoFile, buckets }),
-  exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: unknown, clicks?: number[]) =>
-    ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn, audioClips, clicks }),
+  exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: unknown, clicks?: number[], voiceCleanup?: boolean) =>
+    ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn, audioClips, clicks, voiceCleanup }),
   exportFrame: (bytes: ArrayBuffer) => ipcRenderer.invoke('export:frame', bytes),
   exportEnd: () => ipcRenderer.invoke('export:end'),
   exportGif: (inMp4: string, outGif: string) => ipcRenderer.invoke('export:gif', { inMp4, outGif }),
