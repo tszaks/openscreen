@@ -2,6 +2,7 @@ import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, screen, she
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { createCursorTracker, type CursorTracker } from './cursor';
 import { startFfmpegJob, type FfmpegJob } from './ffmpegJob';
 import { disposeIosHelper, listIosDevices, onIosEnded, startIosRecording, stopIosRecording } from './ios';
@@ -11,6 +12,7 @@ import { normalizeProject, type CursorSample, type KeystrokeSample, type Project
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
 import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
 import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
+import { analysisFrameSize, analyzeFrames, detectTaps, findDeadTime, splitRawGray, tapAnalysisFfmpegArgs } from '../shared/taps';
 import {
   alignToVideoStart,
   cursorModeFor,
@@ -679,6 +681,37 @@ app.whenReady().then(() => {
       return silences;
     },
   );
+
+  // Tap analysis for phone recordings: ffmpeg streams small grayscale
+  // frames, taps.ts turns their differences into tap/swipe suggestions and
+  // still stretches. Everything is in source seconds.
+  ipcMain.handle('taps:analyze', async (_e, args: { dir: string; videoFile: string }) => {
+    const { spawn } = await import('node:child_process');
+    const file = join(args.dir, args.videoFile);
+    const banner = await probe(file);
+    const size = parseFfmpegVideoSize(banner);
+    if (!size) throw new Error('could not read the video size');
+    // Long takes analyse at 15 fps so the frames stay in memory comfortably.
+    const fps = (parseFfmpegDuration(banner) ?? 0) > 240 ? 15 : 30;
+    const { w, h } = analysisFrameSize(size.width, size.height);
+    const bin = await ffmpegPath();
+    const raw = await new Promise<Buffer>((resolvePromise, reject) => {
+      const chunks: Buffer[] = [];
+      let err = '';
+      const ff = spawn(bin, tapAnalysisFfmpegArgs(file, { fps }));
+      ff.stdout.on('data', (c: Buffer) => chunks.push(c));
+      ff.stderr.on('data', (c: Buffer) => (err += c.toString()));
+      ff.on('error', reject);
+      ff.on('close', (code) =>
+        code === 0 ? resolvePromise(Buffer.concat(chunks)) : reject(new Error(err.trim() || `ffmpeg exited ${code}`)),
+      );
+    });
+    const frames = splitRawGray(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength), w, h, fps);
+    const analysis = analyzeFrames(frames);
+    const taps = detectTaps(analysis).map((t) => ({ ...t, id: randomUUID() }));
+    const deadTime = findDeadTime(analysis).map((d) => ({ start: d.start, end: d.end, ...(d.edge ? { edge: d.edge } : {}) }));
+    return { taps, deadTime };
+  });
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.

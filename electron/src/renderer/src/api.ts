@@ -1,4 +1,5 @@
-import type { CursorSample, KeystrokeSample, Project, TranscriptWord } from '../../shared/types';
+import type { CursorSample, KeystrokeSample, Project, TranscriptWord, WaitRange } from '../../shared/types';
+import type { TapSuggestion } from '../../shared/taps';
 import type { IosDevice, IosFinished, IosWarning } from '../../shared/iosCapture';
 import type { MenuAction, MenuPhase } from '../../shared/menu';
 
@@ -63,6 +64,8 @@ declare global {
       prepareBackground(path: string): Promise<string | null>;
       transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string; words: TranscriptWord[] }[]>;
       detectSilences(dir: string, videoFile: string, thresholdDb?: number, minDur?: number): Promise<{ start: number; end: number }[]>;
+      /** Tap/swipe suggestions and still stretches (source seconds) for a phone recording. */
+      analyzeTaps(dir: string, videoFile: string): Promise<{ taps: TapSuggestion[]; deadTime: WaitRange[] }>;
       audioPeaks(dir: string, videoFile: string, buckets?: number): Promise<number[]>;
       exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number): Promise<boolean>;
       /** Rejects with ffmpeg's reason once ffmpeg has stopped. */
