@@ -1,15 +1,18 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, screen } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, screen, shell } from 'electron';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { createCursorTracker, type CursorTracker } from './cursor';
+import { startFfmpegJob, type FfmpegJob } from './ffmpegJob';
 import { disposeIosHelper, listIosDevices, startIosRecording, stopIosRecording } from './ios';
 import { buildAppMenu } from './menu';
 import type { MenuPhase } from '../shared/menu';
 import type { CursorSample, KeystrokeSample, Project } from '../shared/types';
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
+import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
 
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
+let exportJob: FfmpegJob | null = null;
 
 // What the renderer is showing, so the menu enables only what applies.
 let menuState: { phase: MenuPhase; bundleDir?: string } = { phase: 'picker' };
@@ -378,10 +381,10 @@ app.whenReady().then(() => {
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
-  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean }) => {
-    const { spawn } = await import('node:child_process');
+  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number }) => {
+    await exportJob?.abort(); // a previous export that never ended
+    exportJob = null;
     const ffmpegBin = await ffmpegPath();
-    let audioArgs: string[] = [];
     // Confirm the source actually has an audio stream before filtering
     // (filter_complex on a missing stream aborts the whole encode).
     let hasAudio = false;
@@ -392,136 +395,84 @@ app.whenReady().then(() => {
       );
       hasAudio = /Stream #\d+:\d+.*Audio:/.test(probe);
     }
-
-    // Click sfx: a decaying-sine tick per output-time click, mixed into
-    // whatever program audio exists (or as the whole track when none).
-    const clicks = (args.clicks ?? []).filter((t) => t >= 0).slice(0, 300);
-    const sfxParts: string[] = [];
-    let sfxOut = '';
-    if (clicks.length) {
-      // short decaying sine ping per click
-      sfxParts.push(`[sfxin]asplit=${clicks.length}${clicks.map((_, i) => `[s${i}]`).join('')}`);
-      clicks.forEach((t, i) => {
-        const ms = Math.round(t * 1000);
-        sfxParts.push(`[s${i}]adelay=${ms}|${ms},volume=0.6[c${i}]`);
-      });
-      sfxParts.push(`${clicks.map((_, i) => `[c${i}]`).join('')}amix=inputs=${clicks.length}:normalize=0[sfx]`);
-      sfxOut = '[sfx]';
-    }
-
-    // Voice cleanup: rumble cut → FFT denoise → gentle compression → limiter.
-    const CLEANUP =
-      'highpass=f=70,afftdn=nf=-24,acompressor=threshold=-20dB:ratio=2.5:attack=10:release=150:makeup=3,alimiter=limit=0.891';
-    const cleanup = args.voiceCleanup === true;
-
-    const filters: string[] = [];
-    let programPad = ''; // labeled pad feeding program audio into amix, or ''
-    if (hasAudio && args.audioIn && args.audioClips?.length) {
-      const clips = args.audioClips;
-      filters.push(
-        ...clips.map(
-          (c, i) =>
-            `[1:a]atrim=start=${c.start.toFixed(3)}:end=${c.end.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${Math.min(100, Math.max(0.5, c.speed))}${cleanup ? ',' + CLEANUP : ''}[a${i}]`,
-        ),
-        `${clips.map((_, i) => `[a${i}]`).join('')}concat=n=${clips.length}:v=0:a=1[prog]`,
-      );
-      programPad = '[prog]';
-    } else if (hasAudio && args.audioIn && cleanup) {
-      filters.push(`[1:a]${CLEANUP}[prog]`);
-      programPad = '[prog]';
-    } else if (hasAudio && args.audioIn) {
-      programPad = '[1:a]'; // pad specifier works directly as a filter input
-    }
-
-    const lavfiIndex = args.audioIn ? 2 : 1;
-    const lavfiInputs: string[] = clicks.length
-      ? ['-f', 'lavfi', '-i', 'aevalsrc=0.5*sin(1900*2*PI*t)*exp(-t*70):s=44100:d=0.09']
-      : [];
-    const mapArgs: string[] = [];
-    if (clicks.length && programPad) {
-      filters.unshift(`[${lavfiIndex}:a]anull[sfxin]`, ...sfxParts);
-      filters.push(`${programPad}[sfx]amix=inputs=2:normalize=0[aout]`);
-      mapArgs.push('-map', '0:v', '-map', '[aout]');
-    } else if (clicks.length) {
-      filters.unshift(`[${lavfiIndex}:a]anull[sfxin]`, ...sfxParts);
-      mapArgs.push('-map', '0:v', '-map', '[sfx]');
-    } else if (hasAudio && args.audioClips?.length) {
-      mapArgs.push('-map', '0:v', '-map', '[prog]');
-    } else if (hasAudio && cleanup) {
-      mapArgs.push('-map', '0:v', '-map', '[prog]');
-    } else if (hasAudio) {
-      // identity timeline, no cleanup — passthrough, no filter_complex needed
-      audioArgs = ['-i', args.audioIn!, '-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-shortest'];
-    }
-
-    if (audioArgs.length === 0 && filters.length) {
-      audioArgs = [
-        ...(args.audioIn ? ['-i', args.audioIn] : []),
-        ...lavfiInputs,
-        '-filter_complex', filters.join(';'),
-        ...mapArgs,
-        '-c:a', 'aac', '-shortest',
-      ];
-    }
-    const argv = [
-      '-y',
-      '-f', 'rawvideo',
-      '-pix_fmt', 'rgba',
-      '-s', `${args.w}x${args.h}`,
-      '-r', String(args.fps),
-      '-i', 'pipe:0',
-      ...audioArgs,
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-crf', '18',
-      args.outPath,
-    ];
-    const ff = spawn(ffmpegBin, argv);
-    const errChunks: Buffer[] = [];
-    ff.stdin.on('error', (e) => console.error('ffmpeg stdin:', e));
-    ff.stderr.on('data', (d: Buffer) => {
-      errChunks.push(d);
-      if (errChunks.length > 30) errChunks.shift();
-    });
-    ff.on('error', (e) => console.error('ffmpeg spawn:', e));
-    ff.on('exit', (code) => {
-      if (code !== 0) console.error('ffmpeg exited', code, Buffer.concat(errChunks).toString());
-    });
-    (globalThis as any).__ffmpeg = ff;
+    mkdirSync(dirname(args.outPath), { recursive: true });
+    exportJob = await startFfmpegJob(ffmpegBin, buildExportArgs({ ...args, hasAudio }), args.outPath);
     return true;
   });
 
-  // Convert an exported mp4 into an optimized gif (two-pass palette).
+  // Where to save: a save dialog opened on ~/Movies/OpenScreen/<project>.<ext>.
+  // Resolves null when the user cancels.
+  ipcMain.handle('export:pickPath', async (_e, args: { bundleDir: string; kind: 'mp4' | 'gif' }) => {
+    const name = basename(args.bundleDir).replace(/\.openscreen$/, '') || 'OpenScreen export';
+    mkdirSync(recordingsRoot(), { recursive: true });
+    const picked = await dialog.showSaveDialog(win!, {
+      title: args.kind === 'gif' ? 'Export GIF' : 'Export MP4',
+      defaultPath: join(recordingsRoot(), `${name}.${args.kind}`),
+      filters: [args.kind === 'gif' ? { name: 'GIF', extensions: ['gif'] } : { name: 'MP4 video', extensions: ['mp4'] }],
+    });
+    if (picked.canceled || !picked.filePath) return null;
+    // ffmpeg picks the container from the extension, so make sure it has one.
+    return extname(picked.filePath).toLowerCase() === `.${args.kind}` ? picked.filePath : `${picked.filePath}.${args.kind}`;
+  });
+
+  ipcMain.handle('export:reveal', (_e, path: string) => {
+    shell.showItemInFolder(path);
+    return true;
+  });
+
+  // Convert an exported mp4 into an optimized gif (two-pass palette). The
+  // mp4 is an intermediate and is removed either way.
   ipcMain.handle('export:gif', async (_e, args: { inMp4: string; outGif: string }) => {
     const { execFile } = await import('node:child_process');
     const bin = await ffmpegPath();
-    await new Promise<void>((resolve, reject) =>
-      execFile(
-        bin,
-        [
-          '-y', '-i', args.inMp4,
-          '-vf', 'fps=12,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer',
-          '-loop', '0', args.outGif,
-        ],
-        (e) => (e ? reject(e) : resolve()),
-      ),
-    );
+    try {
+      await new Promise<void>((resolve, reject) =>
+        execFile(
+          bin,
+          [
+            '-hide_banner', '-loglevel', 'error',
+            '-y', '-i', args.inMp4,
+            '-vf', 'fps=12,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer',
+            '-loop', '0', args.outGif,
+          ],
+          (e, _so, se) => {
+            if (!e) return resolve();
+            const code = typeof e.code === 'number' ? e.code : null;
+            const error = typeof e.code === 'string' ? e : undefined;
+            reject(new Error(ffmpegFailure({ code, signal: e.signal ?? null, error }, se ?? '') ?? e.message));
+          },
+        ),
+      );
+    } catch (e) {
+      rmSync(args.outGif, { force: true });
+      throw e;
+    } finally {
+      rmSync(args.inMp4, { force: true });
+    }
     return true;
   });
 
   ipcMain.handle('export:frame', async (_e, bytes: ArrayBuffer) => {
-    const ff = (globalThis as any).__ffmpeg;
-    if (!ff) return false;
-    return ff.stdin.write(Buffer.from(bytes));
+    if (!exportJob) throw new Error('export not started');
+    await exportJob.write(new Uint8Array(bytes));
+    return true;
   });
 
+  // Finish the file. Throws with ffmpeg's reason when the encode failed.
   ipcMain.handle('export:end', async () => {
-    const ff = (globalThis as any).__ffmpeg;
-    if (!ff) return false;
-    return new Promise<boolean>((resolve) => {
-      ff.on('exit', () => resolve(true));
-      ff.stdin.end();
-    });
+    const job = exportJob;
+    exportJob = null;
+    if (!job) throw new Error('export not started');
+    await job.end();
+    return true;
+  });
+
+  // Cancel or renderer-side failure: stop ffmpeg and delete the partial file.
+  ipcMain.handle('export:abort', async () => {
+    const job = exportJob;
+    exportJob = null;
+    await job?.abort();
+    return true;
   });
 
   ipcMain.handle('display:info', () =>
