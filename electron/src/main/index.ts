@@ -776,6 +776,8 @@ app.on('before-quit', (e) => {
     return;
   }
   quitConfirmed = true;
+  // Don't leave ffmpeg running or a half-written export behind.
+  void exportJob?.abort();
 });
 
 app.on('will-quit', () => {
