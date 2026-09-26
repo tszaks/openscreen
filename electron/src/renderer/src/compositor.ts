@@ -1,8 +1,29 @@
 // Canvas compositor — port of the RenderKit compositor. Draw order:
 // background → screen frame (zoomed via camera, rounded corners, shadow)
 // → software cursor → click ripples → caption pill.
+//
+// Phone recordings add: a blurred-recording backdrop, the video clipped to
+// the real screen shape, touch indicators inside the zoom camera (so they
+// zoom with the content), the procedural device frame and a title card.
+// With a layout preset the canvas and phone placement come from
+// computePhoneLayout; without one the phone sits in the classic padded frame.
 import type { Annotation, CaptionCue, Point, Project, Size } from '../../shared/types';
 import { cameraAt, type AutofocusOptions, type FocusSegment } from '../../shared/autofocus';
+import type { DeviceModel, Orientation } from '../../shared/devices';
+import type { ExportPreset } from '../../shared/exportPresets';
+import type { TapSuggestion } from '../../shared/taps';
+import { Timeline } from '../../shared/timeline';
+import { isPhoneProject, layoutPreset, presetAllowsZoom, resolveDevice, tapsToOutput } from '../../shared/mobileProject';
+import {
+  clipToScreen,
+  continuousRectPath,
+  drawDeviceFrame,
+  pointScaleFor,
+  screenRectFor,
+  type Rect,
+} from './mobile/deviceFrame';
+import { ACCENT_TOUCH_COLOR, drawTouchIndicators } from './mobile/tapIndicator';
+import { computePhoneLayout, drawBlurredBackground, drawTitleCard, type PhoneLayout } from './mobile/layout';
 import type { Ripple } from '../../shared/ripples';
 import { fileUrl } from '../../shared/fileUrl';
 import { api } from './api';
@@ -49,9 +70,35 @@ export interface FrameInputs {
   keystrokes?: string[]; // recently pressed key names, oldest→newest
 }
 
+/** Phone setup for a project, resolved once per compositor. */
+interface PhoneSetup {
+  device: DeviceModel;
+  orientation: Orientation;
+  preset: ExportPreset | null;
+  /** Set when a layout preset places the phone. */
+  layout: PhoneLayout | null;
+  /** Draw the hardware frame. */
+  frame: boolean;
+  /** Taps on the output timeline. */
+  taps: TapSuggestion[];
+}
+
+/** Where the full source frame lands on the canvas at the last render (zoom
+ *  included), and the visible screen rect: lets the editor map clicks back. */
+export interface ScreenMap {
+  /** The whole source frame, zoomed; may extend past the screen. */
+  source: Rect;
+  /** The visible screen / content rect. */
+  screen: Rect;
+}
+
 export class CanvasCompositor {
   readonly canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
+  private phone: PhoneSetup | null;
+  private zoomOn: boolean;
+  /** Filled by render(); see ScreenMap. */
+  screenMap: ScreenMap | null = null;
 
   constructor(
     private project: Project,
@@ -65,43 +112,113 @@ export class CanvasCompositor {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) throw new Error('no 2d context');
     this.ctx = ctx;
+    this.phone = phoneSetup(project);
+    this.zoomOn = presetAllowsZoom(this.phone?.preset ?? null);
+  }
+
+  /** The phone layout on this canvas (safe zone, title rect), when a preset places it. */
+  get phoneLayout(): PhoneLayout | null {
+    return this.phone?.layout ?? null;
+  }
+
+  /** Canvas px → normalized full-source coords, using the last render. Null
+   *  outside the visible screen. */
+  canvasToSource(px: number, py: number): Point | null {
+    const m = this.screenMap;
+    if (!m) return null;
+    const { screen: s, source: v } = m;
+    if (px < s.x || py < s.y || px > s.x + s.w || py > s.y + s.h) return null;
+    return { x: (px - v.x) / v.w, y: (py - v.y) / v.h };
+  }
+
+  /** Normalized full-source coords → canvas px, using the last render. */
+  sourceToCanvas(p: Point): Point | null {
+    const m = this.screenMap;
+    return m ? { x: m.source.x + p.x * m.source.w, y: m.source.y + p.y * m.source.h } : null;
   }
 
   /** Draw the frame at output time `time`. Zoom, captions and annotations
    *  are keyed to output time; the source-time overlays (cursor, keys) come
    *  in already resolved through `input`. */
   render(time: number, input: FrameInputs): void {
-    const { ctx, canvas } = this;
+    const { ctx, canvas, phone } = this;
     const { width: W, height: H } = canvas;
     const style = this.project.style;
-
-    // 1. Background.
-    this.drawBackground(W, H);
-
-    // 2. Screen frame inside padded content rect, camera-cropped.
-    const pad = Math.min(W, H) * style.paddingFraction;
-    const contentRect = { x: pad, y: pad, w: W - pad * 2, h: H - pad * 2 };
-
-    // Effective source rect = user crop (normalized → px) or full source.
     const fullW = this.project.recording.sourceSize.width;
     const fullH = this.project.recording.sourceSize.height;
+    const layout = phone?.layout ?? null;
+
+    // 1. Background.
+    if (phone && this.project.layout.background === 'blurred') {
+      drawBlurredBackground(ctx, input.frame, { width: fullW, height: fullH }, { width: W, height: H });
+    } else {
+      this.drawBackground(W, H);
+    }
+
+    // 2. Where the screen goes, and how to clip to it.
+    let rect: Rect;
+    let clip: () => void;
+    let frameBody: Rect | null = null;
+    if (layout && phone) {
+      rect = layout.screen;
+      if (layout.mode === 'full-bleed') {
+        clip = () => {
+          ctx.beginPath();
+          ctx.rect(0, 0, W, H);
+          ctx.clip();
+        };
+      } else if (phone.frame && layout.device) {
+        frameBody = layout.device;
+        const body = frameBody;
+        clip = () => clipToScreen(ctx, body, phone.device, { orientation: phone.orientation });
+      } else {
+        // No hardware: a floating screen with the device's real corners.
+        const r = layout.screenRadius;
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.38)';
+        ctx.shadowBlur = Math.max(rect.w, rect.h) * 0.06;
+        ctx.shadowOffsetY = Math.max(rect.w, rect.h) * 0.025;
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        continuousRectPath(ctx, rect.x, rect.y, rect.w, rect.h, r);
+        ctx.fill();
+        ctx.restore();
+        clip = () => {
+          ctx.beginPath();
+          continuousRectPath(ctx, rect.x, rect.y, rect.w, rect.h, r);
+          ctx.clip();
+        };
+      }
+    } else {
+      const pad = Math.min(W, H) * style.paddingFraction;
+      const contentRect = { x: pad, y: pad, w: W - pad * 2, h: H - pad * 2 };
+      if (phone?.frame) {
+        // Phone in the classic padded frame: the body fills the content rect.
+        const opts = { orientation: phone.orientation };
+        frameBody = contentRect;
+        rect = screenRectFor(contentRect, phone.device, opts);
+        clip = () => clipToScreen(ctx, contentRect, phone.device, opts);
+      } else {
+        rect = fitAspect(contentRect, style.cropRect ? (style.cropRect.w * fullW) / (style.cropRect.h * fullH) : fullW / fullH);
+        const r = style.cornerRadius;
+        clip = () => {
+          ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
+          ctx.shadowBlur = style.shadowRadius;
+          roundedPath(ctx, rect.x, rect.y, rect.w, rect.h, r);
+          ctx.clip();
+        };
+      }
+    }
+
+    // Effective source rect = user crop (normalized → px) or full source.
     const crop = style.cropRect;
     const srcRect = crop
       ? { x: crop.x * fullW, y: crop.y * fullH, w: crop.w * fullW, h: crop.h * fullH }
       : { x: 0, y: 0, w: fullW, h: fullH };
 
-    // Fit effective-source aspect inside content rect.
-    const srcAspect = srcRect.w / srcRect.h;
-    let rect = { ...contentRect };
-    if (contentRect.w / contentRect.h > srcAspect) {
-      rect.w = contentRect.h * srcAspect;
-      rect.x = contentRect.x + (contentRect.w - rect.w) / 2;
-    } else {
-      rect.h = contentRect.w / srcAspect;
-      rect.y = contentRect.y + (contentRect.h - rect.h) / 2;
-    }
-
-    const cam = cameraAt(time, this.focusSegments, this.autofocusOpts);
+    const cam = this.zoomOn
+      ? cameraAt(time, this.focusSegments, this.autofocusOpts)
+      : { center: { x: 0.5, y: 0.5 }, scale: 1 };
 
     // Camera crop: camera center is normalized over the FULL source —
     // remap into effective-source space, then apply zoom scale.
@@ -112,13 +229,30 @@ export class CanvasCompositor {
     const sx = srcRect.x + Math.max(0, Math.min(srcRect.w - cropW, cx - cropW / 2));
     const sy = srcRect.y + Math.max(0, Math.min(srcRect.h - cropH, cy - cropH / 2));
 
+    // The whole source frame as the camera places it (for taps and clicks).
+    const kx = rect.w / cropW;
+    const ky = rect.h / cropH;
+    const source = { x: rect.x - sx * kx, y: rect.y - sy * ky, w: fullW * kx, h: fullH * ky };
+    this.screenMap = { source, screen: intersect(rect, { x: 0, y: 0, w: W, h: H }) };
+
     ctx.save();
-    ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
-    ctx.shadowBlur = style.shadowRadius;
-    roundedPath(ctx, rect.x, rect.y, rect.w, rect.h, style.cornerRadius);
-    ctx.clip();
+    clip();
     ctx.drawImage(input.frame, sx, sy, cropW, cropH, rect.x, rect.y, rect.w, rect.h);
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    // Touch indicators ride the camera: same clip, same zoom as the video.
+    if (phone && this.project.tapStyle.show && phone.taps.length) {
+      const ts = this.project.tapStyle;
+      drawTouchIndicators(ctx, phone.taps, time, source, pointScaleFor(rect, phone.device) * cam.scale, {
+        style: ts.style,
+        color: ts.color === 'accent' ? ACCENT_TOUCH_COLOR : '#FFFFFF',
+        sizePt: ts.sizePt,
+      });
+    }
     ctx.restore();
+
+    // Overlays sit on the part of the screen that is on the canvas.
+    const visible = this.screenMap.screen;
 
     // 3. Cursor (full-source normalized → crop-relative → rect pixels).
     const dot = (px: number, py: number, d: number, fill: string) => {
@@ -167,10 +301,10 @@ export class CanvasCompositor {
     // 5. Camera overlay PiP in a corner of the content frame.
     const overlay = this.project.cameraOverlay;
     if (overlay.enabled && input.cameraFrame) {
-      const d = Math.min(rect.w, rect.h) * overlay.sizeFraction;
-      const margin = Math.min(rect.w, rect.h) * 0.04;
-      const ox = /Right/.test(overlay.corner) ? rect.x + rect.w - d - margin : rect.x + margin;
-      const oy = /bottom/i.test(overlay.corner) ? rect.y + rect.h - d - margin : rect.y + margin;
+      const d = Math.min(visible.w, visible.h) * overlay.sizeFraction;
+      const margin = Math.min(visible.w, visible.h) * 0.04;
+      const ox = /Right/.test(overlay.corner) ? visible.x + visible.w - d - margin : visible.x + margin;
+      const oy = /bottom/i.test(overlay.corner) ? visible.y + visible.h - d - margin : visible.y + margin;
       ctx.save();
       ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
       ctx.shadowBlur = style.shadowRadius * 0.4;
@@ -201,46 +335,31 @@ export class CanvasCompositor {
 
     // 6. Caption pill near content bottom.
     const cue = this.project.captions.find((c) => c.start <= time && time <= c.end);
-    if (cue && cue.text) this.drawCaption(cue, rect, W, H);
+    if (cue && cue.text) this.drawCaption(cue, visible, W, H);
 
     // 7. Keystroke keycaps, bottom-left inside the content frame.
-    if (input.keystrokes?.length) this.drawKeystrokes(input.keystrokes, rect, H);
+    if (input.keystrokes?.length) this.drawKeystrokes(input.keystrokes, visible, H);
 
     // 8. Text annotations on the content frame.
     for (const a of this.project.annotations ?? []) {
-      if (time >= a.start && time <= a.end) this.drawAnnotation(a, rect, H);
+      if (time >= a.start && time <= a.end) this.drawAnnotation(a, visible, H);
     }
 
-    // 9. Device bezel — hardware chrome drawn over the frame edge.
-    if (style.deviceFrame === 'phone') this.drawPhoneBezel(rect, H);
-  }
+    // 9. Device frame — hardware drawn over the screen's edge.
+    if (phone && frameBody) {
+      drawDeviceFrame(ctx, frameBody, phone.device, this.project.device.finishId, { orientation: phone.orientation });
+    }
 
-  private drawPhoneBezel(rect: { x: number; y: number; w: number; h: number }, H: number) {
-    const { ctx } = this;
-    const bw = Math.max(6, rect.w * 0.045); // bezel thickness
-    const r = Math.max(rect.w * 0.12, 8) + bw / 2;
-    // Outer shell
-    ctx.strokeStyle = '#141418';
-    ctx.lineWidth = bw;
-    roundedPath(ctx, rect.x - bw / 2, rect.y - bw / 2, rect.w + bw, rect.h + bw, r);
-    ctx.stroke();
-    // Inner hairline between screen and bezel
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
-    ctx.lineWidth = Math.max(1, bw * 0.08);
-    roundedPath(ctx, rect.x, rect.y, rect.w, rect.h, Math.max(rect.w * 0.12, 8));
-    ctx.stroke();
-    // Dynamic Island pill, overlapping the top edge
-    const iw = rect.w * 0.32;
-    const ih = Math.max(bw * 0.9, rect.h * 0.024);
-    ctx.fillStyle = '#0a0a0d';
-    roundedPath(ctx, rect.x + rect.w / 2 - iw / 2, rect.y + ih * 0.55, iw, ih, ih / 2);
-    ctx.fill();
-    // Side buttons
-    ctx.fillStyle = '#1c1c22';
-    const bh = rect.h * 0.11;
-    ctx.fillRect(rect.x - bw - bw * 0.15, rect.y + rect.h * 0.22, bw * 0.5, bh); // volume
-    ctx.fillRect(rect.x - bw - bw * 0.15, rect.y + rect.h * 0.36, bw * 0.5, bh * 0.8);
-    ctx.fillRect(rect.x + rect.w + bw - bw * 0.35, rect.y + rect.h * 0.28, bw * 0.5, bh); // power
+    // 10. Title card beside the phone.
+    const title = this.project.layout.titleCard;
+    if (layout?.title && title?.title.trim()) {
+      drawTitleCard(
+        ctx,
+        layout.title,
+        { title: title.title, subtitle: title.subtitle },
+        { align: layout.titleTextAlign, valign: layout.titleAlign },
+      );
+    }
   }
 
   private drawBackground(W: number, H: number) {
@@ -386,6 +505,50 @@ function keyLabel(key: string): string {
   };
   if (map[key]) return map[key];
   return key.length === 1 ? key.toUpperCase() : key;
+}
+
+/** Phone recordings: device, placement and taps for this project. */
+function phoneSetup(project: Project): PhoneSetup | null {
+  if (!isPhoneProject(project)) return null;
+  const { device, orientation } = resolveDevice(project);
+  const preset = layoutPreset(project);
+  const tl = new Timeline(project.recording.duration, project.clips);
+  const framedPreset = preset?.layout === 'framed';
+  const layout = preset
+    ? computePhoneLayout(preset, device, {
+        // Frameless phones keep the floating placement; only App Store is full-bleed.
+        deviceFrame: framedPreset,
+        titleCard: preset.titleCard && !!project.layout.titleCard,
+        orientation,
+      })
+    : null;
+  return {
+    device,
+    orientation,
+    preset,
+    layout,
+    frame: project.device.frame && (!preset || framedPreset),
+    taps: tapsToOutput(project.taps, tl),
+  };
+}
+
+/** Largest rect of `aspect` centred in `into`. */
+function fitAspect(into: Rect, aspect: number): Rect {
+  const r = { ...into };
+  if (into.w / into.h > aspect) {
+    r.w = into.h * aspect;
+    r.x = into.x + (into.w - r.w) / 2;
+  } else {
+    r.h = into.w / aspect;
+    r.y = into.y + (into.h - r.h) / 2;
+  }
+  return r;
+}
+
+function intersect(a: Rect, b: Rect): Rect {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  return { x, y, w: Math.max(0, Math.min(a.x + a.w, b.x + b.w) - x), h: Math.max(0, Math.min(a.y + a.h, b.y + b.h) - y) };
 }
 
 function roundedPath(
