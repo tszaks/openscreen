@@ -31,6 +31,9 @@ export interface ExportArgsInput {
   voiceCleanup?: boolean;
   /** Output length in seconds (frames / fps); the audio is cut to match. */
   duration: number;
+  /** An intermediate for preset transcodes (a .mov): near-lossless video
+   *  and PCM audio, so the second encode starts from clean pixels. */
+  master?: boolean;
 }
 
 // Voice cleanup: rumble cut → FFT denoise → gentle compression → limiter.
@@ -98,7 +101,7 @@ export function buildExportArgs(args: ExportArgsInput): string[] {
           `[bed]${audible.join('')}amix=inputs=${audible.length + 1}:duration=first:normalize=0[aout]`,
         ].join(';'),
         '-map', '0:v', '-map', '[aout]',
-        '-c:a', 'aac',
+        '-c:a', args.master ? 'pcm_s16le' : 'aac',
       ]
     : [];
   return [
@@ -113,7 +116,7 @@ export function buildExportArgs(args: ExportArgsInput): string[] {
     ...audioArgs,
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
-    '-crf', '18',
+    ...(args.master ? ['-preset', 'veryfast', '-crf', '10'] : ['-crf', '18']),
     args.outPath,
   ];
 }
