@@ -22,11 +22,32 @@ export interface IosFinished {
   duration?: number;
 }
 
+/**
+ * A mid-take problem that doesn't end the recording. The helper sends
+ * "stalled" (no new frame for 5s, usually a locked phone) and "resumed".
+ */
+export interface IosWarning {
+  code: string;
+  message?: string;
+}
+
+/** An error from the helper. `code` is "no-frames" when the phone never sent a picture. */
+export class IosCaptureError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = 'IosCaptureError';
+  }
+}
+
 export type HelperEvent =
   | { event: 'devices'; devices: IosDevice[] }
   | ({ event: 'started' } & IosStarted)
   | ({ event: 'finished' } & IosFinished)
-  | { event: 'error'; message: string };
+  | { event: 'error'; message: string; code?: string }
+  | ({ event: 'warning' } & IosWarning);
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const optNum = (v: unknown) => (isNum(v) ? v : undefined);
@@ -85,7 +106,18 @@ export function parseHelperLine(line: string): HelperEvent | null {
         duration: optNum(o.duration),
       };
     case 'error':
-      return { event: 'error', message: typeof o.message === 'string' ? o.message : 'unknown error' };
+      return {
+        event: 'error',
+        message: typeof o.message === 'string' ? o.message : 'unknown error',
+        ...(typeof o.code === 'string' && o.code ? { code: o.code } : {}),
+      };
+    case 'warning':
+      if (typeof o.code !== 'string' || !o.code) return null;
+      return {
+        event: 'warning',
+        code: o.code,
+        ...(typeof o.message === 'string' ? { message: o.message } : {}),
+      };
     default:
       return null;
   }
@@ -118,7 +150,8 @@ interface Deferred<T> {
  *
  * One take at a time: start() resolves on "started", stop() on "finished".
  * A take that ends on its own (cable pulled) is remembered so the next
- * stop() returns it instead of hanging.
+ * stop() returns it instead of hanging. `warning` holds the current
+ * mid-take warning ("stalled"), cleared when frames resume or the take ends.
  */
 export class IosHelperClient {
   devices: IosDevice[] = [];
@@ -126,6 +159,7 @@ export class IosHelperClient {
   ready = false;
   /** Last error not tied to a pending call (helper crash, stray error). */
   lastError: string | null = null;
+  warning: IosWarning | null = null;
 
   private starting: Deferred<IosStarted> | null = null;
   private stopping: Deferred<IosFinished> | null = null;
@@ -149,6 +183,7 @@ export class IosHelperClient {
   start(id: string, path: string): Promise<IosStarted> {
     if (this.busy) return Promise.reject(new Error('An iPhone recording is already running.'));
     this.endedEarly = null;
+    this.warning = null;
     return new Promise<IosStarted>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.starting = null;
@@ -165,7 +200,7 @@ export class IosHelperClient {
     if (this.endedEarly) {
       const e = this.endedEarly;
       this.endedEarly = null;
-      return 'ok' in e ? Promise.resolve(e.ok) : Promise.reject(new Error(e.err));
+      return 'ok' in e ? Promise.resolve(e.ok) : Promise.reject(new IosCaptureError(e.err));
     }
     if (!this.recording) return Promise.reject(new Error('No iPhone recording is running.'));
     if (this.stopping) return Promise.reject(new Error('Already stopping.'));
@@ -206,6 +241,7 @@ export class IosHelperClient {
       case 'finished': {
         const { event: _e, ...done } = ev;
         this.recording = false;
+        this.warning = null;
         const p = this.stopping;
         this.stopping = null;
         if (p) {
@@ -216,8 +252,11 @@ export class IosHelperClient {
         }
         return;
       }
+      case 'warning':
+        this.warning = ev.code === 'resumed' ? null : { code: ev.code, ...(ev.message ? { message: ev.message } : {}) };
+        return;
       case 'error': {
-        const err = new Error(ev.message);
+        const err = new IosCaptureError(ev.message, ev.code);
         if (this.starting) {
           const p = this.starting;
           this.starting = null;
@@ -231,6 +270,7 @@ export class IosHelperClient {
           p.reject(err);
         } else if (this.recording) {
           this.recording = false;
+          this.warning = null;
           this.endEarly({ err: ev.message });
         } else {
           this.lastError = ev.message;
@@ -245,7 +285,8 @@ export class IosHelperClient {
     this.ready = false;
     this.devices = [];
     this.lastError = reason;
-    const err = new Error(reason);
+    this.warning = null;
+    const err = new IosCaptureError(reason);
     for (const p of [this.starting, this.stopping]) {
       if (!p) continue;
       clearTimeout(p.timer);
