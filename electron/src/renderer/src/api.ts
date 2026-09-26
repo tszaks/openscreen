@@ -1,4 +1,4 @@
-import type { CursorSample, KeystrokeSample, Project } from '../../shared/types';
+import type { CursorSample, KeystrokeSample, Project, TranscriptWord } from '../../shared/types';
 
 export interface SourceInfo {
   id: string;
@@ -22,7 +22,7 @@ declare global {
       displays(): Promise<{ id: number; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]>;
       pickBackground(): Promise<string | null>;
       wallpaperPath(): Promise<string | null>;
-      transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string }[]>;
+      transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string; words: TranscriptWord[] }[]>;
       detectSilences(dir: string, videoFile: string, thresholdDb?: number, minDur?: number): Promise<{ start: number; end: number }[]>;
       audioPeaks(dir: string, videoFile: string, buckets?: number): Promise<number[]>;
       exportBegin(outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: { start: number; end: number; speed: number }[], clicks?: number[]): Promise<boolean>;
