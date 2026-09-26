@@ -5,10 +5,10 @@ import {
   removedRanges,
   firstKeptAtOrAfter,
   lastKeptAtOrBefore,
-  remapCues,
   isFillerWord,
 } from '../src/shared/editcuts';
 import { Timeline } from '../src/shared/timeline';
+import { remapCaptions } from '../src/shared/remap';
 
 describe('isFillerWord', () => {
   it('matches fillers, not lookalikes', () => {
@@ -111,7 +111,7 @@ describe('range helpers', () => {
   });
 });
 
-describe('remapCues', () => {
+describe('remapCaptions (cuts)', () => {
   const words = (xs: [number, number, string][]) =>
     xs.map(([start, end, text]) => ({ start, end, text }));
 
@@ -124,7 +124,7 @@ describe('remapCues', () => {
       { id: 'b', start: 12, end: 15, text: 'inside the cut' },
       { id: 'c', start: 30, end: 35, text: 'after' },
     ];
-    const out = remapCues(cues, oldTl, newTl, [{ start: 10, end: 20 }]);
+    const out = remapCaptions(cues, oldTl, newTl);
     expect(out.map((c) => c.id)).toEqual(['a', 'c']);
     expect(out[0].start).toBeCloseTo(0);
     expect(out[1].start).toBeCloseTo(20); // 30s source → 20s output after cutting 10s
@@ -135,7 +135,7 @@ describe('remapCues', () => {
     const newTl = new Timeline(60);
     newTl.cutRanges([{ start: 10, end: 20 }]);
     const cues = [{ id: 'x', start: 8, end: 25, text: 'straddles' }];
-    const out = remapCues(cues, oldTl, newTl, [{ start: 10, end: 20 }]);
+    const out = remapCaptions(cues, oldTl, newTl);
     expect(out).toHaveLength(1);
     expect(out[0].start).toBeCloseTo(8);
     expect(out[0].end).toBeCloseTo(15); // source 25 → output 15
@@ -159,7 +159,7 @@ describe('remapCues', () => {
         ]),
       },
     ];
-    const out = remapCues(cues, oldTl, newTl, [{ start: 1.4, end: 1.8 }]);
+    const out = remapCaptions(cues, oldTl, newTl);
     expect(out).toHaveLength(1);
     expect(out[0].text).toBe('today I will');
     expect(out[0].words).toHaveLength(3);
@@ -174,6 +174,6 @@ describe('remapCues', () => {
     const cues = [
       { id: 'a', start: 5.1, end: 9, text: 'Um uh', words: words([[5.1, 6, 'Um'], [7, 8.5, 'uh']]) },
     ];
-    expect(remapCues(cues, oldTl, newTl, [{ start: 5, end: 10 }])).toHaveLength(0);
+    expect(remapCaptions(cues, oldTl, newTl)).toHaveLength(0);
   });
 });
