@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 // Presentational primitives. No app state lives here: every component is
 // controlled by its caller, and styling comes from styles.css.
@@ -41,24 +41,36 @@ function useGlide(activeIndex: number, count: number) {
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<{ x: number; w: number } | null>(null);
   const [ready, setReady] = useState(false);
+  const measure = useCallback(() => {
+    const root = ref.current;
+    if (!root) return;
+    const el = root.querySelectorAll<HTMLElement>('[data-glide]')[activeIndex];
+    const next = el ? { x: el.offsetLeft, w: el.offsetWidth } : null;
+    // Only update on a real change, so measuring every render can't loop.
+    setBox((prev) =>
+      prev && next && prev.x === next.x && prev.w === next.w ? prev : next,
+    );
+  }, [activeIndex]);
+  // Options can move without resizing (reordered tabs, a count appearing), so
+  // re-measure after every render rather than only when something resizes.
+  useLayoutEffect(measure);
   useLayoutEffect(() => {
     const root = ref.current;
     if (!root) return;
-    const measure = () => {
-      const el = root.querySelectorAll<HTMLElement>('[data-glide]')[activeIndex];
-      setBox(el ? { x: el.offsetLeft, w: el.offsetWidth } : null);
-    };
-    measure();
     // Placed without motion first; only later changes animate.
     const raf = requestAnimationFrame(() => setReady(true));
     const ro = new ResizeObserver(measure);
     ro.observe(root);
     root.querySelectorAll('[data-glide]').forEach((el) => ro.observe(el));
+    const mo = new MutationObserver(measure);
+    mo.observe(root, { childList: true, subtree: true, characterData: true });
+    void document.fonts?.ready.then(measure);
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      mo.disconnect();
     };
-  }, [activeIndex, count]);
+  }, [measure, count]);
   const style = box
     ? ({ transform: `translateX(${box.x}px)`, width: box.w } as React.CSSProperties)
     : { opacity: 0 };
