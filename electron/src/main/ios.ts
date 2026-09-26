@@ -57,7 +57,13 @@ function ensureHelper() {
 
 export function listIosDevices() {
   ensureHelper();
-  return { devices: client.devices, ready: client.ready, error: client.ready ? null : client.lastError };
+  return {
+    devices: client.devices,
+    ready: client.ready,
+    error: client.ready ? null : client.lastError,
+    /** Mid-take warning, e.g. "stalled" when the phone may be locked. */
+    warning: client.warning,
+  };
 }
 
 export function startIosRecording(deviceId: string, outPath: string) {
