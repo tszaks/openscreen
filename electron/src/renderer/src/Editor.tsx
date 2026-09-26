@@ -939,7 +939,7 @@ export function Editor({
 
   const zoomPanel = (
     <>
-      <Section title="Auto-focus">
+      <Section title="Automatic">
         <Switch
           label="Auto-focus"
           hint="Zoom toward each click"
@@ -1437,6 +1437,7 @@ export function Editor({
         preload="auto"
         muted={exporting}
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onLoadedData={(e) => renderAt(e.currentTarget.currentTime)}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
       />
@@ -1614,43 +1615,90 @@ export function Editor({
       </aside>
 
       <footer className="ed-timeline">
-        <div className="timeline" onClick={seekTimeline}>
-          <canvas ref={waveRef} className="wave" />
-          <div
-            className="playhead"
-            style={{ left: `${(playhead / (timeline.outputDuration || duration || 1)) * 100}%` }}
-          />
-          {clipBlocks.map((b) => (
-            <div
-              key={b.id}
-              className={`clipblock${selectedClip === b.id ? ' selected' : ''}`}
-              draggable
-              onDragStart={(e) => {
-                dragFrom.current = timeline.clips.findIndex((c) => c.id === b.id);
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const from = dragFrom.current;
-                const to = timeline.clips.findIndex((c) => c.id === b.id);
-                dragFrom.current = null;
-                if (from === null || to < 0 || from === to) return;
-                const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
-                tl.reorder(from, to);
-                setProj((p) => ({ ...p, clips: tl.clips }));
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                setSelectedClip(b.id);
-              }}
-              style={{
-                left: `${(b.start / (timeline.outputDuration || duration || 1)) * 100}%`,
-                width: `${((b.end - b.start) / (timeline.outputDuration || duration || 1)) * 100}%`,
-              }}
-            />
-          ))}
+        <div className="tl-labels" aria-hidden="true">
+          <span />
+          <span>Clips</span>
+          <span>Zoom</span>
+          <span>Audio</span>
+        </div>
+        {/* The seek target spans exactly the lanes, so click % = time %. */}
+        <div className="tl-lanes" onClick={seekTimeline}>
+          <div className="tl-ruler">
+            {rulerTicks(outDur).map((t) => (
+              <span key={t} className="tick tnum" style={{ left: `${(t / outDur) * 100}%` }}>
+                {fmtTime(t)}
+              </span>
+            ))}
+          </div>
+          <div className="lane lane-clips">
+            {clipBlocks.map((b, i) => {
+              const speed = timeline.clips[i]?.speed ?? 1;
+              return (
+                <div
+                  key={b.id}
+                  className={`clipblock${selectedClip === b.id ? ' selected' : ''}`}
+                  draggable
+                  onDragStart={(e) => {
+                    dragFrom.current = timeline.clips.findIndex((c) => c.id === b.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const from = dragFrom.current;
+                    const to = timeline.clips.findIndex((c) => c.id === b.id);
+                    dragFrom.current = null;
+                    if (from === null || to < 0 || from === to) return;
+                    const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
+                    tl.reorder(from, to);
+                    setProj((p) => ({ ...p, clips: tl.clips }));
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedClip(b.id);
+                  }}
+                  style={{
+                    left: `${(b.start / (timeline.outputDuration || duration || 1)) * 100}%`,
+                    width: `${((b.end - b.start) / (timeline.outputDuration || duration || 1)) * 100}%`,
+                  }}
+                >
+                  <span className="clip-label tnum">
+                    Clip {i + 1}
+                    <span>
+                      {(b.end - b.start).toFixed(1)}s{speed !== 1 ? ` · ${speed}×` : ''}
+                    </span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="lane lane-zoom">
+            {zoomMarks.map((s, i) => {
+              const manual = manualSegments.includes(s);
+              return (
+                <div
+                  key={i}
+                  className={`zoommark${manual ? ' manual' : ''}`}
+                  title={manual ? 'Manual zoom (right-click to remove)' : 'Auto zoom'}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setManualSegments((m) => m.filter((x) => x !== s));
+                  }}
+                  style={{
+                    left: `${(s.inStart / (timeline.outputDuration || duration || 1)) * 100}%`,
+                    width: `${(Math.max(0, s.outEnd - s.inStart) / (timeline.outputDuration || duration || 1)) * 100}%`,
+                  }}
+                >
+                  <span className="tnum">{s.scale.toFixed(1)}×</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="lane lane-audio">
+            <canvas ref={waveRef} className="wave" />
+          </div>
           {(smartCuts ?? []).map((p, i) => {
             const r = proposalOutRange(p);
             if (!r) return null;
@@ -1675,19 +1723,10 @@ export function Editor({
               style={{ left: `${(ch.start / (timeline.outputDuration || duration || 1)) * 100}%` }}
             />
           ))}
-          {zoomMarks.map((s, i) => (
-            <div
-              key={i}
-              className="zoommark"
-              title="Zoom (right-click to remove)"
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setManualSegments((m) => m.filter((x) => x !== s));
-              }}
-              style={{ left: `${(s.inStart / (timeline.outputDuration || duration || 1)) * 100}%` }}
-            />
-          ))}
+          <div
+            className="playhead"
+            style={{ left: `${(playhead / (timeline.outputDuration || duration || 1)) * 100}%` }}
+          />
         </div>
       </footer>
     </div>
@@ -1695,6 +1734,15 @@ export function Editor({
 }
 
 const FILLER = /^[\s.,!?]*(?:um+|uh+|er+|eh+|ah+|hmm+|mm+|mhm)[\s.,!?]*$/i;
+
+/** Evenly spaced ruler labels: the smallest round step giving at most ~10. */
+function rulerTicks(total: number) {
+  const steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800];
+  const step = steps.find((s) => total / s <= 10) ?? 3600;
+  const out: number[] = [];
+  for (let t = 0; t < total - step * 0.3; t += step) out.push(t);
+  return out;
+}
 
 /** m:ss.t for the transport readout. */
 function fmtPrecise(t: number) {

@@ -1274,6 +1274,7 @@ canvas.preview.cropping {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   animation: panel-in var(--t3) var(--ease);
 }
 @keyframes panel-in {
@@ -1310,7 +1311,7 @@ canvas.preview.cropping {
   width: 100%;
   border-radius: var(--r-sm);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
     0 1px 2px rgba(0, 0, 0, 0.3);
   transition: box-shadow var(--t2) var(--ease), transform var(--t2) var(--ease);
 }
@@ -1566,18 +1567,200 @@ input[type='color']::-webkit-color-swatch {
   grid-area: timeline;
   position: relative;
   z-index: 2;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  padding: 6px 20px 14px 0;
   background: var(--surface);
-  box-shadow: 0 -1px 0 var(--hairline);
+  box-shadow: 0 -1px 0 var(--hairline), 0 -16px 40px rgba(0, 0, 0, 0.25);
 }
 
-/* LEGACY: pre-redesign rules, removed once each screen is rebuilt. */
-.timeline { height: 64px; background: #26262c; border-radius: 8px; position: relative; cursor: pointer; }
-.timeline .wave { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.timeline .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; }
-.timeline .zoommark { position: absolute; top: 26px; width: 8px; height: 8px; background: #fdcb6e; transform: rotate(45deg); border-radius: 1px; }
-.timeline .clipblock { position: absolute; top: 4px; height: 18px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.15); border-radius: 3px; box-sizing: border-box; }
-.timeline .clipblock.selected { background: rgba(109,140,220,.4); border-color: #6d8ce0; }
-.timeline .clipblock[draggable=true] { cursor: grab; }
-.timeline .cutmark { position: absolute; top: 4px; bottom: 24px; background: rgba(231,76,60,.4); border-left: 1px solid rgba(231,76,60,.8); border-right: 1px solid rgba(231,76,60,.8); pointer-events: none; }
-.timeline .cutmark.off { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.2); }
-.timeline .chaptermark { position: absolute; top: 0; bottom: 0; width: 2px; background: #6c5ce7; }
+.tl-labels,
+.tl-lanes {
+  display: grid;
+  grid-template-rows: 22px 34px 22px 38px;
+  row-gap: 6px;
+}
+
+.tl-labels span {
+  display: flex;
+  align-items: center;
+  padding-left: 16px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+/* No horizontal padding or border here: the element box must equal the lanes. */
+.tl-lanes {
+  position: relative;
+  cursor: pointer;
+}
+
+.tl-ruler {
+  position: relative;
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+.tick {
+  position: absolute;
+  bottom: 0;
+  height: 100%;
+  padding-left: 5px;
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  color: var(--text-3);
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.lane {
+  position: relative;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.clipblock {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1.5px solid var(--surface); /* gap between neighbours without moving edges */
+  border-radius: 9px;
+  background: linear-gradient(#34343b, #2c2c32);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  cursor: grab;
+  transition: background var(--t2) var(--ease), box-shadow var(--t2) var(--ease);
+}
+.clipblock:hover {
+  background: linear-gradient(#3b3b43, #313138);
+}
+.clipblock:active {
+  cursor: grabbing;
+}
+.clipblock.selected {
+  background: linear-gradient(rgba(255, 138, 61, 0.34), rgba(255, 138, 61, 0.24));
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.clip-label {
+  display: flex;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.clip-label span {
+  font-weight: 500;
+  color: var(--text-2);
+}
+.clipblock.selected .clip-label span {
+  color: rgba(255, 220, 196, 0.8);
+}
+
+.zoommark {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  min-width: 6px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(255, 138, 61, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 61, 0.35);
+  transition: background var(--t2) var(--ease);
+}
+.zoommark.manual {
+  background: rgba(255, 138, 61, 0.55);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.zoommark:hover {
+  background: rgba(255, 138, 61, 0.4);
+}
+.zoommark.manual:hover {
+  background: rgba(255, 138, 61, 0.7);
+}
+.zoommark span {
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #ffd9bf;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.lane-audio {
+  overflow: hidden;
+}
+.wave {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.cutmark {
+  position: absolute;
+  top: 28px;
+  bottom: 0;
+  border-radius: 4px;
+  background: rgba(255, 69, 58, 0.26);
+  box-shadow: inset 1px 0 0 var(--red), inset -1px 0 0 var(--red);
+  pointer-events: none;
+}
+.cutmark.off {
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.2), inset -1px 0 0 rgba(255, 255, 255, 0.2);
+}
+
+.chaptermark {
+  position: absolute;
+  top: 4px;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.chaptermark::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 1px 4px 4px 1px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 3;
+}
+.playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 12px;
+  height: 14px;
+  transform: translateX(-50%);
+  border-radius: 3px 3px 6px 6px;
+  background: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
