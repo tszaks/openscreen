@@ -19,6 +19,7 @@ import {
 import { suggestChapters, toChapterList } from '../../shared/chapters';
 import type { TranscriptWord } from '../../shared/types';
 import { SaveTracker, isTextEntry } from '../../shared/editorSession';
+import { exportCanvasSize, ipcErrorMessage } from '../../shared/exportArgs';
 import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Slider, Switch, Tabs } from './ui';
 
 type InspectorTab = 'background' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'text';
@@ -165,16 +166,10 @@ export function Editor({
     return [...auto, ...manualSegments].sort((a, b) => a.inStart - b.inStart);
   }, [cursor, timeline, autofocusOn, dwellOn, duration, manualSegments, zoomDepth, motionEv]);
 
-  const canvasSize = useMemo(() => {
-    const src = proj.recording.sourceSize;
-    const h =
-      proj.exportPreset === 'uhd4k'
-        ? 2160
-        : proj.exportPreset === 'original'
-          ? src.height
-          : 1080;
-    return { width: Math.round((h * src.width) / src.height), height: h };
-  }, [proj]);
+  const canvasSize = useMemo(
+    () => exportCanvasSize(proj.recording.sourceSize, proj.exportPreset),
+    [proj],
+  );
 
   const compositor = useMemo(
     () => new CanvasCompositor(proj, canvasSize, segments),
@@ -361,34 +356,38 @@ export function Editor({
 
   const exportVideo = async (wantGif = false) => {
     const video = videoRef.current;
-    if (!video) return;
-    setStatus('exporting…');
+    if (!video || exporting) return;
+    const outPath = await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4');
+    if (!outPath) return;
+    // A GIF is converted from an intermediate mp4 in the bundle.
+    const mp4Path = wantGif ? `${bundleDir}/export-${Date.now()}.mp4` : outPath;
     const fps = proj.outputFPS;
     const total = Math.floor((timeline.outputDuration || duration) * fps);
     const { width: W, height: H } = canvasSize;
-    setExporting(true);
-    const outPath = `${bundleDir}/export-${Date.now()}.mp4`;
     const audioIn = `${bundleDir}/${proj.recording.screenVideoFile}`;
-    // Cut timelines get filtered audio (atrim+atempo+concat); identity gets
-    // passthrough. Main probes for a real audio stream either way.
+    // Cut timelines get filtered audio (atrim+atempo+concat); identity uses
+    // the track as is. Main probes for a real audio stream either way.
     const audioClips = timeline.isIdentity
       ? undefined
       : proj.clips.map((c) => ({ start: c.sourceStart, end: c.sourceEnd, speed: c.speed }));
-    await api.exportBegin(
-      outPath,
-      W,
-      H,
-      fps,
-      audioIn,
-      audioClips,
-      clickSfx ? clickEv.map((e) => e.time) : undefined,
-      voiceCleanup,
-    );
-    video.pause();
-
+    setExporting(true);
+    setStatus('exporting…');
     cancelExport.current = false;
-    let failed: unknown = null;
+    let encoding = false; // ffmpeg is running and owns a partial file
     try {
+      await api.exportBegin(
+        mp4Path,
+        W,
+        H,
+        fps,
+        audioIn,
+        audioClips,
+        clickSfx ? clickEv.map((e) => e.time) : undefined,
+        voiceCleanup,
+        total / fps,
+      );
+      encoding = true;
+      video.pause();
       for (let i = 0; i < total; i++) {
         if (cancelExport.current) break;
         const outT = i / fps;
@@ -407,46 +406,38 @@ export function Editor({
         });
         const ctx = compositor.canvas.getContext('2d')!;
         const rgba = ctx.getImageData(0, 0, W, H);
-        await api.exportFrame(rgba.data.buffer);
+        await api.exportFrame(rgba.data.buffer); // rejects once ffmpeg has stopped
         if (i % 10 === 0) {
           setStatus(`exporting ${i}/${total}`);
           await new Promise((r) => setTimeout(r, 0)); // let UI paint
         }
       }
+      if (cancelExport.current) {
+        encoding = false;
+        await api.exportAbort();
+        setStatus('export cancelled');
+        return;
+      }
+      encoding = false; // end() cleans up after itself on failure
+      await api.exportEnd();
+      if (proj.captions.length) {
+        await api.writeText(outPath.replace(/\.[^./]*$/, '.srt'), toSrt(proj.captions));
+      }
+      if (proj.chapters.length) {
+        await api.writeText(outPath.replace(/\.[^./]*$/, '.chapters.txt'), toChapterList(proj.chapters) + '\n');
+      }
+      if (wantGif) {
+        setStatus('converting gif…');
+        await api.exportGif(mp4Path, outPath);
+      }
+      setStatus(`exported ${outPath.split('/').pop()}`);
+      void api.exportReveal(outPath);
     } catch (e) {
-      failed = e;
+      if (encoding) await api.exportAbort().catch(() => {});
+      setStatus(`export failed: ${ipcErrorMessage(e)}`);
+    } finally {
+      setExporting(false);
     }
-    try {
-      await api.exportEnd(); // always ends the ffmpeg pipe, even on failure
-    } catch {
-      // ffmpeg already exited or never started — nothing to end
-    }
-    setExporting(false);
-    if (failed !== null) {
-      setStatus(`export failed: ${failed instanceof Error ? failed.message : String(failed)}`);
-      return;
-    }
-    if (cancelExport.current) {
-      setStatus('export cancelled');
-      return;
-    }
-    if (proj.captions.length) {
-      const srtPath = outPath.replace(/\.mp4$/, '.srt');
-      await api.writeText(srtPath, toSrt(proj.captions));
-    }
-    if (proj.chapters.length) {
-      const chPath = outPath.replace(/\.mp4$/, '.chapters.txt');
-      await api.writeText(chPath, toChapterList(proj.chapters) + '\n');
-    }
-    if (wantGif) {
-      const gifPath = outPath.replace(/\.mp4$/, '.gif');
-      setStatus('converting gif…');
-      await api.exportGif(outPath, gifPath);
-      setStatus(`exported → ${outPath} + gif`);
-    } else {
-      setStatus(`exported → ${outPath}`);
-    }
-    setExporting(false);
   };
 
   /** Output-time range of each clip for the timeline strip. */
