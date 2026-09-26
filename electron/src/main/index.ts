@@ -40,7 +40,14 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1280,
     height: 800,
+    minWidth: 1100,
+    minHeight: 700,
     title: 'OpenScreen',
+    // Hidden title bar: the renderer's top bars are the drag region and leave
+    // room on the left for the traffic lights (centered in the 52px bar).
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 18, y: 19 },
+    backgroundColor: '#0E0E10',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -76,7 +83,7 @@ app.whenReady().then(() => {
   ipcMain.handle('sources:list', async () => {
     const sources = await desktopCapturer.getSources({
       types: ['screen', 'window'],
-      thumbnailSize: { width: 240, height: 140 },
+      thumbnailSize: { width: 640, height: 400 },
       fetchWindowIcons: true,
     });
     return sources.map((s) => ({
