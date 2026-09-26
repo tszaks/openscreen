@@ -5,7 +5,8 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.main.json && vite build",
+    "build:helper": "sh native/ios-capture/build.sh",
+    "build": "npm run build:helper && tsc -p tsconfig.main.json && vite build",
     "test": "vitest run",
     "electron:dev": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
@@ -25,6 +26,12 @@
       "node_modules/ffmpeg-static/**",
       "node_modules/uiohook-napi/**"
     ],
+    "extraResources": [
+      {
+        "from": "dist/native/ios-capture",
+        "to": "native/ios-capture"
+      }
+    ],
     "publish": [
       {
         "provider": "github",
@@ -40,7 +47,11 @@
       ],
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSCameraUsageDescription": "OpenScreen records the screen of a connected iPhone or iPad, and your camera when the camera overlay is on.",
+        "NSMicrophoneUsageDescription": "OpenScreen records your microphone when it is turned on."
+      }
     }
   },
   "devDependencies": {

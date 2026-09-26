@@ -1,7 +1,8 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen } from 'electron';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createCursorTracker, type CursorTracker } from './cursor';
+import { disposeIosHelper, listIosDevices, startIosRecording, stopIosRecording } from './ios';
 import type { CursorSample, KeystrokeSample, Project } from '../shared/types';
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
 
@@ -10,6 +11,27 @@ let tracker: CursorTracker | null = null;
 
 const recordingsRoot = () =>
   join(app.getPath('videos'), 'OpenScreen');
+
+const newBundleDir = () => join(recordingsRoot(), `rec-${Date.now()}.openscreen`);
+
+// Bundle dirs coming back from the renderer must be ones we created.
+const isInRecordingsRoot = (dir: string) => {
+  const rel = relative(recordingsRoot(), resolve(dir));
+  return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
+};
+
+// Write everything but the screen video into a bundle (shared by both save paths).
+const writeBundleSidecars = (
+  dir: string,
+  args: { camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project },
+) => {
+  if (args.camBytes && args.camBytes.byteLength > 0) {
+    writeFileSync(join(dir, 'cam.webm'), Buffer.from(args.camBytes));
+  }
+  writeFileSync(join(dir, 'cursor.json'), JSON.stringify({ samples: args.cursor }, null, 2));
+  writeFileSync(join(dir, 'keystrokes.json'), JSON.stringify({ keys: args.keys ?? [] }, null, 2));
+  writeFileSync(join(dir, 'project.json'), JSON.stringify(args.project, null, 2));
+};
 
 const ffmpegPath = async () => {
   try {
@@ -110,18 +132,49 @@ app.whenReady().then(() => {
   ipcMain.handle(
     'bundle:save',
     async (_e, args: { videoBytes: ArrayBuffer; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) => {
-      const dir = join(recordingsRoot(), `rec-${Date.now()}.openscreen`);
+      const dir = newBundleDir();
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'screen.webm'), Buffer.from(args.videoBytes));
-      if (args.camBytes && args.camBytes.byteLength > 0) {
-        writeFileSync(join(dir, 'cam.webm'), Buffer.from(args.camBytes));
-      }
-      writeFileSync(join(dir, 'cursor.json'), JSON.stringify({ samples: args.cursor }, null, 2));
-      writeFileSync(join(dir, 'keystrokes.json'), JSON.stringify({ keys: args.keys ?? [] }, null, 2));
-      writeFileSync(join(dir, 'project.json'), JSON.stringify(args.project, null, 2));
+      writeBundleSidecars(dir, args);
       return dir;
     },
   );
+
+  // Save a recording whose screen video is already in its bundle (the
+  // iPhone helper writes screen.mov straight to disk).
+  ipcMain.handle(
+    'bundle:saveWithVideoFile',
+    async (_e, args: { dir: string; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) => {
+      if (!isInRecordingsRoot(args.dir)) throw new Error('bundle is outside the recordings folder');
+      const video = join(args.dir, args.project.recording.screenVideoFile);
+      if (!existsSync(video)) throw new Error(`recording is missing ${args.project.recording.screenVideoFile}`);
+      writeBundleSidecars(args.dir, args);
+      return args.dir;
+    },
+  );
+
+  // Wired iPhone/iPad screens, via the native ios-capture helper.
+  ipcMain.handle('ios:list', () => listIosDevices());
+
+  ipcMain.handle('ios:start', async (_e, deviceId: string) => {
+    // Ask from the app itself so the Camera prompt names OpenScreen; the
+    // helper inherits the grant as our child process.
+    const { systemPreferences } = await import('electron');
+    if (!(await systemPreferences.askForMediaAccess('camera'))) {
+      throw new Error('Camera permission is needed to record an iPhone. Allow OpenScreen in System Settings > Privacy & Security > Camera.');
+    }
+    const dir = newBundleDir();
+    mkdirSync(dir, { recursive: true });
+    try {
+      const size = await startIosRecording(deviceId, join(dir, 'screen.mov'));
+      return { bundleDir: dir, ...size };
+    } catch (e) {
+      rmSync(dir, { recursive: true, force: true });
+      throw e;
+    }
+  });
+
+  ipcMain.handle('ios:stop', () => stopIosRecording());
 
   // Persist editor changes back into an existing bundle.
   ipcMain.handle('bundle:saveProject', async (_e, args: { dir: string; project: Project }) => {
@@ -472,6 +525,8 @@ app.whenReady().then(() => {
       .catch(() => {});
   }
 });
+
+app.on('will-quit', () => disposeIosHelper());
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
