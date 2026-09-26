@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 
 // Presentational primitives. No app state lives here: every component is
 // controlled by its caller, and styling comes from styles.css.
@@ -33,6 +33,36 @@ export function IconButton({
       {children}
     </button>
   );
+}
+
+/** Measures the active child of a row so one indicator can glide between
+ *  options instead of each option fading its own highlight. */
+function useGlide(activeIndex: number, count: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<{ x: number; w: number } | null>(null);
+  const [ready, setReady] = useState(false);
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    const measure = () => {
+      const el = root.querySelectorAll<HTMLElement>('[data-glide]')[activeIndex];
+      setBox(el ? { x: el.offsetLeft, w: el.offsetWidth } : null);
+    };
+    measure();
+    // Placed without motion first; only later changes animate.
+    const raf = requestAnimationFrame(() => setReady(true));
+    const ro = new ResizeObserver(measure);
+    ro.observe(root);
+    root.querySelectorAll('[data-glide]').forEach((el) => ro.observe(el));
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [activeIndex, count]);
+  const style = box
+    ? ({ transform: `translateX(${box.x}px)`, width: box.w } as React.CSSProperties)
+    : { opacity: 0 };
+  return { ref, style, ready };
 }
 
 /** A checkbox styled as a switch. Stays a real <input> so the editor's
@@ -124,18 +154,23 @@ export function Segmented<T extends string | number>({
   label?: string;
   disabled?: boolean;
 }) {
+  const active = options.findIndex((o) => o.value === value);
+  const glide = useGlide(columns ? -1 : active, options.length);
   return (
     <div
-      className={`segmented segmented-${size}${columns ? ' segmented-grid' : ''}`}
+      ref={glide.ref}
+      className={`segmented segmented-${size}${columns ? ' segmented-grid' : ''}${glide.ready ? ' ready' : ''}`}
       role="radiogroup"
       aria-label={label}
       style={columns ? { gridTemplateColumns: `repeat(${columns}, 1fr)` } : undefined}
     >
+      {!columns && <span className="segment-thumb" style={glide.style} aria-hidden="true" />}
       {options.map((o) => (
         <button
           key={String(o.value)}
           type="button"
           role="radio"
+          data-glide
           aria-checked={o.value === value}
           className={`segment${o.value === value ? ' on' : ''}`}
           disabled={disabled || o.disabled}
@@ -158,13 +193,15 @@ export function Tabs<T extends string>({
   tabs: readonly { value: T; label: React.ReactNode }[];
   onChange: (v: T) => void;
 }) {
+  const glide = useGlide(tabs.findIndex((t) => t.value === value), tabs.length);
   return (
-    <div className="tabs" role="tablist">
+    <div ref={glide.ref} className={`tabs${glide.ready ? ' ready' : ''}`} role="tablist">
       {tabs.map((t) => (
         <button
           key={t.value}
           type="button"
           role="tab"
+          data-glide
           aria-selected={t.value === value}
           className={`tab${t.value === value ? ' on' : ''}`}
           onClick={() => onChange(t.value)}
@@ -172,6 +209,7 @@ export function Tabs<T extends string>({
           {t.label}
         </button>
       ))}
+      <span className="tab-indicator" style={glide.style} aria-hidden="true" />
     </div>
   );
 }

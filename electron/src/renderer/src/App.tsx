@@ -192,16 +192,35 @@ export function App() {
   if (phase.name === 'picker') {
     const displays = sources.filter((s) => s.id.startsWith('screen:'));
     const windows = sources.filter((s) => s.id.startsWith('window:'));
-    const tab: PickerTab = pickerTab ?? (devices.length ? 'devices' : 'displays');
+    // Every camera is a device, but only iPhones and iPads are the headline.
+    const iosDevices = devices.filter((d) => /iphone|ipad/i.test(d.label));
+    const otherCameras = devices.filter((d) => !/iphone|ipad/i.test(d.label));
+    const tab: PickerTab = pickerTab ?? (iosDevices.length ? 'devices' : 'displays');
     const tabOptions = [
       { value: 'displays' as const, label: <>Displays<span className="count">{displays.length}</span></> },
       { value: 'windows' as const, label: <>Windows<span className="count">{windows.length}</span></> },
-      { value: 'devices' as const, label: <>iPhone &amp; iPad<span className="count">{devices.length}</span></> },
+      { value: 'devices' as const, label: <>iPhone &amp; iPad<span className="count">{iosDevices.length}</span></> },
     ];
     // The iPhone/iPad path is the headline feature: lead with it when one is plugged in.
-    if (devices.length) tabOptions.unshift(tabOptions.pop()!);
+    if (iosDevices.length) tabOptions.unshift(tabOptions.pop()!);
     const shown = tab === 'displays' ? displays : tab === 'windows' ? windows : [];
     const selectedName = selectedDevice?.label ?? selected?.name;
+    const deviceCard = (d: MediaDeviceInfo, art: 'phone' | 'tablet' | 'camera') => (
+      <button
+        key={d.deviceId}
+        type="button"
+        className={`card${selectedDevice?.deviceId === d.deviceId ? ' selected' : ''}`}
+        onClick={() => {
+          setSelectedDevice(d);
+          setSelected(null);
+        }}
+      >
+        <div className="card-thumb device-thumb">
+          {art === 'camera' ? <div className="webcam" /> : <div className={`device-outline${art === 'tablet' ? ' tablet' : ''}`} />}
+        </div>
+        <div className="card-name">{d.label}</div>
+      </button>
+    );
 
     return (
       <div className="shell">
@@ -245,38 +264,27 @@ export function App() {
           </div>
 
           {tab === 'devices' ? (
-            devices.length ? (
-              <div className="cards">
-                {devices.map((d) => (
-                  <button
-                    key={d.deviceId}
-                    type="button"
-                    className={`card${selectedDevice?.deviceId === d.deviceId ? ' selected' : ''}`}
-                    onClick={() => {
-                      setSelectedDevice(d);
-                      setSelected(null);
-                    }}
-                  >
-                    <div className="card-thumb device-thumb">
-                      <div
-                        className={`device-outline${
-                          /ipad/i.test(d.label) ? ' tablet' : /iphone/i.test(d.label) ? '' : ' camera'
-                        }`}
-                      />
-                    </div>
-                    <div className="card-name">{d.label}</div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <EmptyState
-                art={<div className="device-outline large" />}
-                title="No iPhone or iPad connected"
-              >
-                Connect it with a USB cable, unlock it, and tap Trust if asked. Then
-                reopen OpenScreen to refresh this list.
-              </EmptyState>
-            )
+            <>
+              {iosDevices.length ? (
+                <div className="cards">
+                  {iosDevices.map((d) => deviceCard(d, /ipad/i.test(d.label) ? 'tablet' : 'phone'))}
+                </div>
+              ) : (
+                <EmptyState
+                  art={<div className="device-outline large" />}
+                  title="No iPhone or iPad connected"
+                >
+                  Connect it with a USB cable, unlock it, and tap Trust if asked. Then
+                  reopen OpenScreen to refresh this list.
+                </EmptyState>
+              )}
+              {otherCameras.length > 0 && (
+                <>
+                  <h2 className="subhead">Other cameras</h2>
+                  <div className="cards">{otherCameras.map((d) => deviceCard(d, 'camera'))}</div>
+                </>
+              )}
+            </>
           ) : shown.length ? (
             <div className="cards">
               {shown.map((s) => (
