@@ -691,6 +691,14 @@ export function App() {
     // The iPhone/iPad path is the headline feature: lead with it when one is plugged in.
     if (iosDevices.length) tabOptions.unshift(tabOptions.pop()!);
     const shown = tab === 'displays' ? displays : tab === 'windows' ? windows : [];
+    // A selection made on another tab isn't visible; dropping it keeps Start
+    // honest (and stops an iPhone live preview).
+    const chooseTab = (t: PickerTab) => {
+      setPickerTab(t);
+      setSelected(null);
+      setSelectedDevice(null);
+      setSelectedIos(null);
+    };
     const selectedName = selectedIos?.name ?? (selectedDevice ? cameraLabel(selectedDevice, 0) : selected?.name);
     const cameraCard = (d: MediaDeviceInfo, i: number) => (
       <button
@@ -808,7 +816,7 @@ export function App() {
               <Button variant="ghost" size="sm" onClick={() => void refresh()} title="Look for new windows and displays">
                 Refresh
               </Button>
-              <Segmented value={tab} options={tabOptions} onChange={setPickerTab} label="Source type" />
+              <Segmented value={tab} options={tabOptions} onChange={chooseTab} label="Source type" />
             </div>
           </div>
           {tab === 'windows' && shown.length > 0 && (
