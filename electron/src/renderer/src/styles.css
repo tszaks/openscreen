@@ -1997,3 +1997,75 @@ input[type='color']::-webkit-color-swatch {
   gap: 8px;
   margin-top: 12px;
 }
+
+/* ───────────────────────── recording notices ───────────────────────── */
+
+.picker-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cam-select {
+  height: 28px;
+  max-width: 220px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: var(--fill);
+  box-shadow: var(--lift);
+  font-size: 12px;
+  color: var(--text);
+  outline: none;
+}
+.cam-select:hover {
+  background: var(--fill-hover);
+}
+.cam-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Something happened that the user didn't do (a source closed mid-take,
+   a project wouldn't open). Floats over any screen. */
+.notice {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  z-index: 50;
+  width: fit-content;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 48px));
+  padding: 10px 8px 10px 14px;
+  border-radius: var(--r-sm);
+  background: rgba(30, 30, 34, 0.92);
+  backdrop-filter: blur(20px) saturate(160%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 179, 64, 0.16),
+    0 12px 32px rgba(0, 0, 0, 0.4);
+  color: #f3cf98;
+  font-size: 12px;
+  line-height: 1.45;
+  animation: fade-in var(--t2) var(--ease);
+}
+.notice p {
+  flex: 1;
+}
+.notice-close {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-full);
+  background: var(--fill);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+.notice-close:hover {
+  background: var(--fill-hover);
+}
