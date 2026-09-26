@@ -650,12 +650,7 @@ export function Editor({
         return;
       }
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-        return;
-      }
+      // ⌘Z / ⇧⌘Z come from the app menu (Edit > Undo/Redo) so one press is one undo.
       // ⌘S, ⌘⌫ and friends belong to the menu, not to split and delete.
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.code === 'Space') {
