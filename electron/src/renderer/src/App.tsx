@@ -292,6 +292,14 @@ export function App() {
 
   const backToPicker = useCallback(() => setPhase({ name: 'picker' }), []);
 
+  // Native menu clicks arrive over IPC; re-broadcast them in this world as
+  // `openscreen:menu` events for the picker and editor to handle.
+  useEffect(() => api.onMenu((a) => window.dispatchEvent(new CustomEvent('openscreen:menu', { detail: a }))), []);
+
+  // Keep the menu's enabled items in step with what's on screen.
+  const menuBundle = phase.name === 'editor' ? phase.bundleDir : undefined;
+  useEffect(() => api.setMenuPhase(phase.name, menuBundle), [phase.name, menuBundle]);
+
   // The app menu dispatches `openscreen:menu` events. The editor handles
   // its own; the picker only opens projects.
   useEffect(() => {
