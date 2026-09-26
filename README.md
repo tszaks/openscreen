@@ -42,9 +42,12 @@ The helper needs Xcode's command line tools (`xcode-select --install`). To recor
 
 ffmpeg on PATH (`brew install ffmpeg`) for MP4/GIF export; `brew install whisper-cpp` for transcription. `npm run dist` builds a dmg + zip with bundled ffmpeg.
 
+## Releases
+
+Releases are signed with a Developer ID and notarized. Build one with `npm run dist` and these set: `APPLE_API_KEY` (path to the .p8), `APPLE_API_KEY_ID` and `APPLE_API_ISSUER`. The app updates itself from GitHub Releases through electron-updater.
+
 ## Known gaps / next
 
-- Signing + notarization: config is staged (hardened runtime, camera/mic entitlements) — needs an Apple Developer ID cert, then flip `mac.notarize` and set `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID`
-- Auto-update: wired via electron-updater → GitHub Releases (`tszaks/openscreen`); goes live on the first published release
 - Windows/Linux ports
-- Whisper binary isn't bundled in the dmg yet (model downloads automatically; binary needs `brew install whisper-cpp`)
+- The whisper binary isn't bundled yet. The model downloads automatically, but the binary needs `brew install whisper-cpp`.
+- Tap detection is tuned on simulated footage. Expect some misses on real recordings; every tap is editable on the Taps lane.
