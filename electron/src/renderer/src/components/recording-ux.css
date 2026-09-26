@@ -355,30 +355,12 @@
   background: radial-gradient(120% 90% at 50% 100%, #1d1d22 0%, var(--stage) 70%);
   width: 100%;
 }
-.device-outline.rec-device {
-  flex: 1;
-  height: auto;
-  min-height: 0;
-  border-radius: 22px;
-  transition: opacity var(--t3) var(--ease);
-}
-.device-outline.rec-device::after {
-  top: 11px;
-  height: 8px;
-}
-.device-outline.rec-device.tablet {
-  border-radius: 16px;
-}
-.device-outline.rec-device.is-stalled {
-  opacity: 0.45;
-}
-.rec-card-device-note {
-  max-width: 320px;
-  font-size: 12px;
-  line-height: 1.5;
+.rec-card-hint {
+  padding: 8px 4px 0;
+  font-size: 11.5px;
+  line-height: 1.4;
   text-align: center;
   color: var(--text-3);
-  text-wrap: balance;
 }
 
 /* Calm, but hard to miss: a frosted strip along the bottom of the preview. */
@@ -461,9 +443,3 @@
 }
 
 /* The warning takes the note's place along the bottom of the stage. */
-.rec-card-device-note {
-  transition: opacity var(--t2) var(--ease);
-}
-.rec-card.has-warning .rec-card-device-note {
-  opacity: 0;
-}
