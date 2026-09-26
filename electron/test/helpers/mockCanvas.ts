@@ -18,7 +18,11 @@ export function mockCanvas(): MockCtx {
     getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
     createLinearGradient: () => gradient,
     createRadialGradient: () => gradient,
-    measureText: (s: string) => ({ width: s.length * 10, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 }),
+    // Glyphs are half the font size wide, so text layout can be tested.
+    measureText: (s: string) => {
+      const px = Number(/(\d+(?:\.\d+)?)px/.exec(String(state.font ?? '10px'))?.[1] ?? 10);
+      return { width: s.length * px * 0.5, actualBoundingBoxAscent: px * 0.8, actualBoundingBoxDescent: px * 0.2 };
+    },
   };
   const ctx = new Proxy(target, {
     get(t, prop: string) {
