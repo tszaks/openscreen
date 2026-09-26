@@ -791,7 +791,6 @@ export function Editor({
   const outDur = timeline.outputDuration || duration || 1;
   const bundleName = (bundleDir.split('/').filter(Boolean).pop() ?? 'Untitled').replace(/\.openscreen$/, '');
   const exportProgress = /exporting (\d+)\/(\d+)/.exec(status);
-  const bgKey = JSON.stringify(proj.style.background);
   const selectedSpeed = proj.clips.find((c) => c.id === selectedClip)?.speed ?? 1;
   const togglePlay = () =>
     videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause();
@@ -827,7 +826,7 @@ export function Editor({
               key={s.name}
               type="button"
               title={s.name}
-              className={`tile${JSON.stringify(s.bg) === bgKey ? ' selected' : ''}`}
+              className={`tile${sameBackground(s.bg, proj.style.background) ? ' selected' : ''}`}
               onClick={() =>
                 setProj((p) => ({ ...p, style: { ...p.style, background: s.bg } }))
               }
@@ -1698,8 +1697,8 @@ export function Editor({
           </div>
           <div className="lane lane-audio">
             <canvas ref={waveRef} className="wave" />
-            {peaks.length > 0 && Math.max(...peaks) < 0.01 && (
-              <span className="lane-note">No audio in this recording</span>
+            {peaks.length > 0 && Math.max(...peaks) < 0.03 && (
+              <span className="lane-note">Silent recording</span>
             )}
           </div>
           {(smartCuts ?? []).map((p, i) => {
@@ -1737,6 +1736,19 @@ export function Editor({
 }
 
 const FILLER = /^[\s.,!?]*(?:um+|uh+|er+|eh+|ah+|hmm+|mm+|mhm)[\s.,!?]*$/i;
+
+/** Field-wise background equality (saved projects may order keys differently). */
+function sameBackground(a: Project['style']['background'], b: Project['style']['background']) {
+  if (a.kind === 'gradient' && b.kind === 'gradient') {
+    return (
+      a.startHex.toLowerCase() === b.startHex.toLowerCase() &&
+      a.endHex.toLowerCase() === b.endHex.toLowerCase() &&
+      a.angle === b.angle
+    );
+  }
+  if (a.kind === 'solid' && b.kind === 'solid') return a.hex.toLowerCase() === b.hex.toLowerCase();
+  return false;
+}
 
 /** Evenly spaced ruler labels: the smallest round step giving at most ~10. */
 function rulerTicks(total: number) {
