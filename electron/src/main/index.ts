@@ -6,7 +6,7 @@ import { startFfmpegJob, type FfmpegJob } from './ffmpegJob';
 import { disposeIosHelper, listIosDevices, startIosRecording, stopIosRecording } from './ios';
 import { buildAppMenu } from './menu';
 import type { MenuPhase } from '../shared/menu';
-import type { CursorSample, KeystrokeSample, Project } from '../shared/types';
+import { normalizeProject, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
 import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
 
@@ -219,11 +219,7 @@ app.whenReady().then(() => {
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
     const dir = picked.filePaths[0];
-    const project = JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'));
-    project.annotations ??= [];
-    project.captions ??= [];
-    project.chapters ??= [];
-    if (project.style) project.style.deviceFrame ??= 'none';
+    const project = normalizeProject(JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8')));
     const cursor = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8')).samples ?? [];
     let keys: unknown[] = [];
     try {
@@ -241,7 +237,7 @@ app.whenReady().then(() => {
     const picked = await dialog.showOpenDialog(win!, {
       title: 'Background image',
       properties: ['openFile'],
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'heif'] }],
     });
     return picked.canceled ? null : picked.filePaths[0];
   });
@@ -255,6 +251,25 @@ app.whenReady().then(() => {
         'osascript',
         ['-e', 'tell application "Finder" to get POSIX path of (get desktop picture as alias)'],
         (_err, stdout) => resolve(stdout.trim() || null),
+      );
+    });
+  });
+
+  // Chromium can't decode HEIC (the usual macOS wallpaper format): hand the
+  // renderer a JPEG copy made with sips, cached by path + mtime.
+  ipcMain.handle('background:prepare', async (_e, path: string) => {
+    if (!/\.hei[cf]$/i.test(path)) return path;
+    const { execFile } = await import('node:child_process');
+    const { statSync } = await import('node:fs');
+    const { createHash } = await import('node:crypto');
+    const dir = join(app.getPath('userData'), 'backgrounds');
+    mkdirSync(dir, { recursive: true });
+    const key = createHash('sha1').update(`${path}:${statSync(path).mtimeMs}`).digest('hex');
+    const out = join(dir, `${key}.jpg`);
+    if (existsSync(out)) return out;
+    return new Promise<string | null>((done) => {
+      execFile('sips', ['-s', 'format', 'jpeg', path, '--out', out], (err) =>
+        done(err || !existsSync(out) ? null : out),
       );
     });
   });

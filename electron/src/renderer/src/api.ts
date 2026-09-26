@@ -32,6 +32,8 @@ declare global {
       displays(): Promise<{ id: number; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]>;
       pickBackground(): Promise<string | null>;
       wallpaperPath(): Promise<string | null>;
+      /** A path Chromium can decode (HEIC becomes a cached JPEG); null if conversion failed. */
+      prepareBackground(path: string): Promise<string | null>;
       transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string; words: TranscriptWord[] }[]>;
       detectSilences(dir: string, videoFile: string, thresholdDb?: number, minDur?: number): Promise<{ start: number; end: number }[]>;
       audioPeaks(dir: string, videoFile: string, buckets?: number): Promise<number[]>;

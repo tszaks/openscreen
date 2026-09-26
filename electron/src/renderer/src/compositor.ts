@@ -4,6 +4,40 @@
 import type { Annotation, CaptionCue, Point, Project, Size } from '../../shared/types';
 import { cameraAt, type AutofocusOptions, type FocusSegment } from '../../shared/autofocus';
 import type { Ripple } from '../../shared/ripples';
+import { fileUrl } from '../../shared/fileUrl';
+import { api } from './api';
+
+// Background images by raw path, shared by every compositor: the editor
+// builds a new compositor on each edit, and reloading the image each time
+// would flash the fallback.
+const bgImages = new Map<string, { img: HTMLImageElement; ready: Promise<void> }>();
+
+function backgroundImage(path: string) {
+  let entry = bgImages.get(path);
+  if (!entry) {
+    const img = new Image();
+    const ready = new Promise<void>((resolve) => {
+      img.onload = () => resolve();
+      img.onerror = () => resolve();
+      // HEIC goes through main for a JPEG copy; null means it can't be shown.
+      api.prepareBackground(path).then(
+        (usable) => {
+          if (usable) img.src = fileUrl(usable);
+          else resolve();
+        },
+        () => resolve(),
+      );
+    });
+    entry = { img, ready };
+    bgImages.set(path, entry);
+  }
+  return entry;
+}
+
+/** Resolves once the background image at `path` has loaded (or failed). */
+export function backgroundReady(path: string): Promise<void> {
+  return backgroundImage(path).ready;
+}
 
 export interface FrameInputs {
   frame: CanvasImageSource; // source frame at this output time
@@ -32,6 +66,9 @@ export class CanvasCompositor {
     this.ctx = ctx;
   }
 
+  /** Draw the frame at output time `time`. Zoom, captions and annotations
+   *  are keyed to output time; the source-time overlays (cursor, keys) come
+   *  in already resolved through `input`. */
   render(time: number, input: FrameInputs): void {
     const { ctx, canvas } = this;
     const { width: W, height: H } = canvas;
@@ -205,8 +242,6 @@ export class CanvasCompositor {
     ctx.fillRect(rect.x + rect.w + bw - bw * 0.35, rect.y + rect.h * 0.28, bw * 0.5, bh); // power
   }
 
-  private bgImage?: HTMLImageElement;
-
   private drawBackground(W: number, H: number) {
     const { ctx } = this;
     const bg = this.project.style.background;
@@ -214,15 +249,12 @@ export class CanvasCompositor {
       ctx.fillStyle = bg.hex;
       ctx.fillRect(0, 0, W, H);
     } else if (bg.kind === 'imageFile') {
-      if (!this.bgImage || !this.bgImage.src.endsWith(bg.path)) {
-        this.bgImage = new Image();
-        this.bgImage.src = `file://${bg.path}`;
-      }
-      if (this.bgImage.complete && this.bgImage.naturalWidth > 0) {
+      const img = backgroundImage(bg.path).img;
+      if (img.complete && img.naturalWidth > 0) {
         const ar = W / H;
-        const ir = this.bgImage.naturalWidth / this.bgImage.naturalHeight;
-        let sw = this.bgImage.naturalWidth;
-        let sh = this.bgImage.naturalHeight;
+        const ir = img.naturalWidth / img.naturalHeight;
+        let sw = img.naturalWidth;
+        let sh = img.naturalHeight;
         if (ar > ir) sh = sw / ar;
         else sw = sh * ar;
         const blur = bg.blur ?? 0;
@@ -232,17 +264,17 @@ export class CanvasCompositor {
           // slight overscan hides the softened edges
           const m = blur;
           ctx.drawImage(
-            this.bgImage,
-            (this.bgImage.naturalWidth - sw) / 2,
-            (this.bgImage.naturalHeight - sh) / 2,
+            img,
+            (img.naturalWidth - sw) / 2,
+            (img.naturalHeight - sh) / 2,
             sw, sh, -m, -m, W + m * 2, H + m * 2,
           );
           ctx.restore();
         } else {
           ctx.drawImage(
-            this.bgImage,
-            (this.bgImage.naturalWidth - sw) / 2,
-            (this.bgImage.naturalHeight - sh) / 2,
+            img,
+            (img.naturalWidth - sw) / 2,
+            (img.naturalHeight - sh) / 2,
             sw, sh, 0, 0, W, H,
           );
         }
