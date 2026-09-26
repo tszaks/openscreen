@@ -78,9 +78,11 @@ export function layoutPresetOf(proj: Project): ExportPreset | null {
 
 /**
  * The project as a preset renders it. `layout.presetId` tells the compositor
- * which layout to draw. Full-bleed presets (App Store) also drop the device
- * frame, padding, rounded corners and shadow so the screen fills the canvas
- * even where the compositor predates presets.
+ * which layout to draw; for iOS recordings it lays out at the preset's own
+ * size (projectCanvasSize), which is the size planRenders gives a pass.
+ * Full-bleed presets (App Store) also drop padding, rounded corners and
+ * shadow: the phone layout ignores those, but desktop recordings, which keep
+ * the classic padded frame, then fill the canvas instead.
  */
 export function projectForPreset(proj: Project, preset: ExportPreset): Project {
   const layout = { ...(proj as Project & LayoutFields).layout, presetId: preset.id };
