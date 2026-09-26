@@ -1761,8 +1761,9 @@ function rulerTicks(total: number) {
 
 /** m:ss.t for the transport readout. */
 function fmtPrecise(t: number) {
-  const m = Math.floor(t / 60);
-  const s = t - m * 60;
+  const tenths = Math.round(t * 10);
+  const m = Math.floor(tenths / 600);
+  const s = (tenths % 600) / 10;
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
