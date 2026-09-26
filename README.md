@@ -41,7 +41,7 @@ ffmpeg on PATH (`brew install ffmpeg`) for MP4/GIF export; `brew install whisper
 
 ## Known gaps / next
 
-- Signing + notarization: config is staged (hardened runtime, camera/mic entitlements) — needs an Apple Developer ID cert, then flip `mac.notarize` and set `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID`
+- Signing + notarization: config is staged (hardened runtime, camera/mic entitlements, `mac.notarize`) — needs a "Developer ID Application" cert in the keychain plus `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` (or `APPLE_API_KEY`/`APPLE_API_KEY_ID`/`APPLE_API_ISSUER` for an App Store Connect API key) at `npm run dist` time; builds stay unsigned when no identity is found
 - Auto-update: wired via electron-updater → GitHub Releases (`tszaks/openscreen`); goes live on the first published release
 - Windows/Linux ports
 - Whisper binary isn't bundled in the dmg yet (model downloads automatically; binary needs `brew install whisper-cpp`)
