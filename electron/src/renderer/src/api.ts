@@ -58,13 +58,23 @@ declare global {
       displays(): Promise<{ id: number; bounds: { x: number; y: number; width: number; height: number }; scaleFactor: number }[]>;
       pickBackground(): Promise<string | null>;
       wallpaperPath(): Promise<string | null>;
+      /** A path Chromium can decode (HEIC becomes a cached JPEG); null if conversion failed. */
+      prepareBackground(path: string): Promise<string | null>;
       transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string; words: TranscriptWord[] }[]>;
       detectSilences(dir: string, videoFile: string, thresholdDb?: number, minDur?: number): Promise<{ start: number; end: number }[]>;
       audioPeaks(dir: string, videoFile: string, buckets?: number): Promise<number[]>;
-      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: { start: number; end: number; speed: number }[], clicks?: number[], voiceCleanup?: boolean): Promise<boolean>;
+      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number): Promise<boolean>;
+      /** Rejects with ffmpeg's reason once ffmpeg has stopped. */
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
+      /** Finishes the file; rejects (and deletes it) when the encode failed. */
       exportEnd(): Promise<boolean>;
+      /** Stops ffmpeg and deletes the partial file. */
+      exportAbort(): Promise<boolean>;
+      /** Converts inMp4 to outGif, then deletes inMp4. */
       exportGif(inMp4: string, outGif: string): Promise<boolean>;
+      /** Save dialog for the export; null when cancelled. */
+      exportPickPath(bundleDir: string, kind: 'mp4' | 'gif'): Promise<string | null>;
+      exportReveal(path: string): Promise<boolean>;
       /** Tell main what is on screen, so the menu enables what applies. */
       setMenuPhase(phase: MenuPhase, bundleDir?: string): void;
       /** Subscribe to app-menu clicks; returns the unsubscribe. */

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   alignToVideoStart,
   cameraLabel,
+  correctDuration,
+  parseFfmpegProgressTime,
   captureErrorMessage,
   createStopLatch,
   cursorModeFor,
@@ -172,5 +174,43 @@ describe('small helpers', () => {
     expect(findWhisperCli(has(['/opt/tools/whisper-cli']), ['/usr/bin', '/opt/tools/'])).toBe('/opt/tools/whisper-cli');
     expect(findWhisperCli(has([]), ['/usr/bin'])).toBeNull();
     expect(partialPath('/m/ggml-base.en.bin')).toBe('/m/ggml-base.en.bin.part');
+  });
+});
+
+describe('correctDuration on open (old wall-clock bundles)', () => {
+  const make = (duration: number) =>
+    defaultProject({ screenVideoFile: 'screen.mov', sourceKind: 'iosDevice', sourceSize: { width: 1, height: 1 }, duration });
+
+  it('fixes a stored duration that is too long, like 57.75 s stored for a 54.46 s file', () => {
+    const p = make(57.75);
+    const out = correctDuration(p, 54.46);
+    expect(out.recording.duration).toBe(54.46);
+    expect(out.clips[0].sourceEnd).toBe(54.46);
+  });
+
+  it('clamps and drops edited clips that run past the real end', () => {
+    const p = make(3);
+    p.clips = [
+      { id: 'a', sourceStart: 0, sourceEnd: 1, speed: 1 },
+      { id: 'b', sourceStart: 1, sourceEnd: 2, speed: 1 },
+      { id: 'c', sourceStart: 2, sourceEnd: 3, speed: 2 },
+    ];
+    const out = correctDuration(p, 1.13);
+    expect(out.clips.map((c) => [c.id, c.sourceStart, c.sourceEnd])).toEqual([
+      ['a', 0, 1],
+      ['b', 1, 1.13],
+    ]);
+  });
+
+  it('leaves values within 0.1 s alone and returns the same object', () => {
+    const p = make(12.0);
+    expect(correctDuration(p, 12.05)).toBe(p);
+    expect(correctDuration(p, null)).toBe(p);
+  });
+
+  it('reads the last progress stamp for header-less files', () => {
+    const err = 'frame=  10 time=00:00:01.00 bitrate=N/A\rframe= 600 time=00:00:10.79 bitrate=N/A speed=900x';
+    expect(parseFfmpegProgressTime(err)).toBeCloseTo(10.79);
+    expect(parseFfmpegProgressTime('no stamps')).toBeNull();
   });
 });

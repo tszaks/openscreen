@@ -1,6 +1,8 @@
 // Shared model layer — pure types, no Electron/DOM deps. Everything here is
 // unit-tested in vitest and mirrors the (now legacy) Swift modules' semantics.
 
+import type { FocusSegment } from './autofocus';
+
 export interface Point {
   x: number;
   y: number;
@@ -125,10 +127,30 @@ export interface RecordingRef {
   cameraOffset?: number;
 }
 
+export interface ZoomSettings {
+  /** Zoom toward each click. */
+  autofocus: boolean;
+  /** Also zoom where the cursor lingers. */
+  dwell: boolean;
+  /** Max auto-zoom scale. */
+  depth: number;
+  /** Touch regions found by "Detect touches" (source time). */
+  motionEvents: CursorSample[];
+}
+
+export interface AudioSettings {
+  clickSounds: boolean;
+  voiceCleanup: boolean;
+}
+
 export interface Project {
   recording: RecordingRef;
   clips: Clip[];
   zoomKeyframes: ZoomKeyframe[];
+  /** Zooms added by hand (Option-click the timeline), in output time. */
+  manualZooms: FocusSegment[];
+  zoom: ZoomSettings;
+  audio: AudioSettings;
   style: StyleSettings;
   cameraOverlay: CameraOverlay;
   captions: CaptionCue[];
@@ -151,10 +173,22 @@ export const defaultStyle = (): StyleSettings => ({
   cursorHex: '#ffffff',
 });
 
+export const defaultZoom = (): ZoomSettings => ({
+  autofocus: true,
+  dwell: true,
+  depth: 2,
+  motionEvents: [],
+});
+
+export const defaultAudio = (): AudioSettings => ({ clickSounds: true, voiceCleanup: false });
+
 export const defaultProject = (recording: RecordingRef): Project => ({
   recording,
   clips: [{ id: crypto.randomUUID(), sourceStart: 0, sourceEnd: recording.duration, speed: 1 }],
   zoomKeyframes: [],
+  manualZooms: [],
+  zoom: defaultZoom(),
+  audio: defaultAudio(),
   style: defaultStyle(),
   cameraOverlay: { enabled: false, corner: 'bottomLeft', sizeFraction: 0.22, circular: true },
   captions: [],
@@ -163,3 +197,17 @@ export const defaultProject = (recording: RecordingRef): Project => ({
   exportPreset: 'p1080',
   outputFPS: 60,
 });
+
+/** Fill in fields that bundles saved by older versions don't have. */
+export function normalizeProject(raw: Project): Project {
+  const p = { ...raw };
+  p.annotations ??= [];
+  p.captions ??= [];
+  p.chapters ??= [];
+  p.zoomKeyframes ??= [];
+  p.manualZooms ??= [];
+  p.zoom = { ...defaultZoom(), ...p.zoom };
+  p.audio = { ...defaultAudio(), ...p.audio };
+  if (p.style) p.style = { ...p.style, deviceFrame: p.style.deviceFrame ?? 'none' };
+  return p;
+}
