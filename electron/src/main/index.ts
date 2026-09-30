@@ -1,9 +1,8 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, screen, shell, systemPreferences } from 'electron';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { randomUUID } from 'node:crypto';
 import { createCursorTracker, type CursorTracker } from './cursor';
 import { startFfmpegJob, type FfmpegJob } from './ffmpegJob';
 import { transcodePreset, type TranscodeRun } from './transcodeJob';
@@ -21,25 +20,56 @@ import { interruptedBundles, recoveredProject, RECOVERABLE_VIDEO, type BundleLis
 import { buildAppMenu } from './menu';
 import type { MenuPhase } from '../shared/menu';
 import { normalizeProject, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
-import { tokensToWords, type WhisperToken } from '../shared/transcript';
+import { parseHeadlessArgs, type HeadlessJob, type HeadlessResult } from '../shared/headless';
+import { analyzeTapsInFile, detectSilences, extractWav as extractBundleWav, transcribeBundle } from '../node/media';
 import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
 import { getPreset, type PresetId } from '../shared/exportPresets';
 import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
-import { analysisFrameSize, analyzeFrames, detectTaps, findDeadTime, splitRawGray, tapAnalysisFfmpegArgs } from '../shared/taps';
 import {
   alignToVideoStart,
   cursorModeFor,
-  findWhisperCli,
   correctDuration,
   parseFfmpegDuration,
   parseFfmpegProgressTime,
   parseFfmpegVideoSize,
-  partialPath,
   withProbedDuration,
 } from '../shared/recording';
 
 // Dev runs take the name from package.json ("openscreen"); the menu wants the product name.
 app.setName('OpenScreen');
+
+// `OpenScreen --export <bundle> --out <file>`: render one export with no
+// window shown and no dialogs, print JSON lines, exit 0/1. It runs beside a
+// GUI instance without touching its state: its own userData, no updater,
+// no menu, no quit confirmations.
+const headlessParsed = parseHeadlessArgs(process.argv);
+const headless: HeadlessJob | null = headlessParsed && !('error' in headlessParsed) ? headlessParsed : null;
+const emitJson = (o: unknown) => process.stdout.write(JSON.stringify(o) + '\n');
+let headlessFinished = false;
+const finishHeadless = (r: HeadlessResult) => {
+  if (headlessFinished) return;
+  headlessFinished = true;
+  emitJson(r);
+  // exit() skips before-quit/will-quit; nothing of the GUI's is running.
+  void (exportJob?.abort() ?? Promise.resolve()).finally(() => app.exit(r.ok ? 0 : 1));
+};
+// `OpenScreen --open <bundle>`: open that project in the editor (an agent
+// handing a project to a human). It is the one bundle outside the
+// recordings folder the renderer may open.
+const openArgIndex = process.argv.indexOf('--open');
+const openOnLaunch = !headlessParsed && openArgIndex >= 0 && process.argv[openArgIndex + 1] ? resolve(process.argv[openArgIndex + 1]) : null;
+if (headlessParsed && 'error' in headlessParsed) {
+  emitJson({ ok: false, error: headlessParsed.error });
+  app.exit(1);
+}
+// OPENSCREEN_USER_DATA gives a test instance its own profile.
+if (process.env.OPENSCREEN_USER_DATA && !headlessParsed) app.setPath('userData', process.env.OPENSCREEN_USER_DATA);
+if (headless) {
+  app.setPath('userData', mkdtempSync(join(tmpdir(), 'openscreen-headless-')));
+  app.dock?.hide();
+  const t = setTimeout(() => finishHeadless({ ok: false, error: `timed out after ${headless.timeoutSec}s` }), headless.timeoutSec * 1000);
+  t.unref();
+}
 
 let win: BrowserWindow | null = null;
 let tracker: CursorTracker | null = null;
@@ -61,6 +91,7 @@ const busyReason = () => rendererBusy ?? (exportRunning() ? 'exporting' : null);
 
 /** True when nothing is running, or the user chose to throw it away. */
 const confirmDiscard = (action: 'close' | 'quit') => {
+  if (headless) return true;
   const reason = busyReason();
   if (!reason) return true;
   const what =
@@ -157,6 +188,16 @@ const isInRecordingsRoot = (dir: string) => {
 };
 
 // Write everything but the screen video into a bundle (shared by both save paths).
+// project.json contents we wrote, per bundle, so the live-reload watcher
+// can tell our own saves from outside edits.
+const lastWrittenProject = new Map<string, string>();
+const projectWatchers = new Map<string, FSWatcher>();
+const writeProjectFile = (dir: string, project: Project) => {
+  const text = JSON.stringify(project, null, 2);
+  lastWrittenProject.set(dir, text);
+  writeFileSync(join(dir, 'project.json'), text);
+};
+
 const writeBundleSidecars = (
   dir: string,
   args: { camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project },
@@ -187,19 +228,7 @@ const probeHasAudio = async (bin: string, path: string) => {
 
 // Extract 16kHz mono wav from a bundle video for analysis (shared by
 // transcription and silence detection).
-const extractWav = async (dir: string, videoFile: string) => {
-  const { execFile } = await import('node:child_process');
-  const wav = join(dir, 'audio.wav');
-  const bin = await ffmpegPath();
-  await new Promise<void>((resolve, reject) =>
-    execFile(
-      bin,
-      ['-y', '-i', join(dir, videoFile), '-vn', '-ar', '16000', '-ac', '1', '-f', 'wav', wav],
-      (e) => (e ? reject(e) : resolve()),
-    ),
-  );
-  return wav;
-};
+const extractWav = async (dir: string, videoFile: string) => extractBundleWav(dir, videoFile, await ffmpegPath());
 
 /** Whether a movie plays: its length and size, or null. */
 const probeMovie = async (file: string) => {
@@ -283,6 +312,8 @@ const keepOrDiscardIosBundle = async (dir: string) => {
 
 function createWindow() {
   win = new BrowserWindow({
+    // Headless exports never show a window; frames keep coming while hidden.
+    show: !headless,
     width: 1280,
     height: 800,
     minWidth: 1100,
@@ -297,9 +328,10 @@ function createWindow() {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: !headless,
     },
   });
-  win.loadFile(join(__dirname, '../renderer/index.html'));
+  win.loadFile(join(__dirname, '../renderer/index.html'), headless ? { query: { headless: '1' } } : undefined);
   win.on('close', (e) => {
     if (!quitConfirmed && !confirmDiscard('close')) e.preventDefault();
   });
@@ -317,7 +349,10 @@ function createWindow() {
         .finally(() => void keepOrDiscardIosBundle(dir));
     }
   };
-  win.webContents.on('render-process-gone', abandonTake);
+  win.webContents.on('render-process-gone', (_e, d) => {
+    abandonTake();
+    if (headless) finishHeadless({ ok: false, error: `renderer crashed (${d.reason})` });
+  });
   win.on('closed', () => {
     abandonTake();
     win = null;
@@ -327,7 +362,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  refreshMenu();
+  if (!headless) refreshMenu();
   ipcMain.on('menu:phase', (_e, next: { phase: MenuPhase; bundleDir?: string }) => {
     menuState = { phase: next.phase, bundleDir: next.bundleDir };
     refreshMenu();
@@ -541,8 +576,50 @@ app.whenReady().then(() => {
 
   // Persist editor changes back into an existing bundle.
   ipcMain.handle('bundle:saveProject', async (_e, args: { dir: string; project: Project }) => {
-    writeFileSync(join(args.dir, 'project.json'), JSON.stringify(args.project, null, 2));
+    writeProjectFile(args.dir, args.project);
     return true;
+  });
+
+  // Live reload: watch the open bundle for project.json changes that did not
+  // come from our own saves (the agent CLI, a text editor) and send them on.
+  ipcMain.on('bundle:watch', (e, dir: string) => {
+    if (typeof dir !== 'string' || !existsSync(dir)) return;
+    projectWatchers.get(dir)?.close();
+    let timer: NodeJS.Timeout | null = null;
+    const sender = e.sender;
+    const check = () => {
+      timer = null;
+      let text: string;
+      try {
+        text = readFileSync(join(dir, 'project.json'), 'utf8');
+      } catch {
+        return;
+      }
+      if (text === lastWrittenProject.get(dir)) return;
+      lastWrittenProject.set(dir, text);
+      if (!sender.isDestroyed()) sender.send('bundle:projectChanged', { dir, text });
+    };
+    try {
+      // Watch the folder: writers that replace the file (rename) end a file watch.
+      const w = watch(dir, (_ev, name) => {
+        if (name && name !== 'project.json') return;
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(check, 300);
+      });
+      w.on('error', () => w.close());
+      projectWatchers.set(dir, w);
+      if (!lastWrittenProject.has(dir)) {
+        try {
+          lastWrittenProject.set(dir, readFileSync(join(dir, 'project.json'), 'utf8'));
+        } catch {}
+      }
+    } catch (err) {
+      console.error('could not watch', dir, err);
+    }
+  });
+  ipcMain.on('bundle:unwatch', (_e, dir: string) => {
+    projectWatchers.get(dir)?.close();
+    projectWatchers.delete(dir);
   });
 
   ipcMain.handle('file:writeText', async (_e, args: { path: string; text: string }) => {
@@ -563,7 +640,7 @@ app.whenReady().then(() => {
 
   // Open a bundle by path (e.g. one just recovered). Only our own bundles.
   ipcMain.handle('bundle:openDir', (_e, dir: string) => {
-    if (!isInRecordingsRoot(dir)) throw new Error('That recording is outside the recordings folder.');
+    if (!isInRecordingsRoot(dir) && resolve(dir) !== openOnLaunch) throw new Error('That recording is outside the recordings folder.');
     return loadBundle(dir);
   });
 
@@ -604,7 +681,8 @@ app.whenReady().then(() => {
       if (corrected !== project) {
         project = corrected;
         try {
-          writeFileSync(join(dir, 'project.json'), JSON.stringify(project, null, 2));
+          // A headless export only reads the bundle; the fix applies in memory.
+          if (!headless) writeProjectFile(dir, project);
         } catch (e) {
           console.error('could not write corrected duration:', e);
         }
@@ -696,64 +774,9 @@ app.whenReady().then(() => {
 
   // Transcribe a bundle's audio via whisper-cli → caption cues (source time).
   // The ggml model auto-downloads on first use (~148MB, into ~/models).
-  ipcMain.handle('captions:transcribe', async (_e, args: { dir: string; videoFile: string }) => {
-    const { execFile } = await import('node:child_process');
-    const run = (cmd: string, argv: string[]) =>
-      new Promise<void>((resolve, reject) =>
-        execFile(cmd, argv, (e) => (e ? reject(e) : resolve())),
-      );
-
-    // Check for whisper-cli first, so nothing is downloaded for a tool that
-    // isn't installed. A Finder-launched app's PATH misses Homebrew.
-    const cli = findWhisperCli(existsSync, (process.env.PATH ?? '').split(delimiter));
-    if (!cli) throw new Error('Transcription needs whisper-cpp. Install it with: brew install whisper-cpp');
-
-    // Download to .part and rename, so an interrupted download is retried
-    // instead of being mistaken for a model.
-    const modelDir = join(app.getPath('home'), 'models');
-    const model = process.env.OPENSCREEN_WHISPER_MODEL ?? join(modelDir, 'ggml-base.en.bin');
-    if (!existsSync(model)) {
-      mkdirSync(modelDir, { recursive: true });
-      const part = partialPath(model);
-      try {
-        await run('curl', [
-          '-fL', '--silent', '--show-error',
-          'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin',
-          '-o', part,
-        ]);
-        renameSync(part, model);
-      } catch {
-        rmSync(part, { force: true });
-        throw new Error('Could not download the speech model (148 MB). Check your connection and try again.');
-      }
-    }
-
-    const wav = await extractWav(args.dir, args.videoFile).catch(() => {
-      throw new Error('Could not read the audio from this recording.');
-    });
-    const jsonOut = join(args.dir, 'transcript.json');
-    // -ojf adds per-token offsets (ms) so the editor gets word-level timing.
-    try {
-      await run(cli, [
-        '-m', model, '-f', wav, '--output-json-full', '--output-file', jsonOut.replace(/\.json$/, ''),
-        '-t', '4',
-      ]);
-    } catch {
-      throw new Error('whisper-cli failed to transcribe this recording.');
-    }
-    if (!existsSync(jsonOut)) throw new Error('whisper-cli produced no transcript.');
-    const parsed = JSON.parse(readFileSync(jsonOut, 'utf8'));
-    // whisper-cli --output-json-full emits { transcription: [{ offsets: {from,to}, text, tokens }] }
-    const segs = parsed.transcription ?? parsed.result ?? [];
-    return segs
-      .map((s: { offsets?: { from: number; to: number }; timestamps?: { from: string; to: string }; text: string; tokens?: WhisperToken[] }) => {
-        const from = s.offsets?.from ?? 0;
-        const to = s.offsets?.to ?? 0;
-        const words = s.tokens ? tokensToWords(s.tokens) : [];
-        return { start: from / 1000, end: to / 1000, text: (s.text ?? '').trim(), words };
-      })
-      .filter((c: { start: number; end: number; text: string }) => c.end > c.start && c.text);
-  });
+  ipcMain.handle('captions:transcribe', async (_e, args: { dir: string; videoFile: string }) =>
+    transcribeBundle(args.dir, args.videoFile, await ffmpegPath()),
+  );
 
   // Waveform peaks for the timeline: decode audio.wav → normalized
   // peak per bucket in source-time order.
@@ -795,62 +818,16 @@ app.whenReady().then(() => {
   // [{start,end}] silent ranges in source seconds.
   ipcMain.handle(
     'audio:detectSilences',
-    async (_e, args: { dir: string; videoFile: string; thresholdDb?: number; minDur?: number }) => {
-      const { execFile } = await import('node:child_process');
-      const wav = await extractWav(args.dir, args.videoFile);
-      const noise = `-${Math.abs(args.thresholdDb ?? 35)}dB`;
-      const dur = String(args.minDur ?? 0.4);
-      const bin = await ffmpegPath();
-      const stderr = await new Promise<string>((resolve, reject) =>
-        execFile(
-          bin,
-          ['-i', wav, '-af', `silencedetect=n=${noise}:d=${dur}`, '-f', 'null', '-'],
-          (e, _so, se) => (e && !se ? reject(e) : resolve(se ?? '')),
-        ),
-      );
-      const silences: { start: number; end: number }[] = [];
-      let cur: number | null = null;
-      for (const m of stderr.matchAll(/silence_(start|end):\s*([\d.]+)/g)) {
-        if (m[1] === 'start') cur = parseFloat(m[2]);
-        else if (cur !== null) {
-          silences.push({ start: cur, end: parseFloat(m[2]) });
-          cur = null;
-        }
-      }
-      return silences;
-    },
+    async (_e, args: { dir: string; videoFile: string; thresholdDb?: number; minDur?: number }) =>
+      detectSilences(args.dir, args.videoFile, { thresholdDb: args.thresholdDb, minDur: args.minDur }, await ffmpegPath()),
   );
 
   // Tap analysis for phone recordings: ffmpeg streams small grayscale
   // frames, taps.ts turns their differences into tap/swipe suggestions and
   // still stretches. Everything is in source seconds.
-  ipcMain.handle('taps:analyze', async (_e, args: { dir: string; videoFile: string }) => {
-    const { spawn } = await import('node:child_process');
-    const file = join(args.dir, args.videoFile);
-    const banner = await probe(file);
-    const size = parseFfmpegVideoSize(banner);
-    if (!size) throw new Error('could not read the video size');
-    // Long takes analyse at 15 fps so the frames stay in memory comfortably.
-    const fps = (parseFfmpegDuration(banner) ?? 0) > 240 ? 15 : 30;
-    const { w, h } = analysisFrameSize(size.width, size.height);
-    const bin = await ffmpegPath();
-    const raw = await new Promise<Buffer>((resolvePromise, reject) => {
-      const chunks: Buffer[] = [];
-      let err = '';
-      const ff = spawn(bin, tapAnalysisFfmpegArgs(file, { fps }));
-      ff.stdout.on('data', (c: Buffer) => chunks.push(c));
-      ff.stderr.on('data', (c: Buffer) => (err += c.toString()));
-      ff.on('error', reject);
-      ff.on('close', (code) =>
-        code === 0 ? resolvePromise(Buffer.concat(chunks)) : reject(new Error(err.trim() || `ffmpeg exited ${code}`)),
-      );
-    });
-    const frames = splitRawGray(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength), w, h, fps);
-    const analysis = analyzeFrames(frames);
-    const taps = detectTaps(analysis).map((t) => ({ ...t, id: randomUUID() }));
-    const deadTime = findDeadTime(analysis).map((d) => ({ start: d.start, end: d.end, ...(d.edge ? { edge: d.edge } : {}) }));
-    return { taps, deadTime };
-  });
+  ipcMain.handle('taps:analyze', async (_e, args: { dir: string; videoFile: string }) =>
+    analyzeTapsInFile(join(args.dir, args.videoFile), await ffmpegPath()),
+  );
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
@@ -1002,6 +979,37 @@ app.whenReady().then(() => {
     })),
   );
 
+  // Headless export plumbing: the job, its bundle, progress and the result.
+  ipcMain.handle('headless:job', () => (headless ? { bundleDir: headless.bundleDir, out: headless.out, gif: headless.gif, presets: headless.presets } : null));
+  ipcMain.handle('headless:open', () => {
+    if (!headless) throw new Error('not a headless run');
+    return loadBundle(resolve(headless.bundleDir));
+  });
+  let lastPct = -1;
+  ipcMain.on('headless:progress', (_e, p: { done: number; total: number; detail: string }) => {
+    if (!headless || !(p.total > 0)) return;
+    const pct = Math.floor((p.done / p.total) * 100);
+    if (pct === lastPct || pct % 5 !== 0) return;
+    lastPct = pct;
+    emitJson({ progress: pct / 100, done: Math.round(p.done), total: Math.round(p.total), ...(p.detail ? { detail: p.detail } : {}) });
+  });
+  ipcMain.on('headless:done', (_e, r: HeadlessResult) => {
+    if (!headless) return;
+    if (r.ok && r.out && !existsSync(r.out)) finishHeadless({ ok: false, error: `export reported success but ${r.out} is missing` });
+    else finishHeadless(r);
+  });
+
+  if (headless) {
+    if (!existsSync(join(resolve(headless.bundleDir), 'project.json'))) {
+      finishHeadless({ ok: false, error: `${headless.bundleDir} is not an OpenScreen bundle (no project.json)` });
+      return;
+    }
+    createWindow();
+    return;
+  }
+
+  ipcMain.handle('app:openOnLaunch', () => openOnLaunch);
+
   createWindow();
 
   // Auto-update from GitHub Releases (packaged builds only).
@@ -1015,7 +1023,7 @@ app.whenReady().then(() => {
 // Ask before quitting over a recording or export. The window's own close
 // guard is skipped once this has been answered.
 app.on('before-quit', (e) => {
-  if (quitConfirmed) return;
+  if (quitConfirmed || headless) return;
   if (!confirmDiscard('quit')) {
     e.preventDefault();
     return;
@@ -1039,9 +1047,10 @@ app.on('will-quit', (e) => {
 
 // macOS keeps the app alive with no window; clicking the Dock icon brings one back.
 app.on('activate', () => {
-  if (!win && app.isReady()) createWindow();
+  if (!win && app.isReady() && !headless) createWindow();
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (headless) finishHeadless({ ok: false, error: 'the export window closed' });
+  else if (process.platform !== 'darwin') app.quit();
 });

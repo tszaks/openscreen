@@ -1,4 +1,4 @@
-import { app, Menu, shell, type BrowserWindow, type MenuItemConstructorOptions } from 'electron';
+import { app, clipboard, Menu, shell, type BrowserWindow, type MenuItemConstructorOptions } from 'electron';
 import type { MenuAction, MenuPhase } from '../shared/menu';
 
 /** The native macOS menu. Items that act on the app send a `menu:action` to
@@ -45,6 +45,12 @@ export function buildAppMenu(
           label: 'Show Project in Finder',
           enabled: inEditor && !!state.bundleDir,
           click: () => state.bundleDir && shell.showItemInFolder(state.bundleDir),
+        },
+        {
+          // The bundle path an agent CLI takes (`openscreen-agent info <path>`).
+          label: 'Copy Path for Agent',
+          enabled: inEditor && !!state.bundleDir,
+          click: () => state.bundleDir && clipboard.writeText(state.bundleDir),
         },
         { type: 'separator' },
         { role: 'close' },
