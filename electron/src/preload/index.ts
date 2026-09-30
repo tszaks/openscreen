@@ -81,6 +81,25 @@ const api = {
       ipcRenderer.removeListener('export:transcodeProgress', listener);
     };
   },
+  /** Watch a bundle's project.json for outside changes; returns the unsubscribe. */
+  watchProject: (dir: string, cb: (text: string) => void) => {
+    const listener = (_e: IpcRendererEvent, p: { dir: string; text: string }) => {
+      if (p.dir === dir) cb(p.text);
+    };
+    ipcRenderer.on('bundle:projectChanged', listener);
+    ipcRenderer.send('bundle:watch', dir);
+    return () => {
+      ipcRenderer.removeListener('bundle:projectChanged', listener);
+      ipcRenderer.send('bundle:unwatch', dir);
+    };
+  },
+  /** Headless export: what to open and where to export, or null in the GUI. */
+  /** The bundle passed as `--open <bundle>`, or null. */
+  openOnLaunch: () => ipcRenderer.invoke('app:openOnLaunch'),
+  headlessJob: () => ipcRenderer.invoke('headless:job'),
+  headlessOpen: () => ipcRenderer.invoke('headless:open'),
+  headlessProgress: (done: number, total: number, detail: string) => ipcRenderer.send('headless:progress', { done, total, detail }),
+  headlessDone: (result: unknown) => ipcRenderer.send('headless:done', result),
   setMenuPhase: (phase: string, bundleDir?: string) => ipcRenderer.send('menu:phase', { phase, bundleDir }),
   onMenu: (cb: (action: string) => void) => {
     const listener = (_e: IpcRendererEvent, action: string) => cb(action);
