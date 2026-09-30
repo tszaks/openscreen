@@ -33,8 +33,9 @@ export function transcodePreset(
   /** Master length in seconds, to turn out_time into a fraction. */
   duration: number,
   onProgress: (fraction: number) => void = () => {},
+  audible = true,
 ): TranscodeRun {
-  const jobs = ffmpegJobsFor(preset, input, outBase, hasAudio);
+  const jobs = ffmpegJobsFor(preset, input, outBase, hasAudio, audible);
   const videos = Math.max(1, jobs.filter((j) => j.kind === 'video').length);
   let child: ChildProcess | null = null;
   let cancelled = false;

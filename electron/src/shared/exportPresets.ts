@@ -345,6 +345,10 @@ export interface FfmpegExportOptions {
   output: string;
   /** Does the input carry an audio stream? */
   hasAudio: boolean;
+  /** False when that stream is digital silence. loudnorm divides by the
+   *  measured loudness, so on silence it emits NaN and the AAC encoder
+   *  aborts the export; silent audio is encoded without normalization. */
+  audible?: boolean;
   /** Which of the preset's containers to write. Defaults to the primary one. */
   container?: Container;
   /** x264 speed/quality tradeoff. */
@@ -417,7 +421,7 @@ export function ffmpegArgsFor(p: ExportPreset, o: FfmpegExportOptions): string[]
   args.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
 
   if (wantsAudio && (o.hasAudio || silent) && p.audio.mode === 'aac-stereo') {
-    if (o.hasAudio && p.audio.loudnessLufs !== undefined) {
+    if (o.hasAudio && o.audible !== false && p.audio.loudnessLufs !== undefined) {
       args.push('-af', `loudnorm=I=${p.audio.loudnessLufs}:TP=-1.5:LRA=11`);
     }
     args.push('-c:a', 'aac', '-b:a', `${p.audio.bitrateKbps}k`, '-ar', String(p.audio.sampleRate), '-ac', '2');
@@ -447,10 +451,10 @@ export interface FfmpegJob {
 }
 
 /** Every file a preset produces: one video per container, plus a poster. */
-export function ffmpegJobsFor(p: ExportPreset, input: string, outBase: string, hasAudio: boolean): FfmpegJob[] {
+export function ffmpegJobsFor(p: ExportPreset, input: string, outBase: string, hasAudio: boolean, audible = true): FfmpegJob[] {
   const jobs: FfmpegJob[] = p.containers.map((container) => {
     const output = `${outBase}.${container}`;
-    return { kind: 'video', output, args: ffmpegArgsFor(p, { input, output, hasAudio, container }) };
+    return { kind: 'video', output, args: ffmpegArgsFor(p, { input, output, hasAudio, audible, container }) };
   });
   if (p.poster) {
     const output = `${outBase}-poster.jpg`;
