@@ -2,7 +2,7 @@
 // the main process and the agent CLI run the exact same analysis.
 
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -144,6 +144,17 @@ export function parseWhisperJson(parsed: unknown): TranscriptSegment[] {
     .filter((c) => c.end > c.start && c.text);
 }
 
+/** Below this peak level (dBFS) a recording has no audible sound. */
+export const SILENT_PEAK_DB = -60;
+
+/** max_volume from ffmpeg's volumedetect output, in dB; null if absent. */
+export function parseMaxVolume(stderr: string): number | null {
+  const at = stderr.lastIndexOf('max_volume:');
+  if (at < 0) return null;
+  const value = parseFloat(stderr.slice(at + 'max_volume:'.length));
+  return Number.isFinite(value) ? value : null;
+}
+
 /**
  * Transcribe a bundle with whisper-cli into transcript.json (whisper's own
  * format) and return its segments. The model downloads on first use.
@@ -170,6 +181,13 @@ export async function transcribeBundle(dir: string, videoFile: string, bin = ffm
     throw new Error('Could not read the audio from this recording.');
   });
   const jsonOut = join(dir, 'transcript.json');
+  // Whisper hallucinates words ("You") on silent audio, which would become
+  // bogus captions. A recording with no audible sound has no transcript.
+  const peak = parseMaxVolume(await ffmpegStderr(['-hide_banner', '-i', wav, '-af', 'volumedetect', '-f', 'null', '-'], bin));
+  if (peak !== null && peak < SILENT_PEAK_DB) {
+    writeFileSync(jsonOut, JSON.stringify({ transcription: [], silent: true }));
+    return [];
+  }
   try {
     await run(cli, ['-m', model, '-f', wav, '--output-json-full', '--output-file', jsonOut.replace(/\.json$/, ''), '-t', '4']);
   } catch {
