@@ -42,6 +42,16 @@ The helper needs Xcode's command line tools (`xcode-select --install`). To recor
 
 ffmpeg on PATH (`brew install ffmpeg`) for MP4/GIF export; `brew install whisper-cpp` for transcription. `npm run dist` builds a dmg + zip with bundled ffmpeg.
 
+## Agents
+
+An agent can record, watch, edit and export without the GUI:
+`node electron/scripts/openscreen-agent.mjs <command>` (JSON on stdout,
+exit codes). `devices` / `record start|stop` → `review` (contact sheets) →
+`polish` / `apply edits.json` → `export --out x.mp4` (headless render
+through the real app: `OpenScreen --export <bundle> --out x.mp4`) → `review
+x.mp4`. The editor reloads `project.json` when it changes on disk. See
+[AGENTS.md](AGENTS.md).
+
 ## Releases
 
 Releases are signed with a Developer ID and notarized. Build one with `npm run dist` and these set: `APPLE_API_KEY` (path to the .p8), `APPLE_API_KEY_ID` and `APPLE_API_ISSUER`. The app updates itself from GitHub Releases through electron-updater.

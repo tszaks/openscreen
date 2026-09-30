@@ -10,5 +10,5 @@
     "types": ["node"],
     "sourceMap": true
   },
-  "include": ["src/main", "src/preload", "src/shared"]
+  "include": ["src/main", "src/preload", "src/shared", "src/node"]
 }

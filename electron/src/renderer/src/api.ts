@@ -118,6 +118,16 @@ declare global {
       exportTranscode(presetId: PresetId, input: string, outBase: string, duration: number): Promise<string[]>;
       /** Subscribe to transcode progress (0..1); returns the unsubscribe. */
       onTranscodeProgress(cb: (e: { presetId: PresetId; fraction: number }) => void): () => void;
+      /** project.json changed on disk (not by our own save); returns the unsubscribe. */
+      watchProject(dir: string, cb: (text: string) => void): () => void;
+      /** The bundle given as `--open <bundle>` on the command line, or null. */
+      openOnLaunch(): Promise<string | null>;
+      /** The headless export job (`OpenScreen --export`), or null for a normal launch. */
+      headlessJob(): Promise<{ bundleDir: string; out: string; gif: boolean; presets?: string[] } | null>;
+      /** Open the headless job's bundle (it may be outside the recordings folder). */
+      headlessOpen(): Promise<OpenedBundle>;
+      headlessProgress(done: number, total: number, detail: string): void;
+      headlessDone(result: { ok: boolean; out?: string; files?: string[]; frames?: number; seconds?: number; error?: string }): void;
       /** Tell main what is on screen, so the menu enables what applies. */
       setMenuPhase(phase: MenuPhase, bundleDir?: string): void;
       /** Subscribe to app-menu clicks; returns the unsubscribe. */
