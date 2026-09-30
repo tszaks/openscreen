@@ -226,6 +226,18 @@ const probeHasAudio = async (bin: string, path: string) => {
   return /Stream #\d+:\d+.*Audio:/.test(probe);
 };
 
+/** Is there any audible sound in the file's audio (peak above -70 dBFS)?
+ *  Unknown counts as audible, so a failed probe never drops normalization. */
+const probeAudible = async (bin: string, path: string) => {
+  const { execFile } = await import('node:child_process');
+  const out = await new Promise<string>((resolve) =>
+    execFile(bin, ['-hide_banner', '-i', path, '-vn', '-af', 'volumedetect', '-f', 'null', '-'], { maxBuffer: 16 * 1024 * 1024 }, (_e, _so, se) => resolve(String(se ?? ''))),
+  );
+  const m = /max_volume:\s*(-?[\d.]+|-inf)\s*dB/.exec(out);
+  if (!m) return true;
+  return m[1] !== '-inf' && parseFloat(m[1]) > -70;
+};
+
 // Extract 16kHz mono wav from a bundle video for analysis (shared by
 // transcription and silence detection).
 const extractWav = async (dir: string, videoFile: string) => extractBundleWav(dir, videoFile, await ffmpegPath());
@@ -897,8 +909,12 @@ app.whenReady().then(() => {
     const preset = getPreset(args.presetId);
     const hasAudio = await probeHasAudio(bin, args.input);
     mkdirSync(dirname(args.outBase), { recursive: true });
+    const audible = hasAudio && preset.audio.mode === 'aac-stereo' && preset.audio.loudnessLufs !== undefined
+      ? await probeAudible(bin, args.input)
+      : true;
     const run = transcodePreset(bin, preset, args.input, args.outBase, hasAudio, args.duration, (fraction) =>
       win?.webContents.send('export:transcodeProgress', { presetId: args.presetId, fraction }),
+      audible,
     );
     transcodeRun = run;
     try {
