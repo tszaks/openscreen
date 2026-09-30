@@ -333,22 +333,21 @@ export class CanvasCompositor {
       ctx.stroke();
     }
 
-    // 6. Caption pill near content bottom.
-    const cue = this.project.captions.find((c) => c.start <= time && time <= c.end);
-    if (cue && cue.text) this.drawCaption(cue, visible, W, H);
-
     // 7. Keystroke keycaps, bottom-left inside the content frame.
     if (input.keystrokes?.length) this.drawKeystrokes(input.keystrokes, visible, H);
 
-    // 8. Text annotations on the content frame.
-    for (const a of this.project.annotations ?? []) {
-      if (time >= a.start && time <= a.end) this.drawAnnotation(a, visible, H);
-    }
-
-    // 9. Device frame — hardware drawn over the screen's edge.
+    // 8. Device frame — hardware drawn over the screen's edge.
     if (phone && frameBody) {
       drawDeviceFrame(ctx, frameBody, phone.device, this.project.device.finishId, { orientation: phone.orientation });
     }
+
+    // 9. Text overlays and the caption pill, above the hardware so the
+    // frame never cuts through them.
+    for (const a of this.project.annotations ?? []) {
+      if (time >= a.start && time <= a.end) this.drawAnnotation(a, visible, H);
+    }
+    const cue = this.project.captions.find((c) => c.start <= time && time <= c.end);
+    if (cue && cue.text) this.drawCaption(cue, visible, W, H);
 
     // 10. Title card beside the phone.
     const title = this.project.layout.titleCard;
@@ -436,21 +435,26 @@ export class CanvasCompositor {
 
   private drawCaption(cue: CaptionCue, rect: { x: number; y: number; w: number; h: number }, W: number, H: number) {
     const { ctx } = this;
-    const fontSize = Math.max(16, H * 0.032);
+    // Sized to the screen it sits on, and wrapped so it never runs off it.
+    const fontSize = Math.max(16, Math.min(H * 0.032, rect.w * 0.06));
     ctx.font = `600 ${fontSize}px -apple-system, sans-serif`;
-    const tw = ctx.measureText(cue.text).width;
+    const maxW = Math.max(fontSize * 4, Math.min(rect.w * 0.9, W * 0.94));
+    const lines = wrapText(ctx, cue.text, maxW).slice(0, 3);
     const padX = fontSize * 0.5;
     const padY = fontSize * 0.28;
-    const pw = tw + padX * 2;
-    const ph = fontSize * 1.35 + padY * 2;
+    const lineH = fontSize * 1.3;
+    const pw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + padX * 2;
+    const ph = lineH * lines.length + padY * 2;
     const px = rect.x + rect.w / 2 - pw / 2;
-    const py = rect.y + rect.h - ph - H * 0.03;
+    const py = rect.y + rect.h - ph - Math.min(H * 0.03, rect.h * 0.06);
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    roundedPath(ctx, px, py, pw, ph, ph / 4);
+    roundedPath(ctx, px, py, pw, ph, Math.min(ph, lineH + padY * 2) / 4);
     ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.textBaseline = 'middle';
-    ctx.fillText(cue.text, px + padX, py + ph / 2);
+    ctx.textAlign = 'center';
+    lines.forEach((l, i) => ctx.fillText(l, px + pw / 2, py + padY + lineH * (i + 0.5)));
+    ctx.textAlign = 'start';
   }
 
   private drawKeystrokes(keys: string[], rect: { x: number; y: number; w: number; h: number }, H: number) {
@@ -566,4 +570,20 @@ function roundedPath(
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
+}
+
+/** Greedy word wrap to `maxW` pixels in the context's current font. */
+export function wrapText(ctx: { measureText(t: string): { width: number } }, text: string, maxW: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (cur && ctx.measureText(next).width > maxW) {
+      lines.push(cur);
+      cur = w;
+    } else cur = next;
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [text];
 }

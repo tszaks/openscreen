@@ -23,7 +23,7 @@ import type { TranscriptWord } from '../../shared/types';
 import type { TapSuggestion } from '../../shared/taps';
 import { SaveTracker, isTextEntry } from '../../shared/editorSession';
 import { exportCanvasSize, ipcErrorMessage } from '../../shared/exportArgs';
-import { getPreset, type ExportPreset, type PresetId } from '../../shared/exportPresets';
+import { getPreset, PRESETS, type ExportPreset, type PresetId } from '../../shared/exportPresets';
 import {
   ENCODE_WEIGHT,
   batchUnits,
@@ -63,6 +63,16 @@ import { LayoutSection } from './mobile/LayoutSection';
 type InspectorTab = 'background' | 'device' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'text';
 
 /** The export shown in the progress overlay: one file, or a batch of formats. */
+/** How an export ended, for headless runs. */
+interface ExportOutcome {
+  ok: boolean;
+  out?: string;
+  files?: string[];
+  frames?: number;
+  seconds?: number;
+  error?: string;
+}
+
 interface ExportRun {
   kind: 'single' | 'batch';
   state: ExportProgressState;
@@ -96,6 +106,7 @@ export function Editor({
   bundleDir,
   onNewRecording,
   onOpenProject,
+  headless,
 }: {
   videoUrl: string;
   camUrl?: string;
@@ -107,6 +118,8 @@ export function Editor({
   onNewRecording: () => void;
   /** Pick and open another project in place of this one. */
   onOpenProject: () => void;
+  /** Headless export (`OpenScreen --export`): export this, report, never save. */
+  headless?: { out: string; gif: boolean; presets?: string[] };
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const camRef = useRef<HTMLVideoElement>(null);
@@ -187,6 +200,8 @@ export function Editor({
 
   /** Write a snapshot into the bundle and record it as saved. */
   const persist = async (snapshot: Project) => {
+    // A headless export only reads the project; the agent CLI owns the file.
+    if (headless) return;
     await api.saveProject(bundleDir, snapshot);
     saveTracker.current.markSaved(snapshot);
   };
@@ -208,6 +223,7 @@ export function Editor({
   }, []);
 
   useEffect(() => {
+    if (headless) return;
     let dead = false;
     api.audioPeaks(bundleDir, proj.recording.screenVideoFile, 1200).then((p) => {
       if (!dead) setPeaks(p);
@@ -225,14 +241,43 @@ export function Editor({
   const timelineRef = useRef(timeline);
   timelineRef.current = timeline;
 
-  // Autosave edits into the bundle (debounced; undo/redo snapshots included).
+  // project.json changed on disk from outside (the agent CLI, a text editor).
+  // Clean editor: reload it. Unsaved edits: hold autosave and ask.
+  const [externalChange, setExternalChange] = useState<Project | null>(null);
+  const loadExternal = (next: Project) => {
+    const n = normalizeProject(next);
+    setProj(n);
+    saveTracker.current.markSaved(n);
+    setExternalChange(null);
+    setStatus('Reloaded: project.json changed on disk');
+  };
   useEffect(() => {
+    if (headless) return;
+    return api.watchProject(bundleDir, (text) => {
+      let next: Project;
+      try {
+        next = JSON.parse(text);
+      } catch {
+        return; // mid-write or damaged; the next change event retries
+      }
+      if (!next?.recording || !Array.isArray(next.clips)) return;
+      if (JSON.stringify(normalizeProject(next)) === JSON.stringify(projRef.current)) return;
+      if (saveTracker.current.isDirty(projRef.current)) setExternalChange(next);
+      else loadExternal(next);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundleDir]);
+
+  // Autosave edits into the bundle (debounced; undo/redo snapshots included).
+  // Held while an outside change to project.json waits for an answer.
+  useEffect(() => {
+    if (externalChange) return;
     const t = setTimeout(() => {
       void persist(proj).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proj, bundleDir]);
+  }, [proj, bundleDir, externalChange]);
 
   const cancelExport = useRef(false);
   // The export overlay, and whoever is listening for transcode progress.
@@ -711,12 +756,13 @@ export function Editor({
   /** This project's export: MP4 or GIF, drawn with the project's layout preset
    *  when one is set (and then encoded to that preset's spec), otherwise at
    *  the Resolution and Frame rate picked in the Export menu. */
-  const exportVideo = async (wantGif = false) => {
+  const exportVideo = async (wantGif = false, outPathIn?: string): Promise<ExportOutcome> => {
     const video = videoRef.current;
-    if (!video || exporting) return;
+    if (!video || exporting) return { ok: false, error: exporting ? 'an export is already running' : 'the recording is not loaded' };
     setExportMenuOpen(false);
-    const outPath = await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4');
-    if (!outPath) return;
+    // `outPathIn` skips the save dialog (headless export).
+    const outPath = outPathIn ?? (await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4'));
+    if (!outPath) return { ok: false, error: 'cancelled' };
     const preset = layoutPresetOf(proj);
     // A GIF is converted from an intermediate mp4 in the bundle.
     const mp4Path = wantGif ? `${bundleDir}/export-${Date.now()}.mp4` : outPath;
@@ -746,15 +792,16 @@ export function Editor({
       if (!ok) {
         setXp(null);
         setStatus('export cancelled');
-        return;
+        return { ok: false, error: 'cancelled' };
       }
       let reveal = outPath;
+      let files = [outPath];
       if (transcode && master) {
         phase = 'encoding';
         setXp((x) => x && { ...x, done: frames, detail: `Encoding for ${preset.label}` });
         transcodeProgress.current = ({ fraction }) =>
           setXp((x) => x && { ...x, done: frames + fraction * frames * ENCODE_WEIGHT });
-        const files = await api.exportTranscode(preset.id, master, basePath, frames / fps);
+        files = await api.exportTranscode(preset.id, master, basePath, frames / fps);
         reveal = files[0] ?? outPath;
       }
       await writeSidecars(basePath);
@@ -764,14 +811,16 @@ export function Editor({
         await api.exportGif(mp4Path, outPath);
       }
       setXp((x) => x && { ...x, state: 'done', done: total, message: reveal.split('/').pop(), reveal });
+      return { ok: true, out: reveal, files: wantGif ? [outPath] : files, frames, seconds: frames / fps };
     } catch (e) {
       if (cancelExport.current) {
         setXp(null);
         setStatus('export cancelled');
-      } else {
-        const message = ipcErrorMessage(e);
-        setXp((x) => x && { ...x, state: 'failed', message, detail: transcode || wantGif ? `Stopped while ${phase}` : undefined });
+        return { ok: false, error: 'cancelled' };
       }
+      const message = ipcErrorMessage(e);
+      setXp((x) => x && { ...x, state: 'failed', message, detail: transcode || wantGif ? `Stopped while ${phase}` : undefined });
+      return { ok: false, error: message };
     } finally {
       transcodeProgress.current = null;
       if (master) void api.exportDiscardMaster(master);
@@ -785,11 +834,11 @@ export function Editor({
    * encoded from it with its own settings, one at a time. Cancel stops the
    * running step and skips the rest; finished files are kept.
    */
-  const exportFormats = async (ids: PresetId[], folderIn?: string, prevRows?: TaskRowState[]) => {
-    if (!videoRef.current || exporting || ids.length === 0) return;
+  const exportFormats = async (ids: PresetId[], folderIn?: string, prevRows?: TaskRowState[]): Promise<ExportOutcome> => {
+    if (!videoRef.current || exporting || ids.length === 0) return { ok: false, error: 'nothing to export' };
     setExportMenuOpen(false);
     const folder = folderIn ?? (await api.exportPickFolder(bundleDir));
-    if (!folder) return;
+    if (!folder) return { ok: false, error: 'cancelled' };
     const presets = ids.map(getPreset);
     const passes = planRenders(presets);
     const dur = timeline.outputDuration || duration;
@@ -885,11 +934,47 @@ export function Editor({
         detail = '';
         publish('done', `${ids.length} format${ids.length === 1 ? '' : 's'} saved to ${folder.split('/').pop()}`);
       }
+      const finished = rows.filter((r) => ids.includes(r.preset.id));
+      const files = finished.filter((r) => r.status === 'done').flatMap((r) => r.files);
+      const failures = finished.filter((r) => r.status !== 'done').map((r) => `${r.preset.id}: ${r.error ?? r.status}`);
+      return failures.length
+        ? { ok: false, out: folder, files, error: failures.join('; ') }
+        : { ok: true, out: folder, files, frames: Math.floor(dur * 30), seconds: dur };
     } finally {
       transcodeProgress.current = null;
       setExporting(false);
     }
   };
+
+  // Headless export: once the video (and camera) can be drawn, export to the
+  // requested path with no dialogs and report the outcome to main.
+  const [mediaReady, setMediaReady] = useState(false);
+  const headlessStarted = useRef(false);
+  useEffect(() => {
+    if (!headless || !mediaReady || headlessStarted.current) return;
+    headlessStarted.current = true;
+    void (async () => {
+      let result: ExportOutcome;
+      try {
+        if (proj.style.background.kind === 'imageFile') await backgroundReady(proj.style.background.path);
+        if (headless.presets?.length) {
+          const bad = headless.presets.filter((id) => !PRESETS.some((x) => x.id === id));
+          result = bad.length
+            ? { ok: false, error: `unknown preset(s): ${bad.join(', ')}. Known: ${PRESETS.map((x) => x.id).join(', ')}` }
+            : await exportFormats(headless.presets as PresetId[], headless.out);
+        } else {
+          result = await exportVideo(headless.gif, headless.out);
+        }
+      } catch (e) {
+        result = { ok: false, error: ipcErrorMessage(e) };
+      }
+      api.headlessDone(result);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [headless, mediaReady]);
+  useEffect(() => {
+    if (headless && xp) api.headlessProgress(xp.done, xp.total, xp.detail ?? '');
+  }, [headless, xp]);
 
   const cancelRunningExport = () => {
     cancelExport.current = true;
@@ -1175,7 +1260,7 @@ export function Editor({
 
   // The first time a phone recording opens, find its taps.
   useEffect(() => {
-    if (isPhone && !proj.tapsAnalyzed && proj.taps.length === 0) void analyzeTaps(true);
+    if (!headless && isPhone && !proj.tapsAnalyzed && proj.taps.length === 0) void analyzeTaps(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2035,7 +2120,10 @@ export function Editor({
         muted={exporting}
         onLoadedMetadata={(e) => setDuration(mediaDuration(e.currentTarget.duration, proj.recording.duration))}
         onDurationChange={(e) => setDuration(mediaDuration(e.currentTarget.duration, proj.recording.duration))}
-        onLoadedData={() => renderAt(playheadRef.current)}
+        onLoadedData={() => {
+          renderAt(playheadRef.current);
+          setMediaReady(true);
+        }}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
       />
@@ -2403,6 +2491,22 @@ export function Editor({
         </div>
       )}
 
+      {externalChange && (
+        <div className="modal-scrim">
+          <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="ext-title">
+            <h2 id="ext-title">project.json changed on disk</h2>
+            <p>Something outside OpenScreen (an agent, a text editor) changed this project, and you have unsaved edits. Load the version on disk, or keep yours and overwrite it?</p>
+            <div className="modal-actions">
+              <Button variant="ghost" onClick={() => { saveTracker.current.markSaved(externalChange); setExternalChange(null); setStatus('Kept your edits; they overwrite the file on the next save'); }}>
+                Keep Mine
+              </Button>
+              <Button variant="primary" onClick={() => loadExternal(externalChange)}>
+                Load From Disk
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       {pendingLeave && (
         <div className="modal-scrim" onMouseDown={() => void answerLeave('cancel')}>
           <div

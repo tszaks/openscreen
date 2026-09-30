@@ -10,7 +10,9 @@
     "test": "vitest run",
     "electron:dev": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "agent": "node scripts/openscreen-agent.mjs",
+    "build:main": "tsc -p tsconfig.main.json"
   },
   "build": {
     "appId": "com.openscreen.app",

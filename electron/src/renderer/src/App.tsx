@@ -631,6 +631,15 @@ export function App() {
     if (dir) void openBundle(() => api.openBundleDir(dir));
   }, [recovered, openBundle]);
 
+  // `OpenScreen --open <bundle>` opens that project straight away.
+  useEffect(() => {
+    void api.openOnLaunch().then((dir) => {
+      if (dir) void openBundle(() => api.openBundleDir(dir));
+    });
+    // Once, at launch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const backToPicker = useCallback(() => setPhase({ name: 'picker' }), []);
 
   // Native menu clicks arrive over IPC; re-broadcast them in this world as
