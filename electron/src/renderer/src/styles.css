@@ -1886,28 +1886,28 @@ body.resizing-y * {
   color: var(--label-2);
 }
 .clip-frames {
+  position: relative;
   flex: 1;
   min-height: 0;
-  display: flex;
   overflow: hidden;
   border-radius: 0 0 6px 6px;
   background: var(--fill-2);
   pointer-events: none;
 }
+/* Tiles are placed by the editor (left and width), only near the view. */
 .clip-frames > * {
-  flex: 1 1 0;
-  min-width: 0;
-  height: 100%;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  height: auto;
   object-fit: cover;
   box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.22);
   animation: fade-in var(--t3) var(--ease);
 }
 /* Portrait takes: each frame a small rounded screen on the clip's grey. */
-.clip-frames.portrait {
-  gap: 3px;
-  padding: 2px 3px 3px;
-}
 .clip-frames.portrait > * {
+  top: 2px;
+  bottom: 3px;
   border-radius: 3px;
   box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.25);
 }

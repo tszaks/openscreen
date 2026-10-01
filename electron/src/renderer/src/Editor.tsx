@@ -43,7 +43,7 @@ import { ExportPanel, ExportTasks, type TaskRowState } from './components/Export
 import { Button, EmptyState, FormRow, Icon, IconButton, Kbd, Section, Segmented, Sheet, Switch, Tabs, cssToken, useColorScheme } from './ui';
 import { ScrubField } from './components/ScrubField';
 import { useFilmstrip } from './useFilmstrip';
-import { clipFrames, filmstripTile, filmstripTimes, tilesForClip } from '../../shared/filmstrip';
+import { filmstripTile, filmstripTimes, slotFrame, tilesForClip, visibleSlots } from '../../shared/filmstrip';
 import { BACKDROPS, BACKDROP_GROUPS, backgroundCss, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
 import {
@@ -1474,7 +1474,7 @@ export function Editor({
     if (!g) return;
     g.clearRect(0, 0, W, H);
     // A silent recording draws nothing; the lane says so in words instead.
-    if (Math.max(...peaks) < 0.03) return;
+    if (Math.max(...peaks) < SILENT_PEAK) return;
     g.fillStyle = cssToken('--wave', 'rgba(128,128,128,0.4)');
     const outDur = timeline.outputDuration || duration || 1;
     const srcDur = proj.recording.duration || 1;
@@ -1515,6 +1515,26 @@ export function Editor({
     const ro = new ResizeObserver(() => setLanesW(el.clientWidth));
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+  // The part of the lanes in view, in coarse steps (a re-render per 256px of
+  // scrolling, not per pixel): the filmstrip draws only near it.
+  const [tlView, setTlView] = useState<[number, number]>([0, 4096]);
+  useEffect(() => {
+    const sc = tlScrollRef.current;
+    if (!sc) return;
+    const update = () => {
+      const x0 = Math.floor(sc.scrollLeft / 256) * 256;
+      const x1 = x0 + Math.ceil(sc.clientWidth / 256) * 256 + 256;
+      setTlView((v) => (v[0] === x0 && v[1] === x1 ? v : [x0, x1]));
+    };
+    update();
+    sc.addEventListener('scroll', update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(sc);
+    return () => {
+      sc.removeEventListener('scroll', update);
+      ro.disconnect();
+    };
   }, []);
   // The clips lane grows with a dragged-taller timeline; tiles follow it.
   const clipLaneRef = useRef<HTMLDivElement>(null);
@@ -1674,25 +1694,34 @@ export function Editor({
   const framesH = clipLaneH ? Math.max(12, clipLaneH - CLIP_CHROME_H) : CLIP_FRAMES_H;
   const tile = filmstripTile(proj.recording.sourceSize, portraitSource ? framesH - 5 : framesH);
   const tileSlot = tile.width + (tile.portrait ? 3 : 0);
-  // Each clip's tiles, built only when the strip, the clips, the zoom or the
-  // lane size change: never on a playhead tick, so zoomed playback stays smooth.
+  // Each clip's tiles, built only when the strip, the clips, the zoom, the
+  // lane size or the part in view change (never on a playhead tick), and
+  // only near what's on screen, so deep zoom stays cheap. Each tile keeps
+  // its frame's shape at any zoom.
   const clipTiles = useMemo(
     () =>
-      clipBlocks.map((b, i) =>
-        filmstrip.length === 0
-          ? null
-          : clipFrames(
-              filmTimes,
-              timeline.clips[i]?.sourceStart ?? 0,
-              timeline.clips[i]?.sourceEnd ?? 0,
-              tilesForClip((b.end - b.start) / outDur, lanesW, tileSlot),
-            ).map((fi, k) =>
-              filmstrip[fi] ? <img key={k} src={filmstrip[fi]!} alt="" draggable={false} /> : <span key={k} />,
-            ),
-      ),
-    [clipBlocks, filmstrip, filmTimes, timeline, outDur, lanesW, tileSlot],
+      clipBlocks.map((b, i) => {
+        if (filmstrip.length === 0 || !lanesW) return null;
+        const clipLeft = (b.start / outDur) * lanesW;
+        const clipW = ((b.end - b.start) / outDur) * lanesW;
+        const slots = tilesForClip((b.end - b.start) / outDur, lanesW, tileSlot);
+        const slotW = clipW / slots;
+        const [first, last] = visibleSlots(slots, slotW, clipLeft, tlView[0], tlView[1]);
+        const inset = tile.portrait ? 1.5 : 0;
+        const src = timeline.clips[i];
+        const out = [];
+        for (let k = first; k < last; k++) {
+          const fi = slotFrame(filmTimes, src?.sourceStart ?? 0, src?.sourceEnd ?? 0, slots, k);
+          const style = { left: k * slotW + inset, width: slotW - inset * 2 };
+          out.push(filmstrip[fi] ? <img key={k} src={filmstrip[fi]!} alt="" draggable={false} style={style} /> : <span key={k} style={style} />);
+        }
+        return out;
+      }),
+    [clipBlocks, filmstrip, filmTimes, timeline, outDur, lanesW, tileSlot, tile.portrait, tlView],
   );
-  const silent = peaks.length > 0 && Math.max(...peaks) < 0.03;
+  // "No sound" only for a track that is really silent (about −54 dBFS or
+  // below); quiet speech still draws its waveform.
+  const silent = peaks.length > 0 && Math.max(...peaks) < SILENT_PEAK;
   const bundleName = projectName(proj, bundleDir);
   const formatChoices = presetChoices(proj.recording.sourceSize);
   const selectedFormats =
@@ -2938,6 +2967,9 @@ export function Editor({
 
 /** Height of the frames strip under a clip's name: the clips lane less the
  *  name strip and the clip's border (styles.css .clipblock / .clip-label). */
+/** Below this normalized peak a track is treated as having no sound. */
+const SILENT_PEAK = 0.002;
+
 const CLIP_CHROME_H = 16 + 3;
 const CLIP_FRAMES_H = 56 - CLIP_CHROME_H;
 
