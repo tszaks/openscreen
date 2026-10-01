@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
-import { normalizeProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
+import { normalizeProject, resetProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
 import { AutofocusPlanner, cameraAt, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
@@ -194,6 +194,7 @@ export function Editor({
   const saveTracker = useRef(new SaveTracker(proj));
   // Where to go once the unsaved-changes confirm is answered.
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
   const disposed = useRef(false);
   // Phone recordings: the tap selected on the taps lane (clicking the preview
   // places it), a tap analysis in flight, and whether the title field has
@@ -1262,6 +1263,9 @@ export function Editor({
         case 'split':
           if (!exporting) splitAtPlayhead();
           return;
+        case 'resetProject':
+          if (!exporting) setConfirmReset(true);
+          return;
       }
     };
     window.addEventListener('openscreen:menu', onMenu);
@@ -1652,6 +1656,25 @@ export function Editor({
   const activeTab: InspectorTab = inspectorTabs.some((t) => t.value === inspectorTab) ? inspectorTab : 'background';
   /** Ends the undo step a scrub gesture made. */
   const sealHistory = () => historyRef.current.seal();
+
+  /** Everything back to the raw take except the backdrop, as one undo step. */
+  const doReset = () => {
+    setConfirmReset(false);
+    historyRef.current.seal();
+    setProj((p) => resetProject(p));
+    // Sealed after the change lands, so a quick next edit can't merge into it.
+    requestAnimationFrame(() => historyRef.current.seal());
+    setSelectedClip(null);
+    setSelectedTap(null);
+    setCropMode(false);
+    setSmartCuts(null);
+    setWordSel(null);
+    setTlZoom(1);
+    tlZoomRef.current = 1;
+    movePlayhead(0);
+    seekOutput(0);
+    setStatus('Project reset to the original recording · ⌘Z to undo');
+  };
   const blurredBg = isPhone && proj.layout.background === 'blurred';
 
   const importCaptionsButton = (variant: 'secondary' | 'ghost', size: 'sm' | 'md') => (
@@ -2323,6 +2346,9 @@ export function Editor({
         <div className="history no-drag">
           <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
           <IconButton label="Redo (⌘⇧Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
+          <Button size="sm" variant="ghost" disabled={exporting} onClick={() => setConfirmReset(true)} title="Undo every edit, keeping the recording and backdrop">
+            Reset
+          </Button>
         </div>
         <div className="spacer" />
         {status && !xp && (
@@ -2717,6 +2743,31 @@ export function Editor({
               </Button>
               <Button variant="primary" onClick={() => loadExternal(externalChange)}>
                 Load From Disk
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmReset && (
+        <div className="modal-scrim" onMouseDown={() => setConfirmReset(false)}>
+          <div
+            className="modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="reset-title"
+            onMouseDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === 'Escape' && setConfirmReset(false)}
+          >
+            <h2 id="reset-title">Reset {bundleName}?</h2>
+            <p>
+              Removes every edit: cuts, speed changes, zooms, taps, captions, text, crop and frame settings. The
+              original recording and your backdrop stay. You can undo this with ⌘Z.
+            </p>
+            <div className="modal-actions">
+              <div className="spacer" />
+              <Button autoFocus onClick={() => setConfirmReset(false)}>Cancel</Button>
+              <Button variant="danger" onClick={doReset}>
+                Reset Project
               </Button>
             </div>
           </div>

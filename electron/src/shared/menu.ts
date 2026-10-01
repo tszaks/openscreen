@@ -10,7 +10,8 @@ export type MenuAction =
   | 'undo'
   | 'redo'
   | 'playPause'
-  | 'split';
+  | 'split'
+  | 'resetProject';
 
 /** One row of a right-click menu built by the renderer and shown natively. */
 export type ContextMenuItem =
