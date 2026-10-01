@@ -11,8 +11,8 @@ const api = {
   setBusy: (reason: string | null) => ipcRenderer.send('app:busy', reason),
   startRecording: (sourceId: string, displayId?: string) => ipcRenderer.invoke('recording:start', { sourceId, displayId }),
   stopRecording: (videoStartedAtMs?: number) => ipcRenderer.invoke('recording:stop', { videoStartedAtMs }),
-  saveBundle: (videoBytes: ArrayBuffer, cursor: unknown, project: unknown, camBytes?: ArrayBuffer, keys?: unknown) =>
-    ipcRenderer.invoke('bundle:save', { videoBytes, camBytes, cursor, project, keys }),
+  saveBundle: (videoBytes: ArrayBuffer, cursor: unknown, project: unknown, camBytes?: ArrayBuffer, keys?: unknown, phoneDir?: string) =>
+    ipcRenderer.invoke('bundle:save', { videoBytes, camBytes, cursor, project, keys, phoneDir }),
   saveBundleWithVideoFile: (dir: string, cursor: unknown, project: unknown, camBytes?: ArrayBuffer, keys?: unknown) =>
     ipcRenderer.invoke('bundle:saveWithVideoFile', { dir, camBytes, cursor, project, keys }),
   iosList: () => ipcRenderer.invoke('ios:list'),
@@ -61,8 +61,8 @@ const api = {
     ipcRenderer.invoke('audio:peaks', { dir, videoFile, buckets }),
   importAudio: (dir: string) => ipcRenderer.invoke('audio:import', dir),
   audioFilePeaks: (dir: string, file: string, buckets?: number) => ipcRenderer.invoke('audio:filePeaks', { dir, file, buckets }),
-  exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: unknown, clicks?: number[], voiceCleanup?: boolean, duration?: number, master?: boolean, music?: unknown, duck?: unknown) =>
-    ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn, audioClips, clicks, voiceCleanup, duration, master, music, duck }),
+  exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: unknown, clicks?: number[], voiceCleanup?: boolean, duration?: number, master?: boolean, music?: unknown, duck?: unknown, phone?: unknown) =>
+    ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn, audioClips, clicks, voiceCleanup, duration, master, music, duck, phone }),
   exportFrame: (bytes: ArrayBuffer) => ipcRenderer.invoke('export:frame', bytes),
   exportEnd: () => ipcRenderer.invoke('export:end'),
   exportAbort: () => ipcRenderer.invoke('export:abort'),

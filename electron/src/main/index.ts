@@ -283,6 +283,32 @@ const saveWithVideoFile = async (args: { dir: string; camBytes?: ArrayBuffer; cu
 };
 
 /**
+ * A Mac + iPhone take: move the phone's movie (recorded by the helper into
+ * its own bundle) into the Mac take's bundle as phone.mov, then remove the
+ * emptied phone bundle. Returns the project with the phone's real length, or
+ * without any phone fields when the movie could not be moved: the phone
+ * bundle is then left alone, so recovery opens it as an iPhone take.
+ */
+const adoptPhoneVideo = async (dir: string, phoneDir: string | undefined, project: Project): Promise<Project> => {
+  const file = project.recording.phoneVideoFile;
+  if (!file) return project;
+  const { phoneVideoFile: _f, phoneOffset: _o, phoneSize: _s, phoneDuration: _d, ...recording } = project.recording;
+  const without = { ...project, recording, phoneOverlay: { ...project.phoneOverlay, enabled: false } };
+  const src = phoneDir ? join(phoneDir, RECOVERABLE_VIDEO) : '';
+  if (!phoneDir || !isInRecordingsRoot(phoneDir) || resolve(phoneDir) === resolve(dir) || !existsSync(src)) return without;
+  try {
+    const dest = join(dir, file);
+    renameSync(src, dest);
+    if (!existsSync(join(phoneDir, 'project.json'))) rmSync(phoneDir, { recursive: true, force: true });
+    const duration = await probeDuration(dest);
+    return duration ? { ...project, recording: { ...project.recording, phoneDuration: duration } } : project;
+  } catch (e) {
+    console.error('could not move the phone recording', e);
+    return without;
+  }
+};
+
+/**
  * Give an interrupted take (screen.mov but no project.json) a project so
  * it opens in the editor. Resolves false when its movie doesn't play; the
  * bundle is then left as it is.
@@ -529,16 +555,24 @@ app.whenReady().then(() => {
   // The duration in project.json comes from the file itself, not a timer.
   ipcMain.handle(
     'bundle:save',
-    async (_e, args: { videoBytes: ArrayBuffer; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project }) => {
+    async (_e, args: { videoBytes: ArrayBuffer; camBytes?: ArrayBuffer; cursor: CursorSample[]; keys?: KeystrokeSample[]; project: Project; phoneDir?: string }) => {
       const dir = newBundleDir();
       mkdirSync(dir, { recursive: true });
       const video = join(dir, 'screen.webm');
       writeFileSync(video, Buffer.from(args.videoBytes));
-      const project = withProbedDuration(args.project, await finalizeWebm(video));
+      let project = withProbedDuration(args.project, await finalizeWebm(video));
+      project = await adoptPhoneVideo(dir, args.phoneDir, project);
       writeBundleSidecars(dir, { ...args, project });
       const cam = join(dir, 'cam.webm');
       if (existsSync(cam)) await finalizeWebm(cam);
-      return { dir, project, videoUrl: fileUrl(video), camUrl: existsSync(cam) ? fileUrl(cam) : undefined };
+      const phone = project.recording.phoneVideoFile ? join(dir, project.recording.phoneVideoFile) : null;
+      return {
+        dir,
+        project,
+        videoUrl: fileUrl(video),
+        camUrl: existsSync(cam) ? fileUrl(cam) : undefined,
+        phoneUrl: phone && existsSync(phone) ? fileUrl(phone) : undefined,
+      };
     },
   );
 
@@ -742,6 +776,9 @@ app.whenReady().then(() => {
     const camPath = project.recording?.cameraVideoFile
       ? join(dir, project.recording.cameraVideoFile)
       : undefined;
+    // Only a movie inside the bundle; a missing one just means no phone layer.
+    const phoneFile = project.recording?.phoneVideoFile;
+    const phonePath = phoneFile && bundleRelative(phoneFile) && existsSync(join(dir, phoneFile)) ? join(dir, phoneFile) : undefined;
     return {
       bundleDir: dir,
       project,
@@ -751,6 +788,7 @@ app.whenReady().then(() => {
       camPath,
       videoUrl: fileUrl(videoPath),
       camUrl: camPath ? fileUrl(camPath) : undefined,
+      phoneUrl: phonePath ? fileUrl(phonePath) : undefined,
     };
   };
 
@@ -904,7 +942,7 @@ app.whenReady().then(() => {
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
-  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number; master?: boolean; music?: MusicInput[]; duck?: { start: number; end: number }[] }) => {
+  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number; master?: boolean; music?: MusicInput[]; duck?: { start: number; end: number }[]; phone?: { path: string; offset: number } }) => {
     await exportJob?.abort(); // a previous export that never ended
     exportJob = null;
     // A missing music file would fail the whole encode with ffmpeg's own words.
@@ -918,8 +956,14 @@ app.whenReady().then(() => {
     // Confirm the source actually has an audio stream before filtering
     // (filter_complex on a missing stream aborts the whole encode).
     const hasAudio = args.audioIn ? await probeHasAudio(ffmpegBin, args.audioIn) : false;
+    // The phone's sound (Mac + iPhone takes, "Phone sound" on): only its own
+    // bundle's movie, and only when it really has an audio stream.
+    if (args.phone && (!bundleDir || !insideDir(resolve(args.phone.path), bundleDir))) {
+      throw new Error("The phone recording is outside this project, so its sound can't be exported.");
+    }
+    const hasPhoneAudio = args.phone && existsSync(args.phone.path) ? await probeHasAudio(ffmpegBin, args.phone.path) : false;
     mkdirSync(dirname(args.outPath), { recursive: true });
-    exportJob = await startFfmpegJob(ffmpegBin, buildExportArgs({ ...args, hasAudio, bundleDir }), args.outPath);
+    exportJob = await startFfmpegJob(ffmpegBin, buildExportArgs({ ...args, hasAudio, hasPhoneAudio, bundleDir }), args.outPath);
     return true;
   });
 

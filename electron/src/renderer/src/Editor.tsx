@@ -76,6 +76,7 @@ import { TapsLane } from './mobile/TapsLane';
 import { DevicePanel } from './mobile/DevicePanel';
 import { LayoutSection } from './mobile/LayoutSection';
 import { AudioTrackLane } from './AudioTrackLane';
+import { phoneLayerOn, phoneTimeForSource } from '../../shared/phoneLayer';
 import { useMusicPlayback } from './useMusicPlayback';
 import {
   addItem,
@@ -89,7 +90,7 @@ import {
   updateTrack,
 } from '../../shared/audioTracks';
 
-type InspectorTab = 'background' | 'device' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'text';
+type InspectorTab = 'background' | 'device' | 'zoom' | 'cursor' | 'camera' | 'phone' | 'audio' | 'text';
 
 /** The export shown in the progress overlay: one file, or a batch of formats. */
 /** How an export ended, for headless runs. */
@@ -122,6 +123,7 @@ interface ExportRun {
 export function Editor({
   videoUrl,
   camUrl,
+  phoneUrl,
   project,
   cursor,
   keys,
@@ -132,6 +134,8 @@ export function Editor({
 }: {
   videoUrl: string;
   camUrl?: string;
+  /** The phone video of a Mac + iPhone take. */
+  phoneUrl?: string;
   project: Project;
   cursor: CursorSample[];
   keys: KeystrokeSample[];
@@ -145,6 +149,7 @@ export function Editor({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const camRef = useRef<HTMLVideoElement>(null);
+  const phoneRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [proj, setProj] = useState(() => normalizeProject(project));
   // Undo/redo: one step per burst of edits (a slider drag is one step, not
@@ -263,7 +268,7 @@ export function Editor({
   // Leaving stops playback and lets go of the decoders; App releases any
   // blob URLs behind them.
   useEffect(() => {
-    const media = [videoRef.current, camRef.current];
+    const media = [videoRef.current, camRef.current, phoneRef.current];
     disposed.current = false;
     return () => {
       disposed.current = true;
@@ -509,6 +514,7 @@ export function Editor({
       const cursorPos = cursorAt(smoothed, srcT);
       const keyCaps = keysAt(srcT, keys);
       const cam = camRef.current;
+      const phone = phoneRef.current;
       compositor.render(outT, {
         frame: video,
         cursor: cursorPos,
@@ -516,6 +522,7 @@ export function Editor({
         keystrokes: keyCaps,
         ripples: ripplesAt(outT, clickEv),
         cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
+        phoneFrame: phone && phone.readyState >= 2 ? phone : undefined,
       });
       ctx.drawImage(compositor.canvas, 0, 0);
       drawEditorGuides(ctx);
@@ -602,6 +609,24 @@ export function Editor({
     }
   };
 
+  /** Phone seconds at Mac source time `srcT` (Mac + iPhone takes). */
+  const phoneTime = (srcT: number) => phoneTimeForSource(srcT, proj.recording.phoneOffset ?? 0, proj.recording.phoneDuration);
+
+  /** Keep the phone video on the Mac video's clock while playing: it holds
+   *  its first or last frame outside its own take, and is nudged back when it
+   *  drifts more than a few frames. */
+  const followPhone = (video: HTMLVideoElement, rate: number) => {
+    const phone = phoneRef.current;
+    if (!phone) return;
+    const want = phoneTime(video.currentTime);
+    const end = Number.isFinite(phone.duration) ? phone.duration : Infinity;
+    const live = !video.paused && want > 0 && want < end - 0.05;
+    if (Math.abs(phone.currentTime - want) > 0.12) phone.currentTime = want;
+    if (phone.playbackRate !== rate) phone.playbackRate = rate;
+    if (live && phone.paused) void phone.play().catch(() => {});
+    else if (!live && !phone.paused) phone.pause();
+  };
+
   /** Move the playhead to output time `outT` and put the video (and camera)
    *  on the source frame that plays there, at that clip's speed. */
   const seekOutput = (outT: number) => {
@@ -613,6 +638,12 @@ export function Editor({
       if (!v) continue;
       if (Math.abs(v.currentTime - at.srcT) > 1e-3) v.currentTime = at.srcT;
       v.playbackRate = tl.clips[at.index].speed;
+    }
+    const phone = phoneRef.current;
+    if (phone) {
+      const pt = phoneTime(at.srcT);
+      if (Math.abs(phone.currentTime - pt) > 1e-3) phone.currentTime = pt;
+      phone.playbackRate = tl.clips[at.index].speed;
     }
     movePlayhead(t);
     if (videoRef.current?.paused) renderAt(t);
@@ -636,6 +667,7 @@ export function Editor({
         video.playbackRate = tick.rate;
         if (cam) cam.playbackRate = tick.rate;
       }
+      if (tick.kind !== 'end') followPhone(video, tick.rate);
       movePlayhead(tick.outT);
       renderAt(tick.outT);
       music.sync(tick.outT, timelineRef.current.outputDuration, tick.kind !== 'end', video);
@@ -657,6 +689,7 @@ export function Editor({
     };
     const onPause = () => {
       camRef.current?.pause();
+      phoneRef.current?.pause();
       music.stop(video);
       cancelAnimationFrame(raf);
       const tick = playbackTick(timelineRef.current, playIndex.current, video.currentTime);
@@ -750,6 +783,12 @@ export function Editor({
       ? undefined
       : proj.clips.map((c) => ({ start: c.sourceStart, end: c.sourceEnd, speed: c.speed }));
     const outLen = total / fps;
+    const phoneOn = phoneLayerOn(proj);
+    // The phone's sound joins the mix only when its switch is on.
+    const phoneAudio =
+      phoneOn && proj.phoneOverlay.sound && proj.recording.phoneVideoFile
+        ? { path: `${bundleDir}/${proj.recording.phoneVideoFile}`, offset: proj.recording.phoneOffset ?? 0 }
+        : undefined;
     let encoding = false; // ffmpeg is running and owns a partial file
     try {
       await api.exportBegin(
@@ -765,6 +804,7 @@ export function Editor({
         master,
         musicInputs(proj.tracks, bundleDir, outLen),
         duckRanges(proj.tracks, outLen),
+        phoneAudio,
       );
       encoding = true;
       video.pause();
@@ -776,6 +816,8 @@ export function Editor({
         await seekVideo(video, srcT);
         const cam = camRef.current;
         if (cam) await seekVideo(cam, srcT);
+        const phone = phoneOn ? phoneRef.current : null;
+        if (phone) await seekVideo(phone, phoneTime(srcT));
         comp.render(outT, {
           cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, srcT) : undefined,
           frame: video,
@@ -783,6 +825,7 @@ export function Editor({
           keystrokes: keysAt(srcT, keys),
           ripples: ripplesAt(outT, clickEv),
           cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
+          phoneFrame: phone && phone.readyState >= 2 ? phone : undefined,
         });
         const ctx = comp.canvas.getContext('2d')!;
         const rgba = ctx.getImageData(0, 0, W, H);
@@ -1850,6 +1893,8 @@ export function Editor({
   const togglePlay = () =>
     videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause();
 
+  // A Mac + iPhone take: the phone video is a layer with its own tab.
+  const hasPhoneLayer = !isPhone && !!phoneUrl && !!proj.recording.phoneVideoFile;
   // Phone recordings have no cursor; they get the Device tab instead.
   const inspectorTabs = [
     { value: 'background' as const, label: 'Background' },
@@ -1857,6 +1902,7 @@ export function Editor({
     { value: 'zoom' as const, label: 'Zoom' },
     ...(isPhone ? [] : [{ value: 'cursor' as const, label: 'Cursor' }]),
     ...(camUrl ? [{ value: 'camera' as const, label: 'Camera' }] : []),
+    ...(hasPhoneLayer ? [{ value: 'phone' as const, label: 'Phone' }] : []),
     { value: 'audio' as const, label: 'Audio' },
     { value: 'text' as const, label: 'Text' },
   ];
@@ -2231,6 +2277,73 @@ export function Editor({
         }
       />
     </Section>
+  );
+
+  const setPhone = (patch: Partial<Project['phoneOverlay']>) =>
+    setProj((p) => ({ ...p, phoneOverlay: { ...p.phoneOverlay, ...patch } }));
+  const phoneOverlay = proj.phoneOverlay;
+  const phonePanel = hasPhoneLayer && (
+    <>
+      <Section title="Phone">
+        <Switch
+          label="Show phone"
+          hint="The iPhone screen recorded with this take"
+          checked={phoneOverlay.enabled}
+          onChange={(v) => setPhone({ enabled: v })}
+        />
+        <div className="field-block">
+          <span className="row-label">Layout</span>
+          <Segmented
+            label="Phone layout"
+            value={phoneOverlay.layout}
+            options={[
+              { value: 'side-by-side-left', label: 'Left' },
+              { value: 'side-by-side-right', label: 'Right' },
+              { value: 'corner', label: 'Corner' },
+            ]}
+            onChange={(layout) => setPhone({ layout, enabled: true })}
+          />
+        </div>
+        {phoneOverlay.layout === 'corner' && (
+          <div className="field-block">
+            <span className="row-label">Corner</span>
+            <Segmented
+              label="Phone corner"
+              columns={2}
+              value={phoneOverlay.corner}
+              options={[
+                { value: 'topLeft', label: 'Top left' },
+                { value: 'topRight', label: 'Top right' },
+                { value: 'bottomLeft', label: 'Bottom left' },
+                { value: 'bottomRight', label: 'Bottom right' },
+              ]}
+              onChange={(corner) => setPhone({ corner })}
+            />
+          </div>
+        )}
+        <ScrubField
+          slider
+          label="Size"
+          min={30}
+          max={100}
+          step={1}
+          unit="%"
+          value={Math.round(phoneOverlay.size * 100)}
+          onCommit={sealHistory}
+          onChange={(v) => setPhone({ size: v / 100 })}
+        />
+        <Switch label="Device frame" hint="Draw the iPhone around its screen" checked={phoneOverlay.frame} onChange={(v) => setPhone({ frame: v })} />
+        <Switch label="Shadow" checked={phoneOverlay.shadow} onChange={(v) => setPhone({ shadow: v })} />
+      </Section>
+      <Section title="Sound">
+        <Switch
+          label="Phone sound"
+          hint="Mix the iPhone's own sound in with the Mac's"
+          checked={phoneOverlay.sound}
+          onChange={(v) => setPhone({ sound: v })}
+        />
+      </Section>
+    </>
   );
 
   const audioPanel = (
@@ -2733,6 +2846,19 @@ export function Editor({
         onPause={() => setPlaying(false)}
       />
       {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
+      {phoneUrl && (
+        <video
+          ref={phoneRef}
+          src={phoneUrl}
+          className="hidden"
+          preload="auto"
+          // Its sound plays in the preview only when it goes into the export.
+          muted={exporting || !phoneLayerOn(proj) || !proj.phoneOverlay.sound}
+          // A paused preview redraws once the phone lands on its frame.
+          onSeeked={() => videoRef.current?.paused && renderAt(playheadRef.current)}
+          onLoadedData={() => videoRef.current?.paused && renderAt(playheadRef.current)}
+        />
+      )}
 
       <header className="topbar ed-top">
         <span className="tb-group no-drag">
@@ -2994,6 +3120,7 @@ export function Editor({
           {activeTab === 'zoom' && zoomPanel}
           {activeTab === 'cursor' && cursorPanel}
           {activeTab === 'camera' && cameraPanel}
+          {activeTab === 'phone' && phonePanel}
           {activeTab === 'audio' && audioPanel}
           {activeTab === 'text' && textPanel}
         </div>
