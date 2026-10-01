@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
-import { normalizeProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
+import { fileSafeName, normalizeProject, projectName, resetProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
 import { AutofocusPlanner, cameraAt, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
@@ -42,7 +42,19 @@ import { ExportProgress, type ExportProgressState } from './components/ExportPro
 import { ExportPanel, ExportTasks, type TaskRowState } from './components/ExportPanel';
 import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Slider, Switch, Tabs } from './ui';
 import { ScrubField } from './components/ScrubField';
+import { BACKDROPS, BACKDROP_GROUPS, backgroundCss, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
+import {
+  INSPECTOR_DEFAULT,
+  ZOOM_STEP,
+  anchoredScroll,
+  clampInspector,
+  clampTimeline,
+  clampZoom,
+  fmtTick,
+  rulerTicks,
+} from '../../shared/timelineView';
+import type { ContextMenuItem } from '../../shared/menu';
 import {
   isPhoneProject,
   layoutPreset,
@@ -89,13 +101,6 @@ interface ExportRun {
   rows?: TaskRowState[];
   folder?: string;
 }
-
-const SWATCHES = [
-  { name: 'Aurora', bg: { kind: 'gradient' as const, startHex: '#3a1c71', endHex: '#d76d77', angle: 120 } },
-  { name: 'Ocean', bg: { kind: 'gradient' as const, startHex: '#0f2027', endHex: '#2c5364', angle: 135 } },
-  { name: 'Sunset', bg: { kind: 'gradient' as const, startHex: '#ff7e5f', endHex: '#feb47b', angle: 160 } },
-  { name: 'Mono', bg: { kind: 'solid' as const, hex: '#17171c' } },
-];
 
 export function Editor({
   videoUrl,
@@ -189,6 +194,11 @@ export function Editor({
   const saveTracker = useRef(new SaveTracker(proj));
   // Where to go once the unsaved-changes confirm is answered.
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  // The title's inline rename field, while open: its draft text.
+  const [renameDraft, setRenameDraft] = useState<string | null>(null);
+  // Escape closes the field, and its blur must not then save the draft.
+  const renameCancelled = useRef(false);
   const disposed = useRef(false);
   // Phone recordings: the tap selected on the taps lane (clicking the preview
   // places it), a tap analysis in flight, and whether the title field has
@@ -197,6 +207,26 @@ export function Editor({
   const [selectedTap, setSelectedTap] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [titleFocus, setTitleFocus] = useState(false);
+
+  // Resizable panes (remembered across launches) and timeline zoom: 1 fits
+  // the whole take in view; higher stretches time and scrolls sideways.
+  const [inspectorW, setInspectorW] = useState(() => {
+    const v = Number(localStorage.getItem('openscreen.inspectorWidth'));
+    return v ? clampInspector(v, window.innerWidth) : INSPECTOR_DEFAULT;
+  });
+  // A height saved on a bigger display is capped so the preview keeps its room.
+  const [timelineH, setTimelineH] = useState<number | null>(() => {
+    const v = Number(localStorage.getItem('openscreen.timelineHeight'));
+    return v ? clampTimeline(v, 0, window.innerHeight, 52) : null;
+  });
+  const [tlZoom, setTlZoom] = useState(1);
+  const tlScrollRef = useRef<HTMLDivElement>(null);
+  const tlLanesRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLElement>(null);
+  // Set before a zoom change: the viewport x to hold still while the lanes resize.
+  const zoomAnchor = useRef<{ x: number; oldW: number } | null>(null);
+  // Latest zoom, ahead of the render, for pinch events that arrive in a burst.
+  const tlZoomRef = useRef(1);
 
   /** Write a snapshot into the bundle and record it as saved. */
   const persist = async (snapshot: Project) => {
@@ -639,24 +669,31 @@ export function Editor({
     };
   }, [bgPath, renderAt]);
 
+  /** A manual zoom centered on the cursor at output time `t`. */
+  const addZoomAt = (t: number) => {
+    const c = cursorAt(smoothed, locate(timeline, t).srcT) ?? { x: 0.5, y: 0.5 };
+    const seg: FocusSegment = {
+      inStart: t,
+      holdStart: t + 0.5,
+      holdEnd: t + 1.4,
+      outEnd: t + 2.1,
+      center: { x: c.x, y: c.y },
+      scale: 2,
+    };
+    setProj((p) => ({ ...p, manualZooms: [...p.manualZooms, seg] }));
+  };
+
+  /** Output time under a pointer event on the lanes. */
+  const timelineTimeAt = (e: React.MouseEvent) => {
+    const rect = (tlLanesRef.current ?? (e.currentTarget as HTMLElement)).getBoundingClientRect();
+    return Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * (timeline.outputDuration || duration);
+  };
+
   const seekTimeline = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const t = ((e.clientX - rect.left) / rect.width) * (timeline.outputDuration || duration);
-    if (e.altKey) {
-      // Alt+click: add a manual zoom centered on the cursor at that time.
-      const c = cursorAt(smoothed, locate(timeline, t).srcT) ?? { x: 0.5, y: 0.5 };
-      const seg: FocusSegment = {
-        inStart: t,
-        holdStart: t + 0.5,
-        holdEnd: t + 1.4,
-        outEnd: t + 2.1,
-        center: { x: c.x, y: c.y },
-        scale: 2,
-      };
-      setProj((p) => ({ ...p, manualZooms: [...p.manualZooms, seg] }));
-      return;
-    }
-    seekOutput(t);
+    const t = timelineTimeAt(e);
+    // Alt+click: add a manual zoom centered on the cursor at that time.
+    if (e.altKey) addZoomAt(t);
+    else seekOutput(t);
   };
 
   /** Render every output frame through `comp` and pipe it into ffmpeg at
@@ -761,7 +798,7 @@ export function Editor({
     if (!video || exporting) return { ok: false, error: exporting ? 'an export is already running' : 'the recording is not loaded' };
     setExportMenuOpen(false);
     // `outPathIn` skips the save dialog (headless export).
-    const outPath = outPathIn ?? (await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4'));
+    const outPath = outPathIn ?? (await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4', proj.name));
     if (!outPath) return { ok: false, error: 'cancelled' };
     const preset = layoutPresetOf(proj);
     // A GIF is converted from an intermediate mp4 in the bundle.
@@ -837,13 +874,13 @@ export function Editor({
   const exportFormats = async (ids: PresetId[], folderIn?: string, prevRows?: TaskRowState[]): Promise<ExportOutcome> => {
     if (!videoRef.current || exporting || ids.length === 0) return { ok: false, error: 'nothing to export' };
     setExportMenuOpen(false);
-    const folder = folderIn ?? (await api.exportPickFolder(bundleDir));
+    const folder = folderIn ?? (await api.exportPickFolder(bundleDir, proj.name));
     if (!folder) return { ok: false, error: 'cancelled' };
     const presets = ids.map(getPreset);
     const passes = planRenders(presets);
     const dur = timeline.outputDuration || duration;
     const total = batchUnits(passes, dur);
-    const name = bundleName;
+    const name = fileSafeName(bundleName);
     const fresh = (p: ExportPreset): TaskRowState => ({
       preset: p,
       status: 'queued',
@@ -1003,31 +1040,34 @@ export function Editor({
     );
   };
 
-  const splitAtPlayhead = () => {
+  const splitAtPlayhead = () => splitAt(playhead);
+  const splitAt = (t: number) => {
     const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
-    if (!tl.split(playhead)) {
+    if (!tl.split(t)) {
       setStatus('cannot split here');
       return;
     }
     editClips(tl.clips);
   };
 
-  const deleteSelectedClip = () => {
-    if (!selectedClip || proj.clips.length <= 1) return;
-    editClips(proj.clips.filter((c) => c.id !== selectedClip));
+  const deleteSelectedClip = () => deleteClip(selectedClip);
+  const deleteClip = (id: string | null) => {
+    if (!id || proj.clips.length <= 1) return;
+    editClips(proj.clips.filter((c) => c.id !== id));
     setSelectedClip(null);
   };
 
-  const trimClip = (edge: 'start' | 'end') => {
-    if (!selectedClip) return;
-    const src = timeline.sourceTime(playhead);
+  const trimClip = (edge: 'start' | 'end') => trimClipAt(edge, selectedClip, playhead);
+  const trimClipAt = (edge: 'start' | 'end', clipId: string | null, t: number) => {
+    if (!clipId) return;
+    const src = timeline.sourceTime(t);
     if (src === null) {
       setStatus('playhead is outside a kept clip');
       return;
     }
     editClips(
       proj.clips.map((c) => {
-        if (c.id !== selectedClip) return c;
+        if (c.id !== clipId) return c;
         if (edge === 'start' && src > c.sourceStart && src < c.sourceEnd) {
           return { ...c, sourceStart: src };
         }
@@ -1227,6 +1267,9 @@ export function Editor({
         case 'split':
           if (!exporting) splitAtPlayhead();
           return;
+        case 'resetProject':
+          if (!exporting) setConfirmReset(true);
+          return;
       }
     };
     window.addEventListener('openscreen:menu', onMenu);
@@ -1273,10 +1316,11 @@ export function Editor({
   };
 
   /** Option-click on the taps lane: a tap at the playhead, mid-screen until placed. */
-  const addTapAtPlayhead = () => {
+  const addTapAtPlayhead = () => addTapAt(playheadRef.current);
+  const addTapAt = (outT: number) => {
     const tap: TapSuggestion = {
       id: crypto.randomUUID(),
-      t: tapSourceTime(playheadRef.current, timeline),
+      t: tapSourceTime(outT, timeline),
       x: 0.5,
       y: 0.5,
       kind: 'tap',
@@ -1407,7 +1451,8 @@ export function Editor({
   useEffect(() => {
     const cv = waveRef.current;
     if (!cv || !peaks.length) return;
-    const W = (cv.width = cv.clientWidth * 2);
+    // Capped: zoomed in, the lane can be wider than a canvas may be.
+    const W = (cv.width = Math.min(16384, cv.clientWidth * 2));
     const H = (cv.height = cv.clientHeight * 2);
     const g = cv.getContext('2d');
     if (!g) return;
@@ -1423,7 +1468,7 @@ export function Editor({
       const h = Math.max(2, p * H * 0.9);
       g.fillRect(x, (H - h) / 2, 1, h);
     }
-  }, [peaks, timeline, duration, proj.recording.duration]);
+  }, [peaks, timeline, duration, proj.recording.duration, tlZoom, timelineH]);
 
   // Smart cut proposals are reviewed in the Text tab, so bring it forward.
   useEffect(() => {
@@ -1442,9 +1487,151 @@ export function Editor({
 
   const zoomMarks = segments;
 
+  // ── resizable panes + timeline zoom ──
+  useEffect(() => localStorage.setItem('openscreen.inspectorWidth', String(inspectorW)), [inspectorW]);
+  useEffect(() => {
+    if (timelineH == null) localStorage.removeItem('openscreen.timelineHeight');
+    else localStorage.setItem('openscreen.timelineHeight', String(timelineH));
+  }, [timelineH]);
+
+  // The timeline's height with no override: its floor when dragging.
+  const naturalTimelineH = () => {
+    const lanes = isPhone ? [34, 22, 26, 38] : [34, 22, 38];
+    return 6 + 14 + 22 + lanes.reduce((a, b) => a + b, 0) + lanes.length * 6;
+  };
+  const topbarH = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) || 52;
+
+  /** Pointer-drag a divider; `apply` gets the pixel delta since the press. */
+  const dragDivider = (e: React.PointerEvent, axis: 'x' | 'y', apply: (delta: number) => void) => {
+    e.preventDefault();
+    const start = axis === 'x' ? e.clientX : e.clientY;
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('dragging');
+    document.body.classList.add(axis === 'x' ? 'resizing-x' : 'resizing-y');
+    const move = (ev: PointerEvent) => apply((axis === 'x' ? ev.clientX : ev.clientY) - start);
+    const up = () => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
+      el.classList.remove('dragging');
+      document.body.classList.remove('resizing-x', 'resizing-y');
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  };
+  const startInspectorDrag = (e: React.PointerEvent) => {
+    const w0 = inspectorW;
+    dragDivider(e, 'x', (dx) => setInspectorW(clampInspector(w0 - dx, window.innerWidth)));
+  };
+  const startTimelineDrag = (e: React.PointerEvent) => {
+    const h0 = footerRef.current?.offsetHeight ?? naturalTimelineH();
+    const floor = naturalTimelineH();
+    dragDivider(e, 'y', (dy) => {
+      const h = clampTimeline(h0 - dy, floor, window.innerHeight, topbarH());
+      setTimelineH(h <= floor + 2 ? null : h);
+    });
+  };
+
+  // Keep a window shrink from leaving the inspector wider than half the window.
+  useEffect(() => {
+    const onResize = () => {
+      setInspectorW((w) => clampInspector(w, window.innerWidth));
+      setTimelineH((h) => (h == null ? null : clampTimeline(h, naturalTimelineH(), window.innerHeight, topbarH())));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  /** Zoom the timeline, holding still the point `anchorX` px into the viewport
+   *  (default: the playhead if it's in view, else the middle). */
+  const zoomTimeline = (next: number, anchorX?: number) => {
+    const sc = tlScrollRef.current;
+    const z = clampZoom(next);
+    if (!sc || z === tlZoomRef.current) return;
+    let x = anchorX;
+    if (x === undefined) {
+      const ph = (playheadRef.current / (timeline.outputDuration || duration || 1)) * sc.scrollWidth - sc.scrollLeft;
+      x = ph >= 0 && ph <= sc.clientWidth ? ph : sc.clientWidth / 2;
+    }
+    // Several pinch events can land before React re-renders: they compound,
+    // and the anchor measures from the width the user last saw.
+    zoomAnchor.current = { x, oldW: zoomAnchor.current?.oldW ?? sc.scrollWidth };
+    tlZoomRef.current = z;
+    // A burst that nets back to the zoom on screen won't re-render, so the
+    // layout effect never consumes the anchor; drop it here instead.
+    if (z === tlZoom) zoomAnchor.current = null;
+    setTlZoom(z);
+  };
+  useLayoutEffect(() => {
+    const sc = tlScrollRef.current;
+    const a = zoomAnchor.current;
+    zoomAnchor.current = null;
+    if (!sc || !a) return;
+    sc.scrollLeft = anchoredScroll(sc.scrollLeft, a.x, a.oldW, sc.scrollWidth, sc.clientWidth);
+  }, [tlZoom]);
+
+  // Pinch on the trackpad (Chromium reports it as ctrl+wheel) or ⌘-scroll
+  // zooms around the pointer. Non-passive so the page itself doesn't zoom.
+  const zoomRef = useRef(zoomTimeline);
+  zoomRef.current = zoomTimeline;
+  useEffect(() => {
+    const sc = tlScrollRef.current;
+    if (!sc) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const x = e.clientX - sc.getBoundingClientRect().left;
+      zoomRef.current(tlZoomRef.current * Math.exp(-e.deltaY * (e.ctrlKey ? 0.02 : 0.004)), x);
+    };
+    sc.addEventListener('wheel', onWheel, { passive: false });
+    return () => sc.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // While playing zoomed in, page the view along so the playhead stays visible.
+  useEffect(() => {
+    const sc = tlScrollRef.current;
+    if (!sc || tlZoom <= 1 || !playing) return;
+    const x = (playhead / (timeline.outputDuration || duration || 1)) * sc.scrollWidth;
+    if (x < sc.scrollLeft || x > sc.scrollLeft + sc.clientWidth - 24) sc.scrollLeft = x - sc.clientWidth * 0.1;
+  }, [playhead, playing, tlZoom, timeline, duration]);
+
+  /** Show a native menu and run the picked action. */
+  const popMenu = async (items: (ContextMenuItem & { run?: () => void })[]) => {
+    const picked = await api.showContextMenu(items.map(({ run: _run, ...it }) => it));
+    items.find((it) => it.type !== 'separator' && it.id === picked)?.run?.();
+  };
+
+  // Two-finger click on the timeline: act on that spot.
+  const timelineMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const t = timelineTimeAt(e);
+    const clip = clipBlocks.find((b) => t >= b.start && t < b.end) ?? null;
+    seekOutput(t);
+    if (clip) setSelectedClip(clip.id);
+    const x = e.clientX - (tlScrollRef.current?.getBoundingClientRect().left ?? 0);
+    void popMenu([
+      { id: 'split', label: 'Split Here', run: () => splitAt(t) },
+      { id: 'trimStart', label: 'Trim Clip Start to Here', enabled: !!clip, run: () => trimClipAt('start', clip?.id ?? null, t) },
+      { id: 'trimEnd', label: 'Trim Clip End to Here', enabled: !!clip, run: () => trimClipAt('end', clip?.id ?? null, t) },
+      { id: 'delete', label: 'Delete Clip', enabled: !!clip && proj.clips.length > 1, run: () => deleteClip(clip?.id ?? null) },
+      { type: 'separator' },
+      { id: 'zoom', label: 'Add Zoom Here', run: () => addZoomAt(t) },
+      ...(isPhone ? [{ id: 'tap', label: 'Add Tap Here', run: () => addTapAt(t) }] : []),
+      { type: 'separator' },
+      { id: 'zin', label: 'Zoom In Timeline', enabled: tlZoom < 40, run: () => zoomTimeline(tlZoom * ZOOM_STEP, x) },
+      { id: 'zout', label: 'Zoom Out Timeline', enabled: tlZoom > 1, run: () => zoomTimeline(tlZoom / ZOOM_STEP, x) },
+      { id: 'zfit', label: 'Fit Timeline', enabled: tlZoom > 1, run: () => zoomTimeline(1) },
+    ]);
+  };
+
   // ── presentation only below: derived display values and UI-only state ──
   const outDur = timeline.outputDuration || duration || 1;
-  const bundleName = (bundleDir.split('/').filter(Boolean).pop() ?? 'Untitled').replace(/\.openscreen$/, '');
+  const ruler = rulerTicks(outDur, tlZoom);
+  // With a dragged height the lanes share the extra room in proportion to their base sizes.
+  const laneRows = `22px ${(isPhone ? [34, 22, 26, 38] : [34, 22, 38]).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
+  const bundleName = projectName(proj, bundleDir);
   const formatChoices = presetChoices(proj.recording.sourceSize);
   const selectedFormats =
     formatPick ?? [formatChoices[0].id, 'social-9x16' as const].filter((id) => formatChoices.some((p) => p.id === id));
@@ -1473,6 +1660,25 @@ export function Editor({
   const activeTab: InspectorTab = inspectorTabs.some((t) => t.value === inspectorTab) ? inspectorTab : 'background';
   /** Ends the undo step a scrub gesture made. */
   const sealHistory = () => historyRef.current.seal();
+
+  /** Everything back to the raw take except the backdrop, as one undo step. */
+  const doReset = () => {
+    setConfirmReset(false);
+    historyRef.current.seal();
+    setProj((p) => resetProject(p));
+    // Sealed after the change lands, so a quick next edit can't merge into it.
+    requestAnimationFrame(() => historyRef.current.seal());
+    setSelectedClip(null);
+    setSelectedTap(null);
+    setCropMode(false);
+    setSmartCuts(null);
+    setWordSel(null);
+    setTlZoom(1);
+    tlZoomRef.current = 1;
+    movePlayhead(0);
+    seekOutput(0);
+    setStatus('Project reset to the original recording · ⌘Z to undo');
+  };
   const blurredBg = isPhone && proj.layout.background === 'blurred';
 
   const importCaptionsButton = (variant: 'secondary' | 'ghost', size: 'sm' | 'md') => (
@@ -1490,7 +1696,27 @@ export function Editor({
   const backgroundPanel = (
     <>
       {isPhone && <LayoutSection proj={proj} setProj={setProj} onTitleFocus={setTitleFocus} />}
-      <Section title="Backdrop">
+      {BACKDROP_GROUPS.map((group) => (
+        <Section key={group.id} title={group.title}>
+          <div className="tiles">
+            {BACKDROPS.filter((b) => b.group === group.id).map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                title={b.name}
+                className={`tile${!blurredBg && sameBackground(b.bg, proj.style.background) ? ' selected' : ''}`}
+                onClick={() =>
+                  setProj((p) => ({ ...p, style: { ...p.style, background: b.bg }, layout: { ...p.layout, background: 'style' } }))
+                }
+              >
+                <span className="tile-swatch" style={{ background: backgroundCss(b.bg) }} />
+                <span className="tile-label">{b.name}</span>
+              </button>
+            ))}
+          </div>
+        </Section>
+      ))}
+      <Section title="Image">
         <div className="tiles">
           {isPhone && (
             <button
@@ -1503,27 +1729,6 @@ export function Editor({
               <span className="tile-label">Blurred</span>
             </button>
           )}
-          {SWATCHES.map((s) => (
-            <button
-              key={s.name}
-              type="button"
-              title={s.name}
-              className={`tile${!blurredBg && sameBackground(s.bg, proj.style.background) ? ' selected' : ''}`}
-              onClick={() =>
-                setProj((p) => ({ ...p, style: { ...p.style, background: s.bg }, layout: { ...p.layout, background: 'style' } }))
-              }
-            >
-              <span
-                className="tile-swatch"
-                style={
-                  s.bg.kind === 'gradient'
-                    ? { background: `linear-gradient(${s.bg.angle}deg, ${s.bg.startHex}, ${s.bg.endHex})` }
-                    : { background: s.bg.hex }
-                }
-              />
-              <span className="tile-label">{s.name}</span>
-            </button>
-          ))}
           <button
             type="button"
             title="Custom background image"
@@ -2111,7 +2316,7 @@ export function Editor({
   );
 
   return (
-    <div className="editor">
+    <div className="editor" style={{ '--inspector-w': `${inspectorW}px` } as React.CSSProperties}>
       <video
         ref={videoRef}
         src={videoUrl}
@@ -2141,10 +2346,62 @@ export function Editor({
           {Icon.chevronLeft(12)}
           New recording
         </Button>
-        <span className="doc-title" title={bundleDir}>{bundleName}</span>
+        {renameDraft === null ? (
+          // no-drag: in the title bar a double-click would otherwise zoom the window.
+          <span
+            className="doc-title no-drag"
+            title={`${bundleDir}\nDouble-click to rename`}
+            onDoubleClick={() => {
+              renameCancelled.current = false;
+              setRenameDraft(bundleName);
+            }}
+          >
+            {bundleName}
+          </span>
+        ) : (
+          <input
+            className="doc-title doc-title-input no-drag"
+            aria-label="Project name"
+            autoFocus
+            maxLength={80}
+            value={renameDraft}
+            size={Math.max(8, renameDraft.length + 1)}
+            onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              else if (e.key === 'Escape') {
+                renameCancelled.current = true;
+                setRenameDraft(null);
+              }
+              e.stopPropagation();
+            }}
+            onBlur={() => {
+              if (renameCancelled.current || renameDraft === null) {
+                renameCancelled.current = false;
+                return;
+              }
+              const name = renameDraft.trim();
+              setRenameDraft(null);
+              // Cleared: back to the folder's name.
+              if (name !== (proj.name ?? '')) {
+                historyRef.current.seal();
+                setProj((p) => {
+                  const next = { ...p };
+                  if (name && name !== projectName({}, bundleDir)) next.name = name;
+                  else delete next.name;
+                  return next;
+                });
+              }
+            }}
+          />
+        )}
         <div className="history no-drag">
           <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
           <IconButton label="Redo (⌘⇧Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
+          <Button size="sm" variant="ghost" disabled={exporting} onClick={() => setConfirmReset(true)} title="Undo every edit, keeping the recording and backdrop">
+            Reset
+          </Button>
         </div>
         <div className="spacer" />
         {status && !xp && (
@@ -2293,6 +2550,14 @@ export function Editor({
       </main>
 
       <aside className="inspector">
+        <div
+          className="pane-divider pane-divider-x"
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize · double-click to reset"
+          onPointerDown={startInspectorDrag}
+          onDoubleClick={() => setInspectorW(INSPECTOR_DEFAULT)}
+        />
         <Tabs value={activeTab} tabs={inspectorTabs} onChange={setInspectorTab} />
         <div className="inspector-body" key={activeTab}>
           {activeTab === 'background' && backgroundPanel}
@@ -2317,20 +2582,44 @@ export function Editor({
         </div>
       </aside>
 
-      <footer className={`ed-timeline${isPhone ? ' has-taps' : ''}`}>
-        <div className="tl-labels" aria-hidden="true">
-          <span />
+      <footer
+        ref={footerRef}
+        className={`ed-timeline${isPhone ? ' has-taps' : ''}${timelineH ? ' sized' : ''}`}
+        style={
+          timelineH
+            ? ({ height: timelineH, '--tl-rows': laneRows, '--tl-scale': Math.min(2.2, timelineH / naturalTimelineH()).toFixed(2) } as React.CSSProperties)
+            : undefined
+        }
+      >
+        <div
+          className="pane-divider pane-divider-y"
+          role="separator"
+          aria-orientation="horizontal"
+          title="Drag to resize · double-click to reset"
+          onPointerDown={startTimelineDrag}
+          onDoubleClick={() => setTimelineH(null)}
+        />
+        <div className="tl-labels">
+          <span className="tl-zoom">
+            <button type="button" aria-label="Zoom out timeline" title="Zoom out (pinch or ⌘-scroll)" disabled={tlZoom <= 1} onClick={() => zoomTimeline(tlZoom / ZOOM_STEP)}>
+              −
+            </button>
+            <button type="button" aria-label="Zoom in timeline" title="Zoom in (pinch or ⌘-scroll)" disabled={tlZoom >= 40} onClick={() => zoomTimeline(tlZoom * ZOOM_STEP)}>
+              +
+            </button>
+          </span>
           <span>Clips</span>
           <span>Zoom</span>
           {isPhone && <span>Taps</span>}
           <span>Audio</span>
         </div>
         {/* The seek target spans exactly the lanes, so click % = time %. */}
-        <div className="tl-lanes" onClick={seekTimeline}>
+        <div className="tl-scroll" ref={tlScrollRef}>
+        <div className="tl-lanes" ref={tlLanesRef} style={{ width: `${tlZoom * 100}%` }} onClick={seekTimeline} onContextMenu={timelineMenu}>
           <div className="tl-ruler">
-            {rulerTicks(outDur).map((t) => (
+            {ruler.ticks.map((t) => (
               <span key={t} className="tick tnum" style={{ left: `${(t / outDur) * 100}%` }}>
-                {fmtTime(t)}
+                {fmtTick(t, ruler.step)}
               </span>
             ))}
           </div>
@@ -2385,11 +2674,14 @@ export function Editor({
                 <div
                   key={i}
                   className={`zoommark${manual ? ' manual' : ''}`}
-                  title={manual ? 'Manual zoom (right-click to remove)' : 'Auto zoom'}
+                  title={manual ? 'Manual zoom (two-finger click for options)' : 'Auto zoom'}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    setProj((p) => ({ ...p, manualZooms: p.manualZooms.filter((x) => x !== s) }));
+                    if (!manual) return timelineMenu(e);
+                    void popMenu([
+                      { id: 'remove', label: 'Remove Zoom', run: () => setProj((p) => ({ ...p, manualZooms: p.manualZooms.filter((x) => x !== s) })) },
+                    ]);
                   }}
                   style={{
                     left: `${(s.inStart / (timeline.outputDuration || duration || 1)) * 100}%`,
@@ -2416,6 +2708,7 @@ export function Editor({
               }}
               onMove={(id, outT) => updateTap(id, { t: tapSourceTime(outT, timeline) })}
               onRemove={removeTap}
+              onMenu={(id) => void popMenu([{ id: 'remove', label: 'Remove Tap', run: () => removeTap(id) }])}
               onAdd={addTapAtPlayhead}
             />
           )}
@@ -2453,6 +2746,7 @@ export function Editor({
             className="playhead"
             style={{ left: `${(playhead / (timeline.outputDuration || duration || 1)) * 100}%` }}
           />
+        </div>
         </div>
       </footer>
 
@@ -2507,6 +2801,31 @@ export function Editor({
           </div>
         </div>
       )}
+      {confirmReset && (
+        <div className="modal-scrim" onMouseDown={() => setConfirmReset(false)}>
+          <div
+            className="modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="reset-title"
+            onMouseDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === 'Escape' && setConfirmReset(false)}
+          >
+            <h2 id="reset-title">Reset {bundleName}?</h2>
+            <p>
+              Removes every edit: cuts, speed changes, zooms, taps, captions, text, crop and frame settings. The
+              original recording and your backdrop stay. You can undo this with ⌘Z.
+            </p>
+            <div className="modal-actions">
+              <div className="spacer" />
+              <Button autoFocus onClick={() => setConfirmReset(false)}>Cancel</Button>
+              <Button variant="danger" onClick={doReset}>
+                Reset Project
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       {pendingLeave && (
         <div className="modal-scrim" onMouseDown={() => void answerLeave('cancel')}>
           <div
@@ -2536,28 +2855,6 @@ export function Editor({
 }
 
 const FILLER = /^[\s.,!?]*(?:um+|uh+|er+|eh+|ah+|hmm+|mm+|mhm)[\s.,!?]*$/i;
-
-/** Field-wise background equality (saved projects may order keys differently). */
-function sameBackground(a: Project['style']['background'], b: Project['style']['background']) {
-  if (a.kind === 'gradient' && b.kind === 'gradient') {
-    return (
-      a.startHex.toLowerCase() === b.startHex.toLowerCase() &&
-      a.endHex.toLowerCase() === b.endHex.toLowerCase() &&
-      a.angle === b.angle
-    );
-  }
-  if (a.kind === 'solid' && b.kind === 'solid') return a.hex.toLowerCase() === b.hex.toLowerCase();
-  return false;
-}
-
-/** Evenly spaced ruler labels: the smallest round step giving at most ~10. */
-function rulerTicks(total: number) {
-  const steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800];
-  const step = steps.find((s) => total / s <= 10) ?? 3600;
-  const out: number[] = [];
-  for (let t = 0; t < total - step * 0.3; t += step) out.push(t);
-  return out;
-}
 
 /** m:ss.t for the transport readout. */
 function fmtPrecise(t: number) {
