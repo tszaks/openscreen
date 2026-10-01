@@ -198,6 +198,7 @@ export function validateProject(p: Project): string[] {
     if (!(s.shadowOpacity >= 0 && s.shadowOpacity <= 1)) errs.push('style.shadowOpacity must be 0..1');
     if (!(s.cursorSize > 0 && s.cursorSize <= 0.1)) errs.push('style.cursorSize must be 0..0.1 (fraction of frame height)');
     if (!/^#[0-9a-f]{6}$/i.test(s.cursorHex)) errs.push('style.cursorHex must be #rrggbb');
+    if (s.cursorOpacity !== undefined && !(s.cursorOpacity >= 0 && s.cursorOpacity <= 1)) errs.push('style.cursorOpacity must be 0..1');
     if (!['none', 'phone'].includes(s.deviceFrame)) errs.push('style.deviceFrame must be none|phone');
     const b = s.background as Background | undefined;
     if (!b || !['solid', 'gradient', 'mesh', 'imageFile', 'wallpaper'].includes(b.kind)) errs.push('style.background.kind must be solid|gradient|mesh|imageFile|wallpaper');
@@ -471,6 +472,10 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
       if (hex !== undefined) patch.cursorHex = hex;
       const trail = optBool(o, 'trail');
       if (trail !== undefined) patch.cursorTrail = trail;
+      const show = optBool(o, 'show');
+      if (show !== undefined) patch.cursorShow = show;
+      const opacity = optNum(o, 'opacity');
+      if (opacity !== undefined) patch.cursorOpacity = opacity;
       return { project: { ...p, style: { ...p.style, ...patch } }, note: `cursor ${JSON.stringify(patch)}` };
     }
     case 'audio': {
@@ -625,7 +630,7 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
       return { project: { ...p, cameraOverlay: { ...p.cameraOverlay, ...patch } }, note: `camera ${JSON.stringify(patch)}` };
     }
     case 'style': {
-      const patch = pick<Project['style']>(o, ['paddingFraction', 'cornerRadius', 'shadowRadius', 'shadowOpacity', 'cropRect', 'background', 'deviceFrame', 'cursorSize', 'cursorTrail', 'cursorHex']);
+      const patch = pick<Project['style']>(o, ['paddingFraction', 'cornerRadius', 'shadowRadius', 'shadowOpacity', 'cropRect', 'background', 'deviceFrame', 'cursorSize', 'cursorTrail', 'cursorHex', 'cursorShow', 'cursorOpacity']);
       return { project: { ...p, style: { ...p.style, ...patch } }, note: `style ${JSON.stringify(patch)}` };
     }
     case 'background': {

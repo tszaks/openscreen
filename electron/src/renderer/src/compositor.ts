@@ -267,18 +267,20 @@ export class CanvasCompositor {
       y: rect.y + ((p.y * fullH - sy) / cropH) * rect.h,
     });
     const d = H * style.cursorSize;
-    if (input.cursorTrail?.length) {
+    const showCursor = style.cursorShow !== false;
+    const op = Math.min(1, Math.max(0, style.cursorOpacity ?? 0.85));
+    const alphaHex = (a: number) => Math.round(255 * a).toString(16).padStart(2, '0');
+    if (showCursor && input.cursorTrail?.length) {
       const n = input.cursorTrail.length;
       for (let i = 0; i < n; i++) {
         const t = (i + 1) / n; // fade oldest→newest
         const { x, y } = toPx(input.cursorTrail[i]);
-        const hex = style.cursorHex;
-        dot(x, y, d * (0.4 + 0.6 * t), `${hex}${Math.round(0x66 * t).toString(16).padStart(2, '0')}`);
+        dot(x, y, d * (0.4 + 0.6 * t), `${style.cursorHex}${alphaHex(Math.min(1, 0.4 * t * (op / 0.85)))}`);
       }
     }
-    if (input.cursor) {
+    if (showCursor && input.cursor) {
       const { x, y } = toPx(input.cursor);
-      dot(x, y, d, `${style.cursorHex}d9`);
+      dot(x, y, d, `${style.cursorHex}${alphaHex(op)}`);
     }
 
     // 4. Click ripples — same full-source→crop-relative mapping.
