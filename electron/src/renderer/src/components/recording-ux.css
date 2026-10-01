@@ -198,11 +198,12 @@
 
 .setup-overlay {
   position: fixed;
-  inset: 0;
+  inset: var(--toolbar-h) 0 0 0;
   z-index: 60;
-  display: grid;
-  place-items: center;
-  padding: 24px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: var(--s2) var(--s6) var(--s6);
 }
 .setup-scrim {
   position: absolute;
