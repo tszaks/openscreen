@@ -1,4 +1,4 @@
-# Routine (minor/patch) updates arrive as one grouped PR per ecosystem.
+# In both ecosystems, routine (minor/patch) updates arrive as one grouped PR.
 # Major versions still open one PR each, capped at three at a time. They are
 # deliberately NOT ignored: `ignore` rules also suppress security updates,
 # and some fixes (e.g. Electron's) only exist in a newer major.
@@ -16,6 +16,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 3
     groups:
       actions:
-        patterns: ["*"]
+        update-types: [minor, patch]
