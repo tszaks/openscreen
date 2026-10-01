@@ -26,6 +26,7 @@ import { ACCENT_TOUCH_COLOR, drawTouchIndicators } from './mobile/tapIndicator';
 import { computePhoneLayout, drawBlurredBackground, drawTitleCard, type PhoneLayout } from './mobile/layout';
 import type { Ripple } from '../../shared/ripples';
 import { fileUrl } from '../../shared/fileUrl';
+import { isColourBackground, paintBackdrop } from './backdrop';
 import { api } from './api';
 
 // Background images by raw path, shared by every compositor: the editor
@@ -364,9 +365,8 @@ export class CanvasCompositor {
   private drawBackground(W: number, H: number) {
     const { ctx } = this;
     const bg = this.project.style.background;
-    if (bg.kind === 'solid') {
-      ctx.fillStyle = bg.hex;
-      ctx.fillRect(0, 0, W, H);
+    if (isColourBackground(bg)) {
+      paintBackdrop(ctx, bg, W, H);
     } else if (bg.kind === 'imageFile') {
       const img = backgroundImage(bg.path).img;
       if (img.complete && img.naturalWidth > 0) {
@@ -401,17 +401,6 @@ export class CanvasCompositor {
         ctx.fillStyle = '#111';
         ctx.fillRect(0, 0, W, H);
       }
-    } else if (bg.kind === 'gradient') {
-      const rad = (bg.angle * Math.PI) / 180;
-      const x0 = W / 2 - (Math.cos(rad) * W) / 2;
-      const y0 = H / 2 - (Math.sin(rad) * H) / 2;
-      const x1 = W / 2 + (Math.cos(rad) * W) / 2;
-      const y1 = H / 2 + (Math.sin(rad) * H) / 2;
-      const g = ctx.createLinearGradient(x0, y0, x1, y1);
-      g.addColorStop(0, bg.startHex);
-      g.addColorStop(1, bg.endHex);
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H);
     } else {
       ctx.fillStyle = '#111';
       ctx.fillRect(0, 0, W, H);
