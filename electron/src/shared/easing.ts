@@ -1,5 +1,5 @@
-// Easing curves — the "butter" of the autofocus feature. Screen Studio's
-// zoom feels weighty because transitions have zero velocity AND zero
+// Easing curves — the "butter" of the autofocus feature. A zoom feels
+// weighty when its transitions have zero velocity AND zero
 // acceleration at both ends, i.e. smootherstep, optionally with a soft
 // critically-damped-spring settle.
 
