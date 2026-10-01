@@ -134,9 +134,11 @@ export function phoneLayerRects(content: Rect, macAspect: number, phoneAspectRat
   if (!portrait) {
     let ph = content.h * size;
     let pw = ph * phoneAspectRatio;
-    // Never more than half the row.
-    if (pw > (content.w - gap) * 0.5) {
-      pw = (content.w - gap) * 0.5;
+    // Never more than half a wide row; on a square-ish canvas a full-height
+    // phone would leave the Mac screen a postage stamp, so it gets less.
+    const share = content.w > content.h * 1.2 ? 0.5 : 0.38;
+    if (pw > (content.w - gap) * share) {
+      pw = (content.w - gap) * share;
       ph = pw / phoneAspectRatio;
     }
     const macBox = { x: 0, y: content.y, w: content.w - pw - gap, h: content.h };
