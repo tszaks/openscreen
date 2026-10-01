@@ -61,6 +61,10 @@ export interface StyleSettings {
   cursorSize: number; // dot diameter as a fraction of frame height
   cursorTrail: boolean;
   cursorHex: string;
+  /** Draw OpenScreen's cursor at all (off hides it and its trail). */
+  cursorShow: boolean;
+  /** Opacity of the drawn cursor, 0..1. */
+  cursorOpacity: number;
 }
 
 export type Background =
@@ -280,6 +284,8 @@ export const defaultStyle = (): StyleSettings => ({
   cursorSize: 0.012,
   cursorTrail: false,
   cursorHex: '#ffffff',
+  cursorShow: true,
+  cursorOpacity: 0.85,
 });
 
 // Phone footage zooms gentler: at 2x a tap target plus its context no longer
@@ -365,7 +371,8 @@ export function normalizeProject(raw: Project): Project {
   p.manualZooms ??= [];
   p.zoom = { ...defaultZoom(p.recording), ...p.zoom };
   p.audio = { ...defaultAudio(), ...p.audio };
-  if (p.style) p.style = { ...p.style, deviceFrame: p.style.deviceFrame ?? 'none' };
+  // 0.85 was the fixed cursor opacity before it became a setting.
+  if (p.style) p.style = { ...p.style, deviceFrame: p.style.deviceFrame ?? 'none', cursorShow: p.style.cursorShow ?? true, cursorOpacity: p.style.cursorOpacity ?? 0.85 };
   // Older phone bundles: the frame switch lived in style.deviceFrame.
   p.device ??= { frame: isPhone(p.recording) || p.style?.deviceFrame === 'phone' };
   p.taps ??= [];
