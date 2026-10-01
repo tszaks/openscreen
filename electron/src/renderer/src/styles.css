@@ -1934,16 +1934,18 @@ body.resizing-y * {
 /* ───────────────────────── sheets ───────────────────────── */
 
 /* A sheet: drops from under the toolbar, centred on the window, over a
-   light dim. Escape and the scrim cancel. */
+   light dim. The overlay covers the whole window, toolbar included, so
+   nothing else can be started until the sheet is answered; only the area
+   under the toolbar is dimmed. Escape and the scrim cancel. */
 .modal-scrim {
   position: fixed;
-  inset: var(--toolbar-h) 0 0 0;
+  inset: 0;
   z-index: 30;
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: var(--s2) var(--s6) var(--s6);
-  background: var(--scrim);
+  padding: calc(var(--toolbar-h) + var(--s2)) var(--s6) var(--s6);
+  background: var(--scrim-under-toolbar);
   animation: fade-in var(--t2) var(--ease);
 }
 

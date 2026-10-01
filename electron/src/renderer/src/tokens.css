@@ -116,6 +116,8 @@
   --shadow-preview: 0 2px 6px rgba(0, 0, 0, 0.1), 0 18px 44px rgba(0, 0, 0, 0.16);
   --highlight: inset 0 0.5px 0 rgba(255, 255, 255, 0.7);
   --focus-ring: 0 0 0 3px var(--accent-ring);
+  /* A sheet's dim: everything under the toolbar, which stays undimmed. */
+  --scrim-under-toolbar: linear-gradient(transparent 0 var(--toolbar-h), var(--scrim) var(--toolbar-h));
 }
 
 @media (prefers-color-scheme: dark) {
