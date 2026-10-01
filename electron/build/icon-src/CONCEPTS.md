@@ -13,7 +13,7 @@ Sources: `electron/build/icon-src/` on branch `feat/app-icon` (worktree `/tmp/os
 - Avoid a flat frontal photo-real 3D object. Realistic objects fight the material, so Apple prefers "a more flat and frontal view". (WWDC25)
 - Avoid copies of Apple hardware (HIG: "Don't use replicas of Apple hardware products"). This is a risk for B: its phone is generic, but the island pill leans toward iPhone.
 - Avoid shapes that break the squircle. Tahoe masks every icon to the template, and an icon that does not fit gets shrunk onto a grey tile ("squircle jail"). ([Michael Tsai on Tahoe icons](https://mjtsai.com/blog/2025/06/19/macos-tahoes-new-theming-system/))
-- What the best utility icons share: Screen Studio, CleanShot X, Raycast and Things each rely on ONE graphic, one strong colour and depth from light, not outlines. CleanShot's peeled layer and Things' single checkbox read at 16 px because there is only one thing to read.
+- What the best utility icons share: CleanShot X, Raycast and Things each rely on ONE graphic, one strong colour and depth from light, not outlines. CleanShot's peeled layer and Things' single checkbox read at 16 px because there is only one thing to read.
 
 ## Found along the way: the current icon has a baked-in white square
 

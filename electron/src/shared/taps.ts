@@ -1,8 +1,7 @@
 // Tap / swipe / long-press / typing suggestions from screen pixels alone.
 //
-// A wired iPhone capture has no touch data, and no shipping tool infers it
-// (Screen Studio: "cannot record your finger taps"; Matte: manual on real
-// devices). This module reads the recording itself: iOS reacts to a finger
+// A wired iPhone capture carries no touch data, so this module reads the
+// recording itself: iOS reacts to a finger
 // in characteristic ways, and those reactions show up as frame differences.
 //
 //  - Tap: a small, compact change (a row or button highlight) right after a

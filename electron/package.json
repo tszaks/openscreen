@@ -2,6 +2,16 @@
   "name": "openscreen",
   "version": "1.2.0",
   "description": "Open-source screen recorder for Mac: wired iPhone/iPad screen capture, automatic tap detection with zoom, device frames, and App Store / social export presets.",
+  "homepage": "https://github.com/tszaks/openscreen",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tszaks/openscreen.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tszaks/openscreen/issues"
+  },
+  "author": "Tyler Szakacs",
+  "license": "MIT",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite",
