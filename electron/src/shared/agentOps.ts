@@ -15,6 +15,7 @@ import { parseCaptions } from './captions';
 import { suggestChapters } from './chapters';
 import { isFillerWord, planSmartCuts, type TimeRange } from './editcuts';
 import { PRESETS } from './exportPresets';
+import { BACKDROPS } from './backdrops';
 import { DEVICES } from './devices';
 import { pendingWaits, speedUpRanges, waitCore, LAYOUT_CHOICES } from './mobileProject';
 import { remapProject } from './remap';
@@ -195,7 +196,8 @@ export function validateProject(p: Project): string[] {
     if (!/^#[0-9a-f]{6}$/i.test(s.cursorHex)) errs.push('style.cursorHex must be #rrggbb');
     if (!['none', 'phone'].includes(s.deviceFrame)) errs.push('style.deviceFrame must be none|phone');
     const b = s.background as Background | undefined;
-    if (!b || !['solid', 'gradient', 'imageFile', 'wallpaper'].includes(b.kind)) errs.push('style.background.kind must be solid|gradient|imageFile|wallpaper');
+    if (!b || !['solid', 'gradient', 'mesh', 'imageFile', 'wallpaper'].includes(b.kind)) errs.push('style.background.kind must be solid|gradient|mesh|imageFile|wallpaper');
+    else if (b.kind === 'mesh' && !(/^#[0-9a-f]{6}$/i.test(b.baseHex) && Array.isArray(b.blobs) && b.blobs.every((o) => /^#[0-9a-f]{6}$/i.test(o.hex) && o.r > 0))) errs.push('style.background mesh needs baseHex #rrggbb and blobs [{x,y,r>0,hex}]');
     if (s.cropRect) {
       const c = s.cropRect;
       if (!(c.x >= 0 && c.y >= 0 && c.w > 0 && c.h > 0 && c.x + c.w <= 1 + EPS && c.y + c.h <= 1 + EPS)) errs.push('style.cropRect must be normalized and inside the frame');
@@ -261,12 +263,8 @@ export function setPointer(p: Project, ptr: string, value: unknown): Project {
 // ---------------------------------------------------------------------------
 // The ops
 
-export const SWATCHES: Record<string, Background> = {
-  aurora: { kind: 'gradient', startHex: '#3a1c71', endHex: '#d76d77', angle: 120 },
-  ocean: { kind: 'gradient', startHex: '#0f2027', endHex: '#2c5364', angle: 135 },
-  sunset: { kind: 'gradient', startHex: '#ff7e5f', endHex: '#feb47b', angle: 160 },
-  mono: { kind: 'solid', hex: '#17171c' },
-};
+/** Agent swatch names → backgrounds (the editor's backdrop tiles). */
+export const SWATCHES: Record<string, Background> = Object.fromEntries(BACKDROPS.map((b) => [b.id, b.bg]));
 
 /** Default manual zoom shape (the editor's Option-click): 0.5s in, 0.9s hold, 0.7s out. */
 export function manualZoom(at: number, center: { x: number; y: number }, scale = 2, hold = 0.9): FocusSegment {
