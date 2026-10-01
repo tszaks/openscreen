@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
-import { fileSafeName, normalizeProject, projectName, resetProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
+import { autoZoomOn, fileSafeName, normalizeProject, withAutoZoom, projectName, resetProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
 import { AutofocusPlanner, cameraAt, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
@@ -2761,7 +2761,22 @@ export function Editor({
             </button>
           </span>
           <span>Clips</span>
-          <span>Zoom</span>
+          <span className="tl-label-switch">
+            Zoom
+            <input
+              type="checkbox"
+              role="switch"
+              className="switch switch-mini"
+              aria-label="Automatic zooms"
+              title={
+                autoZoomOn(proj.zoom, isPhone)
+                  ? 'Automatic zooms are on. Turn off to remove them (zooms you added stay).'
+                  : 'Automatic zooms are off. Turn on to add them back.'
+              }
+              checked={autoZoomOn(proj.zoom, isPhone)}
+              onChange={(e) => setProj((p) => ({ ...p, zoom: withAutoZoom(p.zoom, isPhone, e.target.checked) }))}
+            />
+          </span>
           {isPhone && <span>Taps</span>}
           <span>Audio</span>
         </div>
