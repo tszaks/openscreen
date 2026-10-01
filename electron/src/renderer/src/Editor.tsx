@@ -43,6 +43,8 @@ import { ExportPanel, ExportTasks, type TaskRowState } from './components/Export
 import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Slider, Switch, Tabs } from './ui';
 import { ScrubField } from './components/ScrubField';
 import { planTapZoom } from '../../shared/autozoomTaps';
+import { OpError, type ApplyContext } from '../../shared/agentOps';
+import { autoEditSummary, runPolish } from '../../shared/polish';
 import {
   isPhoneProject,
   layoutPreset,
@@ -130,13 +132,18 @@ export function Editor({
   const historyRef = useRef(new History<Project>());
   const projRef = useRef(proj);
   const applyingHistory = useRef(false);
+  // Set by an edit that must be its own undo step even if another edit
+  // follows within the coalescing window (Auto-edit).
+  const sealAfterRecord = useRef(false);
   useEffect(() => {
     if (proj === projRef.current) return;
     if (applyingHistory.current) {
       applyingHistory.current = false;
     } else {
       historyRef.current.record(projRef.current, performance.now());
+      if (sealAfterRecord.current) historyRef.current.seal();
     }
+    sealAfterRecord.current = false;
     projRef.current = proj;
   }, [proj]);
   // Each pointer gesture (a click, a drag) is its own undo step.
@@ -197,6 +204,9 @@ export function Editor({
   const [selectedTap, setSelectedTap] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [titleFocus, setTitleFocus] = useState(false);
+  // Auto-edit in flight; bumping the run id cancels it (its result is dropped).
+  const [autoEditing, setAutoEditing] = useState(false);
+  const autoEditRun = useRef(0);
 
   /** Write a snapshot into the bundle and record it as saved. */
   const persist = async (snapshot: Project) => {
@@ -1264,6 +1274,46 @@ export function Editor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Auto-edit: the agent's polish recipe (Clean look) behind one button.
+   * Builds the whole new project out of sight and swaps it in as a single
+   * undo step, so nothing changes on screen until it lands. Reuses the taps
+   * found when the take opened; only analyses if that never ran.
+   */
+  const autoEdit = async () => {
+    if (autoEditing) {
+      autoEditRun.current++;
+      setAutoEditing(false);
+      setStatus('Auto-edit cancelled, nothing changed');
+      return;
+    }
+    if (exporting || analyzing) return;
+    const run = ++autoEditRun.current;
+    const live = () => !disposed.current && run === autoEditRun.current;
+    setAutoEditing(true);
+    try {
+      const ctx: ApplyContext = {};
+      const findTaps = projRef.current.recording.sourceKind === 'iosDevice' && !projRef.current.tapsAnalyzed;
+      const steps = findTaps ? 2 : 1;
+      if (findTaps) {
+        setStatus(`Auto-edit: finding taps (1 of ${steps})…`);
+        ctx.tapAnalysis = await api.analyzeTaps(bundleDir, projRef.current.recording.screenVideoFile);
+        if (!live()) return;
+      }
+      setStatus(`Auto-edit: applying (${steps} of ${steps})…`);
+      const result = runPolish(projRef.current, ctx, { style: 'clean' });
+      historyRef.current.seal();
+      sealAfterRecord.current = true;
+      setProj(result.project);
+      setSelectedTap(null);
+      setStatus(autoEditSummary(result));
+    } catch (e) {
+      if (live()) setStatus(`Auto-edit failed, nothing changed: ${e instanceof OpError ? e.message : ipcErrorMessage(e)}`);
+    } finally {
+      if (live()) setAutoEditing(false);
+    }
+  };
+
   const updateTap = (id: string, patch: Partial<TapSuggestion>) =>
     setProj((p) => ({ ...p, taps: p.taps.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
 
@@ -2153,6 +2203,27 @@ export function Editor({
           </div>
         )}
         <div className="spacer" />
+        <Button
+          className="no-drag"
+          disabled={exporting || (analyzing && !autoEditing)}
+          title={
+            autoEditing
+              ? 'Stop Auto-edit (nothing changes)'
+              : analyzing
+                ? 'Finding taps…'
+                : 'Frame, trim dead air, speed up waits and zoom to taps in one step (⌘Z undoes it all)'
+          }
+          onClick={() => void autoEdit()}
+        >
+          {autoEditing ? (
+            <>
+              <span className="btn-spinner" aria-hidden="true" />
+              Cancel
+            </>
+          ) : (
+            'Auto-edit'
+          )}
+        </Button>
         <Button variant="ghost" onClick={saveProject}>Save</Button>
         <div className="split-btn no-drag" ref={exportMenuRef}>
           <Button variant="primary" className="split-main" disabled={exporting} onClick={() => exportVideo()}>

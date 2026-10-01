@@ -1,7 +1,10 @@
-// `agent polish`: good-looking defaults as a fixed list of edit ops, so the
-// result is deterministic and every change is visible in the summary.
+// `agent polish` and the editor's Auto-edit button: good-looking defaults as
+// a fixed list of edit ops, so the result is deterministic and every change
+// is visible in the summary. Both run runPolish, so they make the same edit.
 
-import type { EditOp } from './agentOps';
+import { applyOps, type ApplyContext, type EditOp } from './agentOps';
+import { formatClock } from './exportProgress';
+import { Timeline } from './timeline';
 import type { Project } from './types';
 
 export type PolishStyle = 'clean' | 'bold';
@@ -59,4 +62,33 @@ export function planPolish(p: Project, o: PolishOptions): EditOp[] {
   if (o.transcript && p.captions.length === 0) ops.push({ op: 'captionsFromTranscript' });
   if (o.title) ops.push({ op: 'titleCard', title: o.title, subtitle: o.subtitle ?? '' });
   return ops;
+}
+
+export interface PolishResult {
+  project: Project;
+  ops: EditOp[];
+  notes: string[];
+  /** Output length in seconds, before and after. */
+  before: number;
+  after: number;
+}
+
+/**
+ * Plans and applies the polish recipe in one go. Pure: `ctx` carries the tap
+ * analysis / transcript the caller already gathered; with no tap analysis
+ * the project's existing taps and waits are used. Throws OpError like
+ * applyOps, in which case nothing has changed.
+ */
+export function runPolish(p: Project, ctx: ApplyContext, o: Pick<PolishOptions, 'style' | 'title' | 'subtitle'>): PolishResult {
+  const ops = planPolish(p, { ...o, analyzed: !!ctx.tapAnalysis, transcript: !!ctx.transcript });
+  const { project, notes } = applyOps(p, ops, ctx);
+  const length = (q: Project) => new Timeline(q.recording.duration, q.clips).outputDuration;
+  return { project, ops, notes, before: length(p), after: length(project) };
+}
+
+/** The editor's one-line result: "Auto-edit: 1:12 → 0:48 · ⌘Z to undo". */
+export function autoEditSummary(r: Pick<PolishResult, 'before' | 'after'>): string {
+  // Within half a second reads as unchanged (a look-only Mac take).
+  const length = Math.abs(r.before - r.after) >= 0.5 ? `${formatClock(r.before * 1000)} → ${formatClock(r.after * 1000)}` : 'look applied';
+  return `Auto-edit: ${length} · ⌘Z to undo`;
 }

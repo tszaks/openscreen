@@ -152,6 +152,11 @@ switch (they are drawn whenever the recording has keystrokes/clicks); use
   title card when `--title` is given.
 - Screen recording: background, frame style, auto-focus + dwell zoom, cursor size.
 
+The editor's **Auto-edit** button (top bar) runs the same recipe
+(`runPolish` in `shared/polish.ts`) in the `clean` style, without a title
+card. In the editor it is one undo step; `polish` + `undo` is the CLI
+equivalent.
+
 ## Caveats
 
 - **Export speed**: the export renders every frame in the real renderer
