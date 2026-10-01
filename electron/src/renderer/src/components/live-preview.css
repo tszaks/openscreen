@@ -82,18 +82,18 @@
   display: grid;
   place-items: center;
   padding: 0 10%;
-  font-size: 10px;
+  font-size: var(--text-caption);
   line-height: 1.35;
   text-align: center;
-  color: var(--text-3);
+  color: rgba(255, 255, 255, 0.6);
   text-wrap: balance;
   animation: live-breathe 1.8s ease-in-out infinite;
 }
 .live-phone.size-stage .live-status {
-  font-size: 12.5px;
+  font-size: var(--text-body);
 }
 .live-status.is-error {
-  color: var(--amber);
+  color: var(--caution);
   animation: none;
 }
 

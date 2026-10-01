@@ -18,6 +18,8 @@ import {
 } from './ios';
 import { interruptedBundles, recoveredProject, RECOVERABLE_VIDEO, type BundleListing } from '../shared/recovery';
 import { buildAppMenu } from './menu';
+import { applyAppearance, loadAppearance } from './appearance';
+import type { Appearance } from '../shared/appearance';
 import type { ContextMenuItem, MenuPhase } from '../shared/menu';
 import { fileSafeName, normalizeProject, projectName, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
 import { parseHeadlessArgs, type HeadlessJob, type HeadlessResult } from '../shared/headless';
@@ -172,7 +174,14 @@ const fileUrl = (p: string) => pathToFileURL(p).href;
 
 // What the renderer is showing, so the menu enables only what applies.
 let menuState: { phase: MenuPhase; bundleDir?: string } = { phase: 'picker' };
-const refreshMenu = () => Menu.setApplicationMenu(buildAppMenu(() => win, menuState));
+let appearance: Appearance = 'system';
+const setAppearance = (a: Appearance) => {
+  appearance = a;
+  applyAppearance(a, true);
+  refreshMenu();
+};
+const refreshMenu = () =>
+  Menu.setApplicationMenu(buildAppMenu(() => win, menuState, { current: appearance, set: setAppearance }));
 
 // OPENSCREEN_RECORDINGS_DIR points a test run somewhere other than the
 // real recordings, which recovery would otherwise scan and write into.
@@ -331,11 +340,16 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 700,
     title: 'OpenScreen',
-    // Hidden title bar: the renderer's top bars are the drag region and leave
-    // room on the left for the traffic lights (centered in the 52px bar).
+    // Hidden title bar: the renderer's toolbar is the drag region and leaves
+    // room on the left for the traffic lights, centred in its 52px height.
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 18, y: 19 },
-    backgroundColor: '#0E0E10',
+    trafficLightPosition: { x: 20, y: 19 },
+    // The window's material is the sidebar's vibrancy; the renderer paints
+    // every opaque region itself and leaves the inspector translucent over
+    // it. Reduce Transparency turns the material opaque system-wide.
+    vibrancy: 'sidebar',
+    visualEffectState: 'followWindow',
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -374,7 +388,11 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  if (!headless) refreshMenu();
+  if (!headless) {
+    appearance = loadAppearance();
+    applyAppearance(appearance);
+    refreshMenu();
+  }
   // Right-click (two-finger click) menus: the renderer describes the items,
   // main pops a native menu and resolves with the chosen id, or null.
   ipcMain.handle('contextMenu:show', (e, items: ContextMenuItem[]) =>
