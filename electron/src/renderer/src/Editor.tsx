@@ -215,7 +215,11 @@ export function Editor({
     const v = Number(localStorage.getItem('openscreen.inspectorWidth'));
     return v ? clampInspector(v, window.innerWidth) : INSPECTOR_DEFAULT;
   });
-  const [timelineH, setTimelineH] = useState<number | null>(() => Number(localStorage.getItem('openscreen.timelineHeight')) || null);
+  // A height saved on a bigger display is capped so the preview keeps its room.
+  const [timelineH, setTimelineH] = useState<number | null>(() => {
+    const v = Number(localStorage.getItem('openscreen.timelineHeight'));
+    return v ? clampTimeline(v, 0, window.innerHeight, 52) : null;
+  });
   const [tlZoom, setTlZoom] = useState(1);
   const tlScrollRef = useRef<HTMLDivElement>(null);
   const tlLanesRef = useRef<HTMLDivElement>(null);
@@ -1310,10 +1314,11 @@ export function Editor({
   };
 
   /** Option-click on the taps lane: a tap at the playhead, mid-screen until placed. */
-  const addTapAtPlayhead = () => {
+  const addTapAtPlayhead = () => addTapAt(playheadRef.current);
+  const addTapAt = (outT: number) => {
     const tap: TapSuggestion = {
       id: crypto.randomUUID(),
-      t: tapSourceTime(playheadRef.current, timeline),
+      t: tapSourceTime(outT, timeline),
       x: 0.5,
       y: 0.5,
       kind: 'tap',
@@ -1529,7 +1534,10 @@ export function Editor({
 
   // Keep a window shrink from leaving the inspector wider than half the window.
   useEffect(() => {
-    const onResize = () => setInspectorW((w) => clampInspector(w, window.innerWidth));
+    const onResize = () => {
+      setInspectorW((w) => clampInspector(w, window.innerWidth));
+      setTimelineH((h) => (h == null ? null : clampTimeline(h, naturalTimelineH(), window.innerHeight, topbarH())));
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
@@ -1549,6 +1557,9 @@ export function Editor({
     // and the anchor measures from the width the user last saw.
     zoomAnchor.current = { x, oldW: zoomAnchor.current?.oldW ?? sc.scrollWidth };
     tlZoomRef.current = z;
+    // A burst that nets back to the zoom on screen won't re-render, so the
+    // layout effect never consumes the anchor; drop it here instead.
+    if (z === tlZoom) zoomAnchor.current = null;
     setTlZoom(z);
   };
   useLayoutEffect(() => {
@@ -1605,7 +1616,7 @@ export function Editor({
       { id: 'delete', label: 'Delete Clip', enabled: !!clip && proj.clips.length > 1, run: () => deleteClip(clip?.id ?? null) },
       { type: 'separator' },
       { id: 'zoom', label: 'Add Zoom Here', run: () => addZoomAt(t) },
-      ...(isPhone ? [{ id: 'tap', label: 'Add Tap Here', run: addTapAtPlayhead }] : []),
+      ...(isPhone ? [{ id: 'tap', label: 'Add Tap Here', run: () => addTapAt(t) }] : []),
       { type: 'separator' },
       { id: 'zin', label: 'Zoom In Timeline', enabled: tlZoom < 40, run: () => zoomTimeline(tlZoom * ZOOM_STEP, x) },
       { id: 'zout', label: 'Zoom Out Timeline', enabled: tlZoom > 1, run: () => zoomTimeline(tlZoom / ZOOM_STEP, x) },
