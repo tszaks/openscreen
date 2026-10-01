@@ -42,6 +42,7 @@ import { ExportProgress, type ExportProgressState } from './components/ExportPro
 import { ExportPanel, ExportTasks, type TaskRowState } from './components/ExportPanel';
 import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Slider, Switch, Tabs } from './ui';
 import { ScrubField } from './components/ScrubField';
+import { BACKDROPS, BACKDROP_GROUPS, backgroundCss, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
 import {
   isPhoneProject,
@@ -89,13 +90,6 @@ interface ExportRun {
   rows?: TaskRowState[];
   folder?: string;
 }
-
-const SWATCHES = [
-  { name: 'Aurora', bg: { kind: 'gradient' as const, startHex: '#3a1c71', endHex: '#d76d77', angle: 120 } },
-  { name: 'Ocean', bg: { kind: 'gradient' as const, startHex: '#0f2027', endHex: '#2c5364', angle: 135 } },
-  { name: 'Sunset', bg: { kind: 'gradient' as const, startHex: '#ff7e5f', endHex: '#feb47b', angle: 160 } },
-  { name: 'Mono', bg: { kind: 'solid' as const, hex: '#17171c' } },
-];
 
 export function Editor({
   videoUrl,
@@ -1490,7 +1484,27 @@ export function Editor({
   const backgroundPanel = (
     <>
       {isPhone && <LayoutSection proj={proj} setProj={setProj} onTitleFocus={setTitleFocus} />}
-      <Section title="Backdrop">
+      {BACKDROP_GROUPS.map((group) => (
+        <Section key={group.id} title={group.title}>
+          <div className="tiles">
+            {BACKDROPS.filter((b) => b.group === group.id).map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                title={b.name}
+                className={`tile${!blurredBg && sameBackground(b.bg, proj.style.background) ? ' selected' : ''}`}
+                onClick={() =>
+                  setProj((p) => ({ ...p, style: { ...p.style, background: b.bg }, layout: { ...p.layout, background: 'style' } }))
+                }
+              >
+                <span className="tile-swatch" style={{ background: backgroundCss(b.bg) }} />
+                <span className="tile-label">{b.name}</span>
+              </button>
+            ))}
+          </div>
+        </Section>
+      ))}
+      <Section title="Image">
         <div className="tiles">
           {isPhone && (
             <button
@@ -1503,27 +1517,6 @@ export function Editor({
               <span className="tile-label">Blurred</span>
             </button>
           )}
-          {SWATCHES.map((s) => (
-            <button
-              key={s.name}
-              type="button"
-              title={s.name}
-              className={`tile${!blurredBg && sameBackground(s.bg, proj.style.background) ? ' selected' : ''}`}
-              onClick={() =>
-                setProj((p) => ({ ...p, style: { ...p.style, background: s.bg }, layout: { ...p.layout, background: 'style' } }))
-              }
-            >
-              <span
-                className="tile-swatch"
-                style={
-                  s.bg.kind === 'gradient'
-                    ? { background: `linear-gradient(${s.bg.angle}deg, ${s.bg.startHex}, ${s.bg.endHex})` }
-                    : { background: s.bg.hex }
-                }
-              />
-              <span className="tile-label">{s.name}</span>
-            </button>
-          ))}
           <button
             type="button"
             title="Custom background image"
@@ -2536,19 +2529,6 @@ export function Editor({
 }
 
 const FILLER = /^[\s.,!?]*(?:um+|uh+|er+|eh+|ah+|hmm+|mm+|mhm)[\s.,!?]*$/i;
-
-/** Field-wise background equality (saved projects may order keys differently). */
-function sameBackground(a: Project['style']['background'], b: Project['style']['background']) {
-  if (a.kind === 'gradient' && b.kind === 'gradient') {
-    return (
-      a.startHex.toLowerCase() === b.startHex.toLowerCase() &&
-      a.endHex.toLowerCase() === b.endHex.toLowerCase() &&
-      a.angle === b.angle
-    );
-  }
-  if (a.kind === 'solid' && b.kind === 'solid') return a.hex.toLowerCase() === b.hex.toLowerCase();
-  return false;
-}
 
 /** Evenly spaced ruler labels: the smallest round step giving at most ~10. */
 function rulerTicks(total: number) {

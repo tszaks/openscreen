@@ -93,6 +93,11 @@ A JSON array of ops (or `{"ops":[…]}`). Items are picked by `id` or 0-based
 
 `x`/`y` are normalized (0..1) positions on the recording, `0,0` top-left.
 
+Background swatch names (the Background tab's tiles, defined in
+`electron/src/shared/backdrops.ts`): soft `aurora sunset peach lilac sage dusk`,
+dark `mono ocean midnight graphite nebula deep-sea forest ember slate`, light
+`studio paper cloud mist blush`, vivid `electric citrus lagoon bloom`.
+
 ### Parity with the editor
 
 Every editing control in the editor (Editor.tsx, mobile/DevicePanel,
