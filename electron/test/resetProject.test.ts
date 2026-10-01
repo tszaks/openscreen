@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultProject, resetProject, type Project } from '../src/shared/types';
+import { defaultProject, fileSafeName, projectName, resetProject, type Project } from '../src/shared/types';
 
 const phone = () =>
   defaultProject({ screenVideoFile: 'screen.mov', sourceKind: 'iosDevice', sourceSize: { width: 1206, height: 2622 }, duration: 12 });
@@ -58,5 +58,23 @@ describe('resetProject', () => {
     const r = resetProject(before);
     r.style.cornerRadius = 99;
     expect(before.style.cornerRadius).toBe(4);
+  });
+});
+
+describe('project name', () => {
+  it("shows the user's name, else the folder's", () => {
+    expect(projectName({}, '/Users/t/Movies/OpenScreen/rec-123.openscreen')).toBe('rec-123');
+    expect(projectName({ name: '  Vero bills demo ' }, '/x/rec-1.openscreen')).toBe('Vero bills demo');
+    expect(projectName({ name: '   ' }, '/x/rec-1.openscreen/')).toBe('rec-1');
+  });
+  it('makes names safe as file names', () => {
+    expect(fileSafeName('Bills / Subs: v2')).toBe('Bills - Subs- v2');
+    expect(fileSafeName('..hidden')).toBe('hidden');
+    expect(fileSafeName('  ')).toBe('OpenScreen export');
+  });
+  it('survives a reset', () => {
+    const p = phone();
+    p.name = 'Vero demo';
+    expect(resetProject(p).name).toBe('Vero demo');
   });
 });

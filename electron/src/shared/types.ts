@@ -184,6 +184,8 @@ export interface AudioSettings {
 }
 
 export interface Project {
+  /** What the user named it (double-click the title); else the folder's name. */
+  name?: string;
   recording: RecordingRef;
   clips: Clip[];
   zoomKeyframes: ZoomKeyframe[];
@@ -276,12 +278,23 @@ export const defaultProject = (recording: RecordingRef): Project => ({
  */
 export function resetProject(p: Project): Project {
   const fresh = defaultProject(p.recording);
+  if (p.name) fresh.name = p.name;
   fresh.style.background = structuredClone(p.style.background);
   fresh.layout.background = p.layout.background;
   // Recording sets this whenever a camera was captured.
   if (p.recording.cameraVideoFile) fresh.cameraOverlay.enabled = true;
   return fresh;
 }
+
+/** The name to show and to save exports under: the user's, else the folder's. */
+export function projectName(project: Pick<Project, 'name'>, bundleDir: string) {
+  const named = project.name?.trim();
+  if (named) return named;
+  return (bundleDir.split('/').filter(Boolean).pop() ?? 'Untitled').replace(/\.openscreen$/, '');
+}
+
+/** A project name made safe as a file name (no path separators or colons). */
+export const fileSafeName = (name: string) => name.replace(/[/:\\]/g, '-').replace(/^\.+/, '').trim() || 'OpenScreen export';
 
 /** Fill in fields that bundles saved by older versions don't have. */
 export function normalizeProject(raw: Project): Project {

@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { applyOps, captionsFromSegments, needsSilences, needsTapAnalysis, needsTranscript, OP_NAMES, OpError, validateProject, type ApplyContext, type EditOp, type TranscriptSegment } from '../shared/agentOps';
 import { planPolish, type PolishStyle } from '../shared/polish';
-import { defaultProject, normalizeProject, type Project } from '../shared/types';
+import { defaultProject, fileSafeName, normalizeProject, projectName, type Project } from '../shared/types';
 import { Timeline } from '../shared/timeline';
 import { resolveDevice, projectCanvasSize, layoutPreset } from '../shared/mobileProject';
 import { parseFreezes, parseSilences, silenceDetectArgs } from '../shared/silence';
@@ -444,7 +444,7 @@ async function exportCmd(args: string[]) {
   const dir = bundlePath(args.shift());
   let outPath = outArg ? resolve(outArg) : undefined;
   if (!outPath) {
-    const name = basename(dir).replace(/\.openscreen$/, '');
+    const name = fileSafeName(projectName(readProject(dir), dir));
     outPath = presets ? join(dirname(dir), `${name}-export`) : join(dirname(dir), `${name}.${gif ? 'gif' : 'mp4'}`);
   }
   if (gif && extname(outPath).toLowerCase() !== '.gif') outPath = outPath.replace(/\.[^./]*$/, '') + '.gif';

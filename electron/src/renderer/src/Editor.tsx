@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
-import { normalizeProject, resetProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
+import { fileSafeName, normalizeProject, projectName, resetProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
 import { AutofocusPlanner, cameraAt, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
@@ -195,6 +195,10 @@ export function Editor({
   // Where to go once the unsaved-changes confirm is answered.
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  // The title's inline rename field, while open: its draft text.
+  const [renameDraft, setRenameDraft] = useState<string | null>(null);
+  // Escape closes the field, and its blur must not then save the draft.
+  const renameCancelled = useRef(false);
   const disposed = useRef(false);
   // Phone recordings: the tap selected on the taps lane (clicking the preview
   // places it), a tap analysis in flight, and whether the title field has
@@ -794,7 +798,7 @@ export function Editor({
     if (!video || exporting) return { ok: false, error: exporting ? 'an export is already running' : 'the recording is not loaded' };
     setExportMenuOpen(false);
     // `outPathIn` skips the save dialog (headless export).
-    const outPath = outPathIn ?? (await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4'));
+    const outPath = outPathIn ?? (await api.exportPickPath(bundleDir, wantGif ? 'gif' : 'mp4', proj.name));
     if (!outPath) return { ok: false, error: 'cancelled' };
     const preset = layoutPresetOf(proj);
     // A GIF is converted from an intermediate mp4 in the bundle.
@@ -870,13 +874,13 @@ export function Editor({
   const exportFormats = async (ids: PresetId[], folderIn?: string, prevRows?: TaskRowState[]): Promise<ExportOutcome> => {
     if (!videoRef.current || exporting || ids.length === 0) return { ok: false, error: 'nothing to export' };
     setExportMenuOpen(false);
-    const folder = folderIn ?? (await api.exportPickFolder(bundleDir));
+    const folder = folderIn ?? (await api.exportPickFolder(bundleDir, proj.name));
     if (!folder) return { ok: false, error: 'cancelled' };
     const presets = ids.map(getPreset);
     const passes = planRenders(presets);
     const dur = timeline.outputDuration || duration;
     const total = batchUnits(passes, dur);
-    const name = bundleName;
+    const name = fileSafeName(bundleName);
     const fresh = (p: ExportPreset): TaskRowState => ({
       preset: p,
       status: 'queued',
@@ -1627,7 +1631,7 @@ export function Editor({
   const ruler = rulerTicks(outDur, tlZoom);
   // With a dragged height the lanes share the extra room in proportion to their base sizes.
   const laneRows = `22px ${(isPhone ? [34, 22, 26, 38] : [34, 22, 38]).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
-  const bundleName = (bundleDir.split('/').filter(Boolean).pop() ?? 'Untitled').replace(/\.openscreen$/, '');
+  const bundleName = projectName(proj, bundleDir);
   const formatChoices = presetChoices(proj.recording.sourceSize);
   const selectedFormats =
     formatPick ?? [formatChoices[0].id, 'social-9x16' as const].filter((id) => formatChoices.some((p) => p.id === id));
@@ -2342,7 +2346,56 @@ export function Editor({
           {Icon.chevronLeft(12)}
           New recording
         </Button>
-        <span className="doc-title" title={bundleDir}>{bundleName}</span>
+        {renameDraft === null ? (
+          // no-drag: in the title bar a double-click would otherwise zoom the window.
+          <span
+            className="doc-title no-drag"
+            title={`${bundleDir}\nDouble-click to rename`}
+            onDoubleClick={() => {
+              renameCancelled.current = false;
+              setRenameDraft(bundleName);
+            }}
+          >
+            {bundleName}
+          </span>
+        ) : (
+          <input
+            className="doc-title doc-title-input no-drag"
+            aria-label="Project name"
+            autoFocus
+            maxLength={80}
+            value={renameDraft}
+            size={Math.max(8, renameDraft.length + 1)}
+            onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              else if (e.key === 'Escape') {
+                renameCancelled.current = true;
+                setRenameDraft(null);
+              }
+              e.stopPropagation();
+            }}
+            onBlur={() => {
+              if (renameCancelled.current || renameDraft === null) {
+                renameCancelled.current = false;
+                return;
+              }
+              const name = renameDraft.trim();
+              setRenameDraft(null);
+              // Cleared: back to the folder's name.
+              if (name !== (proj.name ?? '')) {
+                historyRef.current.seal();
+                setProj((p) => {
+                  const next = { ...p };
+                  if (name && name !== projectName({}, bundleDir)) next.name = name;
+                  else delete next.name;
+                  return next;
+                });
+              }
+            }}
+          />
+        )}
         <div className="history no-drag">
           <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
           <IconButton label="Redo (⌘⇧Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
