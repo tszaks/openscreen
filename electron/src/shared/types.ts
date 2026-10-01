@@ -377,6 +377,22 @@ export function normalizeProject(raw: Project): Project {
   return p;
 }
 
+/** A path that stays inside the bundle: relative, with no ".." step, no drive or backslash tricks. */
+export const bundleRelative = (file: unknown): file is string =>
+  typeof file === 'string' &&
+  file.length > 0 &&
+  !file.includes('\0') &&
+  !/^([/\\~]|[a-z]:)/i.test(file) &&
+  !file.split(/[\\/]/).includes('..');
+
+/** Audio items in saved tracks whose file is not inside the bundle (normalizeTracks drops them). */
+export function unsafeAudioFiles(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((t) =>
+    Array.isArray(t?.items) ? t.items.filter((i: { file?: unknown }) => i && typeof i === 'object' && !bundleRelative(i.file)).map((i: { file?: unknown }) => String(i.file)) : [],
+  );
+}
+
 const finite = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
 const unit = (v: unknown, fallback: number) => Math.min(1, Math.max(0, finite(v, fallback)));
 
@@ -393,7 +409,8 @@ export function normalizeTracks(raw: unknown): Track[] {
       volume: unit(t.volume, 1),
       duck: t.duck === true,
       items: (Array.isArray(t.items) ? t.items : [])
-        .filter((i): i is AudioItem => !!i && typeof i === 'object' && typeof i.file === 'string')
+        // A file outside the bundle (absolute, "..") is never played or exported.
+        .filter((i): i is AudioItem => !!i && typeof i === 'object' && bundleRelative(i.file))
         .map((i, ii) => {
           const fileDuration = Math.max(0, finite(i.fileDuration, finite(i.sourceOut, 0)));
           const sourceIn = Math.max(0, finite(i.sourceIn, 0));

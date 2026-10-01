@@ -1,7 +1,7 @@
 // Export encode plumbing that doesn't need Electron: output size, the ffmpeg
 // argv for the frame pipe, and turning an ffmpeg exit into a readable error.
 
-import { DUCK_GAIN, type MusicInput } from './audioTracks';
+import { DUCK_GAIN, insideDir, type MusicInput } from './audioTracks';
 import type { Project } from './types';
 
 /** libx264 + yuv420p needs even width and height. */
@@ -37,6 +37,8 @@ export interface ExportArgsInput {
   master?: boolean;
   /** Added sounds from the audio tracks (audioTracks.musicInputs), in output time. */
   music?: MusicInput[];
+  /** The project's bundle: every music path must be inside it. Required with music. */
+  bundleDir?: string;
   /** Output-time ranges where the recording's own sound is lowered under music. */
   duck?: { start: number; end: number }[];
 }
@@ -96,6 +98,8 @@ export function buildExportArgs(args: ExportArgsInput): string[] {
     : [];
   if (clicks.length) filters.unshift(`[${lavfiIndex}:a]anull[sfxin]`, ...sfxParts);
 
+  const outside = (args.music ?? []).find((m) => !args.bundleDir || !insideDir(m.path, args.bundleDir));
+  if (outside) throw new Error(`The sound file ${outside.path} is outside this project, so it can't be exported.`);
   const music = (args.music ?? []).filter((m) => m.length > 1e-3 && m.gain > 0 && m.sourceOut > m.sourceIn);
   const musicBase = lavfiIndex + (clicks.length ? 1 : 0);
   const musicInputs = music.flatMap((m) => ['-i', m.path]);
