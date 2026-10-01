@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clipFrames, filmstripTimes } from '../src/shared/filmstrip';
+import { clipFrames, filmstripTile, filmstripTimes, tilesForClip } from '../src/shared/filmstrip';
 
 describe('filmstripTimes', () => {
   it('spaces frames evenly at the middle of each slice', () => {
@@ -14,18 +14,54 @@ describe('filmstripTimes', () => {
 
 describe('clipFrames', () => {
   const times = filmstripTimes(10, 10); // 0.5, 1.5, … 9.5
-  it('shows every frame inside the clip', () => {
-    expect(clipFrames(times, 2, 5, 10)).toEqual([2, 3, 4]);
+  it('gives each slot the frame nearest its moment', () => {
+    expect(clipFrames(times, 2, 5, 3)).toEqual([2, 3, 4]);
+    expect(clipFrames(times, 0, 10, 4)).toEqual([1, 3, 6, 8]);
   });
-  it('thins evenly to the most a clip has room for', () => {
-    expect(clipFrames(times, 0, 10, 3)).toEqual([1, 5, 8]);
+  it('repeats the nearest frame when the clip has more slots than frames', () => {
+    expect(clipFrames(times, 4, 6, 4)).toEqual([4, 4, 5, 5]);
   });
   it('gives a clip too short for a frame the one nearest its middle', () => {
-    expect(clipFrames(times, 4.6, 4.9, 4)).toEqual([4]);
-    expect(clipFrames(times, 9.8, 10, 4)).toEqual([9]);
+    expect(clipFrames(times, 4.6, 4.9, 1)).toEqual([4]);
+    expect(clipFrames(times, 9.8, 10, 2)).toEqual([9, 9]);
   });
   it('is empty with no frames or no room', () => {
     expect(clipFrames([], 0, 1, 3)).toEqual([]);
     expect(clipFrames(times, 0, 10, 0)).toEqual([]);
+  });
+});
+
+describe('filmstripTile', () => {
+  const phone = { width: 1206, height: 2622 };
+  const mac = { width: 1920, height: 1080 };
+  const square = { width: 1080, height: 1080 };
+  it('keeps a portrait frame whole: a narrow tile at the lane height', () => {
+    expect(filmstripTile(phone, 37)).toEqual({ width: 17, portrait: true });
+    expect(filmstripTile(phone, 56)).toEqual({ width: 26, portrait: true });
+  });
+  it('keeps landscape and square frames whole at their own shape', () => {
+    expect(filmstripTile(mac, 37)).toEqual({ width: 66, portrait: false });
+    expect(filmstripTile(mac, 56)).toEqual({ width: 100, portrait: false });
+    expect(filmstripTile(square, 40)).toEqual({ width: 40, portrait: false });
+  });
+  it('caps very wide sources, floors very tall ones, survives a missing size', () => {
+    expect(filmstripTile({ width: 4000, height: 500 }, 40).width).toBe(96);
+    expect(filmstripTile({ width: 300, height: 3000 }, 40).width).toBe(12);
+    expect(filmstripTile({ width: 0, height: 0 }, 40)).toEqual({ width: 71, portrait: false });
+  });
+});
+
+describe('tilesForClip', () => {
+  it('fills a clip with as many tiles as its width holds', () => {
+    expect(tilesForClip(1, 1200, 30)).toBe(40); // a whole take at zoom 1
+    expect(tilesForClip(0.5, 1200, 71)).toBe(8);
+  });
+  it('grows with the timeline zoom (the lanes get wider)', () => {
+    const at = (zoom: number) => tilesForClip(0.25, 1000 * zoom, 30);
+    expect([at(1), at(2), at(4)]).toEqual([8, 17, 33]);
+  });
+  it('always shows at least one tile', () => {
+    expect(tilesForClip(0.001, 1000, 71)).toBe(1);
+    expect(tilesForClip(0.5, 0, 30)).toBe(1);
   });
 });
