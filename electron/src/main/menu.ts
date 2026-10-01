@@ -64,6 +64,8 @@ export function buildAppMenu(
         { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: send('undo') },
         { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: send('redo') },
         { type: 'separator' },
+        { label: 'Reset Project…', enabled: inEditor, click: send('resetProject') },
+        { type: 'separator' },
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },

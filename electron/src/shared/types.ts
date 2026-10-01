@@ -267,6 +267,22 @@ export const defaultProject = (recording: RecordingRef): Project => ({
   layout: defaultLayout(recording),
 });
 
+/**
+ * Back to the take as it was first opened: every edit gone (cuts, speed,
+ * zooms, captions, text, crop, taps, frame and layout choices), keeping only
+ * the recording and the backdrop (the style background, and whether a phone
+ * take uses the blurred one). Taps come back empty and unanalysed, so the
+ * next open (or Auto-edit, or Re-detect) finds them again, as on a fresh take.
+ */
+export function resetProject(p: Project): Project {
+  const fresh = defaultProject(p.recording);
+  fresh.style.background = structuredClone(p.style.background);
+  fresh.layout.background = p.layout.background;
+  // Recording sets this whenever a camera was captured.
+  if (p.recording.cameraVideoFile) fresh.cameraOverlay.enabled = true;
+  return fresh;
+}
+
 /** Fill in fields that bundles saved by older versions don't have. */
 export function normalizeProject(raw: Project): Project {
   const p = { ...raw };
