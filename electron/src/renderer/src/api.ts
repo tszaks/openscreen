@@ -102,12 +102,13 @@ declare global {
       /** Converts inMp4 to outGif, then deletes inMp4. */
       exportGif(inMp4: string, outGif: string): Promise<boolean>;
       /** Save dialog for the export; null when cancelled. */
-      exportPickPath(bundleDir: string, kind: 'mp4' | 'gif'): Promise<string | null>;
+      /** `name`: the project's display name, for the suggested file name. */
+      exportPickPath(bundleDir: string, kind: 'mp4' | 'gif', name?: string): Promise<string | null>;
       exportReveal(path: string): Promise<boolean>;
       /** Hide OpenScreen's window from screen capture (during countdown and recording). */
       setCaptureShield(on: boolean): void;
       /** Folder picker for a multi-format export; null when cancelled. */
-      exportPickFolder(bundleDir: string): Promise<string | null>;
+      exportPickFolder(bundleDir: string, name?: string): Promise<string | null>;
       /** A temp path for a rendered master (.mov). */
       exportMasterPath(key: string): Promise<string>;
       /** Deletes a master made by exportMasterPath. */
