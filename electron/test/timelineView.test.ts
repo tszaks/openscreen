@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { autoZoomOn, withAutoZoom } from '../src/shared/types';
 import {
   anchoredScroll,
   clampInspector,
@@ -78,5 +79,23 @@ describe('lane heights and the natural timeline height', () => {
   it('lifts a height saved under shorter lanes up to the new floor', () => {
     const floor = naturalTimelineHeight(laneHeights(false));
     expect(clampTimeline(157, floor, 900, 52)).toBe(floor);
+  });
+});
+
+describe('automatic zoom switch', () => {
+  const base = { autofocus: true, dwell: true, fromTaps: true };
+  it('reads on/off per kind of take', () => {
+    expect(autoZoomOn(base, false)).toBe(true);
+    expect(autoZoomOn({ ...base, autofocus: false }, false)).toBe(true); // dwell alone still zooms
+    expect(autoZoomOn({ ...base, autofocus: false, dwell: false }, false)).toBe(false);
+    expect(autoZoomOn({ ...base, fromTaps: false }, true)).toBe(false);
+    expect(autoZoomOn({ ...base, autofocus: false, dwell: false }, true)).toBe(true); // phones zoom from taps
+  });
+  it('turns every automatic source off and back on, leaving the rest alone', () => {
+    const z = { ...base, depth: 1.6 };
+    expect(withAutoZoom(z, false, false)).toEqual({ ...z, autofocus: false, dwell: false });
+    expect(withAutoZoom({ ...z, autofocus: false, dwell: false }, false, true)).toEqual(z);
+    expect(withAutoZoom(z, true, false)).toEqual({ ...z, fromTaps: false });
+    expect(autoZoomOn(withAutoZoom(z, true, false), true)).toBe(false);
   });
 });
