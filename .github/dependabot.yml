@@ -1,6 +1,7 @@
-# Routine updates arrive as one grouped PR per ecosystem. Major versions are
-# left for deliberate upgrades (they can change behaviour); security fixes
-# still open on their own through Dependabot security updates.
+# Routine (minor/patch) updates arrive as one grouped PR per ecosystem.
+# Major versions still open one PR each, capped at three at a time. They are
+# deliberately NOT ignored: `ignore` rules also suppress security updates,
+# and some fixes (e.g. Electron's) only exist in a newer major.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -11,9 +12,6 @@ updates:
     groups:
       dependencies:
         update-types: [minor, patch]
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
