@@ -57,6 +57,31 @@ export const BACKDROPS: Backdrop[] = [
   { id: 'bloom', name: 'Bloom', group: 'vivid', bg: mesh('#d8336f', [blob(0.05, 0.05, 0.7, '#ff8466'), blob(0.95, 0.95, 0.7, '#7a2ff0')]) },
 ];
 
+/** Quick picks in the Background tab's Solid color section. */
+export const SOLID_SWATCHES: { name: string; hex: string }[] = [
+  { name: 'White', hex: '#ffffff' },
+  { name: 'Light Grey', hex: '#e5e5ea' },
+  { name: 'Charcoal', hex: '#2c2c2e' },
+  { name: 'Black', hex: '#000000' },
+  { name: 'Orange', hex: '#ff8a3d' },
+];
+
+/** `#RGB` / `#RRGGBB` (any case, with or without #) → `#rrggbb`, or null. */
+export function normalizeHex(input: string): string | null {
+  const m = input.trim().replace(/^#/, '').toLowerCase();
+  if (/^[0-9a-f]{6}$/.test(m)) return `#${m}`;
+  if (/^[0-9a-f]{3}$/.test(m)) return `#${[...m].map((c) => c + c).join('')}`;
+  return null;
+}
+
+/** A solid background that isn't one of the presets or quick picks: what the
+ *  Custom tile shows as selected. */
+export function isCustomSolid(bg: Background): bg is Extract<Background, { kind: 'solid' }> {
+  if (bg.kind !== 'solid') return false;
+  const hex = lc(bg.hex);
+  return !SOLID_SWATCHES.some((s) => s.hex === hex) && !BACKDROPS.some((b) => sameBackground(b.bg, bg));
+}
+
 /** The preset with this id (case-insensitive), or undefined. */
 export function backdropById(id: string): Backdrop | undefined {
   const key = id.toLowerCase();
