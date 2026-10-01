@@ -1740,7 +1740,7 @@ input[type='color']::-webkit-color-swatch {
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-columns: 84px minmax(0, 1fr);
   padding: 6px var(--s5) 14px 0;
   background: var(--surface);
   box-shadow: inset 0 1px 0 var(--separator);
@@ -2008,6 +2008,36 @@ body.resizing-y * {
 .zoommark.manual {
   background: var(--accent-tint-strong);
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* Automatic zooms read as suggestions: a dashed edge, lighter fill. */
+.zoommark:not(.manual) {
+  box-shadow: none;
+  outline: 1px dashed var(--accent-ring);
+  outline-offset: -1px;
+}
+
+/* The lane label with its automatic-zoom switch. */
+.tl-labels .tl-label-switch {
+  justify-content: space-between;
+  gap: 6px;
+  padding-right: 8px;
+}
+.switch.switch-mini {
+  width: 26px;
+  height: 16px;
+}
+.switch.switch-mini::before {
+  width: 12px;
+  height: 12px;
+}
+.switch.switch-mini:checked::before {
+  transform: translateX(10px);
+}
+.switch.switch-mini:active::before {
+  width: 15px;
+}
+.switch.switch-mini:checked:active::before {
+  transform: translateX(7px);
 }
 .zoommark:hover {
   background: var(--accent-tint-strong);
