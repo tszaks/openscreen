@@ -4,6 +4,7 @@ import { ExportProgress } from './components/ExportProgress';
 import { ExportTasks, type TaskRowState } from './components/ExportPanel';
 import { IosSetupCard } from './components/IosSetupCard';
 import { getPreset } from '../../shared/exportPresets';
+import { openCameraBubble, type CameraBubble } from './cameraBubble';
 
 /**
  * Development only: `index.html?gallery=<state>` renders one screen that is
@@ -58,6 +59,37 @@ function useFakeCapture(): MediaStream | null {
 }
 
 const preset = (id: Parameters<typeof getPreset>[0]) => getPreset(id);
+
+/**
+ * The camera bubble as a take opens it, on the display OpenScreen is on.
+ * Run with --use-fake-device-for-media-stream so the camera is Chromium's
+ * test pattern, not a real one. `window.cameraBubble.close()` closes it and
+ * resolves where it was left, as Stop does.
+ */
+function BubbleDemo({ circular }: { circular: boolean }) {
+  const [state, setState] = useState('Opening the camera…');
+  useEffect(() => {
+    let live = true;
+    let stream: MediaStream | null = null;
+    let bubble: CameraBubble | null = null;
+    void navigator.mediaDevices
+      .getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } } })
+      .then((s) => {
+        stream = s;
+        if (!live) return s.getTracks().forEach((t) => t.stop());
+        bubble = openCameraBubble({ stream: s, circular, onCameraLost: setState });
+        (window as unknown as { cameraBubble: CameraBubble | null }).cameraBubble = bubble;
+        setState(bubble ? 'The camera bubble is open.' : 'The bubble window could not open.');
+      })
+      .catch((e) => setState(`No camera: ${String(e)}`));
+    return () => {
+      live = false;
+      void bubble?.close();
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+  }, [circular]);
+  return <p style={{ padding: 40 }}>{state}</p>;
+}
 
 export function Gallery({ view }: { view: string }) {
   const stream = useFakeCapture();
@@ -140,6 +172,8 @@ export function Gallery({ view }: { view: string }) {
       </div>
     );
   }
+
+  if (view === 'camera-bubble' || view === 'camera-bubble-square') return <BubbleDemo circular={view === 'camera-bubble'} />;
 
   return <p style={{ padding: 40 }}>Unknown gallery view: {view}</p>;
 }

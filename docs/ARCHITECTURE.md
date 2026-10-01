@@ -51,6 +51,10 @@ macOS only exposes a wired iPhone's screen to apps that opt in to CoreMediaIO sc
 
 With a display or window selected, **Also record → iPhone or iPad** starts the helper on the phone first (it answers on the phone's first frame, with that frame's capture time), then the Mac recorders. The phone records into its own bundle; when the take is saved, its `screen.mov` moves into the Mac bundle as `phone.mov`, with `phoneOffset` = phone start − Mac start. Either side failing never costs the other (`phoneLayer.dualOutcome`): a phone that won't start, stops early or fails leaves the Mac take intact with a notice, and a Mac take that can't be saved leaves the phone's bundle to open as an iPhone take.
 
+## Camera bubble
+
+With **Also record → Camera** on, a display or window take shows the camera live in a small floating bubble (**Show me while recording**, on by default). The renderer opens it with `window.open`, so it plays the very stream being recorded (no second camera capture; stopping the take turns the camera off for both). Main makes it frameless, transparent, always on top, unfocusable, on every Space, and hidden from screen capture: the camera is recorded separately and composited in the editor, so a captured bubble would show the face twice. When a display take stops, the bubble's last position and size become the new project's camera corner and `sizeFraction` (`shared/cameraBubble.ts`). iPhone-only and camera-only takes get no bubble.
+
 ## Project bundles
 
 A recording is a folder named `<name>.openscreen`:
