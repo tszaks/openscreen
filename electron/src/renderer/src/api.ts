@@ -1,7 +1,7 @@
 import type { CursorSample, KeystrokeSample, Project, TranscriptWord, WaitRange } from '../../shared/types';
 import type { TapSuggestion } from '../../shared/taps';
 import type { IosDevice, IosFinished, IosPreview, IosWarning } from '../../shared/iosCapture';
-import type { MenuAction, MenuPhase } from '../../shared/menu';
+import type { ContextMenuItem, MenuAction, MenuPhase } from '../../shared/menu';
 import type { PresetId } from '../../shared/exportPresets';
 
 export type { IosDevice, IosPreview };
@@ -102,12 +102,13 @@ declare global {
       /** Converts inMp4 to outGif, then deletes inMp4. */
       exportGif(inMp4: string, outGif: string): Promise<boolean>;
       /** Save dialog for the export; null when cancelled. */
-      exportPickPath(bundleDir: string, kind: 'mp4' | 'gif'): Promise<string | null>;
+      /** `name`: the project's display name, for the suggested file name. */
+      exportPickPath(bundleDir: string, kind: 'mp4' | 'gif', name?: string): Promise<string | null>;
       exportReveal(path: string): Promise<boolean>;
       /** Hide OpenScreen's window from screen capture (during countdown and recording). */
       setCaptureShield(on: boolean): void;
       /** Folder picker for a multi-format export; null when cancelled. */
-      exportPickFolder(bundleDir: string): Promise<string | null>;
+      exportPickFolder(bundleDir: string, name?: string): Promise<string | null>;
       /** A temp path for a rendered master (.mov). */
       exportMasterPath(key: string): Promise<string>;
       /** Deletes a master made by exportMasterPath. */
@@ -128,6 +129,8 @@ declare global {
       headlessOpen(): Promise<OpenedBundle>;
       headlessProgress(done: number, total: number, detail: string): void;
       headlessDone(result: { ok: boolean; out?: string; files?: string[]; frames?: number; seconds?: number; error?: string }): void;
+      /** Pop a native right-click menu; resolves with the picked item's id, or null. */
+      showContextMenu(items: ContextMenuItem[]): Promise<string | null>;
       /** Tell main what is on screen, so the menu enables what applies. */
       setMenuPhase(phase: MenuPhase, bundleDir?: string): void;
       /** Subscribe to app-menu clicks; returns the unsubscribe. */

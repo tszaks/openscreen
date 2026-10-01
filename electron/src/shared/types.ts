@@ -66,6 +66,10 @@ export interface StyleSettings {
 export type Background =
   | { kind: 'solid'; hex: string }
   | { kind: 'gradient'; startHex: string; endHex: string; angle: number }
+  /** Soft radial colour blobs over a base colour, plus optional film grain.
+   *  Blob x/y are 0..1 of the canvas; r is a fraction of its longer side.
+   *  grain is the noise opacity (0..0.2). */
+  | { kind: 'mesh'; baseHex: string; blobs: { x: number; y: number; r: number; hex: string }[]; grain?: number }
   | { kind: 'imageFile'; path: string; blur?: number }
   | { kind: 'wallpaper' };
 
@@ -180,6 +184,8 @@ export interface AudioSettings {
 }
 
 export interface Project {
+  /** What the user named it (double-click the title); else the folder's name. */
+  name?: string;
   recording: RecordingRef;
   clips: Clip[];
   zoomKeyframes: ZoomKeyframe[];
@@ -262,6 +268,33 @@ export const defaultProject = (recording: RecordingRef): Project => ({
   tapsAnalyzed: false,
   layout: defaultLayout(recording),
 });
+
+/**
+ * Back to the take as it was first opened: every edit gone (cuts, speed,
+ * zooms, captions, text, crop, taps, frame and layout choices), keeping only
+ * the recording and the backdrop (the style background, and whether a phone
+ * take uses the blurred one). Taps come back empty and unanalysed, so the
+ * next open (or Auto-edit, or Re-detect) finds them again, as on a fresh take.
+ */
+export function resetProject(p: Project): Project {
+  const fresh = defaultProject(p.recording);
+  if (p.name) fresh.name = p.name;
+  fresh.style.background = structuredClone(p.style.background);
+  fresh.layout.background = p.layout.background;
+  // Recording sets this whenever a camera was captured.
+  if (p.recording.cameraVideoFile) fresh.cameraOverlay.enabled = true;
+  return fresh;
+}
+
+/** The name to show and to save exports under: the user's, else the folder's. */
+export function projectName(project: Pick<Project, 'name'>, bundleDir: string) {
+  const named = project.name?.trim();
+  if (named) return named;
+  return (bundleDir.split('/').filter(Boolean).pop() ?? 'Untitled').replace(/\.openscreen$/, '');
+}
+
+/** A project name made safe as a file name (no path separators or colons). */
+export const fileSafeName = (name: string) => name.replace(/[/:\\]/g, '-').replace(/^\.+/, '').trim() || 'OpenScreen export';
 
 /** Fill in fields that bundles saved by older versions don't have. */
 export function normalizeProject(raw: Project): Project {

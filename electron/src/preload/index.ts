@@ -65,10 +65,10 @@ const api = {
   exportEnd: () => ipcRenderer.invoke('export:end'),
   exportAbort: () => ipcRenderer.invoke('export:abort'),
   exportGif: (inMp4: string, outGif: string) => ipcRenderer.invoke('export:gif', { inMp4, outGif }),
-  exportPickPath: (bundleDir: string, kind: 'mp4' | 'gif') => ipcRenderer.invoke('export:pickPath', { bundleDir, kind }),
+  exportPickPath: (bundleDir: string, kind: 'mp4' | 'gif', name?: string) => ipcRenderer.invoke('export:pickPath', { bundleDir, kind, name }),
   exportReveal: (path: string) => ipcRenderer.invoke('export:reveal', path),
   setCaptureShield: (on: boolean) => ipcRenderer.send('app:captureShield', on),
-  exportPickFolder: (bundleDir: string) => ipcRenderer.invoke('export:pickFolder', { bundleDir }),
+  exportPickFolder: (bundleDir: string, name?: string) => ipcRenderer.invoke('export:pickFolder', { bundleDir, name }),
   exportMasterPath: (key: string) => ipcRenderer.invoke('export:masterPath', key),
   exportDiscardMaster: (path: string) => ipcRenderer.invoke('export:discardMaster', path),
   exportHasAudio: (path: string) => ipcRenderer.invoke('export:hasAudio', path),
@@ -100,6 +100,7 @@ const api = {
   headlessOpen: () => ipcRenderer.invoke('headless:open'),
   headlessProgress: (done: number, total: number, detail: string) => ipcRenderer.send('headless:progress', { done, total, detail }),
   headlessDone: (result: unknown) => ipcRenderer.send('headless:done', result),
+  showContextMenu: (items: unknown[]) => ipcRenderer.invoke('contextMenu:show', items),
   setMenuPhase: (phase: string, bundleDir?: string) => ipcRenderer.send('menu:phase', { phase, bundleDir }),
   onMenu: (cb: (action: string) => void) => {
     const listener = (_e: IpcRendererEvent, action: string) => cb(action);

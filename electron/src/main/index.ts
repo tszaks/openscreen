@@ -18,8 +18,8 @@ import {
 } from './ios';
 import { interruptedBundles, recoveredProject, RECOVERABLE_VIDEO, type BundleListing } from '../shared/recovery';
 import { buildAppMenu } from './menu';
-import type { MenuPhase } from '../shared/menu';
-import { normalizeProject, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
+import type { ContextMenuItem, MenuPhase } from '../shared/menu';
+import { fileSafeName, normalizeProject, projectName, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
 import { parseHeadlessArgs, type HeadlessJob, type HeadlessResult } from '../shared/headless';
 import { analyzeTapsInFile, detectSilences, extractWav as extractBundleWav, transcribeBundle } from '../node/media';
 import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
@@ -375,6 +375,25 @@ function createWindow() {
 
 app.whenReady().then(() => {
   if (!headless) refreshMenu();
+  // Right-click (two-finger click) menus: the renderer describes the items,
+  // main pops a native menu and resolves with the chosen id, or null.
+  ipcMain.handle('contextMenu:show', (e, items: ContextMenuItem[]) =>
+    new Promise<string | null>((resolve) => {
+      // On macOS the close callback can fire before the item's click, so a
+      // click resolves at once and the close only settles "nothing picked"
+      // after a beat (a promise resolves once; the later call is a no-op).
+      const menu = Menu.buildFromTemplate(
+        items.map((it) =>
+          it.type === 'separator'
+            ? { type: 'separator' as const }
+            : { label: it.label, enabled: it.enabled !== false, click: () => resolve(it.id) },
+        ),
+      );
+      const w = BrowserWindow.fromWebContents(e.sender);
+      if (!w || w.isDestroyed()) return resolve(null);
+      menu.popup({ window: w, callback: () => setTimeout(() => resolve(null), 250) });
+    }),
+  );
   ipcMain.on('menu:phase', (_e, next: { phase: MenuPhase; bundleDir?: string }) => {
     menuState = { phase: next.phase, bundleDir: next.bundleDir };
     refreshMenu();
@@ -857,8 +876,8 @@ app.whenReady().then(() => {
 
   // Where to save: a save dialog opened on ~/Movies/OpenScreen/<project>.<ext>.
   // Resolves null when the user cancels.
-  ipcMain.handle('export:pickPath', async (_e, args: { bundleDir: string; kind: 'mp4' | 'gif' }) => {
-    const name = basename(args.bundleDir).replace(/\.openscreen$/, '') || 'OpenScreen export';
+  ipcMain.handle('export:pickPath', async (_e, args: { bundleDir: string; kind: 'mp4' | 'gif'; name?: string }) => {
+    const name = fileSafeName(projectName({ name: args.name }, args.bundleDir));
     mkdirSync(recordingsRoot(), { recursive: true });
     const picked = await dialog.showSaveDialog(win!, {
       title: args.kind === 'gif' ? 'Export GIF' : 'Export MP4',
@@ -872,9 +891,9 @@ app.whenReady().then(() => {
 
   // Multi-format export: one folder for every file, opened on
   // ~/Movies/OpenScreen/<project>/. Resolves null when the user cancels.
-  ipcMain.handle('export:pickFolder', async (_e, args: { bundleDir: string }) => {
-    const name = basename(args.bundleDir).replace(/\.openscreen$/, '') || 'OpenScreen export';
-    const defaultPath = join(recordingsRoot(), name.replace(/[/:]/g, '-'));
+  ipcMain.handle('export:pickFolder', async (_e, args: { bundleDir: string; name?: string }) => {
+    const name = fileSafeName(projectName({ name: args.name }, args.bundleDir));
+    const defaultPath = join(recordingsRoot(), name);
     mkdirSync(defaultPath, { recursive: true });
     const picked = await dialog.showOpenDialog(win!, {
       title: 'Export formats to…',
