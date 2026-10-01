@@ -8,11 +8,11 @@ command, reports errors as `{"ok":false,"error":"…"}`, and exits `0` (ok),
 **stderr** as JSON lines. Nothing ever prompts.
 
 ```
-node /Users/tyler/Projects/openscreen/electron/scripts/openscreen-agent.mjs <command> …
+node <checkout>/electron/scripts/openscreen-agent.mjs <command> …
 ```
 
 Use the absolute path to `electron/scripts/openscreen-agent.mjs` in your
-checkout (above is Tyler's main checkout). It works from any working
+checkout. It works from any working
 directory. It needs a build first: `cd electron && npm run build` (creates
 `electron/dist/`, which the script loads). `npm run agent -- <command>` from
 `electron/` does the same thing.

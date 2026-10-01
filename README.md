@@ -1,63 +1,94 @@
-# openscreen
+<div align="center">
 
-An open-source screen recorder in the spirit of Screen Studio — buttery auto-focus zoom on clicks and dwell, cursor smoothing, styled backgrounds, a full editor, captions, transcript editing. Recording iPhone and iPad screens is the headline feature.
+<img src="electron/build/icon.png" width="128" height="128" alt="OpenScreen icon">
 
-## Stack
+# OpenScreen
 
-**Electron + TypeScript + React** — same stack as Screen Studio. The capture/UI layer is Electron; the motion model (autofocus segments, easing, cursor smoothing, timeline mapping, click ripples, keystroke overlay) is a pure shared library with unit tests — that's where the buttery feel lives.
+**Polished iPhone, iPad and Mac demo videos — recorded, edited and exported in minutes.**
 
-## Layout
+[![Download for macOS](https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/tszaks/openscreen/releases/latest)
 
-- `electron/` — the app
-  - `src/shared/` — pure model layer: `autofocus.ts` (click/dwell/motion clusters → focus segments + per-frame camera eval), `easing.ts` (smootherstep/spring curves), `cursor.ts` (Catmull-Rom smoothing), `timeline.ts` (clip ↔ output mapping), `ripples.ts`, `keystrokes.ts`, `captions.ts`, `types.ts`
-  - `src/main/` — Electron main: window, `desktopCapturer` sources, 120Hz cursor poller + uiohook global clicks/keys, bundle save, ffmpeg export pipe + audio filters, whisper transcription, `ios.ts` (drives the iPhone capture helper)
-  - `native/ios-capture/` — Swift CLI helper for wired iPhone/iPad screen capture (built by `npm run build:helper`)
-  - `src/preload/` — contextBridge API
-  - `src/renderer/` — React UI: source picker → record HUD → editor (composited canvas preview, waveform timeline, style + annotation panels) → MP4/GIF export
-  - `test/` — vitest unit tests for the model layer
+[![Latest release](https://img.shields.io/github/v/release/tszaks/openscreen?label=release&color=FF8A3D)](https://github.com/tszaks/openscreen/releases/latest)
+[![CI](https://github.com/tszaks/openscreen/actions/workflows/ci.yml/badge.svg)](https://github.com/tszaks/openscreen/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+![Apple silicon](https://img.shields.io/badge/Mac-Apple%20silicon-lightgrey)
+
+</div>
+
+<p align="center">
+  <img src="docs/images/editor.png" alt="The OpenScreen editor with an iPhone recording, a device frame, a backdrop and detected taps on the timeline" width="900">
+</p>
+
+OpenScreen is a free, open-source screen recorder for Mac, built for app demos. Plug in an iPhone with a cable and record it, or record your Mac's screen. OpenScreen finds every tap, zooms in where the action is, frames the device and exports a video that's ready for the App Store, social media or your website.
 
 ## Features
 
-- Screen/window capture via `desktopCapturer` + `getUserMedia` (60fps webm); mic audio; webcam PiP
-- iPhone/iPad screen capture over a USB cable, like QuickTime's "New Movie Recording → iPhone": a small Swift helper opts into CoreMediaIO screen devices (`kCMIOHardwarePropertyAllowScreenCaptureDevices`), which Chromium never does, and records them with AVFoundation to an H.264 `screen.mov` with the device's audio. Plus a device-frame bezel and **Detect touches** autofocus (frame-diff motion centroid tracking, since iOS taps don't reach the global hook). Continuity Camera is different: it is the phone's *camera* used as a webcam, not its screen, so it's listed under "Other cameras".
-- Auto-focus zoom: click/dwell clusters → smoothed glide-in → hold → glide-out with smootherstep easing; consecutive clusters pan directly. Manual zooms via Alt+click on the timeline.
-- Cursor: Catmull-Rom smoothing, size/color/trail controls; click ripples; click SFX mixed into export audio
-- Editor: clip split/trim/reorder/speed, silence auto-cut (ffmpeg silencedetect), transcript panel (click-to-seek, cut cue, cut fillers), undo/redo
-- Captions: whisper transcription (model auto-downloads on first use) or SRT/VTT import, burned into preview + exported as an `.srt` sidecar
-- Style: solid/gradient/image backgrounds (with blur + macOS wallpaper), padding/corner/shadow, text annotations, keystroke overlay
-- Export: compositor → raw RGBA → bundled ffmpeg → h264 mp4 with re-timed audio (atrim/atempo/concat); GIF via two-pass palettegif
-- Projects save/reopen as `.openscreen` bundles; 3-2-1 record countdown; permission banners for Screen Recording / Accessibility
+**iPhone and iPad, over a cable**
+- Record a wired iPhone or iPad with a live preview. The status bar switches to Apple's clean 9:41 demo look while you record.
+- **Automatic tap detection.** Taps, swipes, long presses and typing are found from the video itself and shown as ripples you can move or remove.
+- **Zoom to tap.** The camera glides in on each tap and back out once the screen settles.
+- **Device frames** for current iPhone and iPad models, in their real finishes. The model is detected from the recording.
 
-## Develop
+**Mac screen recording**
+- Record a display or a window, with your microphone and an optional camera overlay.
+- Smooth auto-zoom on clicks and where your cursor lingers, with natural easing.
+- Cursor smoothing, click ripples and a keystroke overlay.
+
+**A full editor**
+- Split, trim, reorder and change the speed of clips. Undo everything.
+- A resizable workspace and a zoomable timeline — pinch to work down to a fraction of a second.
+- 24 backdrops, plus your own images or desktop wallpaper.
+- Captions with on-device transcription, transcript editing, and smart cutting of silences and filler words.
+- Right-click menus, project naming, and a one-step reset back to the original recording.
+
+**Export anywhere**
+- App Store previews at Apple's exact specs (886 × 1920, 30 fps).
+- Reels, TikTok and Shorts (9:16), feed (4:5), square and widescreen layouts, with optional title cards.
+- Looping landing-page videos (MP4 + WebM + poster) and GIFs.
+- Several formats in one click.
+
+## Install
+
+1. Download **OpenScreen** from the [latest release](https://github.com/tszaks/openscreen/releases/latest) and drag it to Applications.
+2. Open it. It's signed and notarized by Apple, and it keeps itself up to date.
+
+**Requirements:** a Mac with Apple silicon.
+
+**To record an iPhone or iPad:** connect it with a data cable, unlock it, tap **Trust**, and allow Camera access for OpenScreen when macOS asks.
+
+**For captions (optional):** `brew install whisper-cpp`. The speech model downloads automatically the first time.
+
+## Automate it
+
+Everything in the editor can also be driven from the command line, so an agent or a script can record a phone, review the take, edit it and export it without opening a window:
 
 ```sh
-cd electron
-npm install
-npm test            # model-layer unit tests
-npm run build       # iOS capture helper (swiftc) + main (tsc) + renderer (vite)
-npm run electron:dev
+node electron/scripts/openscreen-agent.mjs record start
+node electron/scripts/openscreen-agent.mjs record stop
+node electron/scripts/openscreen-agent.mjs polish latest --style clean
+node electron/scripts/openscreen-agent.mjs export latest --out demo.mp4
 ```
 
-The helper needs Xcode's command line tools (`xcode-select --install`). To record an iPhone or iPad: plug it in with a cable, unlock it, tap Trust, and allow Camera access for OpenScreen when macOS asks.
+Every command prints one JSON object. See [AGENTS.md](AGENTS.md) for the full reference.
 
-ffmpeg on PATH (`brew install ffmpeg`) for MP4/GIF export; `brew install whisper-cpp` for transcription. `npm run dist` builds a dmg + zip with bundled ffmpeg.
+## Build from source
 
-## Agents
+```sh
+git clone https://github.com/tszaks/openscreen.git
+cd openscreen/electron
+npm install
+npm test               # unit tests
+npm run electron:dev   # build and launch
+```
 
-An agent can record, watch, edit and export without the GUI:
-`node electron/scripts/openscreen-agent.mjs <command>` (JSON on stdout,
-exit codes). `devices` / `record start|stop` → `review` (contact sheets) →
-`polish` / `apply edits.json` → `export --out x.mp4` (headless render
-through the real app: `OpenScreen --export <bundle> --out x.mp4`) → `review
-x.mp4`. The editor reloads `project.json` when it changes on disk. See
-[AGENTS.md](AGENTS.md).
+You'll need Node.js 20 or later, and Xcode's command line tools (`xcode-select --install`) for the iPhone capture helper. For exports during development, install ffmpeg (`brew install ffmpeg`); release builds bundle it.
 
-## Releases
+How it fits together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-Releases are signed with a Developer ID and notarized. Build one with `npm run dist` and these set: `APPLE_API_KEY` (path to the .p8), `APPLE_API_KEY_ID` and `APPLE_API_ISSUER`. The app updates itself from GitHub Releases through electron-updater.
+## Contributing
 
-## Known gaps / next
+Bug reports, ideas and pull requests are welcome — please read [CONTRIBUTING.md](CONTRIBUTING.md) first. To report a security issue, see [SECURITY.md](SECURITY.md).
 
-- Windows/Linux ports
-- The whisper binary isn't bundled yet. The model downloads automatically, but the binary needs `brew install whisper-cpp`.
-- Tap detection is tuned on simulated footage. Expect some misses on real recordings; every tap is editable on the Taps lane.
+## License
+
+[MIT](LICENSE) © Tyler Szakacs
