@@ -197,7 +197,7 @@ export function validateProject(p: Project): string[] {
     if (!['none', 'phone'].includes(s.deviceFrame)) errs.push('style.deviceFrame must be none|phone');
     const b = s.background as Background | undefined;
     if (!b || !['solid', 'gradient', 'mesh', 'imageFile', 'wallpaper'].includes(b.kind)) errs.push('style.background.kind must be solid|gradient|mesh|imageFile|wallpaper');
-    else if (b.kind === 'mesh' && !(/^#[0-9a-f]{6}$/i.test(b.baseHex) && Array.isArray(b.blobs) && b.blobs.every((o) => /^#[0-9a-f]{6}$/i.test(o.hex) && o.r > 0))) errs.push('style.background mesh needs baseHex #rrggbb and blobs [{x,y,r>0,hex}]');
+    else if (b.kind === 'mesh' && !(/^#[0-9a-f]{6}$/i.test(b.baseHex) && Array.isArray(b.blobs) && b.blobs.every((o) => /^#[0-9a-f]{6}$/i.test(o.hex) && Number.isFinite(o.x) && Number.isFinite(o.y) && Number.isFinite(o.r) && o.r > 0) && (b.grain === undefined || Number.isFinite(b.grain)))) errs.push('style.background mesh needs baseHex #rrggbb, blobs [{x,y,r>0,hex}] with finite numbers, and a finite grain if set');
     if (s.cropRect) {
       const c = s.cropRect;
       if (!(c.x >= 0 && c.y >= 0 && c.w > 0 && c.h > 0 && c.x + c.w <= 1 + EPS && c.y + c.h <= 1 + EPS)) errs.push('style.cropRect must be normalized and inside the frame');
