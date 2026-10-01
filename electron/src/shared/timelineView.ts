@@ -66,9 +66,10 @@ export function fmtTick(t: number, step: number) {
 /** Base height of an added audio track's lane (music, voiceover). */
 export const MUSIC_LANE = 34;
 
-/** Base heights of the lanes under the ruler: clips, zoom, (taps), audio, music. */
-export function laneHeights(phone: boolean): number[] {
-  return phone ? [56, 22, 26, 38, MUSIC_LANE] : [56, 22, 38, MUSIC_LANE];
+/** Base heights of the lanes under the ruler: clips, zoom, (taps), audio, and
+ *  the music lane only once the project has a sound on it. */
+export function laneHeights(phone: boolean, music = false): number[] {
+  return [56, 22, ...(phone ? [26] : []), 38, ...(music ? [MUSIC_LANE] : [])];
 }
 
 /** The timeline's height with no override: padding, ruler and lanes with

@@ -29,7 +29,7 @@ export function AudioTrackLane({
   onSelect: (id: string) => void;
   /** Live while dragging: the item as it now is. */
   onChange: (item: AudioItem) => void;
-  /** Two-finger click on a block (its id) or on the empty lane (null). */
+  /** Two-finger click on a block (its id) or on the lane between blocks (null). */
   onMenu: (id: string | null, e: React.MouseEvent) => void;
 }) {
   const laneRef = useRef<HTMLDivElement>(null);
@@ -116,7 +116,6 @@ export function AudioTrackLane({
           </div>
         );
       })}
-      {items.length === 0 && <span className="lane-note">Right-click to add music or a voiceover</span>}
     </div>
   );
 }

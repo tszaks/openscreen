@@ -68,13 +68,22 @@ describe('ruler', () => {
 });
 
 describe('lane heights and the natural timeline height', () => {
-  it('adds the phone taps lane, and ends with the music lane', () => {
-    expect(laneHeights(false)).toEqual([56, 22, 38, 34]);
-    expect(laneHeights(true)).toEqual([56, 22, 26, 38, 34]);
+  it('adds the phone taps lane', () => {
+    expect(laneHeights(false)).toEqual([56, 22, 38]);
+    expect(laneHeights(true)).toEqual([56, 22, 26, 38]);
+  });
+  it('adds the music lane only when the project has a sound', () => {
+    expect(laneHeights(false, false)).toEqual([56, 22, 38]);
+    expect(laneHeights(false, true)).toEqual([56, 22, 38, 34]);
+    expect(laneHeights(true, true)).toEqual([56, 22, 26, 38, 34]);
   });
   it('is padding + ruler + lanes + gaps', () => {
-    expect(naturalTimelineHeight(laneHeights(false))).toBe(6 + 14 + 22 + 150 + 24);
-    expect(naturalTimelineHeight(laneHeights(true))).toBe(6 + 14 + 22 + 176 + 30);
+    // No music: exactly the timeline as it was before audio tracks.
+    expect(naturalTimelineHeight(laneHeights(false))).toBe(6 + 14 + 22 + 116 + 18);
+    expect(naturalTimelineHeight(laneHeights(true))).toBe(6 + 14 + 22 + 142 + 24);
+    // With music: one 34px lane and one 6px gap more.
+    expect(naturalTimelineHeight(laneHeights(false, true))).toBe(6 + 14 + 22 + 150 + 24);
+    expect(naturalTimelineHeight(laneHeights(true, true))).toBe(6 + 14 + 22 + 176 + 30);
   });
   it('lifts a height saved under shorter lanes up to the new floor', () => {
     const floor = naturalTimelineHeight(laneHeights(false));

@@ -202,6 +202,10 @@
 
 .ed-timeline.has-taps .tl-labels,
 .ed-timeline.has-taps .tl-lanes {
+  grid-template-rows: 22px 56px 22px 26px 38px;
+}
+.ed-timeline.has-taps.has-music .tl-labels,
+.ed-timeline.has-taps.has-music .tl-lanes {
   grid-template-rows: 22px 56px 22px 26px 38px 34px;
 }
 .lane-taps {
