@@ -1231,6 +1231,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   min-width: 0;
   min-height: 0;
   background: var(--stage);
+  container: stage / inline-size;
 }
 
 .stage-canvas {
@@ -1284,6 +1285,23 @@ canvas.preview.cropping {
 }
 .transport-tools {
   justify-content: flex-end;
+}
+/* A narrow stage (a wide inspector on a small window) can't hold three
+   columns: the groups wrap onto rows instead of overlapping, play first. */
+@container stage (max-width: 900px) {
+  .transport {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--s2) var(--s3);
+    height: auto;
+    padding: 10px var(--s4);
+  }
+  .transport-play {
+    order: -1;
+    flex-basis: 100%;
+    justify-content: center;
+  }
 }
 
 .play-btn {
