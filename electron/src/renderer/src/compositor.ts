@@ -7,6 +7,10 @@
 // zoom with the content), the procedural device frame and a title card.
 // With a layout preset the canvas and phone placement come from
 // computePhoneLayout; without one the phone sits in the classic padded frame.
+//
+// A Mac + iPhone take adds the phone layer (shared/phoneLayer): the phone's
+// own video in its device frame, beside the Mac screen (which shrinks to make
+// room) or over a corner of it, drawn after the camera overlay.
 import type { Annotation, CaptionCue, Point, Project, Size } from '../../shared/types';
 import { cameraAt, type AutofocusOptions, type FocusSegment } from '../../shared/autofocus';
 import type { DeviceModel, Orientation } from '../../shared/devices';
@@ -27,6 +31,7 @@ import { computePhoneLayout, drawBlurredBackground, drawTitleCard, type PhoneLay
 import type { Ripple } from '../../shared/ripples';
 import { fileUrl } from '../../shared/fileUrl';
 import { isColourBackground, paintBackdrop } from './backdrop';
+import { phoneAspect, phoneDevice, phoneLayerOn, phoneLayerRects, type PhoneDevice } from '../../shared/phoneLayer';
 import { api } from './api';
 
 // Background images by raw path, shared by every compositor: the editor
@@ -68,6 +73,8 @@ export interface FrameInputs {
   cursorTrail?: Point[]; // recent positions, oldest→newest (motion smear)
   ripples: Ripple[];
   cameraFrame?: CanvasImageSource;
+  /** The phone layer's frame at this output time (Mac + iPhone takes). */
+  phoneFrame?: CanvasImageSource;
   keystrokes?: string[]; // recently pressed key names, oldest→newest
 }
 
@@ -98,6 +105,10 @@ export class CanvasCompositor {
   private ctx: CanvasRenderingContext2D;
   private phone: PhoneSetup | null;
   private zoomOn: boolean;
+  /** The phone layer of a Mac + iPhone take: its model and the aspect it is placed at. */
+  private phoneLayer: (PhoneDevice & { aspect: number }) | null;
+  /** Where the phone layer was drawn at the last render (its body, or its screen when unframed). */
+  phoneRect: Rect | null = null;
   /** Filled by render(); see ScreenMap. */
   screenMap: ScreenMap | null = null;
 
@@ -115,6 +126,9 @@ export class CanvasCompositor {
     this.ctx = ctx;
     this.phone = phoneSetup(project);
     this.zoomOn = presetAllowsZoom(this.phone?.preset ?? null);
+    const size = project.recording.phoneSize;
+    this.phoneLayer =
+      phoneLayerOn(project) && size ? { ...phoneDevice(size, project.phoneOverlay), aspect: phoneAspect(size, project.phoneOverlay) } : null;
   }
 
   /** The phone layout on this canvas (safe zone, title rect), when a preset places it. */
@@ -200,7 +214,11 @@ export class CanvasCompositor {
         rect = screenRectFor(contentRect, phone.device, opts);
         clip = () => clipToScreen(ctx, contentRect, phone.device, opts);
       } else {
-        rect = fitAspect(contentRect, style.cropRect ? (style.cropRect.w * fullW) / (style.cropRect.h * fullH) : fullW / fullH);
+        const macAspect = style.cropRect ? (style.cropRect.w * fullW) / (style.cropRect.h * fullH) : fullW / fullH;
+        // A phone layer beside the screen takes its share of the content rect first.
+        const placed = this.phoneLayer ? phoneLayerRects(contentRect, macAspect, this.phoneLayer.aspect, this.project.phoneOverlay) : null;
+        this.phoneRect = placed?.phone ?? null;
+        rect = placed ? placed.mac : fitAspect(contentRect, macAspect);
         const r = style.cornerRadius;
         clip = () => {
           ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
@@ -336,6 +354,9 @@ export class CanvasCompositor {
       ctx.stroke();
     }
 
+    // 6. The phone layer, beside the screen or over its corner.
+    if (this.phoneLayer && this.phoneRect) this.drawPhoneLayer(this.phoneRect, input.phoneFrame);
+
     // 7. Keystroke keycaps, bottom-left inside the content frame.
     if (input.keystrokes?.length) this.drawKeystrokes(input.keystrokes, visible, H);
 
@@ -362,6 +383,47 @@ export class CanvasCompositor {
         { align: layout.titleTextAlign, valign: layout.titleAlign },
       );
     }
+  }
+
+  /** The phone's video in `box`: inside its hardware frame, or as a floating
+   *  screen with the device's own corners. Black until its first frame loads. */
+  private drawPhoneLayer(box: Rect, frame?: CanvasImageSource) {
+    const { ctx } = this;
+    const layer = this.phoneLayer!;
+    const o = this.project.phoneOverlay;
+    const opts = { orientation: layer.orientation };
+    let screen: Rect;
+    let clip: () => void;
+    if (o.frame) {
+      screen = screenRectFor(box, layer.device, opts);
+      clip = () => clipToScreen(ctx, box, layer.device, opts);
+    } else {
+      screen = box;
+      const r = screenCornerRadiusFor(box, layer.device);
+      if (o.shadow) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.38)';
+        ctx.shadowBlur = Math.max(box.w, box.h) * 0.06;
+        ctx.shadowOffsetY = Math.max(box.w, box.h) * 0.025;
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        continuousRectPath(ctx, box.x, box.y, box.w, box.h, r);
+        ctx.fill();
+        ctx.restore();
+      }
+      clip = () => {
+        ctx.beginPath();
+        continuousRectPath(ctx, box.x, box.y, box.w, box.h, r);
+        ctx.clip();
+      };
+    }
+    ctx.save();
+    clip();
+    ctx.fillStyle = '#000';
+    ctx.fillRect(screen.x, screen.y, screen.w, screen.h);
+    if (frame) ctx.drawImage(frame, screen.x, screen.y, screen.w, screen.h);
+    ctx.restore();
+    if (o.frame) drawDeviceFrame(ctx, box, layer.device, o.finishId, { ...opts, shadow: o.shadow });
   }
 
   private drawBackground(W: number, H: number) {
@@ -525,6 +587,11 @@ function phoneSetup(project: Project): PhoneSetup | null {
     frame: project.device.frame && (!preset || framedPreset),
     taps: tapsToOutput(project.taps, tl),
   };
+}
+
+/** A frameless phone screen's corner radius in canvas px: the device's own, scaled to `screen`. */
+function screenCornerRadiusFor(screen: Rect, device: DeviceModel): number {
+  return device.cornerRadiusPt * pointScaleFor(screen, device);
 }
 
 /** Largest rect of `aspect` centred in `into`. */

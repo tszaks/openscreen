@@ -220,6 +220,14 @@ export function validateProject(p: Project): string[] {
     if (!['white', 'accent'].includes(p.tapStyle.color)) errs.push('tapStyle.color must be white|accent');
   }
   if (p.cameraOverlay && !['topLeft', 'topRight', 'bottomLeft', 'bottomRight'].includes(p.cameraOverlay.corner)) errs.push('cameraOverlay.corner is invalid');
+  if (p.phoneOverlay) {
+    const ph = p.phoneOverlay;
+    if (!['side-by-side-right', 'side-by-side-left', 'corner'].includes(ph.layout)) errs.push('phoneOverlay.layout must be side-by-side-right|side-by-side-left|corner');
+    if (!['topLeft', 'topRight', 'bottomLeft', 'bottomRight'].includes(ph.corner)) errs.push('phoneOverlay.corner must be topLeft|topRight|bottomLeft|bottomRight');
+    if (!(ph.size >= 0.3 && ph.size <= 1)) errs.push('phoneOverlay.size must be 0.3..1');
+    if (ph.modelId && !DEVICES.some((x) => x.id === ph.modelId)) errs.push(`phoneOverlay.modelId "${ph.modelId}" is unknown`);
+    if (ph.enabled && !p.recording?.phoneVideoFile) errs.push('phoneOverlay is enabled but the recording has no phone video');
+  }
   errs.push(...trackProblems(p.tracks ?? []));
   if (out <= 0) errs.push('the timeline has no footage');
   return errs;
@@ -322,7 +330,7 @@ export const OP_NAMES = [
   'addCaption', 'editCaption', 'removeCaption', 'clearCaptions', 'setCaptions', 'importCaptions', 'captionsFromTranscript',
   'addChapter', 'editChapter', 'removeChapter', 'clearChapters', 'suggestChapters',
   'addAnnotation', 'editAnnotation', 'removeAnnotation',
-  'camera', 'style', 'background', 'crop',
+  'camera', 'phone', 'style', 'background', 'crop',
   'device', 'tapStyle', 'addTap', 'moveTap', 'removeTap', 'clearTaps', 'analyzeTaps',
   'speedUpWaits', 'cutWaits', 'setWaits',
   'layout', 'titleCard', 'exportSettings',
@@ -628,6 +636,14 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
     case 'camera': {
       const patch = pick<Project['cameraOverlay']>(o, ['enabled', 'corner', 'sizeFraction', 'circular']);
       return { project: { ...p, cameraOverlay: { ...p.cameraOverlay, ...patch } }, note: `camera ${JSON.stringify(patch)}` };
+    }
+    case 'phone': {
+      if (!p.recording.phoneVideoFile) throw new OpError('phone: this recording has no phone video (only Mac takes recorded with "iPhone or iPad" on have one)');
+      const patch = pick<Project['phoneOverlay']>(o, ['enabled', 'layout', 'corner', 'size', 'frame', 'shadow', 'sound', 'modelId', 'finishId']);
+      const next = { ...p.phoneOverlay, ...patch };
+      if (o.modelId === null) delete next.modelId;
+      if (o.finishId === null) delete next.finishId;
+      return { project: { ...p, phoneOverlay: next }, note: `phone ${JSON.stringify(patch)}` };
     }
     case 'style': {
       const patch = pick<Project['style']>(o, ['paddingFraction', 'cornerRadius', 'shadowRadius', 'shadowOpacity', 'cropRect', 'background', 'deviceFrame', 'cursorSize', 'cursorTrail', 'cursorHex', 'cursorShow', 'cursorOpacity']);

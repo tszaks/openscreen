@@ -29,6 +29,7 @@ export function Headless() {
     <Editor
       videoUrl={b.videoUrl}
       camUrl={b.camUrl}
+      phoneUrl={b.phoneUrl}
       project={b.project}
       cursor={b.cursor}
       keys={b.keys}

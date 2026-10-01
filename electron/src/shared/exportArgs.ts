@@ -41,6 +41,11 @@ export interface ExportArgsInput {
   bundleDir?: string;
   /** Output-time ranges where the recording's own sound is lowered under music. */
   duck?: { start: number; end: number }[];
+  /** A Mac + iPhone take with "Phone sound" on: the phone movie and its
+   *  offset (phone time = source time - offset). Mixed in only with hasPhoneAudio. */
+  phone?: { path: string; offset: number };
+  /** Whether the phone movie really has an audio stream (main probes for it). */
+  hasPhoneAudio?: boolean;
 }
 
 // Voice cleanup: rumble cut → FFT denoise → gentle compression → limiter.
@@ -105,16 +110,24 @@ export function buildExportArgs(args: ExportArgsInput): string[] {
   const musicInputs = music.flatMap((m) => ['-i', m.path]);
   music.forEach((m, k) => filters.push(`[${musicBase + k}:a]${musicChain(m)}[m${k}]`));
 
+  // The phone's sound: shifted onto the Mac's source clock, then cut and sped
+  // up exactly like the program audio, so it stays with its picture.
+  const phoneIndex = musicBase + music.length;
+  const phoneOn = !!args.phone && args.hasPhoneAudio === true;
+  const phoneInputs = phoneOn ? ['-i', args.phone!.path] : [];
+  if (phoneOn) filters.push(...phoneChain(phoneIndex, args.phone!.offset, args.audioClips));
+
   // Everything audible is mixed over a silent bed exactly as long as the
   // video, so the file always ends where the video ends. `-shortest` can't
   // be trusted for that: a click-only track ends at the last click and cut
   // the video off there, and ffmpeg 6 ignores apad in this graph.
-  const audible = [programPad, clicks.length ? '[sfx]' : '', ...music.map((_, k) => `[m${k}]`)].filter(Boolean);
+  const audible = [programPad, clicks.length ? '[sfx]' : '', ...music.map((_, k) => `[m${k}]`), phoneOn ? '[phone]' : ''].filter(Boolean);
   const audioArgs = audible.length
     ? [
         ...(args.audioIn ? ['-i', args.audioIn] : []),
         ...lavfiInputs,
         ...musicInputs,
+        ...phoneInputs,
         '-filter_complex',
         [
           ...filters,
@@ -139,6 +152,27 @@ export function buildExportArgs(args: ExportArgsInput): string[] {
     '-pix_fmt', 'yuv420p',
     ...(args.master ? ['-preset', 'veryfast', '-crf', '10'] : ['-crf', '18']),
     args.outPath,
+  ];
+}
+
+/**
+ * The phone movie's sound (input `index`) as filters ending in [phone]: moved
+ * onto the Mac recording's source clock (delayed when the phone started
+ * later, trimmed when it started first), then through the same clip cuts and
+ * speeds as the program audio.
+ */
+export function phoneChain(index: number, offset: number, clips?: { start: number; end: number; speed: number }[]): string[] {
+  const f = (n: number) => n.toFixed(3);
+  const ms = Math.round(offset * 1000);
+  const shift = ms > 0 ? `adelay=delays=${ms}:all=1` : ms < 0 ? `atrim=start=${f(-offset)},asetpts=PTS-STARTPTS` : 'anull';
+  const base = `[${index}:a]${shift},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo`;
+  if (!clips?.length) return [`${base}[phone]`];
+  return [
+    `${base},asplit=${clips.length}${clips.map((_, i) => `[ph${i}]`).join('')}`,
+    ...clips.map(
+      (c, i) => `[ph${i}]atrim=start=${f(c.start)}:end=${f(c.end)},asetpts=PTS-STARTPTS,atempo=${Math.min(100, Math.max(0.5, c.speed))}[pc${i}]`,
+    ),
+    `${clips.map((_, i) => `[pc${i}]`).join('')}concat=n=${clips.length}:v=0:a=1[phone]`,
   ];
 }
 

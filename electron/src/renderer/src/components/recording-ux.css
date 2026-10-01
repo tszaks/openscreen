@@ -342,6 +342,21 @@
   object-fit: contain;
   display: block;
 }
+.rec-card-dual {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.32fr);
+  gap: 16px;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+}
+.rec-card-dual-phone {
+  min-width: 0;
+  min-height: 0;
+}
+.rec-card-dual-phone .live-fit.size-card {
+  height: 100%;
+}
 .rec-card-empty {
   font-size: var(--text-body);
   color: var(--label-2);
