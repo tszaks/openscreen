@@ -66,7 +66,7 @@ declare global {
       /** `warning` is set mid-take (e.g. "stalled" when the phone may be locked). */
       iosList(): Promise<{ devices: IosDevice[]; ready: boolean; error: string | null; warning: IosWarning | null }>;
       /** Starts recording into a new bundle's screen.mov; resolves on the first frame. */
-      iosStart(deviceId: string): Promise<{ bundleDir: string; width: number; height: number }>;
+      iosStart(deviceId: string): Promise<{ bundleDir: string; width: number; height: number; startedAtMs?: number }>;
       /** `partial` when the take failed but its file still plays. */
       iosStop(): Promise<IosFinished & { partial?: boolean }>;
       /** Show a device live; resolves with the preview's state. Frames and
