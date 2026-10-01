@@ -1122,7 +1122,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .editor {
   display: grid;
   height: 100%;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) var(--inspector-w, 340px);
   grid-template-rows: var(--topbar-h) minmax(0, 1fr) auto;
   grid-template-areas:
     'top top'
@@ -1718,10 +1718,111 @@ input[type='color']::-webkit-color-swatch {
   color: var(--text-3);
 }
 
-/* No horizontal padding or border here: the element box must equal the lanes. */
+/* No horizontal padding or border here: the element box must equal the lanes.
+   Its width is the zoom (100% = the whole take); .tl-scroll pans it. */
 .tl-lanes {
   position: relative;
   cursor: pointer;
+  min-width: 100%;
+}
+
+.tl-scroll {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+/* A dragged height: lanes share the room in proportion (rows set inline). */
+.editor .ed-timeline.sized .tl-labels,
+.editor .ed-timeline.sized .tl-lanes {
+  grid-template-rows: var(--tl-rows);
+}
+.editor .ed-timeline.sized .tl-lanes {
+  height: 100%;
+}
+
+/* Timeline zoom − + in the ruler row's label cell. */
+.tl-labels .tl-zoom {
+  gap: 2px;
+  padding-left: 10px;
+}
+.tl-zoom button {
+  border: 0;
+  padding: 0;
+  width: 20px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-2);
+  background: transparent;
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+.tl-zoom button:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+.tl-zoom button:disabled {
+  color: var(--text-3);
+  opacity: 0.5;
+}
+
+/* ── pane dividers: drag the inspector's left edge or the timeline's top ── */
+
+.pane-divider {
+  position: absolute;
+  z-index: 4;
+  touch-action: none;
+}
+.pane-divider::after {
+  content: '';
+  position: absolute;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+.pane-divider:hover::after,
+.pane-divider.dragging::after {
+  opacity: 0.7;
+  transition-delay: 80ms;
+}
+.pane-divider-x {
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  cursor: col-resize;
+}
+.pane-divider-x::after {
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+}
+.pane-divider-y {
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  cursor: row-resize;
+}
+.pane-divider-y::after {
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 2px;
+}
+/* Mid-drag: keep the cursor and stop text selecting as the pointer crosses UI. */
+body.resizing-x,
+body.resizing-x * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+body.resizing-y,
+body.resizing-y * {
+  cursor: row-resize !important;
+  user-select: none;
 }
 
 .tl-ruler {

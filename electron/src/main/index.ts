@@ -18,7 +18,7 @@ import {
 } from './ios';
 import { interruptedBundles, recoveredProject, RECOVERABLE_VIDEO, type BundleListing } from '../shared/recovery';
 import { buildAppMenu } from './menu';
-import type { MenuPhase } from '../shared/menu';
+import type { ContextMenuItem, MenuPhase } from '../shared/menu';
 import { normalizeProject, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
 import { parseHeadlessArgs, type HeadlessJob, type HeadlessResult } from '../shared/headless';
 import { analyzeTapsInFile, detectSilences, extractWav as extractBundleWav, transcribeBundle } from '../node/media';
@@ -375,6 +375,22 @@ function createWindow() {
 
 app.whenReady().then(() => {
   if (!headless) refreshMenu();
+  // Right-click (two-finger click) menus: the renderer describes the items,
+  // main pops a native menu and resolves with the chosen id, or null.
+  ipcMain.handle('contextMenu:show', (e, items: ContextMenuItem[]) =>
+    new Promise<string | null>((resolve) => {
+      let picked: string | null = null;
+      const menu = Menu.buildFromTemplate(
+        items.map((it) =>
+          it.type === 'separator'
+            ? { type: 'separator' as const }
+            : { label: it.label, enabled: it.enabled !== false, click: () => (picked = it.id) },
+        ),
+      );
+      const w = BrowserWindow.fromWebContents(e.sender) ?? undefined;
+      menu.popup({ window: w, callback: () => resolve(picked) });
+    }),
+  );
   ipcMain.on('menu:phase', (_e, next: { phase: MenuPhase; bundleDir?: string }) => {
     menuState = { phase: next.phase, bundleDir: next.bundleDir };
     refreshMenu();
