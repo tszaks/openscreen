@@ -4,6 +4,7 @@ import type { IosDevice, IosFinished, IosPreview, IosWarning } from '../../share
 import type { ContextMenuItem, MenuAction, MenuPhase } from '../../shared/menu';
 import type { PresetId } from '../../shared/exportPresets';
 import type { MusicInput } from '../../shared/audioTracks';
+import type { BubblePlacement, BubbleSize, Rect } from '../../shared/cameraBubble';
 
 export type { IosDevice, IosPreview };
 
@@ -117,6 +118,13 @@ declare global {
       exportReveal(path: string): Promise<boolean>;
       /** Hide OpenScreen's window from screen capture (during countdown and recording). */
       setCaptureShield(on: boolean): void;
+      /** Place the camera bubble (already opened with window.open) on a
+       *  display and show it without focus; resolves its window frame. */
+      bubbleShow(displayId: string | undefined, size: BubbleSize): Promise<Rect | null>;
+      bubbleMove(x: number, y: number): void;
+      bubbleResize(size: BubbleSize): Promise<Rect | null>;
+      /** Close the bubble; resolves where it was left, or null if it never showed. */
+      bubbleClose(): Promise<BubblePlacement | null>;
       /** Folder picker for a multi-format export; null when cancelled. */
       exportPickFolder(bundleDir: string, name?: string): Promise<string | null>;
       /** A temp path for a rendered master (.mov). */

@@ -37,7 +37,9 @@ import {
   parseFfmpegProgressTime,
   parseFfmpegVideoSize,
   withProbedDuration,
+  pickDisplay,
 } from '../shared/recording';
+import { BUBBLE_SIZES, defaultBubbleWindow, resizeBubbleWindow, type BubblePlacement, type BubbleSize, type Rect } from '../shared/cameraBubble';
 
 // Dev runs take the name from package.json ("openscreen"); the menu wants the product name.
 app.setName('OpenScreen');
@@ -83,6 +85,23 @@ let transcodeRun: TranscodeRun | null = null;
 let trackerStartedAtMs = 0;
 // The in-flight iPhone take's bundle, so a failed take can be salvaged or removed.
 let iosBundleDir: string | null = null;
+
+// The camera bubble shown during a take (shared/cameraBubble.ts). The
+// renderer opens it with window.open, so it lives in the renderer's own
+// process and plays the camera stream being recorded, with no second
+// camera capture. Main places it and remembers where it was left.
+const BUBBLE_FRAME = 'openscreen-camera-bubble';
+let bubbleWin: BrowserWindow | null = null;
+let bubble: { display: Rect; last: Rect } | null = null;
+
+/** Close the bubble; resolves where it was (null when it never showed). */
+const closeBubble = (): BubblePlacement | null => {
+  const placed = bubble ? { window: bubble.last, display: bubble.display } : null;
+  bubble = null;
+  if (bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.close();
+  bubbleWin = null;
+  return placed;
+};
 
 // What the renderer is in the middle of ('recording', 'saving', …), so
 // closing or quitting can ask before throwing it away.
@@ -386,6 +405,47 @@ function createWindow() {
     },
   });
   win.loadFile(join(__dirname, '../renderer/index.html'), headless ? { query: { headless: '1' } } : undefined);
+  // The only window the renderer may open is the camera bubble.
+  win.webContents.setWindowOpenHandler(({ frameName, url }) =>
+    frameName === BUBBLE_FRAME && (url === '' || url === 'about:blank')
+      ? {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            show: false,
+            frame: false,
+            transparent: true,
+            backgroundColor: '#00000000',
+            hasShadow: false,
+            resizable: false,
+            minimizable: false,
+            maximizable: false,
+            fullscreenable: false,
+            skipTaskbar: true,
+            // Never takes focus from the app being demoed; a click still
+            // lands on the first try.
+            focusable: false,
+            acceptFirstMouse: true,
+            alwaysOnTop: true,
+            webPreferences: { backgroundThrottling: false },
+          },
+        }
+      : { action: 'deny' },
+  );
+  win.webContents.on('did-create-window', (child, { frameName }) => {
+    if (frameName !== BUBBLE_FRAME) return;
+    bubbleWin?.close();
+    bubbleWin = child;
+    // The bubble is never in the screen recording. The camera is recorded
+    // on its own (cam.webm) and composited in the editor, so a bubble that
+    // was captured too would put the face in the video twice.
+    child.setContentProtection(true);
+    // Above full-screen apps, and on every Space the person switches to.
+    child.setAlwaysOnTop(true, 'screen-saver');
+    child.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+    child.on('closed', () => {
+      if (bubbleWin === child) bubbleWin = null;
+    });
+  });
   win.on('close', (e) => {
     if (!quitConfirmed && !confirmDiscard('close')) e.preventDefault();
   });
@@ -394,6 +454,7 @@ function createWindow() {
   const abandonTake = () => {
     rendererBusy = null;
     stopTracker();
+    closeBubble();
     stopIosPreview();
     if (iosBundleDir) {
       const dir = iosBundleDir;
@@ -490,6 +551,36 @@ app.whenReady().then(() => {
   ipcMain.on('app:captureShield', (_e, on: boolean) => {
     win?.setContentProtection(!!on);
   });
+
+  // The camera bubble: show it on the recorded display (a window take uses
+  // the display OpenScreen is on), move it while dragged, resize it, and
+  // close it, answering where it was left.
+  const bubbleDisplay = (displayId?: string) =>
+    pickDisplay(screen.getAllDisplays(), displayId, win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay());
+  ipcMain.handle('bubble:show', async (_e, args: { displayId?: string; size: BubbleSize }) => {
+    // did-create-window can land just after the renderer's window.open returns.
+    for (let i = 0; i < 20 && !bubbleWin; i++) await new Promise((r) => setTimeout(r, 50));
+    if (!bubbleWin || bubbleWin.isDestroyed()) return null;
+    const display = bubbleDisplay(args.displayId);
+    const bounds = defaultBubbleWindow(display.workArea, BUBBLE_SIZES.includes(args.size) ? args.size : undefined);
+    bubbleWin.setBounds(bounds);
+    bubbleWin.showInactive();
+    bubble = { display: display.bounds, last: bubbleWin.getBounds() };
+    return bubble.last;
+  });
+  ipcMain.on('bubble:move', (_e, p: { x: number; y: number }) => {
+    if (!bubbleWin || bubbleWin.isDestroyed() || !bubble || !Number.isFinite(p?.x) || !Number.isFinite(p?.y)) return;
+    bubbleWin.setPosition(Math.round(p.x), Math.round(p.y));
+    bubble.last = bubbleWin.getBounds();
+  });
+  ipcMain.handle('bubble:resize', (_e, size: BubbleSize) => {
+    if (!bubbleWin || bubbleWin.isDestroyed() || !bubble || !BUBBLE_SIZES.includes(size)) return null;
+    const now = bubbleWin.getBounds();
+    bubbleWin.setBounds(resizeBubbleWindow(now, size, screen.getDisplayMatching(now).workArea));
+    bubble.last = bubbleWin.getBounds();
+    return bubble.last;
+  });
+  ipcMain.handle('bubble:close', () => closeBubble());
 
   ipcMain.handle('permissions:openScreenSettings', async () => {
     const { shell } = await import('electron');
