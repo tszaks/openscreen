@@ -66,6 +66,10 @@ export interface StyleSettings {
 export type Background =
   | { kind: 'solid'; hex: string }
   | { kind: 'gradient'; startHex: string; endHex: string; angle: number }
+  /** Soft radial colour blobs over a base colour, plus optional film grain.
+   *  Blob x/y are 0..1 of the canvas; r is a fraction of its longer side.
+   *  grain is the noise opacity (0..0.2). */
+  | { kind: 'mesh'; baseHex: string; blobs: { x: number; y: number; r: number; hex: string }[]; grain?: number }
   | { kind: 'imageFile'; path: string; blur?: number }
   | { kind: 'wallpaper' };
 
