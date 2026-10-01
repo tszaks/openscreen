@@ -42,9 +42,13 @@ export function filmstripTile(source: { width: number; height: number }, frameH:
   return { width: Math.max(12, Math.round(h * Math.min(aspect, 2.4))), portrait: aspect < 1 };
 }
 
+/** Most tiles one clip draws. Deep timeline zoom on a portrait take would
+ *  otherwise mean thousands of images; past this the tiles widen instead. */
+export const MAX_TILES_PER_CLIP = 400;
+
 /** How many tiles of `tileW` fit a clip that covers `fraction` of lanes
  *  `lanesW` px wide (the lanes' width already includes the timeline zoom). */
-export function tilesForClip(fraction: number, lanesW: number, tileW: number): number {
+export function tilesForClip(fraction: number, lanesW: number, tileW: number, max = MAX_TILES_PER_CLIP): number {
   if (!(tileW > 0) || !(lanesW > 0) || !(fraction > 0)) return 1;
-  return Math.max(1, Math.round((fraction * lanesW) / tileW));
+  return Math.min(max, Math.max(1, Math.round((fraction * lanesW) / tileW)));
 }

@@ -1516,6 +1516,16 @@ export function Editor({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  // The clips lane grows with a dragged-taller timeline; tiles follow it.
+  const clipLaneRef = useRef<HTMLDivElement>(null);
+  const [clipLaneH, setClipLaneH] = useState(0);
+  useEffect(() => {
+    const el = clipLaneRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setClipLaneH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // ── resizable panes + timeline zoom ──
   useEffect(() => localStorage.setItem('openscreen.inspectorWidth', String(inspectorW)), [inspectorW]);
@@ -1661,8 +1671,27 @@ export function Editor({
   // Clip thumbnails sized to the frames strip under each clip's name.
   // Portrait frames sit inset as small screens (styles.css .clip-frames.portrait: 5px padding, 3px gaps).
   const portraitSource = proj.recording.sourceSize.width < proj.recording.sourceSize.height;
-  const tile = filmstripTile(proj.recording.sourceSize, portraitSource ? CLIP_FRAMES_H - 5 : CLIP_FRAMES_H);
+  const framesH = clipLaneH ? Math.max(12, clipLaneH - CLIP_CHROME_H) : CLIP_FRAMES_H;
+  const tile = filmstripTile(proj.recording.sourceSize, portraitSource ? framesH - 5 : framesH);
   const tileSlot = tile.width + (tile.portrait ? 3 : 0);
+  // Each clip's tiles, built only when the strip, the clips, the zoom or the
+  // lane size change: never on a playhead tick, so zoomed playback stays smooth.
+  const clipTiles = useMemo(
+    () =>
+      clipBlocks.map((b, i) =>
+        filmstrip.length === 0
+          ? null
+          : clipFrames(
+              filmTimes,
+              timeline.clips[i]?.sourceStart ?? 0,
+              timeline.clips[i]?.sourceEnd ?? 0,
+              tilesForClip((b.end - b.start) / outDur, lanesW, tileSlot),
+            ).map((fi, k) =>
+              filmstrip[fi] ? <img key={k} src={filmstrip[fi]!} alt="" draggable={false} /> : <span key={k} />,
+            ),
+      ),
+    [clipBlocks, filmstrip, filmTimes, timeline, outDur, lanesW, tileSlot],
+  );
   const silent = peaks.length > 0 && Math.max(...peaks) < 0.03;
   const bundleName = projectName(proj, bundleDir);
   const formatChoices = presetChoices(proj.recording.sourceSize);
@@ -2682,7 +2711,7 @@ export function Editor({
               </span>
             ))}
           </div>
-          <div className="lane lane-clips">
+          <div className="lane lane-clips" ref={clipLaneRef}>
             {clipBlocks.map((b, i) => {
               const speed = timeline.clips[i]?.speed ?? 1;
               return (
@@ -2723,19 +2752,7 @@ export function Editor({
                     </span>
                   </span>
                   <span className={`clip-frames${tile.portrait ? ' portrait' : ''}`} aria-hidden>
-                    {filmstrip.length > 0 &&
-                      clipFrames(
-                        filmTimes,
-                        timeline.clips[i]?.sourceStart ?? 0,
-                        timeline.clips[i]?.sourceEnd ?? 0,
-                        tilesForClip((b.end - b.start) / outDur, lanesW, tileSlot),
-                      ).map((fi, k) =>
-                        filmstrip[fi] ? (
-                          <img key={k} src={filmstrip[fi]!} alt="" draggable={false} />
-                        ) : (
-                          <span key={k} />
-                        ),
-                      )}
+                    {clipTiles[i]}
                   </span>
                 </div>
               );
@@ -2921,7 +2938,8 @@ export function Editor({
 
 /** Height of the frames strip under a clip's name: the clips lane less the
  *  name strip and the clip's border (styles.css .clipblock / .clip-label). */
-const CLIP_FRAMES_H = 56 - 16 - 3;
+const CLIP_CHROME_H = 16 + 3;
+const CLIP_FRAMES_H = 56 - CLIP_CHROME_H;
 
 const FILLER = /^[\s.,!?]*(?:um+|uh+|er+|eh+|ah+|hmm+|mm+|mhm)[\s.,!?]*$/i;
 

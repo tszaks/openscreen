@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clipFrames, filmstripTile, filmstripTimes, tilesForClip } from '../src/shared/filmstrip';
+import { clipFrames, filmstripTile, filmstripTimes, MAX_TILES_PER_CLIP, tilesForClip } from '../src/shared/filmstrip';
 
 describe('filmstripTimes', () => {
   it('spaces frames evenly at the middle of each slice', () => {
@@ -59,6 +59,11 @@ describe('tilesForClip', () => {
   it('grows with the timeline zoom (the lanes get wider)', () => {
     const at = (zoom: number) => tilesForClip(0.25, 1000 * zoom, 30);
     expect([at(1), at(2), at(4)]).toEqual([8, 17, 33]);
+  });
+  it('caps one clip at MAX_TILES_PER_CLIP at deep zoom', () => {
+    // A whole portrait take at 40× zoom on a 1200px timeline: ~2,800 slots wanted.
+    expect(tilesForClip(1, 1200 * 40, 17)).toBe(MAX_TILES_PER_CLIP);
+    expect(tilesForClip(1, 1200 * 40, 17, 50)).toBe(50);
   });
   it('always shows at least one tile', () => {
     expect(tilesForClip(0.001, 1000, 71)).toBe(1);
