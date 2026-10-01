@@ -81,7 +81,7 @@ npm test               # unit tests
 npm run electron:dev   # build and launch
 ```
 
-You'll need Node.js 20 or later, and Xcode's command line tools (`xcode-select --install`) for the iPhone capture helper. For exports during development, install ffmpeg (`brew install ffmpeg`); release builds bundle it.
+You'll need Node.js 22.12 or later, and Xcode's command line tools (`xcode-select --install`) for the iPhone capture helper. For exports during development, install ffmpeg (`brew install ffmpeg`); release builds bundle it.
 
 How it fits together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
