@@ -4,7 +4,7 @@ import React from 'react';
 import type { Project, TapStyle } from '../../../shared/types';
 import { DEVICES, getFinish } from '../../../shared/devices';
 import type { ResolvedDevice } from '../../../shared/mobileProject';
-import { Button, Section, Segmented, Switch } from '../ui';
+import { Button, FormRow, Section, Segmented, Switch } from '../ui';
 import { ScrubField } from '../components/ScrubField';
 import './mobile.css';
 
@@ -96,10 +96,7 @@ export function DevicePanel({
                 ))}
               </select>
             )}
-            <div className="field-block">
-              <span className="row-label">
-                Finish <span className="row-hint finish-name">{finish.name}</span>
-              </span>
+            <FormRow label="Finish" hint={finish.name}>
               <div className="finishes" role="radiogroup" aria-label="Finish">
                 {device.finishes.map((f) => (
                   <button
@@ -115,7 +112,7 @@ export function DevicePanel({
                   />
                 ))}
               </div>
-            </div>
+            </FormRow>
           </>
         )}
       </Section>
@@ -129,8 +126,7 @@ export function DevicePanel({
         />
         {proj.tapStyle.show && (
           <>
-            <div className="field-block">
-              <span className="row-label">Style</span>
+            <FormRow label="Style">
               <Segmented
                 label="Touch style"
                 value={proj.tapStyle.style}
@@ -141,9 +137,8 @@ export function DevicePanel({
                 ]}
                 onChange={(style) => setTapStyle({ style })}
               />
-            </div>
-            <div className="field-block">
-              <span className="row-label">Color</span>
+            </FormRow>
+            <FormRow label="Color">
               <Segmented
                 label="Touch color"
                 value={proj.tapStyle.color}
@@ -153,8 +148,9 @@ export function DevicePanel({
                 ]}
                 onChange={(color) => setTapStyle({ color })}
               />
-            </div>
+            </FormRow>
             <ScrubField
+              slider
               label="Size"
               min={32}
               max={96}
