@@ -35,7 +35,8 @@ OpenScreen is a free, open-source screen recorder for Mac, built for app demos. 
 - Cursor smoothing, click ripples and a keystroke overlay.
 
 **A full editor**
-- Split, trim, reorder and change the speed of clips. Undo everything.
+- A native Mac design in light and dark, following your system appearance.
+- Split, trim, reorder and change the speed of clips, with each clip's frames shown on the timeline. Undo everything.
 - A resizable workspace and a zoomable timeline — pinch to work down to a fraction of a second.
 - 24 backdrops, plus your own images or desktop wallpaper.
 - Captions with on-device transcription, transcript editing, and smart cutting of silences and filler words.
