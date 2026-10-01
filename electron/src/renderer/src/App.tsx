@@ -12,14 +12,14 @@ import {
 } from '../../shared/recording';
 import { decodeIosError } from '../../shared/iosErrors';
 import { Editor } from './Editor';
-import { Button, EmptyState, Segmented } from './ui';
+import { Button, EmptyState } from './ui';
 import { IosSetupCard } from './components/IosSetupCard';
 import { IosLivePreview } from './components/IosLivePreview';
 import { recoveryNotice } from '../../shared/recovery';
 import { RecordingCard } from './components/RecordingCard';
 import { checklistFor, readSetupPrefs, recordingWarning, writeSetupPref, type SetupPrefs, type SetupTrigger } from './components/iosSetup';
 
-type PickerTab = 'displays' | 'windows' | 'devices';
+type PickerTab = 'displays' | 'windows' | 'devices' | 'cameras';
 
 type Phase =
   | { name: 'picker' }
@@ -692,13 +692,22 @@ export function App() {
     // Continuity Camera included, is a camera, not a screen.
     const iosDevices = ios.devices;
     const otherCameras = devices;
-    const tabOptions = [
-      { value: 'displays' as const, label: <>Displays<span className="count">{displays.length}</span></> },
-      { value: 'windows' as const, label: <>Windows<span className="count">{windows.length}</span></> },
-      { value: 'devices' as const, label: <>iPhone &amp; iPad<span className="count">{iosDevices.length}</span></> },
+    // The sidebar's sources. The iPhone/iPad path is the headline feature:
+    // it leads when one is plugged in.
+    const sections: { value: PickerTab; label: string; count: number }[] = [
+      { value: 'displays', label: 'Displays', count: displays.length },
+      { value: 'windows', label: 'Windows', count: windows.length },
+      { value: 'devices', label: 'iPhone & iPad', count: iosDevices.length },
+      { value: 'cameras', label: 'Cameras', count: otherCameras.length },
     ];
-    // The iPhone/iPad path is the headline feature: lead with it when one is plugged in.
-    if (iosDevices.length) tabOptions.unshift(tabOptions.pop()!);
+    if (iosDevices.length) sections.unshift(sections.splice(2, 1)[0]);
+    const section = sections.find((x) => x.value === tab)!;
+    const sectionHint: Record<PickerTab, string> = {
+      displays: 'Records the whole screen, with the cursor, click effects and auto-zoom.',
+      windows: "Records one window. Window recordings don't include the cursor, click effects or auto-zoom.",
+      devices: 'Records the screen of an iPhone or iPad connected with a cable, with its own sound.',
+      cameras: "Records a camera, not a screen. Continuity Camera is your iPhone's camera.",
+    };
     const shown = tab === 'displays' ? displays : tab === 'windows' ? windows : [];
     // A selection made on another tab isn't visible; dropping it keeps Start
     // honest (and stops an iPhone live preview).
@@ -757,87 +766,178 @@ export function App() {
       </button>
     );
 
+    const sourceGrid = (
+      <div className="cards">
+        {shown.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className={`card${selected?.id === s.id ? ' selected' : ''}`}
+            onClick={() => {
+              setSelected(s);
+              setSelectedDevice(null);
+              setSelectedIos(null);
+            }}
+          >
+            <div className="card-thumb">
+              {s.thumbnailDataUrl && s.thumbnailDataUrl.length > 32 ? (
+                <img
+                  src={s.thumbnailDataUrl}
+                  alt=""
+                  onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
+                />
+              ) : (
+                <span className="thumb-empty">{s.name.slice(0, 1).toUpperCase()}</span>
+              )}
+            </div>
+            <div className="card-name">{s.name}</div>
+          </button>
+        ))}
+      </div>
+    );
+
     return (
-      <div className="shell">
-        <header className="topbar">
-          <span className="wordmark">OpenScreen</span>
-          <div className="spacer" />
-          <Button variant="ghost" onClick={openProject}>
-            Open project…
-          </Button>
-        </header>
-
-        <main className="picker">
-          {perms && perms.screen !== 'granted' && (
-            <div className="banner">
-              <span className="banner-dot" />
-              <p>
-                OpenScreen doesn't have Screen Recording access, so recordings will come
-                out black. After you allow it in System Settings, macOS needs OpenScreen
-                to quit and reopen.
-              </p>
-              <Button size="sm" onClick={() => api.openScreenSettings()}>
-                Open System Settings
-              </Button>
-              <Button size="sm" onClick={() => void api.relaunch()}>
-                Quit &amp; Reopen
-              </Button>
-            </div>
-          )}
-          {perms && !perms.hooks && (
-            <div className="banner">
-              <span className="banner-dot" />
-              <p>
-                Clicks and keystrokes won't be tracked until OpenScreen has Accessibility
-                access. Without it there are no click effects or click-based auto-zoom.
-              </p>
-              <Button
-                size="sm"
-                onClick={async () => {
-                  const granted = await api.requestAccessibility().catch(() => false);
-                  if (granted) void refresh();
-                }}
+      <div className="shell picker-window">
+        <nav className="sidebar" aria-label="Sources">
+          <div className="sidebar-drag" />
+          <p className="sidebar-heading">Record</p>
+          <div className="sidebar-list" role="tablist" aria-orientation="vertical">
+            {sections.map((x) => (
+              <button
+                key={x.value}
+                type="button"
+                role="tab"
+                aria-selected={tab === x.value}
+                className={`sidebar-item${tab === x.value ? ' on' : ''}`}
+                onClick={() => chooseTab(x.value)}
               >
-                Grant Access
-              </Button>
-            </div>
-          )}
+                <span>{x.label}</span>
+                <span className="sidebar-count tnum">{x.count}</span>
+              </button>
+            ))}
+          </div>
+          <div className="spacer" />
+          <p className="sidebar-heading">Also record</p>
+          <div className="sidebar-options">
+            <label
+              className={`inline-switch${selectedIos ? ' disabled' : ''}`}
+              title={selectedIos ? 'iPhone and iPad recordings use the device audio' : undefined}
+            >
+              <span>Microphone</span>
+              <input
+                type="checkbox"
+                role="switch"
+                className="switch"
+                checked={micOn && !selectedIos}
+                disabled={!!selectedIos}
+                onChange={(e) => setMicOn(e.target.checked)}
+              />
+            </label>
+            {selectedIos && <span className="hint">The iPhone's own sound is recorded.</span>}
+            <label className="inline-switch">
+              <span>Camera</span>
+              <input
+                type="checkbox"
+                role="switch"
+                className="switch"
+                checked={camOn}
+                onChange={(e) => void toggleCamera(e.target.checked)}
+              />
+            </label>
+            {camOn &&
+              (devices.length > 1 ? (
+                <select
+                  className="cam-select"
+                  aria-label="Camera"
+                  value={overlayCamera?.deviceId ?? ''}
+                  onChange={(e) => setCamId(e.target.value)}
+                >
+                  {devices.map((d, i) => (
+                    <option key={d.deviceId} value={d.deviceId}>
+                      {cameraLabel(d, i)}
+                    </option>
+                  ))}
+                </select>
+              ) : devices.length === 0 ? (
+                <span className="hint">No camera found</span>
+              ) : null)}
+          </div>
+        </nav>
 
-          {recovered.length > 0 && (
-            <div className="banner is-info" role="status">
-              <span className="banner-dot" />
-              <p>{recoveryNotice(recovered.length)} It was cut off before it could be saved, and opens in the editor.</p>
-              <Button size="sm" onClick={openRecovered}>
-                Open
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setRecovered([])}>
-                Dismiss
-              </Button>
+        <div className="picker-pane">
+          <header className="topbar picker-top">
+            <div className="toolbar-title">
+              <span className="toolbar-title-main">{section.label}</span>
+              <span className="toolbar-title-sub tnum">
+                {section.count === 0 ? 'None found' : `${section.count} available`}
+              </span>
             </div>
-          )}
-
-          <div className="picker-head">
-            <div>
-              <h1>New recording</h1>
-              <p>Choose a display, a window, or a connected iPhone or iPad.</p>
-            </div>
-            <div className="picker-tools">
-              <Button variant="ghost" size="sm" onClick={() => void refresh()} title="Look for new windows and displays">
+            <div className="spacer" />
+            <span className="tb-group">
+              <Button size="sm" variant="ghost" onClick={() => void refresh()} title="Look for new windows and displays">
                 Refresh
               </Button>
-              <Segmented value={tab} options={tabOptions} onChange={chooseTab} label="Source type" />
-            </div>
-          </div>
-          {tab === 'windows' && shown.length > 0 && (
-            <p className="hint">
-              Window recordings don't include the cursor, click effects or auto-zoom. Record the
-              display for those.
-            </p>
-          )}
+            </span>
+            <span className="tb-group">
+              <Button size="sm" variant="ghost" onClick={openProject} title="Open a saved project (⌘O)">
+                Open Project…
+              </Button>
+            </span>
+          </header>
 
-          {tab === 'devices' ? (
-            <>
-              {iosDevices.length ? (
+          <main className="picker">
+            {perms && perms.screen !== 'granted' && (
+              <div className="banner">
+                <span className="banner-dot" />
+                <p>
+                  OpenScreen doesn't have Screen Recording access, so recordings will come
+                  out black. After you allow it in System Settings, macOS needs OpenScreen
+                  to quit and reopen.
+                </p>
+                <Button size="sm" onClick={() => api.openScreenSettings()}>
+                  Open System Settings
+                </Button>
+                <Button size="sm" onClick={() => void api.relaunch()}>
+                  Quit &amp; Reopen
+                </Button>
+              </div>
+            )}
+            {perms && !perms.hooks && (
+              <div className="banner">
+                <span className="banner-dot" />
+                <p>
+                  Clicks and keystrokes won't be tracked until OpenScreen has Accessibility
+                  access. Without it there are no click effects or click-based auto-zoom.
+                </p>
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    const granted = await api.requestAccessibility().catch(() => false);
+                    if (granted) void refresh();
+                  }}
+                >
+                  Grant Access
+                </Button>
+              </div>
+            )}
+
+            {recovered.length > 0 && (
+              <div className="banner is-info" role="status">
+                <span className="banner-dot" />
+                <p>{recoveryNotice(recovered.length)} It was cut off before it could be saved, and opens in the editor.</p>
+                <Button size="sm" onClick={openRecovered}>
+                  Open
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setRecovered([])}>
+                  Dismiss
+                </Button>
+              </div>
+            )}
+
+            <p className="picker-hint">{sectionHint[tab]}</p>
+
+            {tab === 'devices' ? (
+              iosDevices.length ? (
                 <div className="cards">{iosDevices.map(iosCard)}</div>
               ) : ios.error ? (
                 <EmptyState art={<div className="device-outline large" />} title="iPhone capture is unavailable">
@@ -856,7 +956,7 @@ export function App() {
                   actions={
                     ios.ready && (
                       <Button size="sm" onClick={() => setInlineSetup(true)}>
-                        Show setup steps
+                        Show Setup Steps
                       </Button>
                     )
                   }
@@ -864,105 +964,36 @@ export function App() {
                   Connect it with a USB cable, unlock it, and tap Trust on the device if
                   asked. It shows up here within a few seconds.
                 </EmptyState>
-              )}
-              {otherCameras.length > 0 && (
-                <>
-                  <h2 className="subhead">Other cameras</h2>
-                  <p className="hint">
-                    These record a camera, not a screen. Continuity Camera is your iPhone's camera.
-                  </p>
-                  <div className="cards">{otherCameras.map(cameraCard)}</div>
-                </>
-              )}
-            </>
-          ) : shown.length ? (
-            <div className="cards">
-              {shown.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`card${selected?.id === s.id ? ' selected' : ''}`}
-                  onClick={() => {
-                    setSelected(s);
-                    setSelectedDevice(null);
-                    setSelectedIos(null);
-                  }}
-                >
-                  <div className="card-thumb">
-                    {s.thumbnailDataUrl && s.thumbnailDataUrl.length > 32 ? (
-                      <img
-                        src={s.thumbnailDataUrl}
-                        alt=""
-                        onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
-                      />
-                    ) : (
-                      <span className="thumb-empty">{s.name.slice(0, 1).toUpperCase()}</span>
-                    )}
-                  </div>
-                  <div className="card-name">{s.name}</div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <EmptyState title={tab === 'displays' ? 'No displays found' : 'No windows found'}>
-              {tab === 'windows'
-                ? 'Open the app you want to record, then press Refresh.'
-                : 'OpenScreen could not list any displays. Check the Screen Recording permission.'}
-            </EmptyState>
-          )}
-        </main>
+              )
+            ) : tab === 'cameras' ? (
+              otherCameras.length ? (
+                <div className="cards">{otherCameras.map(cameraCard)}</div>
+              ) : (
+                <EmptyState title="No cameras found">
+                  Connect a camera, or bring your iPhone near this Mac to use it with Continuity Camera.
+                </EmptyState>
+              )
+            ) : shown.length ? (
+              sourceGrid
+            ) : (
+              <EmptyState title={tab === 'displays' ? 'No displays found' : 'No windows found'}>
+                {tab === 'windows'
+                  ? 'Open the app you want to record, then press Refresh.'
+                  : 'OpenScreen could not list any displays. Check the Screen Recording permission.'}
+              </EmptyState>
+            )}
+          </main>
 
-        <footer className="picker-foot">
-          <label
-            className={`inline-switch${selectedIos ? ' disabled' : ''}`}
-            title={selectedIos ? 'iPhone and iPad recordings use the device audio' : undefined}
-          >
-            <input
-              type="checkbox"
-              role="switch"
-              className="switch"
-              checked={micOn && !selectedIos}
-              disabled={!!selectedIos}
-              onChange={(e) => setMicOn(e.target.checked)}
-            />
-            Microphone
-            {selectedIos && <span className="hint">Uses device audio</span>}
-          </label>
-          <label className="inline-switch">
-            <input
-              type="checkbox"
-              role="switch"
-              className="switch"
-              checked={camOn}
-              onChange={(e) => void toggleCamera(e.target.checked)}
-            />
-            Camera
-          </label>
-          {camOn &&
-            (devices.length > 1 ? (
-              <select
-                className="cam-select"
-                aria-label="Camera"
-                value={overlayCamera?.deviceId ?? ''}
-                onChange={(e) => setCamId(e.target.value)}
-              >
-                {devices.map((d, i) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {cameraLabel(d, i)}
-                  </option>
-                ))}
-              </select>
-            ) : devices.length === 0 ? (
-              <span className="hint">No camera found</span>
-            ) : null)}
-          <div className="spacer" />
-          <span className="status" title={status}>
-            {status || (selectedName ? selectedName : 'Nothing selected')}
-          </span>
-          <Button variant="primary" size="lg" disabled={!selected && !selectedDevice && !selectedIos} onClick={start}>
-            Start recording
-          </Button>
-        </footer>
+          <footer className="picker-foot">
+            <span className="status" title={status}>
+              {status || (selectedName ? selectedName : 'Choose what to record')}
+            </span>
+            <div className="spacer" />
+            <Button variant="primary" size="lg" disabled={!selected && !selectedDevice && !selectedIos} onClick={start}>
+              Start Recording
+            </Button>
+          </footer>
+        </div>
 
         {noticeToast}
         {setupDialog && (
