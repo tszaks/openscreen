@@ -1,6 +1,6 @@
 {
   "name": "openscreen",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Open-source screen recorder for Mac: wired iPhone/iPad screen capture, automatic tap detection with zoom, device frames, and App Store / social export presets.",
   "homepage": "https://github.com/tszaks/openscreen",
   "repository": {
