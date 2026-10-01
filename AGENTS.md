@@ -126,7 +126,7 @@ LayoutSection, TapsLane, ExportPanel) and the op that does the same thing:
 | Move / retarget / rescale a zoom | `manualZooms[i]` | `moveZoom {index, at?, x?, y?, scale?, hold?}` |
 | Right-click zoom: remove | `manualZooms` | `removeZoom {index}`, `clearZooms` |
 | Zoom tab: Auto-focus, Dwell, Zoom to taps, Zoom depth | `zoom.autofocus/dwell/fromTaps/depth` | `zoomSettings {…}` |
-| Cursor tab: size, trail, colour | `style.cursorSize/cursorTrail/cursorHex` | `cursor {size?, trail?, hex?}` |
+| Cursor tab: show, opacity, size, trail, colour | `style.cursorShow/cursorOpacity/cursorSize/cursorTrail/cursorHex` | `cursor {show?, opacity? (0..1), size?, trail?, hex?}` |
 | Audio tab: click sounds, voice cleanup | `audio.clickSounds/voiceCleanup` | `audio {clickSounds?, voiceCleanup?}` |
 | Add Music or Voiceover… (Audio tab, timeline right-click) | `tracks[t].items` | `addAudio {file, start?, volume?, fadeIn?, fadeOut?, loop?, sourceIn?, sourceOut?, fit?, name?}` |
 | Music lane: drag a block | `items[i].start` (output s) | `moveAudio {index\|id, start, track?}` |
