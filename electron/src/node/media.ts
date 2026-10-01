@@ -2,10 +2,10 @@
 // the main process and the agent CLI run the exact same analysis.
 
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { basename, delimiter, extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseFfmpegDuration, parseFfmpegProgressTime, parseFfmpegVideoSize, findWhisperCli, partialPath } from '../shared/recording';
 import { extractWavArgs, parseSilences, silenceDetectArgs } from '../shared/silence';
@@ -100,6 +100,64 @@ export async function detectSilences(
   if (!wav) return [];
   const se = await ffmpegStderr(silenceDetectArgs(wav, opts.thresholdDb, opts.minDur), bin);
   return parseSilences(se, parseFfmpegDuration(se) ?? undefined);
+}
+
+/** An audio file's exact length, by decoding it (an mp3's header can only estimate). Null when it has no sound to play. */
+export async function probeAudioDuration(file: string, bin = ffmpegPath()): Promise<number | null> {
+  const banner = await probeBanner(file, bin);
+  if (!/Stream #\d+:\d+.*Audio:/.test(banner)) return null;
+  const decoded = parseFfmpegProgressTime(await ffmpegStderr(['-hide_banner', '-i', file, '-map', '0:a:0', '-f', 'null', '-'], bin));
+  return decoded && decoded > 0 ? decoded : parseFfmpegDuration(banner);
+}
+
+/** Where an imported sound is copied inside the bundle: audio/<id>.<ext>. */
+export const bundleAudioPath = (id: string, source: string) => `audio/${id}${extname(source).toLowerCase() || '.m4a'}`;
+
+/**
+ * Copy a music or voiceover file into the bundle (so the project keeps
+ * working when the original moves) and measure it. Throws a readable error
+ * for files with no playable sound.
+ */
+export async function importAudioFile(
+  bundleDir: string,
+  source: string,
+  id: string,
+  bin = ffmpegPath(),
+): Promise<{ file: string; name: string; duration: number }> {
+  const duration = await probeAudioDuration(source, bin);
+  if (!duration) throw new Error(`${basename(source)} has no sound OpenScreen can play.`);
+  const file = bundleAudioPath(id, source);
+  mkdirSync(join(bundleDir, 'audio'), { recursive: true });
+  copyFileSync(source, join(bundleDir, file));
+  return { file, name: basename(source, extname(source)), duration };
+}
+
+/** A waveform for any audio file: the peak (0..1) of each of `buckets` equal slices. */
+export async function audioFilePeaks(file: string, buckets = 1000, bin = ffmpegPath()): Promise<number[]> {
+  const raw = await new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const ff = spawn(bin, ['-hide_banner', '-loglevel', 'error', '-i', file, '-vn', '-ac', '1', '-ar', '8000', '-f', 's16le', '-']);
+    ff.stdout.on('data', (c: Buffer) => chunks.push(c));
+    ff.on('error', reject);
+    ff.on('close', (code) => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(`could not read ${basename(file)}`))));
+  });
+  return peaksOf(new Int16Array(raw.buffer, raw.byteOffset, Math.floor(raw.byteLength / 2)), buckets);
+}
+
+/** Peak (0..1) per bucket of 16-bit samples. */
+export function peaksOf(samples: Int16Array, buckets: number): number[] {
+  const n = Math.max(1, Math.min(4096, Math.round(buckets)));
+  const per = samples.length / n;
+  const out: number[] = [];
+  for (let b = 0; b < n; b++) {
+    let max = 0;
+    for (let i = Math.floor(b * per); i < Math.min(samples.length, Math.floor((b + 1) * per)); i++) {
+      const v = Math.abs(samples[i]);
+      if (v > max) max = v;
+    }
+    out.push(max / 32768);
+  }
+  return out;
 }
 
 /** The editor's tap analysis: tap/swipe suggestions and still stretches (source seconds). */

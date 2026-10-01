@@ -75,6 +75,19 @@ import {
 import { TapsLane } from './mobile/TapsLane';
 import { DevicePanel } from './mobile/DevicePanel';
 import { LayoutSection } from './mobile/LayoutSection';
+import { AudioTrackLane } from './AudioTrackLane';
+import { useMusicPlayback } from './useMusicPlayback';
+import {
+  addItem,
+  duckRanges,
+  findItem,
+  fitToVideo,
+  musicInputs,
+  newAudioItem,
+  removeItem,
+  updateItem,
+  updateTrack,
+} from '../../shared/audioTracks';
 
 type InspectorTab = 'background' | 'device' | 'zoom' | 'cursor' | 'camera' | 'audio' | 'text';
 
@@ -178,6 +191,8 @@ export function Editor({
   const setAudio = (patch: Partial<AudioSettings>) =>
     setProj((p) => ({ ...p, audio: { ...p.audio, ...patch } }));
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
+  // The music or voiceover block selected on its lane (the Audio tab edits it).
+  const [selectedAudio, setSelectedAudio] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [cropMode, setCropMode] = useState(false);
   const cropDrag = useRef<{ x: number; y: number } | null>(null);
@@ -285,6 +300,7 @@ export function Editor({
   );
   const timelineRef = useRef(timeline);
   timelineRef.current = timeline;
+  const music = useMusicPlayback(bundleDir, proj.tracks);
 
   // project.json changed on disk from outside (the agent CLI, a text editor).
   // Clean editor: reload it. Unsaved edits: hold autosave and ask.
@@ -622,6 +638,7 @@ export function Editor({
       }
       movePlayhead(tick.outT);
       renderAt(tick.outT);
+      music.sync(tick.outT, timelineRef.current.outputDuration, tick.kind !== 'end', video);
     };
     const loop = () => {
       const tick = playbackTick(timelineRef.current, playIndex.current, video.currentTime);
@@ -640,6 +657,7 @@ export function Editor({
     };
     const onPause = () => {
       camRef.current?.pause();
+      music.stop(video);
       cancelAnimationFrame(raf);
       const tick = playbackTick(timelineRef.current, playIndex.current, video.currentTime);
       if (tick.kind !== 'jump') movePlayhead(tick.outT);
@@ -731,6 +749,7 @@ export function Editor({
     const audioClips = timeline.isIdentity
       ? undefined
       : proj.clips.map((c) => ({ start: c.sourceStart, end: c.sourceEnd, speed: c.speed }));
+    const outLen = total / fps;
     let encoding = false; // ffmpeg is running and owns a partial file
     try {
       await api.exportBegin(
@@ -742,8 +761,10 @@ export function Editor({
         audioClips,
         clickSfx ? clickEv.map((e) => e.time) : undefined,
         voiceCleanup,
-        total / fps,
+        outLen,
         master,
+        musicInputs(proj.tracks, bundleDir, outLen),
+        duckRanges(proj.tracks, outLen),
       );
       encoding = true;
       video.pause();
@@ -1238,6 +1259,8 @@ export function Editor({
         togglePlay();
       } else if (e.key === 'Escape' && selectedTap) {
         setSelectedTap(null);
+      } else if (e.key === 'Escape' && selectedAudio) {
+        setSelectedAudio(null);
       } else if (e.key === 's' || e.key === 'S') {
         splitAtPlayhead();
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
@@ -1247,6 +1270,9 @@ export function Editor({
         } else if (selectedTap) {
           e.preventDefault();
           removeTap(selectedTap);
+        } else if (selectedMusic) {
+          e.preventDefault();
+          removeMusic(selectedMusic.item.id);
         } else {
           deleteSelectedClip();
         }
@@ -1368,6 +1394,75 @@ export function Editor({
       setStatus(`${waitCores.length} wait${waitCores.length === 1 ? '' : 's'} cut, ${removed.toFixed(1)}s removed`);
     }
   };
+
+  // ── music and voiceover: the audio track under the recording ──
+  const musicTrack = proj.tracks.find((t) => t.kind === 'audio');
+  const selectedMusic = findItem(proj.tracks, selectedAudio);
+
+  const selectAudio = (id: string | null) => {
+    setSelectedAudio(id);
+    if (!id) return;
+    setSelectedClip(null);
+    setSelectedTap(null);
+    setInspectorTab('audio');
+  };
+
+  /** Add Music or Voiceover…: pick a file, copy it into the bundle, start it at output time `at`. */
+  const addMusic = async (at: number) => {
+    try {
+      const got = await api.importAudio(bundleDir);
+      if (!got || disposed.current) return;
+      const item = newAudioItem(got.id, got.file, got.name, got.duration, at);
+      setProj((p) => addItem(p, item, () => crypto.randomUUID()));
+      selectAudio(item.id);
+      setStatus(`Added ${got.name}`);
+    } catch (e) {
+      if (!disposed.current) setStatus(`Couldn't add that sound: ${ipcErrorMessage(e)}`);
+    }
+  };
+
+  const removeMusic = (id: string) => {
+    setProj((p) => removeItem(p, id));
+    if (selectedAudio === id) setSelectedAudio(null);
+  };
+
+  const toggleMuteMusic = () => musicTrack && setProj((p) => updateTrack(p, musicTrack.id, { muted: !musicTrack.muted }));
+
+  /** Two-finger click on the music lane: a block's options, or adding one there. */
+  const musicMenu = (id: string | null, e: React.MouseEvent) => {
+    const t = timelineTimeAt(e);
+    if (id) selectAudio(id);
+    const add = { id: 'addMusic', label: 'Add Music or Voiceover…', run: () => void addMusic(t) };
+    const mute = { id: 'mute', label: musicTrack?.muted ? 'Unmute Track' : 'Mute Track', enabled: !!musicTrack, run: toggleMuteMusic };
+    void popMenu(
+      id
+        ? [
+            { id: 'remove', label: 'Remove', run: () => removeMusic(id) },
+            mute,
+            { id: 'fit', label: 'Fit to Video', run: () => setProj((p) => updateItem(p, id, (i) => fitToVideo(i, timeline.outputDuration))) },
+            { type: 'separator' },
+            add,
+          ]
+        : [add, mute],
+    );
+  };
+
+  // Waveforms for the added sounds, read once per file.
+  const [musicPeaks, setMusicPeaks] = useState<Record<string, number[]>>({});
+  const peaksAsked = useRef(new Set<string>());
+  useEffect(() => {
+    if (headless) return;
+    for (const file of new Set(proj.tracks.flatMap((t) => t.items.map((i) => i.file)))) {
+      if (peaksAsked.current.has(file)) continue;
+      peaksAsked.current.add(file);
+      api.audioFilePeaks(bundleDir, file, 2000).then(
+        (p) => !disposed.current && setMusicPeaks((m) => ({ ...m, [file]: p })),
+        // The waveform is decoration: an unreadable file draws a flat block.
+        () => {},
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proj.tracks, bundleDir]);
 
   const transcribe = async () => {
     setStatus('transcribing…');
@@ -1676,6 +1771,7 @@ export function Editor({
       { type: 'separator' },
       { id: 'zoom', label: 'Add Zoom Here', run: () => addZoomAt(t) },
       ...(isPhone ? [{ id: 'tap', label: 'Add Tap Here', run: () => addTapAt(t) }] : []),
+      { id: 'addMusic', label: 'Add Music or Voiceover…', run: () => void addMusic(t) },
       { type: 'separator' },
       { id: 'zin', label: 'Zoom In Timeline', enabled: tlZoom < 40, run: () => zoomTimeline(tlZoom * ZOOM_STEP, x) },
       { id: 'zout', label: 'Zoom Out Timeline', enabled: tlZoom > 1, run: () => zoomTimeline(tlZoom / ZOOM_STEP, x) },
@@ -1727,7 +1823,8 @@ export function Editor({
   const selectedFormats =
     formatPick ?? [formatChoices[0].id, 'social-9x16' as const].filter((id) => formatChoices.some((p) => p.id === id));
   const exportLayoutPreset = layoutPresetOf(proj);
-  const audibleExport = recordingHasAudio === undefined ? undefined : recordingHasAudio || (clickSfx && clickEv.length > 0);
+  const hasMusic = musicInputs(proj.tracks, bundleDir, outDur).length > 0;
+  const audibleExport = hasMusic || (recordingHasAudio === undefined ? undefined : recordingHasAudio || (clickSfx && clickEv.length > 0));
   const formatWarnings = Object.fromEntries(
     [...formatChoices, ...(exportLayoutPreset ? [exportLayoutPreset] : [])].map((p) => [
       p.id,
@@ -1761,6 +1858,7 @@ export function Editor({
     requestAnimationFrame(() => historyRef.current.seal());
     setSelectedClip(null);
     setSelectedTap(null);
+    setSelectedAudio(null);
     setCropMode(false);
     setSmartCuts(null);
     setWordSel(null);
@@ -2100,22 +2198,153 @@ export function Editor({
   );
 
   const audioPanel = (
-    <Section title="Audio">
-      <Switch
-        label="Click sounds"
-        hint="Mix a click sound at each click"
-        title="Mix a click sound at each click"
-        checked={clickSfx}
-        onChange={(v) => setAudio({ clickSounds: v })}
-      />
-      <Switch
-        label="Voice cleanup"
-        hint="Denoise and level the voice on export, locally with ffmpeg"
-        title="Denoise + level the voice track on export (highpass, afftdn, compressor, limiter — all local ffmpeg)"
-        checked={voiceCleanup}
-        onChange={(v) => setAudio({ voiceCleanup: v })}
-      />
-    </Section>
+    <>
+      <Section title="Recording">
+        <Switch
+          label="Click sounds"
+          hint="Mix a click sound at each click"
+          title="Mix a click sound at each click"
+          checked={clickSfx}
+          onChange={(v) => setAudio({ clickSounds: v })}
+        />
+        <Switch
+          label="Voice cleanup"
+          hint="Denoise and level the voice on export, locally with ffmpeg"
+          title="Denoise + level the voice track on export (highpass, afftdn, compressor, limiter — all local ffmpeg)"
+          checked={voiceCleanup}
+          onChange={(v) => setAudio({ voiceCleanup: v })}
+        />
+      </Section>
+      <Section
+        title="Music and voiceover"
+        actions={
+          musicTrack?.items.length ? (
+            <Button size="sm" title="Add a sound file at the playhead" onClick={() => void addMusic(playheadRef.current)}>
+              Add…
+            </Button>
+          ) : undefined
+        }
+      >
+        {!musicTrack?.items.length ? (
+          <EmptyState
+            title="No music yet"
+            actions={
+              <Button variant="primary" onClick={() => void addMusic(playheadRef.current)}>
+                Add Music or Voiceover…
+              </Button>
+            }
+          >
+            Adds an MP3, M4A, AAC, WAV or AIFF file at the playhead. It's copied into the project, so
+            moving the original later is fine.
+          </EmptyState>
+        ) : (
+          <>
+            <div className="list">
+              {musicTrack.items.map((it) => (
+                <div
+                  key={it.id}
+                  className={`cue music-row${it.id === selectedAudio ? ' selected' : ''}`}
+                  onClick={() => {
+                    selectAudio(it.id);
+                    seekOutput(it.start);
+                  }}
+                >
+                  <span className="t">{fmtPrecise(it.start)}</span>
+                  <span className="cue-text">{it.name}</span>
+                  <IconButton
+                    label="Remove"
+                    className="sm cue-action"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeMusic(it.id);
+                    }}
+                  >
+                    {Icon.close(12)}
+                  </IconButton>
+                </div>
+              ))}
+            </div>
+            <Switch
+              label="Mute track"
+              checked={musicTrack.muted}
+              onChange={(v) => setProj((p) => updateTrack(p, musicTrack.id, { muted: v }))}
+            />
+            <ScrubField
+              slider
+              label="Track volume"
+              min={0}
+              max={100}
+              step={1}
+              unit="%"
+              value={Math.round(musicTrack.volume * 100)}
+              onCommit={sealHistory}
+              onChange={(v) => setProj((p) => updateTrack(p, musicTrack.id, { volume: v / 100 }))}
+            />
+            <Switch
+              label="Lower the recording's sound under music"
+              hint="Turns the recording down while music plays"
+              checked={musicTrack.duck}
+              onChange={(v) => setProj((p) => updateTrack(p, musicTrack.id, { duck: v }))}
+            />
+          </>
+        )}
+      </Section>
+      {selectedMusic && (
+        <Section title={selectedMusic.item.name}>
+          <ScrubField
+            slider
+            label="Volume"
+            min={0}
+            max={100}
+            step={1}
+            unit="%"
+            value={Math.round(selectedMusic.item.gain * 100)}
+            onCommit={sealHistory}
+            onChange={(v) => setProj((p) => updateItem(p, selectedMusic.item.id, (i) => ({ ...i, gain: v / 100 })))}
+          />
+          <ScrubField
+            slider
+            label="Fade in"
+            min={0}
+            max={10}
+            step={0.1}
+            unit="s"
+            value={selectedMusic.item.fadeIn}
+            onCommit={sealHistory}
+            onChange={(v) => setProj((p) => updateItem(p, selectedMusic.item.id, (i) => ({ ...i, fadeIn: v })))}
+          />
+          <ScrubField
+            slider
+            label="Fade out"
+            min={0}
+            max={10}
+            step={0.1}
+            unit="s"
+            value={selectedMusic.item.fadeOut}
+            onCommit={sealHistory}
+            onChange={(v) => setProj((p) => updateItem(p, selectedMusic.item.id, (i) => ({ ...i, fadeOut: v })))}
+          />
+          <Switch
+            label="Loop to fill"
+            hint="Repeat it until the video ends"
+            checked={selectedMusic.item.loop}
+            onChange={(v) => setProj((p) => updateItem(p, selectedMusic.item.id, (i) => ({ ...i, loop: v })))}
+          />
+          <div className="toolbar">
+            <Button
+              size="sm"
+              title="Start at the beginning and play to the end of the video"
+              onClick={() => setProj((p) => updateItem(p, selectedMusic.item.id, (i) => fitToVideo(i, timeline.outputDuration)))}
+            >
+              Fit to Video
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => removeMusic(selectedMusic.item.id)}>
+              Remove
+            </Button>
+          </div>
+        </Section>
+      )}
+    </>
   );
 
   const smartCutPanel = smartCuts && (
@@ -2779,6 +3008,9 @@ export function Editor({
           </span>
           {isPhone && <span>Taps</span>}
           <span>Audio</span>
+          <span title={musicTrack?.muted ? 'Muted' : undefined} className={musicTrack?.muted ? 'is-muted' : undefined}>
+            {musicTrack?.name ?? 'Music'}
+          </span>
         </div>
         {/* The seek target spans exactly the lanes, so click % = time %. */}
         <div className="tl-scroll" ref={tlScrollRef}>
@@ -2823,6 +3055,7 @@ export function Editor({
                     e.stopPropagation();
                     setSelectedClip(b.id);
                     setSelectedTap(null);
+                    setSelectedAudio(null);
                   }}
                   style={{
                     left: `${(b.start / (timeline.outputDuration || duration || 1)) * 100}%`,
@@ -2879,6 +3112,7 @@ export function Editor({
               selectedId={selectedTap}
               onSelect={(id) => {
                 setSelectedClip(null);
+                setSelectedAudio(null);
                 selectTap(id);
               }}
               onMove={(id, outT) => updateTap(id, { t: tapSourceTime(outT, timeline) })}
@@ -2891,6 +3125,16 @@ export function Editor({
             <canvas ref={waveRef} className="wave" />
             {silent && <span className="lane-note">No sound in this recording</span>}
           </div>
+          <AudioTrackLane
+            track={musicTrack}
+            outDur={outDur}
+            peaks={musicPeaks}
+            selectedId={selectedAudio}
+            redraw={`${tlZoom}:${timelineH}:${lanesW}:${scheme}`}
+            onSelect={selectAudio}
+            onChange={(item) => setProj((p) => updateItem(p, item.id, () => item))}
+            onMenu={musicMenu}
+          />
           {(smartCuts ?? []).map((p, i) => {
             const r = proposalOutRange(p);
             if (!r) return null;
@@ -2991,8 +3235,8 @@ export function Editor({
           }
         >
           <p>
-            Removes every edit: cuts, speed changes, zooms, taps, captions, text, crop and frame settings. The
-            original recording and your backdrop stay. You can undo this with ⌘Z.
+            Removes every edit: cuts, speed changes, zooms, taps, captions, text, music, crop and frame
+            settings. The original recording and your backdrop stay. You can undo this with ⌘Z.
           </p>
         </Sheet>
       )}

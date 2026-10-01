@@ -19,9 +19,10 @@ import { BACKDROPS } from './backdrops';
 import { DEVICES } from './devices';
 import { pendingWaits, speedUpRanges, waitCore, LAYOUT_CHOICES } from './mobileProject';
 import { remapProject } from './remap';
+import { addItem, fitToVideo, newAudioItem, segmentLength, trackProblems, withMusicTrack } from './audioTracks';
 import { Timeline } from './timeline';
 import type { TapSuggestion } from './taps';
-import type { Annotation, Background, CaptionCue, Chapter, Clip, Project, TranscriptWord, WaitRange } from './types';
+import type { Annotation, AudioItem, Background, CaptionCue, Chapter, Clip, Project, TranscriptWord, WaitRange } from './types';
 
 export interface TranscriptSegment {
   start: number;
@@ -40,6 +41,9 @@ export interface ApplyContext {
   transcript?: TranscriptSegment[];
   /** Contents of files referenced by importCaptions {file}. */
   files?: Record<string, string>;
+  /** Sound files referenced by addAudio {file}: the copy the CLI makes in the
+   *  bundle (bundle-relative), its display name and length in seconds. */
+  audioFiles?: Record<string, { file: string; name: string; duration: number }>;
   /** Fixed id generator (tests). */
   newId?: () => string;
 }
@@ -215,6 +219,7 @@ export function validateProject(p: Project): string[] {
     if (!['white', 'accent'].includes(p.tapStyle.color)) errs.push('tapStyle.color must be white|accent');
   }
   if (p.cameraOverlay && !['topLeft', 'topRight', 'bottomLeft', 'bottomRight'].includes(p.cameraOverlay.corner)) errs.push('cameraOverlay.corner is invalid');
+  errs.push(...trackProblems(p.tracks ?? []));
   if (out <= 0) errs.push('the timeline has no footage');
   return errs;
 }
@@ -319,8 +324,39 @@ export const OP_NAMES = [
   'camera', 'style', 'background', 'crop',
   'device', 'tapStyle', 'addTap', 'moveTap', 'removeTap', 'clearTaps', 'analyzeTaps',
   'speedUpWaits', 'cutWaits', 'setWaits',
-  'layout', 'titleCard', 'exportSettings', 'set',
+  'layout', 'titleCard', 'exportSettings',
+  'addAudio', 'moveAudio', 'trimAudio', 'editAudio', 'fitAudio', 'removeAudio', 'audioTrack',
+  'set',
 ] as const;
+
+/** An audio item by `id` (any track) or by `index` within track `track` (default 0). */
+function locateAudio(o: EditOp, p: Project): { ti: number; ii: number } {
+  if (typeof o.id === 'string') {
+    for (let ti = 0; ti < p.tracks.length; ti++) {
+      const ii = p.tracks[ti].items.findIndex((i) => i.id === o.id);
+      if (ii >= 0) return { ti, ii };
+    }
+    throw new OpError(`${o.op}: no audio item with id ${o.id}`);
+  }
+  const ti = optNum(o, 'track') ?? 0;
+  const track = p.tracks[ti];
+  if (!track) throw new OpError(`${o.op}: no audio track ${ti} (the project has ${p.tracks.length})`);
+  return { ti, ii: locateItem(o, track.items, 'audio item') };
+}
+
+/** The project with audio item (ti, ii) replaced by `fn` of it. */
+function withAudioItem(p: Project, at: { ti: number; ii: number }, fn: (i: AudioItem) => AudioItem): Project {
+  return {
+    ...p,
+    tracks: p.tracks.map((t, ti) => (ti === at.ti ? { ...t, items: t.items.map((i, ii) => (ii === at.ii ? fn(i) : i)) } : t)),
+  };
+}
+
+const nonNegative = (o: EditOp, k: string): number | undefined => {
+  const v = optNum(o, k);
+  if (v !== undefined && v < 0) throw new OpError(`${o.op}: "${k}" must be >= 0`);
+  return v;
+};
 
 export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult {
   const id = ctx.newId ?? (() => crypto.randomUUID());
@@ -703,6 +739,64 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
       return { project: { ...p, ...patch }, note: `export ${JSON.stringify(patch)}` };
     }
 
+    // --- audio tracks (item start: output seconds; sourceIn/sourceOut: seconds into the sound file) ---
+    case 'addAudio': {
+      const src = str(o, 'file');
+      const got = ctx.audioFiles?.[src];
+      if (!got) throw new OpError(`addAudio: ${src} was not imported (the CLI copies the file into the bundle first)`);
+      let item = newAudioItem(id(), got.file, typeof o.name === 'string' ? o.name : got.name, got.duration, nonNegative(o, 'start') ?? 0);
+      item = audioPatch(o, item);
+      if (o.fit === true) item = fitToVideo(item, tl().outputDuration);
+      return { project: addItem(p, item, id), note: `audio "${item.name}" at ${item.start}s (${segmentLength(item).toFixed(2)}s of ${got.duration.toFixed(2)}s)` };
+    }
+    case 'moveAudio': {
+      const at = locateAudio(o, p);
+      const start = nonNegative(o, 'start');
+      if (start === undefined) throw new OpError('moveAudio: "start" must be a number');
+      return { project: withAudioItem(p, at, (i) => ({ ...i, start })), note: `audio ${at.ti}/${at.ii} starts at ${start}s` };
+    }
+    case 'trimAudio': {
+      const at = locateAudio(o, p);
+      let note = '';
+      const project = withAudioItem(p, at, (i) => {
+        const sourceIn = nonNegative(o, 'sourceIn') ?? i.sourceIn;
+        const sourceOut = optNum(o, 'sourceOut') ?? i.sourceOut;
+        if (!(sourceOut > sourceIn)) throw new OpError('trimAudio: sourceOut must be > sourceIn');
+        if (i.fileDuration > 0 && sourceOut > i.fileDuration + 0.05) throw new OpError(`trimAudio: sourceOut is past the end of the file (${i.fileDuration.toFixed(2)}s)`);
+        note = `audio ${at.ti}/${at.ii} plays ${sourceIn}–${sourceOut}s of its file`;
+        return { ...i, sourceIn, sourceOut: Math.min(sourceOut, i.fileDuration || sourceOut) };
+      });
+      return { project, note };
+    }
+    case 'editAudio': {
+      const at = locateAudio(o, p);
+      return { project: withAudioItem(p, at, (i) => audioPatch(o, i)), note: `audio ${at.ti}/${at.ii} ${JSON.stringify(pick(o, ['volume', 'fadeIn', 'fadeOut', 'loop', 'name']))}` };
+    }
+    case 'fitAudio': {
+      const at = locateAudio(o, p);
+      return { project: withAudioItem(p, at, (i) => fitToVideo(i, tl().outputDuration)), note: `audio ${at.ti}/${at.ii} fitted to the video` };
+    }
+    case 'removeAudio': {
+      const at = locateAudio(o, p);
+      return {
+        project: { ...p, tracks: p.tracks.map((t, ti) => (ti === at.ti ? { ...t, items: t.items.filter((_, ii) => ii !== at.ii) } : t)) },
+        note: `audio ${at.ti}/${at.ii} removed`,
+      };
+    }
+    case 'audioTrack': {
+      const { tracks, index } = o.track === undefined ? withMusicTrack(p.tracks, id) : { tracks: p.tracks, index: num(o, 'track') };
+      if (!tracks[index]) throw new OpError(`audioTrack: no audio track ${index}`);
+      const patch: Partial<Project['tracks'][number]> = {};
+      const muted = optBool(o, 'muted');
+      const duck = optBool(o, 'duck');
+      const volume = optNum(o, 'volume');
+      if (muted !== undefined) patch.muted = muted;
+      if (duck !== undefined) patch.duck = duck;
+      if (volume !== undefined) patch.volume = clamp01(volume);
+      if (typeof o.name === 'string') patch.name = o.name;
+      return { project: { ...p, tracks: tracks.map((t, i) => (i === index ? { ...t, ...patch } : t)) }, note: `audio track ${index} ${JSON.stringify(patch)}` };
+    }
+
     case 'set':
       return { project: setPointer(p, str(o, 'path'), o.value), note: `set ${o.path} = ${JSON.stringify(o.value)}` };
 
@@ -711,10 +805,32 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
   }
 }
 
+/** volume (0..1), fadeIn/fadeOut (s), loop and name from an op, onto an audio item. */
+function audioPatch(o: EditOp, item: AudioItem): AudioItem {
+  const next = { ...item };
+  const volume = optNum(o, 'volume');
+  if (volume !== undefined) next.gain = clamp01(volume);
+  const fadeIn = nonNegative(o, 'fadeIn');
+  if (fadeIn !== undefined) next.fadeIn = fadeIn;
+  const fadeOut = nonNegative(o, 'fadeOut');
+  if (fadeOut !== undefined) next.fadeOut = fadeOut;
+  const loop = optBool(o, 'loop');
+  if (loop !== undefined) next.loop = loop;
+  if (typeof o.name === 'string') next.name = o.name;
+  if (o.sourceIn !== undefined || o.sourceOut !== undefined) {
+    next.sourceIn = nonNegative(o, 'sourceIn') ?? next.sourceIn;
+    next.sourceOut = Math.min(optNum(o, 'sourceOut') ?? next.sourceOut, next.fileDuration || Infinity);
+    if (!(next.sourceOut > next.sourceIn)) throw new OpError(`${o.op}: sourceOut must be > sourceIn`);
+  }
+  return next;
+}
+
 /** Ops that need the CLI to run analysis first. */
 export const needsSilences = (ops: EditOp[]) => ops.some((o) => o.op === 'cutSilences' || o.op === 'smartCut');
 export const needsTapAnalysis = (ops: EditOp[]) => ops.some((o) => o.op === 'analyzeTaps');
 export const needsTranscript = (ops: EditOp[]) => ops.some((o) => o.op === 'captionsFromTranscript');
+/** Sound files addAudio ops bring in (the CLI copies each into the bundle). */
+export const audioImports = (ops: EditOp[]) => [...new Set(ops.filter((o) => o.op === 'addAudio' && typeof o.file === 'string').map((o) => o.file as string))];
 
 /** Apply ops in order; stops at the first failing op (nothing is written by callers). Validates the result. */
 export function applyOps(p: Project, ops: EditOp[], ctx: ApplyContext = {}): { project: Project; notes: string[] } {

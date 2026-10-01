@@ -68,13 +68,13 @@ describe('ruler', () => {
 });
 
 describe('lane heights and the natural timeline height', () => {
-  it('adds the phone taps lane', () => {
-    expect(laneHeights(false)).toEqual([56, 22, 38]);
-    expect(laneHeights(true)).toEqual([56, 22, 26, 38]);
+  it('adds the phone taps lane, and ends with the music lane', () => {
+    expect(laneHeights(false)).toEqual([56, 22, 38, 34]);
+    expect(laneHeights(true)).toEqual([56, 22, 26, 38, 34]);
   });
   it('is padding + ruler + lanes + gaps', () => {
-    expect(naturalTimelineHeight(laneHeights(false))).toBe(6 + 14 + 22 + 116 + 18);
-    expect(naturalTimelineHeight(laneHeights(true))).toBe(6 + 14 + 22 + 142 + 24);
+    expect(naturalTimelineHeight(laneHeights(false))).toBe(6 + 14 + 22 + 150 + 24);
+    expect(naturalTimelineHeight(laneHeights(true))).toBe(6 + 14 + 22 + 176 + 30);
   });
   it('lifts a height saved under shorter lanes up to the new floor', () => {
     const floor = naturalTimelineHeight(laneHeights(false));

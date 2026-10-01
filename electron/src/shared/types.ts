@@ -195,6 +195,50 @@ export interface AudioSettings {
   voiceCleanup: boolean;
 }
 
+/**
+ * A piece of added sound (music, a voiceover) placed on an audio track. Its
+ * file lives inside the bundle so the project stays self-contained. Items sit
+ * in OUTPUT time and stay put when clips are cut or sped up, the way music
+ * does on a separate track; they always play at normal speed.
+ */
+export interface AudioItem {
+  id: string;
+  /** Bundle-relative path of the copied file, e.g. "audio/<id>.mp3". */
+  file: string;
+  /** What to call it: the imported file's name. */
+  name: string;
+  /** Length of the whole file in seconds, so trims can't run past it. */
+  fileDuration: number;
+  /** Output-time second the item starts playing at. */
+  start: number;
+  /** The part of the file that plays, in file seconds (sourceIn < sourceOut). */
+  sourceIn: number;
+  sourceOut: number;
+  /** Linear volume, 0..1. */
+  gain: number;
+  /** Seconds of fade at each end. */
+  fadeIn: number;
+  fadeOut: number;
+  /** Repeat the sourceIn..sourceOut part until the video ends. */
+  loop: boolean;
+}
+
+/** A row of the timeline that plays sound alongside the recording. Only
+ *  'audio' exists today; video and overlay tracks join this union later. */
+export interface AudioTrack {
+  id: string;
+  kind: 'audio';
+  name: string;
+  muted: boolean;
+  /** Linear volume for the whole track, 0..1 (multiplies each item's gain). */
+  volume: number;
+  /** Lower the recording's own sound while this track's items play. */
+  duck: boolean;
+  items: AudioItem[];
+}
+
+export type Track = AudioTrack;
+
 export interface Project {
   /** What the user named it (double-click the title); else the folder's name. */
   name?: string;
@@ -221,6 +265,8 @@ export interface Project {
   /** Tap analysis has run once, so opening the project doesn't rerun it. */
   tapsAnalyzed: boolean;
   layout: LayoutSettings;
+  /** Extra tracks under the recording (music, voiceover). Empty for most projects. */
+  tracks: Track[];
 }
 
 export const defaultStyle = (): StyleSettings => ({
@@ -279,6 +325,7 @@ export const defaultProject = (recording: RecordingRef): Project => ({
   waits: [],
   tapsAnalyzed: false,
   layout: defaultLayout(recording),
+  tracks: [],
 });
 
 /**
@@ -326,5 +373,44 @@ export function normalizeProject(raw: Project): Project {
   p.waits ??= [];
   p.tapsAnalyzed ??= false;
   p.layout = { ...defaultLayout(p.recording), ...p.layout };
+  p.tracks = normalizeTracks(p.tracks);
   return p;
+}
+
+const finite = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+const unit = (v: unknown, fallback: number) => Math.min(1, Math.max(0, finite(v, fallback)));
+
+/** Tracks as saved, with every field present and in range. Older bundles have none. */
+export function normalizeTracks(raw: unknown): Track[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((t): t is Partial<AudioTrack> => !!t && typeof t === 'object' && (t.kind ?? 'audio') === 'audio')
+    .map((t, ti) => ({
+      id: typeof t.id === 'string' ? t.id : `track-${ti + 1}`,
+      kind: 'audio' as const,
+      name: typeof t.name === 'string' && t.name.trim() ? t.name : 'Music',
+      muted: t.muted === true,
+      volume: unit(t.volume, 1),
+      duck: t.duck === true,
+      items: (Array.isArray(t.items) ? t.items : [])
+        .filter((i): i is AudioItem => !!i && typeof i === 'object' && typeof i.file === 'string')
+        .map((i, ii) => {
+          const fileDuration = Math.max(0, finite(i.fileDuration, finite(i.sourceOut, 0)));
+          const sourceIn = Math.max(0, finite(i.sourceIn, 0));
+          const sourceOut = Math.max(sourceIn, finite(i.sourceOut, fileDuration));
+          return {
+            id: typeof i.id === 'string' ? i.id : `item-${ti + 1}-${ii + 1}`,
+            file: i.file,
+            name: typeof i.name === 'string' ? i.name : i.file.split('/').pop() ?? i.file,
+            fileDuration,
+            start: Math.max(0, finite(i.start, 0)),
+            sourceIn,
+            sourceOut,
+            gain: unit(i.gain, 1),
+            fadeIn: Math.max(0, finite(i.fadeIn, 0)),
+            fadeOut: Math.max(0, finite(i.fadeOut, 0)),
+            loop: i.loop === true,
+          };
+        }),
+    }));
 }

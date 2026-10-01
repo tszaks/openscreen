@@ -202,7 +202,7 @@
 
 .ed-timeline.has-taps .tl-labels,
 .ed-timeline.has-taps .tl-lanes {
-  grid-template-rows: 22px 56px 22px 26px 38px;
+  grid-template-rows: 22px 56px 22px 26px 38px 34px;
 }
 .lane-taps {
   overflow: hidden;

@@ -59,8 +59,10 @@ const api = {
   analyzeTaps: (dir: string, videoFile: string) => ipcRenderer.invoke('taps:analyze', { dir, videoFile }),
   audioPeaks: (dir: string, videoFile: string, buckets?: number) =>
     ipcRenderer.invoke('audio:peaks', { dir, videoFile, buckets }),
-  exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: unknown, clicks?: number[], voiceCleanup?: boolean, duration?: number, master?: boolean) =>
-    ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn, audioClips, clicks, voiceCleanup, duration, master }),
+  importAudio: (dir: string) => ipcRenderer.invoke('audio:import', dir),
+  audioFilePeaks: (dir: string, file: string, buckets?: number) => ipcRenderer.invoke('audio:filePeaks', { dir, file, buckets }),
+  exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: unknown, clicks?: number[], voiceCleanup?: boolean, duration?: number, master?: boolean, music?: unknown, duck?: unknown) =>
+    ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn, audioClips, clicks, voiceCleanup, duration, master, music, duck }),
   exportFrame: (bytes: ArrayBuffer) => ipcRenderer.invoke('export:frame', bytes),
   exportEnd: () => ipcRenderer.invoke('export:end'),
   exportAbort: () => ipcRenderer.invoke('export:abort'),
