@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- OpenScreen shutter concept B: orange iris blades around a dark lens. -->
+  <defs>
+    <path id="sq" d="M924.0 512.0 L924.0 605.5 L923.8 635.4 L923.6 657.1 L923.2 674.7 L922.8 689.8 L922.2 703.2 L921.6 715.3 L920.8 726.3 L920.0 736.5 L919.0 746.0 L918.0 754.8 L916.8 763.2 L915.6 771.1 L914.2 778.6 L912.7 785.8 L911.2 792.6 L909.5 799.1 L907.7 805.3 L905.8 811.2 L903.8 817.0 L901.7 822.5 L899.5 827.7 L897.1 832.8 L894.7 837.7 L892.1 842.4 L889.4 846.9 L886.6 851.2 L883.7 855.4 L880.6 859.5 L877.4 863.3 L874.1 867.1 L870.7 870.7 L867.1 874.1 L863.3 877.4 L859.5 880.6 L855.4 883.7 L851.2 886.6 L846.9 889.4 L842.4 892.1 L837.7 894.7 L832.8 897.1 L827.7 899.5 L822.5 901.7 L817.0 903.8 L811.2 905.8 L805.3 907.7 L799.1 909.5 L792.6 911.2 L785.8 912.7 L778.6 914.2 L771.1 915.6 L763.2 916.8 L754.8 918.0 L746.0 919.0 L736.5 920.0 L726.3 920.8 L715.3 921.6 L703.2 922.2 L689.8 922.8 L674.7 923.2 L657.1 923.6 L635.4 923.8 L605.5 924.0 L512.0 924.0 L418.5 924.0 L388.6 923.8 L366.9 923.6 L349.3 923.2 L334.2 922.8 L320.8 922.2 L308.7 921.6 L297.7 920.8 L287.5 920.0 L278.0 919.0 L269.2 918.0 L260.8 916.8 L252.9 915.6 L245.4 914.2 L238.2 912.7 L231.4 911.2 L224.9 909.5 L218.7 907.7 L212.8 905.8 L207.0 903.8 L201.5 901.7 L196.3 899.5 L191.2 897.1 L186.3 894.7 L181.6 892.1 L177.1 889.4 L172.8 886.6 L168.6 883.7 L164.5 880.6 L160.7 877.4 L156.9 874.1 L153.3 870.7 L149.9 867.1 L146.6 863.3 L143.4 859.5 L140.3 855.4 L137.4 851.2 L134.6 846.9 L131.9 842.4 L129.3 837.7 L126.9 832.8 L124.5 827.7 L122.3 822.5 L120.2 817.0 L118.2 811.2 L116.3 805.3 L114.5 799.1 L112.8 792.6 L111.3 785.8 L109.8 778.6 L108.4 771.1 L107.2 763.2 L106.0 754.8 L105.0 746.0 L104.0 736.5 L103.2 726.3 L102.4 715.3 L101.8 703.2 L101.2 689.8 L100.8 674.7 L100.4 657.1 L100.2 635.4 L100.0 605.5 L100.0 512.0 L100.0 418.5 L100.2 388.6 L100.4 366.9 L100.8 349.3 L101.2 334.2 L101.8 320.8 L102.4 308.7 L103.2 297.7 L104.0 287.5 L105.0 278.0 L106.0 269.2 L107.2 260.8 L108.4 252.9 L109.8 245.4 L111.3 238.2 L112.8 231.4 L114.5 224.9 L116.3 218.7 L118.2 212.8 L120.2 207.0 L122.3 201.5 L124.5 196.3 L126.9 191.2 L129.3 186.3 L131.9 181.6 L134.6 177.1 L137.4 172.8 L140.3 168.6 L143.4 164.5 L146.6 160.7 L149.9 156.9 L153.3 153.3 L156.9 149.9 L160.7 146.6 L164.5 143.4 L168.6 140.3 L172.8 137.4 L177.1 134.6 L181.6 131.9 L186.3 129.3 L191.2 126.9 L196.3 124.5 L201.5 122.3 L207.0 120.2 L212.8 118.2 L218.7 116.3 L224.9 114.5 L231.4 112.8 L238.2 111.3 L245.4 109.8 L252.9 108.4 L260.8 107.2 L269.2 106.0 L278.0 105.0 L287.5 104.0 L297.7 103.2 L308.7 102.4 L320.8 101.8 L334.2 101.2 L349.3 100.8 L366.9 100.4 L388.6 100.2 L418.5 100.0 L512.0 100.0 L605.5 100.0 L635.4 100.2 L657.1 100.4 L674.7 100.8 L689.8 101.2 L703.2 101.8 L715.3 102.4 L726.3 103.2 L736.5 104.0 L746.0 105.0 L754.8 106.0 L763.2 107.2 L771.1 108.4 L778.6 109.8 L785.8 111.3 L792.6 112.8 L799.1 114.5 L805.3 116.3 L811.2 118.2 L817.0 120.2 L822.5 122.3 L827.7 124.5 L832.8 126.9 L837.7 129.3 L842.4 131.9 L846.9 134.6 L851.2 137.4 L855.4 140.3 L859.5 143.4 L863.3 146.6 L867.1 149.9 L870.7 153.3 L874.1 156.9 L877.4 160.7 L880.6 164.5 L883.7 168.6 L886.6 172.8 L889.4 177.1 L892.1 181.6 L894.7 186.3 L897.1 191.2 L899.5 196.3 L901.7 201.5 L903.8 207.0 L905.8 212.8 L907.7 218.7 L909.5 224.9 L911.2 231.4 L912.7 238.2 L914.2 245.4 L915.6 252.9 L916.8 260.8 L918.0 269.2 L919.0 278.0 L920.0 287.5 L920.8 297.7 L921.6 308.7 L922.2 320.8 L922.8 334.2 L923.2 349.3 L923.6 366.9 L923.8 388.6 L924.0 418.5Z"/>
+    <clipPath id="clip"><use href="#sq"/></clipPath>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000" flood-opacity="0.28"/>
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity="0.30"/>
+    </filter>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2E2E34"/><stop offset="0.55" stop-color="#18181B"/><stop offset="1" stop-color="#0E0E10"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.5" cy="0" r="0.8">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.09"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.40"/><stop offset="0.12" stop-color="#fff" stop-opacity="0.05"/>
+      <stop offset="0.85" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity="0.08"/>
+    </linearGradient>
+    <filter id="blur6" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="6"/></filter>
+    <filter id="blur14" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="14"/></filter>
+    <filter id="blur30" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="30"/></filter>
+    <linearGradient id="barrel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4A4A52"/><stop offset="0.5" stop-color="#2A2A2F"/><stop offset="1" stop-color="#151518"/>
+    </linearGradient>
+    <linearGradient id="barrelLip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.55"/><stop offset="0.45" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0.16"/>
+    </linearGradient>
+    <mask id="barrelHole"><rect width="1024" height="1024" fill="#fff"/><circle cx="512" cy="512" r="306" fill="#000"/></mask>
+    <clipPath id="bb0"><path d="M200.9 488.37 A560 560 0 0 1 456.5 396.76 A560 560 0 0 1 567.5 396.76 A560 560 0 0 0 336.51 254.03 A312 312 0 0 0 200.9 488.37Z"/></clipPath>
+    <clipPath id="bb1"><path d="M336.51 254.03 A560 560 0 0 1 567.5 396.76 A560 560 0 0 1 636.7 483.54 A560 560 0 0 0 604.27 213.96 A312 312 0 0 0 336.51 254.03Z"/></clipPath>
+    <clipPath id="bb2"><path d="M604.27 213.96 A560 560 0 0 1 636.7 483.54 A560 560 0 0 1 612 591.75 A560 560 0 0 0 802.55 398.31 A312 312 0 0 0 604.27 213.96Z"/></clipPath>
+    <clipPath id="bb3"><path d="M802.55 398.31 A560 560 0 0 1 612 591.75 A560 560 0 0 1 512 639.91 A560 560 0 0 0 782.04 668.28 A312 312 0 0 0 802.55 398.31Z"/></clipPath>
+    <clipPath id="bb4"><path d="M782.04 668.28 A560 560 0 0 1 512 639.91 A560 560 0 0 1 412 591.75 A560 560 0 0 0 558.19 820.56 A312 312 0 0 0 782.04 668.28Z"/></clipPath>
+    <clipPath id="bb5"><path d="M558.19 820.56 A560 560 0 0 1 412 591.75 A560 560 0 0 1 387.3 483.54 A560 560 0 0 0 299.55 740.5 A312 312 0 0 0 558.19 820.56Z"/></clipPath>
+    <clipPath id="bb6"><path d="M299.55 740.5 A560 560 0 0 1 387.3 483.54 A560 560 0 0 1 456.5 396.76 A560 560 0 0 0 200.9 488.37 A312 312 0 0 0 299.55 740.5Z"/></clipPath>
+    <linearGradient id="bg0" gradientUnits="userSpaceOnUse" x1="384.2" y1="442.56" x2="336.51" y2="254.03"><stop offset="0" stop-color="#FFBA84"/><stop offset="1" stop-color="#E46521"/></linearGradient>
+    <linearGradient id="bg1" gradientUnits="userSpaceOnUse" x1="486.61" y1="368.79" x2="604.27" y2="213.96"><stop offset="0" stop-color="#FFC594"/><stop offset="1" stop-color="#EC6C24"/></linearGradient>
+    <linearGradient id="bg2" gradientUnits="userSpaceOnUse" x1="608.14" y1="402.85" x2="802.55" y2="398.31"><stop offset="0" stop-color="#FFBF8C"/><stop offset="1" stop-color="#E86822"/></linearGradient>
+    <linearGradient id="bg3" gradientUnits="userSpaceOnUse" x1="657.27" y1="519.11" x2="782.04" y2="668.28"><stop offset="0" stop-color="#FFAE72"/><stop offset="1" stop-color="#DB5C1C"/></linearGradient>
+    <linearGradient id="bg4" gradientUnits="userSpaceOnUse" x1="597.02" y1="630.01" x2="558.19" y2="820.56"><stop offset="0" stop-color="#FF9E5A"/><stop offset="1" stop-color="#CF5117"/></linearGradient>
+    <linearGradient id="bg5" gradientUnits="userSpaceOnUse" x1="472.74" y1="652.05" x2="299.55" y2="740.5"><stop offset="0" stop-color="#FF9B56"/><stop offset="1" stop-color="#CD4F16"/></linearGradient>
+    <linearGradient id="bg6" gradientUnits="userSpaceOnUse" x1="378.03" y1="568.63" x2="200.9" y2="488.37"><stop offset="0" stop-color="#FFA869"/><stop offset="1" stop-color="#D6581A"/></linearGradient>
+    <radialGradient id="bvig" cx="0.5" cy="0.5" r="0.5"><stop offset="0.55" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.35"/></radialGradient>
+    <radialGradient id="openFill" cx="0.5" cy="0.42" r="0.6"><stop offset="0" stop-color="#2E2B2C"/><stop offset="1" stop-color="#0A0A0C"/></radialGradient>
+    <clipPath id="openClip"><path d="M567.5 396.76 A560 560 0 0 1 636.7 483.54 A560 560 0 0 1 612 591.75 A560 560 0 0 1 512 639.91 A560 560 0 0 1 412 591.75 A560 560 0 0 1 387.3 483.54 A560 560 0 0 1 456.5 396.76 A560 560 0 0 1 567.5 396.76 Z"/></clipPath>
+    <clipPath id="lensClip"><path d="M567.5 396.76 A560 560 0 0 1 636.7 483.54 A560 560 0 0 1 612 591.75 A560 560 0 0 1 512 639.91 A560 560 0 0 1 412 591.75 A560 560 0 0 1 387.3 483.54 A560 560 0 0 1 456.5 396.76 A560 560 0 0 1 567.5 396.76 Z"/></clipPath>
+    <radialGradient id="lensSheen" cx="0.3" cy="0.22" r="0.55"><stop offset="0" stop-color="#fff" stop-opacity="0.26"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+  </defs>
+  <use href="#sq" fill="url(#tile)" filter="url(#shadow)"/>
+  <use href="#sq" fill="url(#sheen)"/>
+  <g clip-path="url(#clip)">
+    <circle cx="512" cy="528" r="342" fill="#000" opacity="0.45" filter="url(#blur14)"/>
+    <path d="M200.9 488.37 A560 560 0 0 1 456.5 396.76 A560 560 0 0 1 567.5 396.76 A560 560 0 0 0 336.51 254.03 A312 312 0 0 0 200.9 488.37Z" fill="url(#bg0)"/>
+    <g clip-path="url(#bb0)"><path d="M336.51 254.03 A560 560 0 0 1 567.5 396.76 A560 560 0 0 1 636.7 483.54 A560 560 0 0 0 604.27 213.96 A312 312 0 0 0 336.51 254.03Z" transform="translate(0 7)" fill="#000" opacity="0.45" filter="url(#blur14)"/></g>
+    <path d="M336.51 254.03 A560 560 0 0 1 567.5 396.76 A560 560 0 0 1 636.7 483.54 A560 560 0 0 0 604.27 213.96 A312 312 0 0 0 336.51 254.03Z" fill="url(#bg1)"/>
+    <g clip-path="url(#bb1)"><path d="M604.27 213.96 A560 560 0 0 1 636.7 483.54 A560 560 0 0 1 612 591.75 A560 560 0 0 0 802.55 398.31 A312 312 0 0 0 604.27 213.96Z" transform="translate(0 7)" fill="#000" opacity="0.45" filter="url(#blur14)"/></g>
+    <path d="M604.27 213.96 A560 560 0 0 1 636.7 483.54 A560 560 0 0 1 612 591.75 A560 560 0 0 0 802.55 398.31 A312 312 0 0 0 604.27 213.96Z" fill="url(#bg2)"/>
+    <g clip-path="url(#bb2)"><path d="M802.55 398.31 A560 560 0 0 1 612 591.75 A560 560 0 0 1 512 639.91 A560 560 0 0 0 782.04 668.28 A312 312 0 0 0 802.55 398.31Z" transform="translate(0 7)" fill="#000" opacity="0.45" filter="url(#blur14)"/></g>
+    <path d="M802.55 398.31 A560 560 0 0 1 612 591.75 A560 560 0 0 1 512 639.91 A560 560 0 0 0 782.04 668.28 A312 312 0 0 0 802.55 398.31Z" fill="url(#bg3)"/>
+    <g clip-path="url(#bb3)"><path d="M782.04 668.28 A560 560 0 0 1 512 639.91 A560 560 0 0 1 412 591.75 A560 560 0 0 0 558.19 820.56 A312 312 0 0 0 782.04 668.28Z" transform="translate(0 7)" fill="#000" opacity="0.45" filter="url(#blur14)"/></g>
+    <path d="M782.04 668.28 A560 560 0 0 1 512 639.91 A560 560 0 0 1 412 591.75 A560 560 0 0 0 558.19 820.56 A312 312 0 0 0 782.04 668.28Z" fill="url(#bg4)"/>
+    <g clip-path="url(#bb4)"><path d="M558.19 820.56 A560 560 0 0 1 412 591.75 A560 560 0 0 1 387.3 483.54 A560 560 0 0 0 299.55 740.5 A312 312 0 0 0 558.19 820.56Z" transform="translate(0 7)" fill="#000" opacity="0.45" filter="url(#blur14)"/></g>
+    <path d="M558.19 820.56 A560 560 0 0 1 412 591.75 A560 560 0 0 1 387.3 483.54 A560 560 0 0 0 299.55 740.5 A312 312 0 0 0 558.19 820.56Z" fill="url(#bg5)"/>
+    <g clip-path="url(#bb5)"><path d="M299.55 740.5 A560 560 0 0 1 387.3 483.54 A560 560 0 0 1 456.5 396.76 A560 560 0 0 0 200.9 488.37 A312 312 0 0 0 299.55 740.5Z" transform="translate(0 7)" fill="#000" opacity="0.45" filter="url(#blur14)"/></g>
+    <path d="M299.55 740.5 A560 560 0 0 1 387.3 483.54 A560 560 0 0 1 456.5 396.76 A560 560 0 0 0 200.9 488.37 A312 312 0 0 0 299.55 740.5Z" fill="url(#bg6)"/>
+    <g clip-path="url(#bb6)"><path d="M200.9 488.37 A560 560 0 0 1 456.5 396.76 A560 560 0 0 1 567.5 396.76 A560 560 0 0 0 336.51 254.03 A312 312 0 0 0 200.9 488.37Z" transform="translate(0 7)" fill="#000" opacity="0.45" filter="url(#blur14)"/></g>
+    <path d="M200.9 488.37 A560 560 0 0 1 456.5 396.76 A560 560 0 0 1 567.5 396.76" fill="none" stroke="#fff" stroke-opacity="0.59" stroke-width="2.5" stroke-linecap="round" clip-path="url(#bb0)"/>
+    <path d="M336.51 254.03 A560 560 0 0 1 567.5 396.76 A560 560 0 0 1 636.7 483.54" fill="none" stroke="#fff" stroke-opacity="0.7" stroke-width="2.5" stroke-linecap="round" clip-path="url(#bb1)"/>
+    <path d="M604.27 213.96 A560 560 0 0 1 636.7 483.54 A560 560 0 0 1 612 591.75" fill="none" stroke="#fff" stroke-opacity="0.64" stroke-width="2.5" stroke-linecap="round" clip-path="url(#bb2)"/>
+    <path d="M802.55 398.31 A560 560 0 0 1 612 591.75 A560 560 0 0 1 512 639.91" fill="none" stroke="#fff" stroke-opacity="0.46" stroke-width="2.5" stroke-linecap="round" clip-path="url(#bb3)"/>
+    <path d="M782.04 668.28 A560 560 0 0 1 512 639.91 A560 560 0 0 1 412 591.75" fill="none" stroke="#fff" stroke-opacity="0.28" stroke-width="2.5" stroke-linecap="round" clip-path="url(#bb4)"/>
+    <path d="M558.19 820.56 A560 560 0 0 1 412 591.75 A560 560 0 0 1 387.3 483.54" fill="none" stroke="#fff" stroke-opacity="0.26" stroke-width="2.5" stroke-linecap="round" clip-path="url(#bb5)"/>
+    <path d="M299.55 740.5 A560 560 0 0 1 387.3 483.54 A560 560 0 0 1 456.5 396.76" fill="none" stroke="#fff" stroke-opacity="0.39" stroke-width="2.5" stroke-linecap="round" clip-path="url(#bb6)"/>
+    <circle cx="512" cy="512" r="312" fill="url(#bvig)"/>
+    <path d="M567.5 396.76 A560 560 0 0 1 636.7 483.54 A560 560 0 0 1 612 591.75 A560 560 0 0 1 512 639.91 A560 560 0 0 1 412 591.75 A560 560 0 0 1 387.3 483.54 A560 560 0 0 1 456.5 396.76 A560 560 0 0 1 567.5 396.76 Z" fill="url(#openFill)"/>
+    <g clip-path="url(#openClip)"><path d="M567.5 396.76 A560 560 0 0 1 636.7 483.54 A560 560 0 0 1 612 591.75 A560 560 0 0 1 512 639.91 A560 560 0 0 1 412 591.75 A560 560 0 0 1 387.3 483.54 A560 560 0 0 1 456.5 396.76 A560 560 0 0 1 567.5 396.76 Z" fill="none" stroke="#000" stroke-opacity="0.75" stroke-width="40" transform="translate(0 10)" filter="url(#blur14)"/></g>
+    <g clip-path="url(#lensClip)">
+      <circle cx="512" cy="512" r="82" fill="none" stroke="#FF8A3D" stroke-opacity="0.16" stroke-width="8" filter="url(#blur6)"/>
+      <circle cx="512" cy="512" r="130" fill="url(#lensSheen)"/>
+    </g>
+    <circle cx="512" cy="512" r="336" fill="url(#barrel)" mask="url(#barrelHole)"/>
+    <circle cx="512" cy="512" r="334.5" fill="none" stroke="url(#barrelLip)" stroke-width="3"/>
+    <circle cx="512" cy="512" r="307" fill="none" stroke="#000" stroke-opacity="0.55" stroke-width="3"/>
+  </g>
+  <use href="#sq" fill="none" stroke="url(#rim)" stroke-width="3" clip-path="url(#clip)"/>
+</svg>
