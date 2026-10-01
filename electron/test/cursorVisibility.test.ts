@@ -12,10 +12,12 @@ describe('cursor show / opacity', () => {
     expect(p.style.cursorOpacity).toBe(0.85);
   });
   it('fills both in for projects saved before they existed', () => {
-    const old = screen() as Project & { style: Record<string, unknown> };
-    delete old.style.cursorShow;
-    delete old.style.cursorOpacity;
-    const p = normalizeProject(old);
+    // A project saved before these fields existed.
+    const old = screen();
+    const style: Record<string, unknown> = { ...old.style };
+    delete style.cursorShow;
+    delete style.cursorOpacity;
+    const p = normalizeProject({ ...old, style } as unknown as Project);
     expect(p.style.cursorShow).toBe(true);
     expect(p.style.cursorOpacity).toBe(0.85);
   });
