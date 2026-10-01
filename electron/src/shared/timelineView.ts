@@ -63,9 +63,12 @@ export function fmtTick(t: number, step: number) {
   return `${m}:${(t - m * 60).toFixed(d).padStart(d + 3, '0')}`;
 }
 
-/** Base heights of the lanes under the ruler: clips, zoom, (taps), audio. */
+/** Base height of an added audio track's lane (music, voiceover). */
+export const MUSIC_LANE = 34;
+
+/** Base heights of the lanes under the ruler: clips, zoom, (taps), audio, music. */
 export function laneHeights(phone: boolean): number[] {
-  return phone ? [56, 22, 26, 38] : [56, 22, 38];
+  return phone ? [56, 22, 26, 38, MUSIC_LANE] : [56, 22, 38, MUSIC_LANE];
 }
 
 /** The timeline's height with no override: padding, ruler and lanes with
