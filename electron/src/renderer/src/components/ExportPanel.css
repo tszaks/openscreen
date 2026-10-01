@@ -120,13 +120,13 @@
 
 .xp-overlay {
   position: fixed;
-  inset: var(--topbar-h) 0 0 0;
+  inset: 0;
   z-index: 30;
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: var(--s2) var(--s6) var(--s6);
-  background: var(--scrim);
+  padding: calc(var(--toolbar-h) + var(--s2)) var(--s6) var(--s6);
+  background: var(--scrim-under-toolbar);
   animation: fade-in var(--t2) var(--ease) both;
 }
 
