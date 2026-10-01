@@ -33,7 +33,7 @@ function useFakeCapture(): MediaStream | null {
     g.fillStyle = '#f0eef2';
     g.fillRect(120, 90, 220, 820);
     g.fillStyle = '#1d1d1f';
-    g.font = '600 26px -apple-system';
+    g.font = '600 26px system-ui';
     g.fillText('Spring launch', 380, 150);
     for (let col = 0; col < 4; col++) {
       g.fillStyle = '#f5f5f7';
