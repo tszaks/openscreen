@@ -17,6 +17,8 @@ export interface OpenedBundle {
   camPath?: string;
   videoUrl: string;
   camUrl?: string;
+  /** The phone video of a Mac + iPhone take. */
+  phoneUrl?: string;
 }
 
 export interface SourceInfo {
@@ -34,6 +36,7 @@ export interface SavedBundle {
   project: Project;
   videoUrl: string;
   camUrl?: string;
+  phoneUrl?: string;
 }
 
 declare global {
@@ -55,7 +58,9 @@ declare global {
       startRecording(sourceId: string, displayId?: string): Promise<{ startedAtMs: number; hooks: boolean }>;
       /** Stops tracking; samples are shifted so t=0 is `videoStartedAtMs`. */
       stopRecording(videoStartedAtMs?: number): Promise<{ samples: CursorSample[]; keys: KeystrokeSample[] }>;
-      saveBundle(videoBytes: ArrayBuffer, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer, keys?: KeystrokeSample[]): Promise<SavedBundle>;
+      /** `phoneDir`: the bundle the iPhone helper recorded into during a Mac + iPhone take;
+       *  its screen.mov moves into the new bundle as phone.mov (when project.recording.phoneVideoFile is set). */
+      saveBundle(videoBytes: ArrayBuffer, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer, keys?: KeystrokeSample[], phoneDir?: string): Promise<SavedBundle>;
       saveBundleWithVideoFile(dir: string, cursor: CursorSample[], project: Project, camBytes?: ArrayBuffer, keys?: KeystrokeSample[]): Promise<SavedBundle>;
       /** Wired iPhone/iPad screens. `ready` is false until the helper's first scan. */
       /** `warning` is set mid-take (e.g. "stalled" when the phone may be locked). */
@@ -97,7 +102,7 @@ declare global {
       importAudio(dir: string): Promise<{ id: string; file: string; name: string; duration: number } | null>;
       /** Waveform of a sound file inside the bundle (whole file). */
       audioFilePeaks(dir: string, file: string, buckets?: number): Promise<number[]>;
-      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number, master?: boolean, music?: MusicInput[], duck?: { start: number; end: number }[]): Promise<boolean>;
+      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number, master?: boolean, music?: MusicInput[], duck?: { start: number; end: number }[], phone?: { path: string; offset: number }): Promise<boolean>;
       /** Rejects with ffmpeg's reason once ffmpeg has stopped. */
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       /** Finishes the file; rejects (and deletes it) when the encode failed. */
