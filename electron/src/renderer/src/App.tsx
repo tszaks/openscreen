@@ -11,6 +11,7 @@ import {
   type EndReason,
 } from '../../shared/recording';
 import { decodeIosError } from '../../shared/iosErrors';
+import { dualOutcome, phoneOffsetSeconds, phoneRecordingFields, phoneUsable, type MacSide, type PhoneSide } from '../../shared/phoneLayer';
 import { Editor } from './Editor';
 import { Button, EmptyState } from './ui';
 import { IosSetupCard } from './components/IosSetupCard';
@@ -25,7 +26,7 @@ type Phase =
   | { name: 'picker' }
   | { name: 'recording'; startedAt: number }
   // `session` is new on every entry, so reopening remounts a fresh editor.
-  | { name: 'editor'; session: number; bundleDir: string; videoUrl: string; camUrl?: string; project: Project; cursor: CursorSample[]; keys: KeystrokeSample[] };
+  | { name: 'editor'; session: number; bundleDir: string; videoUrl: string; camUrl?: string; phoneUrl?: string; project: Project; cursor: CursorSample[]; keys: KeystrokeSample[] };
 
 type EditorPhase = Extract<Phase, { name: 'editor' }>;
 
@@ -89,6 +90,10 @@ export function App() {
   const [camOn, setCamOn] = useState(false);
   // Camera for the overlay (null = the first one).
   const [camId, setCamId] = useState<string | null>(null);
+  // Also record a wired iPhone/iPad screen with a display or window take
+  // (null = the first one connected).
+  const [phoneOn, setPhoneOn] = useState(false);
+  const [phoneId, setPhoneId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   // Stop was pressed (or the source went away) and the take is being written.
   const [saving, setSaving] = useState(false);
@@ -129,6 +134,13 @@ export function App() {
   const stoppingRef = useRef(false);
   // The in-flight iPhone take: its bundle and the size from the first frame.
   const iosTakeRef = useRef<{ bundleDir: string; width: number; height: number; startedAtMs: number } | null>(null);
+  // The phone side of a Mac + iPhone take: its bundle, first-frame size and
+  // time, and whether it stopped by itself. `phoneStartError` is set instead
+  // when it never started (the Mac take carries on alone).
+  const phoneTakeRef = useRef<{ bundleDir: string; width: number; height: number; startedAtMs: number; endedEarly: boolean; name: string } | null>(null);
+  const phoneStartError = useRef<string | null>(null);
+  // The phone of a running Mac + iPhone take, for the recording card.
+  const [dualPhone, setDualPhone] = useState<IosDevice | null>(null);
   const sessionRef = useRef(0);
   const openEditor = useCallback(
     (p: Omit<EditorPhase, 'name' | 'session'>) =>
@@ -215,6 +227,9 @@ export function App() {
     };
   }, [phase.name]);
 
+  // The phone a display or window take also records: the one picked, else the first.
+  const alsoPhone = phoneOn ? ios.devices.find((d) => d.id === phoneId) ?? ios.devices[0] : undefined;
+
   // UI only: the picker tab shown. The iPhone tab leads when one is plugged in.
   const tab: PickerTab = pickerTab ?? (ios.devices.length ? 'devices' : 'displays');
 
@@ -223,7 +238,7 @@ export function App() {
   // recording card. Leaving the tab, deselecting or opening the editor stops it.
   useEffect(() => api.onIosPreviewState(setIosPreview), []);
   const previewId =
-    (phase.name === 'picker' && tab === 'devices') || phase.name === 'recording' ? selectedIos?.id : undefined;
+    (phase.name === 'picker' && tab === 'devices') || phase.name === 'recording' ? selectedIos?.id ?? (phase.name === 'recording' ? dualPhone?.id : undefined) : undefined;
   useEffect(() => {
     if (!previewId) return;
     let live = true;
@@ -440,6 +455,25 @@ export function App() {
       const settings = videoTrack?.getSettings();
       sourceSizeRef.current = settings?.width && settings?.height ? { width: settings.width, height: settings.height } : null;
 
+      // Mac + iPhone: the phone first (it resolves on its first frame, which
+      // can take a few seconds), then the Mac recorders. A phone that won't
+      // start never blocks the Mac take: it records alone and says so after.
+      phoneTakeRef.current = null;
+      phoneStartError.current = null;
+      setDualPhone(null);
+      const phone = selected && !selectedDevice ? alsoPhone : undefined;
+      if (phone) {
+        setStatus(`Starting ${phone.name}…`);
+        try {
+          const take = await api.iosStart(phone.id);
+          phoneTakeRef.current = { ...take, startedAtMs: take.startedAtMs ?? Date.now(), endedEarly: false, name: phone.name };
+          setDualPhone(phone);
+        } catch (e) {
+          phoneStartError.current = decodeIosError(ipcMessage(e)).message;
+        }
+        setStatus('');
+      }
+
       // Tracker first, then both recorders in the same tick, so cursor,
       // camera and video share a start. Each start time is recorded.
       const tracker = await api.startRecording(selectedDevice?.deviceId ?? selected!.id, selected?.displayId);
@@ -474,9 +508,18 @@ export function App() {
       streamRef.current = null;
       latchRef.current = null;
       if (tracking) await api.stopRecording().catch(() => {});
+      // A phone started for this take goes too, with its bundle.
+      const phoneTake = phoneTakeRef.current;
+      phoneTakeRef.current = null;
+      phoneStartError.current = null;
+      setDualPhone(null);
+      if (phoneTake) {
+        await api.iosStop().catch(() => {});
+        await api.discardBundle(phoneTake.bundleDir).catch(() => {});
+      }
       setStatus(captureErrorMessage(e, selectedDevice ? cameraLabel(selectedDevice, 0) : selected?.name));
     }
-  }, [selected, selectedDevice, selectedIos, micOn, openCamera, openSetup]);
+  }, [selected, selectedDevice, selectedIos, micOn, openCamera, openSetup, alsoPhone]);
 
   useEffect(() => {
     if (countdown === null) return;
@@ -526,6 +569,28 @@ export function App() {
     [stopCamOverlay, openEditor],
   );
 
+  /** The screen side of a Mac + iPhone take was lost: open the phone's own
+   *  bundle as an iPhone take instead, so nothing recorded is thrown away. */
+  const openPhoneOnly = useCallback(
+    async (dir: string, phone: Extract<PhoneSide, { state: 'ok' }>, notice: string | null) => {
+      const project = defaultProject({
+        screenVideoFile: 'screen.mov',
+        sourceKind: 'iosDevice',
+        sourceSize: { width: phone.width, height: phone.height },
+        duration: phone.duration,
+      });
+      try {
+        const saved = await api.saveBundleWithVideoFile(dir, [], project, undefined, []);
+        openEditor({ bundleDir: saved.dir, videoUrl: saved.videoUrl, project: saved.project, cursor: [], keys: [] });
+        if (notice) setNotice(notice);
+      } catch (e) {
+        setStatus(`Couldn't save the recording. The iPhone video is in ${dir}: ${ipcMessage(e)}`);
+        setPhase({ name: 'picker' });
+      }
+    },
+    [openEditor],
+  );
+
   const stopScreen = useCallback(
     async (reason?: EndReason) => {
       const rec = recorderRef.current;
@@ -535,11 +600,32 @@ export function App() {
       // Read the size before the tracks stop (an ended track reports none).
       const live = stream.getVideoTracks()[0]?.getSettings();
       const stoppedAtMs = Date.now();
+      // The phone of a Mac + iPhone take stops alongside; whatever happens to
+      // it, the Mac take is saved.
+      const phoneTake = phoneTakeRef.current;
+      const startError = phoneStartError.current;
+      phoneTakeRef.current = null;
+      phoneStartError.current = null;
+      const phoneStopped: Promise<PhoneSide> = phoneTake
+        ? api.iosStop().then(
+            (done) => ({
+              state: 'ok' as const,
+              duration: done.duration ?? 0,
+              width: done.width ?? phoneTake.width,
+              height: done.height ?? phoneTake.height,
+              partial: done.partial,
+              endedEarly: phoneTake.endedEarly,
+            }),
+            (e) => ({ state: 'failed' as const, error: ipcMessage(e) }),
+          )
+        : Promise.resolve(startError ? { state: 'startFailed' as const, error: startError } : { state: 'off' as const });
+      let phoneSide: PhoneSide = { state: 'off' };
       try {
         await latch.stop();
         stopTracks(stream);
         const starts = startsRef.current;
         const { samples: cursor, keys } = await api.stopRecording(starts.video);
+        phoneSide = await phoneStopped;
         const camBlob = await stopCamOverlay();
         const blob = new Blob(chunksRef.current, { type: rec.mimeType });
         const videoBytes = await blob.arrayBuffer();
@@ -555,24 +641,38 @@ export function App() {
           duration: Math.max(0.1, (stoppedAtMs - starts.video) / 1000),
           cursorOffset: starts.tracker ? (starts.video - starts.tracker) / 1000 : undefined,
           cameraOffset: camBytes && starts.cam ? (starts.cam - starts.video) / 1000 : undefined,
+          ...(phoneTake ? phoneRecordingFields(phoneSide, phoneOffsetSeconds(starts.video, phoneTake.startedAtMs)) : {}),
         });
         if (camBytes) project.cameraOverlay.enabled = true;
-        const saved = await api.saveBundle(videoBytes, cursor, project, camBytes, keys);
+        const saved = await api.saveBundle(videoBytes, cursor, project, camBytes, keys, phoneUsable(phoneSide) ? phoneTake?.bundleDir : undefined);
         chunksRef.current = [];
         camChunksRef.current = [];
-        openEditor({ bundleDir: saved.dir, videoUrl: saved.videoUrl, camUrl: saved.camUrl, project: saved.project, cursor, keys });
-        if (reason) setNotice(endNotice(reason));
+        openEditor({ bundleDir: saved.dir, videoUrl: saved.videoUrl, camUrl: saved.camUrl, phoneUrl: saved.phoneUrl, project: saved.project, cursor, keys });
+        // A phone that played but couldn't be moved in stays its own take (recovery opens it).
+        const lost = phoneUsable(phoneSide) && !saved.project.recording.phoneVideoFile;
+        const outcome = dualOutcome({ state: 'saved' }, lost ? { state: 'failed', error: "its file couldn't be moved into the project" } : phoneSide);
+        const notices = [reason ? endNotice(reason) : null, outcome.notice].filter(Boolean);
+        if (notices.length) setNotice(notices.join(' '));
       } catch (e) {
-        setStatus(`Couldn't save the recording: ${ipcMessage(e)}`);
-        setPhase({ name: 'picker' });
+        // Never lose the phone because the screen side failed: it opens as an iPhone take.
+        phoneSide = await phoneStopped;
+        const mac: MacSide = { state: 'failed', error: ipcMessage(e) };
+        const outcome = dualOutcome(mac, phoneSide);
+        if (outcome.open === 'phone' && phoneTake && phoneUsable(phoneSide)) {
+          await openPhoneOnly(phoneTake.bundleDir, phoneSide, outcome.notice);
+        } else {
+          setStatus(outcome.notice ?? `Couldn't save the recording: ${ipcMessage(e)}`);
+          setPhase({ name: 'picker' });
+        }
       } finally {
+        setDualPhone(null);
         recorderRef.current = null;
         streamRef.current = null;
         latchRef.current = null;
         setLiveStream(null);
       }
     },
-    [selected, stopCamOverlay, openEditor],
+    [selected, stopCamOverlay, openEditor, openPhoneOnly],
   );
 
   // One stop for every path: the Stop button, a source that went away, or
@@ -600,6 +700,12 @@ export function App() {
     () =>
       api.onIosEnded((e) => {
         if (iosTakeRef.current) void stopRef.current('deviceEnded', e.message);
+        // The phone of a Mac + iPhone take stopped by itself: the Mac take
+        // carries on, and the phone's picture holds on its last frame.
+        else if (phoneTakeRef.current) {
+          phoneTakeRef.current.endedEarly = true;
+          setNotice(`${phoneTakeRef.current.name} stopped sending video${e.message ? ` (${e.message})` : ''}. The screen is still recording.`);
+        }
       }),
     [],
   );
@@ -614,6 +720,7 @@ export function App() {
           bundleDir: b.bundleDir,
           videoUrl: b.videoUrl,
           camUrl: b.camUrl,
+          phoneUrl: b.phoneUrl,
           project: b.project,
           cursor: b.cursor,
           keys: b.keys,
@@ -717,7 +824,8 @@ export function App() {
       setSelectedDevice(null);
       setSelectedIos(null);
     };
-    const selectedName = selectedIos?.name ?? (selectedDevice ? cameraLabel(selectedDevice, 0) : selected?.name);
+    const selectedName =
+      selectedIos?.name ?? (selectedDevice ? cameraLabel(selectedDevice, 0) : selected && alsoPhone ? `${selected.name} + ${alsoPhone.name}` : selected?.name);
     const cameraCard = (d: MediaDeviceInfo, i: number) => (
       <button
         key={d.deviceId}
@@ -861,6 +969,45 @@ export function App() {
               ) : devices.length === 0 ? (
                 <span className="hint">No camera found</span>
               ) : null)}
+            {(tab === 'displays' || tab === 'windows') && (
+              <>
+                <label
+                  className={`inline-switch${iosDevices.length ? '' : ' disabled'}`}
+                  title="Record a wired iPhone or iPad screen at the same time, shown beside the screen"
+                >
+                  <span>iPhone or iPad</span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    className="switch"
+                    checked={!!alsoPhone}
+                    disabled={!iosDevices.length}
+                    onChange={(e) => {
+                      setPhoneOn(e.target.checked);
+                      if (e.target.checked) openSetup({ kind: 'firstUse' });
+                    }}
+                  />
+                </label>
+                {!iosDevices.length ? (
+                  <span className="hint">Connect one with a cable to record its screen too.</span>
+                ) : alsoPhone && iosDevices.length > 1 ? (
+                  <select
+                    className="cam-select"
+                    aria-label="iPhone or iPad"
+                    value={alsoPhone.id}
+                    onChange={(e) => setPhoneId(e.target.value)}
+                  >
+                    {iosDevices.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : alsoPhone ? (
+                  <span className="hint">{alsoPhone.name} is recorded beside the screen.</span>
+                ) : null}
+              </>
+            )}
           </div>
         </nav>
 
@@ -1022,7 +1169,10 @@ export function App() {
   }
 
   if (phase.name === 'recording') {
-    const sourceName = selectedIos?.name ?? (selectedDevice ? cameraLabel(selectedDevice, 0) : selected?.name) ?? 'Recording';
+    const sourceName =
+      selectedIos?.name ??
+      (selectedDevice ? cameraLabel(selectedDevice, 0) : dualPhone && selected ? `${selected.name} + ${dualPhone.name}` : selected?.name) ??
+      'Recording';
     return (
       <div className="shell">
         <header className="topbar" />
@@ -1043,6 +1193,16 @@ export function App() {
                   }
                 : null
             }
+            phone={
+              dualPhone && !selectedIos
+                ? {
+                    id: dualPhone.id,
+                    name: dualPhone.name,
+                    tablet: /ipad/i.test(dualPhone.name),
+                    preview: iosPreview?.id === dualPhone.id ? iosPreview : null,
+                  }
+                : null
+            }
             warning={selectedIos ? iosWarning : null}
           />
           <p className="rec-hint">{saving ? 'Saving the recording…' : 'Recording. Stop to open the editor.'}</p>
@@ -1058,6 +1218,7 @@ export function App() {
         key={phase.session}
         videoUrl={phase.videoUrl}
         camUrl={phase.camUrl}
+        phoneUrl={phase.phoneUrl}
         project={phase.project}
         cursor={phase.cursor}
         keys={phase.keys}

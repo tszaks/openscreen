@@ -13,6 +13,9 @@ export interface IosDevice {
 export interface IosStarted {
   width: number;
   height: number;
+  /** Epoch ms the movie's first frame was captured (helpers since 1.5). Lines a
+   *  Mac + iPhone take's two clocks up. */
+  startedAtMs?: number;
 }
 
 export interface IosFinished {
@@ -114,7 +117,7 @@ export function parseHelperLine(line: string): HelperEvent | null {
       };
     case 'started':
       if (!isNum(o.width) || !isNum(o.height)) return null;
-      return { event: 'started', width: o.width, height: o.height };
+      return { event: 'started', width: o.width, height: o.height, ...(isNum(o.startedAtMs) && o.startedAtMs > 0 ? { startedAtMs: o.startedAtMs } : {}) };
     case 'finished':
       if (typeof o.path !== 'string' || !o.path) return null;
       return {
@@ -382,7 +385,7 @@ export class IosHelperClient {
         this.recording = true;
         if (p) {
           clearTimeout(p.timer);
-          p.resolve({ width: ev.width, height: ev.height });
+          p.resolve({ width: ev.width, height: ev.height, ...(ev.startedAtMs ? { startedAtMs: ev.startedAtMs } : {}) });
         }
         return;
       }

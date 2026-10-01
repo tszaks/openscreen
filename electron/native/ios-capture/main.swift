@@ -25,8 +25,10 @@
 //
 // stdout is one JSON object per line:
 //   {"event":"devices","devices":[{"id","name","modelID","manufacturer"}]}
-//   {"event":"started","width":..,"height":..}
-//       sent on a take's first video frame, with that frame's real size
+//   {"event":"started","width":..,"height":..,"startedAtMs":..}
+//       sent on a take's first video frame, with that frame's real size and
+//       the epoch time it was captured (the movie's t=0), so a Mac take
+//       recorded alongside can be lined up with it
 //   {"event":"finished","path":..,"width":..,"height":..,"duration":..}
 //   {"event":"error","message":..,"code":..}
 //       "code" is optional. "no-frames": no picture arrived within 3s
@@ -849,6 +851,16 @@ final class Capture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
         }
     }
 
+    /// Epoch ms a frame was captured. Its timestamp is on the host clock, so
+    /// its age is host-now minus it; an age that isn't a fraction of a second
+    /// means some other clock, and "now" is the honest answer.
+    static func captureEpochMs(_ pts: CMTime) -> Double {
+        let now = Date().timeIntervalSince1970 * 1000
+        let age = CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), pts))
+        guard age.isFinite, age >= 0, age < 1 else { return now.rounded() }
+        return (now - age * 1000).rounded()
+    }
+
     /// The real size of what the phone is sending, not activeFormat.
     private func frameSize(_ sampleBuffer: CMSampleBuffer, _ pixels: CVPixelBuffer) -> (width: Int, height: Int) {
         if let format = CMSampleBufferGetFormatDescription(sampleBuffer) {
@@ -884,7 +896,7 @@ final class Capture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVC
             }
             take.lastNewFrameAt = Date()
             take.lastPictureChangeAt = Date()
-            emit(["event": "started", "width": width, "height": height])
+            emit(["event": "started", "width": width, "height": height, "startedAtMs": Self.captureEpochMs(pts)])
         }
         guard let writer = take.writer else { return }
         if writer.appendVideo(pixels, at: pts) {

@@ -19,6 +19,7 @@ import { IosHelperClient, createLineSplitter, parseDeviceList } from '../shared/
 import { withProbedDuration } from '../shared/recording';
 import { randomUUID } from 'node:crypto';
 import { itemSpan } from '../shared/audioTracks';
+import { phoneDevice, phoneLayerOn } from '../shared/phoneLayer';
 import { analyzeTapsInFile, bundleAudioPath, detectSilences, ffmpegPath, probeAudioDuration, ffmpegRun, ffmpegStderr, parseWhisperJson, probeMedia, transcribeBundle, whisperCli } from './media';
 
 // ---------------------------------------------------------------------------
@@ -117,6 +118,26 @@ function readTranscript(dir: string): TranscriptSegment[] | null {
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/** The phone layer of a Mac + iPhone take, or null for every other recording. */
+function phoneSummary(dir: string, p: Project) {
+  const r = p.recording;
+  if (!r.phoneVideoFile) return null;
+  const size = r.phoneSize ?? { width: 0, height: 0 };
+  const d = size.width > 0 ? phoneDevice(size, p.phoneOverlay) : null;
+  return {
+    video: join(dir, r.phoneVideoFile),
+    missing: !existsSync(join(dir, r.phoneVideoFile)),
+    width: size.width,
+    height: size.height,
+    duration: r.phoneDuration !== undefined ? r2(r.phoneDuration) : null,
+    offset: r.phoneOffset ?? 0,
+    model: d?.device.id ?? null,
+    orientation: d?.orientation ?? null,
+    drawn: phoneLayerOn(p),
+    ...p.phoneOverlay,
+  };
+}
+
 function summarize(dir: string, p: Project) {
   const tl = new Timeline(p.recording.duration, p.clips);
   const transcript = readTranscript(dir);
@@ -153,6 +174,7 @@ function summarize(dir: string, p: Project) {
     style: p.style,
     layout: p.layout,
     cameraOverlay: p.cameraOverlay,
+    phone: phoneSummary(dir, p),
     audio: p.audio,
     tracks: p.tracks.map((t, ti) => ({
       index: ti,
