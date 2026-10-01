@@ -40,7 +40,7 @@ import {
 } from '../../shared/exportJobs';
 import { ExportProgress, type ExportProgressState } from './components/ExportProgress';
 import { ExportPanel, ExportTasks, type TaskRowState } from './components/ExportPanel';
-import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Slider, Switch, Tabs } from './ui';
+import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Sheet, Slider, Switch, Tabs, cssToken, useColorScheme } from './ui';
 import { ScrubField } from './components/ScrubField';
 import { BACKDROPS, BACKDROP_GROUPS, backgroundCss, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
@@ -521,7 +521,7 @@ export function Editor({
             (c.x * src.width), (c.y * src.height), (c.w * src.width), (c.h * src.height),
             cx0, cy0, cx1 - cx0, cy1 - cy0,
           );
-          ctx.strokeStyle = '#fdcb6e';
+          ctx.strokeStyle = '#FF8A3D';
           ctx.lineWidth = 3;
           ctx.strokeRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
         }
@@ -1453,7 +1453,8 @@ export function Editor({
     else redo();
   };
 
-  // Repaint the waveform whenever peaks or the cut layout changes.
+  // Repaint the waveform whenever peaks, the cut layout or the appearance changes.
+  const scheme = useColorScheme();
   useEffect(() => {
     const cv = waveRef.current;
     if (!cv || !peaks.length) return;
@@ -1463,7 +1464,7 @@ export function Editor({
     const g = cv.getContext('2d');
     if (!g) return;
     g.clearRect(0, 0, W, H);
-    g.fillStyle = 'rgba(255,255,255,0.28)';
+    g.fillStyle = cssToken('--wave', 'rgba(128,128,128,0.4)');
     const outDur = timeline.outputDuration || duration || 1;
     const srcDur = proj.recording.duration || 1;
     for (let x = 0; x < W; x++) {
@@ -1474,7 +1475,7 @@ export function Editor({
       const h = Math.max(2, p * H * 0.9);
       g.fillRect(x, (H - h) / 2, 1, h);
     }
-  }, [peaks, timeline, duration, proj.recording.duration, tlZoom, timelineH]);
+  }, [peaks, timeline, duration, proj.recording.duration, tlZoom, timelineH, scheme]);
 
   // Smart cut proposals are reviewed in the Text tab, so bring it forward.
   useEffect(() => {
@@ -2792,69 +2793,62 @@ export function Editor({
       )}
 
       {externalChange && (
-        <div className="modal-scrim">
-          <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="ext-title">
-            <h2 id="ext-title">project.json changed on disk</h2>
-            <p>Something outside OpenScreen (an agent, a text editor) changed this project, and you have unsaved edits. Load the version on disk, or keep yours and overwrite it?</p>
-            <div className="modal-actions">
+        <Sheet
+          title="project.json changed on disk"
+          actions={
+            <>
               <Button variant="ghost" onClick={() => { saveTracker.current.markSaved(externalChange); setExternalChange(null); setStatus('Kept your edits; they overwrite the file on the next save'); }}>
                 Keep Mine
               </Button>
-              <Button variant="primary" onClick={() => loadExternal(externalChange)}>
+              <div className="spacer" />
+              <Button variant="primary" autoFocus onClick={() => loadExternal(externalChange)}>
                 Load From Disk
               </Button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <p>Something outside OpenScreen (an agent, a text editor) changed this project, and you have unsaved edits. Load the version on disk, or keep yours and overwrite it?</p>
+        </Sheet>
       )}
       {confirmReset && (
-        <div className="modal-scrim" onMouseDown={() => setConfirmReset(false)}>
-          <div
-            className="modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="reset-title"
-            onMouseDown={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.key === 'Escape' && setConfirmReset(false)}
-          >
-            <h2 id="reset-title">Reset {bundleName}?</h2>
-            <p>
-              Removes every edit: cuts, speed changes, zooms, taps, captions, text, crop and frame settings. The
-              original recording and your backdrop stay. You can undo this with ⌘Z.
-            </p>
-            <div className="modal-actions">
+        <Sheet
+          title={`Reset ${bundleName}?`}
+          onCancel={() => setConfirmReset(false)}
+          actions={
+            <>
               <div className="spacer" />
               <Button autoFocus onClick={() => setConfirmReset(false)}>Cancel</Button>
               <Button variant="danger" onClick={doReset}>
                 Reset Project
               </Button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <p>
+            Removes every edit: cuts, speed changes, zooms, taps, captions, text, crop and frame settings. The
+            original recording and your backdrop stay. You can undo this with ⌘Z.
+          </p>
+        </Sheet>
       )}
       {pendingLeave && (
-        <div className="modal-scrim" onMouseDown={() => void answerLeave('cancel')}>
-          <div
-            className="modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="leave-title"
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <h2 id="leave-title">Save changes to {bundleName}?</h2>
-            <p>Your latest edits aren't saved yet. If you don't save, they're lost.</p>
-            <div className="modal-actions">
+        <Sheet
+          title={`Save changes to ${bundleName}?`}
+          onCancel={() => void answerLeave('cancel')}
+          actions={
+            <>
               <Button variant="ghost" onClick={() => void answerLeave('discard')}>
-                Don't save
+                Don't Save
               </Button>
               <div className="spacer" />
               <Button onClick={() => void answerLeave('cancel')}>Cancel</Button>
               <Button variant="primary" autoFocus onClick={() => void answerLeave('save')}>
                 Save
               </Button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <p>Your latest edits aren't saved yet. If you don't save, they're lost.</p>
+        </Sheet>
       )}
     </div>
   );

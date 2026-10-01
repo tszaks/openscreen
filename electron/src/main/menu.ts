@@ -1,11 +1,13 @@
 import { app, clipboard, Menu, shell, type BrowserWindow, type MenuItemConstructorOptions } from 'electron';
 import type { MenuAction, MenuPhase } from '../shared/menu';
+import { APPEARANCES, type Appearance } from '../shared/appearance';
 
 /** The native macOS menu. Items that act on the app send a `menu:action` to
  *  the renderer, which routes it to the existing handler for that action. */
 export function buildAppMenu(
   win: () => BrowserWindow | null,
   state: { phase: MenuPhase; bundleDir?: string },
+  appearance?: { current: Appearance; set: (a: Appearance) => void },
 ): Menu {
   const send = (action: MenuAction) => () => win()?.webContents.send('menu:action', action);
   const sendOrOpen = (action: MenuAction) => () => {
@@ -86,6 +88,20 @@ export function buildAppMenu(
       submenu: [
         ...(!app.isPackaged
           ? ([{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }] as MenuItemConstructorOptions[])
+          : []),
+        ...(appearance
+          ? ([
+              {
+                label: 'Appearance',
+                submenu: APPEARANCES.map((a) => ({
+                  label: a.label,
+                  type: 'radio' as const,
+                  checked: appearance.current === a.value,
+                  click: () => appearance.set(a.value),
+                })),
+              },
+              { type: 'separator' },
+            ] as MenuItemConstructorOptions[])
           : []),
         { role: 'resetZoom' },
         { role: 'zoomIn' },

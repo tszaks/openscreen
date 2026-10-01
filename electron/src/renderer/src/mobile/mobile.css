@@ -7,9 +7,8 @@
   flex-direction: column;
   gap: 2px;
   padding: 3px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.25);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--fill-1);
 }
 .model-row {
   display: flex;
@@ -21,21 +20,20 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
+  color: var(--label);
+  font-size: var(--text-body);
   font-weight: 500;
   text-align: left;
   cursor: pointer;
   transition: background-color var(--t2) var(--ease), color var(--t2) var(--ease);
 }
 .model-row:hover {
-  background: var(--fill);
-  color: var(--text);
+  background: var(--fill-2);
 }
 .model-row.on {
-  background: var(--fill-strong);
-  color: var(--text);
-  box-shadow: var(--lift);
+  background: var(--control-thumb);
+  box-shadow: var(--shadow-thumb);
+  font-weight: 600;
 }
 .model-name {
   overflow: hidden;
@@ -47,18 +45,18 @@
   padding: 2px 7px;
   border-radius: var(--r-full);
   background: var(--accent-tint);
-  color: var(--accent);
-  font-size: 10px;
+  color: var(--accent-text);
+  font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: var(--track-caption);
 }
 .field.select {
   width: 100%;
   appearance: none;
   padding-right: 28px;
-  color: var(--text-2);
-  background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%),
-    linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  color: var(--label-2);
+  background-image: linear-gradient(45deg, transparent 50%, var(--label-3) 50%),
+    linear-gradient(135deg, var(--label-3) 50%, transparent 50%);
   background-position: calc(100% - 15px) 12px, calc(100% - 11px) 12px;
   background-size: 4px 4px;
   background-repeat: no-repeat;
@@ -83,7 +81,7 @@
   border: 0;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.35), transparent 60%), var(--finish);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 1px 2px rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.2), var(--shadow-thumb);
   cursor: pointer;
   transition: transform var(--t1) var(--ease), box-shadow var(--t2) var(--ease);
 }
@@ -94,7 +92,7 @@
   transform: scale(0.96);
 }
 .finish.on {
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.2), 0 0 0 2px var(--window), 0 0 0 4px var(--accent);
 }
 
 /* ── touch colour dots in the segmented control ── */
@@ -109,6 +107,7 @@
 }
 .dot.white {
   background: #fff;
+  box-shadow: inset 0 0 0 0.5px var(--separator-strong);
 }
 .dot.accent {
   background: var(--accent);
@@ -128,25 +127,24 @@
   gap: 3px;
   padding: 8px 2px 7px;
   border: 0;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.2);
-  box-shadow: inset 0 0 0 1px var(--hairline);
-  color: var(--text-2);
+  border-radius: var(--r-sm);
+  background: var(--fill-1);
+  color: var(--label-2);
   cursor: pointer;
   transition: background-color var(--t2) var(--ease), box-shadow var(--t2) var(--ease), color var(--t2) var(--ease),
     transform var(--t1) var(--ease);
 }
 .canvas-tile:hover {
-  background: var(--fill);
-  color: var(--text);
+  background: var(--fill-2);
+  color: var(--label);
 }
 .canvas-tile:active {
   transform: scale(0.97);
 }
 .canvas-tile.on {
   background: var(--accent-tint);
-  box-shadow: inset 0 0 0 1.5px var(--accent);
-  color: var(--text);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  color: var(--label);
 }
 .canvas-glyph {
   display: flex;
@@ -157,26 +155,26 @@
 .canvas-glyph span {
   display: block;
   border-radius: 3px;
-  box-shadow: inset 0 0 0 1.5px var(--text-3);
+  box-shadow: inset 0 0 0 1.5px var(--label-2);
   transition: box-shadow var(--t2) var(--ease), background-color var(--t2) var(--ease);
 }
 .canvas-tile:hover .canvas-glyph span {
-  box-shadow: inset 0 0 0 1.5px var(--text-2);
+  box-shadow: inset 0 0 0 1.5px var(--label);
 }
 .canvas-tile.on .canvas-glyph span {
-  background: rgba(255, 138, 61, 0.25);
+  background: var(--accent-tint-strong);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 .canvas-ratio {
-  font-size: 11px;
+  font-size: var(--text-body);
   font-weight: 600;
 }
 .canvas-label {
-  font-size: 10px;
-  color: var(--text-3);
+  font-size: var(--text-caption);
+  color: var(--label-2);
 }
 .canvas-tile.on .canvas-label {
-  color: rgba(255, 220, 196, 0.75);
+  color: var(--accent-text);
 }
 .title-fields {
   display: flex;
@@ -188,16 +186,16 @@
 }
 .title-fields .field:first-child {
   height: 32px;
-  font-size: 13px;
+  font-size: var(--text-title3);
   font-weight: 600;
 }
 
 /* ── blurred backdrop tile ── */
 
 .tile-swatch.blurred {
-  background: radial-gradient(circle at 30% 30%, #ff8a3d 0, transparent 55%),
-    radial-gradient(circle at 75% 70%, #6a5acd 0, transparent 55%), #1a1a22;
-  filter: saturate(1.2);
+  /* A stand-in for a soft blur of the recording: warm light over grey. */
+  background: radial-gradient(circle at 30% 30%, rgba(255, 138, 61, 0.85) 0, transparent 60%),
+    radial-gradient(circle at 75% 75%, rgba(255, 255, 255, 0.5) 0, transparent 55%), #8a8a90;
 }
 
 /* ── taps lane ── */
@@ -210,18 +208,18 @@
   overflow: hidden;
 }
 .lane-taps .lane-note {
-  font-size: 10px;
+  font-size: var(--text-caption);
 }
 .waitmark {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.07) 0 2px, transparent 2px 7px);
-  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.08), inset -1px 0 0 rgba(255, 255, 255, 0.08);
+  background: repeating-linear-gradient(-45deg, var(--fill-3) 0 2px, transparent 2px 7px);
+  box-shadow: inset 1px 0 0 var(--separator), inset -1px 0 0 var(--separator);
   pointer-events: none;
 }
 .waitmark.done {
-  background: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.03) 0 2px, transparent 2px 7px);
+  background: repeating-linear-gradient(-45deg, var(--fill-1) 0 2px, transparent 2px 7px);
 }
 .tapmark {
   position: absolute;
@@ -233,7 +231,7 @@
   margin: calc(var(--d) / -2) 0 0 calc(var(--d) / -2);
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 2px rgba(23, 23, 26, 0.9);
+  box-shadow: 0 0 0 2px var(--surface);
   cursor: grab;
   touch-action: none;
   transition: transform var(--t1) var(--ease), box-shadow var(--t2) var(--ease);
@@ -251,35 +249,35 @@
   height: var(--h);
   margin: calc(var(--h) / -2) 0 0 0;
   border-radius: calc(var(--h) / 2);
-  background: linear-gradient(90deg, var(--accent), rgba(255, 138, 61, 0.35));
+  background: linear-gradient(90deg, var(--accent), var(--accent-tint-strong));
 }
 .tapmark.span:hover {
   transform: scaleY(1.2);
 }
 .tapmark.kind-longpress {
-  background: rgba(255, 138, 61, 0.55);
-  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 2px rgba(23, 23, 26, 0.9);
+  background: var(--accent-ring);
+  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 2px var(--surface);
 }
 .tapmark.kind-typing {
   height: calc(16px * var(--tl-scale, 1));
   margin-top: calc(-8px * var(--tl-scale, 1));
   border-radius: 5px;
-  background: rgba(255, 138, 61, 0.22);
-  box-shadow: inset 0 0 0 1px rgba(255, 138, 61, 0.5);
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px var(--accent-ring);
   overflow: hidden;
 }
 .tapmark.kind-typing span {
   display: block;
   padding: 0 6px;
-  font-size: 9.5px;
+  font-size: var(--text-caption);
   font-weight: 600;
   line-height: calc(16px * var(--tl-scale, 1));
-  color: #ffd9bf;
+  color: var(--accent-text);
   white-space: nowrap;
   pointer-events: none;
 }
 .tapmark.selected {
   opacity: 1 !important;
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px #fff;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--label);
   z-index: 2;
 }
