@@ -49,7 +49,7 @@ $A undo latest                      # swap project.json <-> project.json.bak
 | `record status` | `idle`, `recording` (with `elapsed`), `finished`, `failed`, or `dead`. |
 | `record stop` | Finishes the take (the helper's normal finalize; the movie is fragmented, so even a crash keeps what was recorded), then writes `project.json` with the same defaults the app gives an iPhone take. |
 | `latest` / `list` | Newest bundle / all bundles in `~/Movies/OpenScreen` (or `$OPENSCREEN_RECORDINGS_DIR`). In the app, **File → Copy Path for Agent** copies the open project's path. |
-| `info <bundle>` | Summary JSON: source size/duration, output duration, canvas, device, clips (with ids, source and output ranges), captions, transcript, chapters, annotations, manual zooms, taps, waits, style, layout, camera, audio, export settings, `problems`. |
+| `info <bundle>` | Summary JSON: source size/duration, output duration, canvas, device, clips (with ids, source and output ranges), captions, transcript, chapters, annotations, manual zooms, taps, waits, style, layout, camera, audio, tracks (music and voiceover items with their output `start`/`end`, file range, volume, fades, loop, and `missing` when the file is gone), export settings, `problems`. |
 | `validate <bundle>` | `{"ok":true,"problems":[]}` or the list of problems (exit 1). |
 | `review <bundle\|video> [--every 2s] [--out dir] [--max-sheets 10] [--transcribe] [--no-taps]` | Writes `review/` in the bundle (or `<video>.review/`): `sheet-NN.png` contact sheets (timestamped tiles, 6×2 for portrait, 4×3 for landscape; interval grows so there are at most ~10 sheets), up to 12 `scene-NNN.jpg` keyframes from scene detection, and `review.json` (duration, orientation, device, stills from freezedetect, silences from silencedetect, taps and waits from the editor's own tap analysis, the transcript, every image path with its timestamps). Works on an exported mp4 too. |
 | `apply <bundle> <edits.json\|-\|'[…]'> [--dry-run]` | Applies edit ops in order. All-or-nothing: if any op fails or the result doesn't validate, nothing is written. Writes `project.json.bak` first. |
@@ -65,12 +65,17 @@ $A undo latest                      # swap project.json <-> project.json.bak
   `sourceStart/sourceEnd`, taps, waits, and every time in `review.json` of a
   bundle.
 - **Output seconds** — the edited timeline: captions, chapters, annotations,
-  manual zooms, `split`. `info` shows each clip's `outputStart/outputEnd` so
+  manual zooms, `split`, and where an audio item `start`s. `info` shows each clip's `outputStart/outputEnd` so
   you can convert. After a `trim` or `cut`, output-time items move with their
   footage automatically (the editor's own remap).
 
 Put timeline edits (trim/cut/speed) **before** caption/zoom ops in the same
 file, and write caption/zoom times against the timeline *after* the cuts.
+
+Audio items (music, voiceover) are different: they stay where they are in
+output time when clips are cut or sped up, the way music on its own track
+does, and always play at normal speed. Their `sourceIn`/`sourceOut` are
+seconds into the sound file itself.
 
 ### edits.json
 
@@ -87,9 +92,16 @@ A JSON array of ops (or `{"ops":[…]}`). Items are picked by `id` or 0-based
   {"op": "addChapter", "start": 0, "title": "Intro"},
   {"op": "addAnnotation", "start": 5, "end": 8, "text": "Tap here", "band": 2, "hex": "#ffffff"},
   {"op": "background", "swatch": "ocean"},
+  {"op": "addAudio", "file": "music/theme.mp3", "start": 0, "fadeIn": 1, "fadeOut": 2, "volume": 0.6},
+  {"op": "audioTrack", "duck": true},
   {"op": "set", "path": "/style/cornerRadius", "value": 32}
 ]
 ```
+
+`addAudio` copies the file (mp3, m4a, aac, wav, aiff; a relative path is
+read from the edits file's folder) into the bundle's `audio/` folder, so the
+project keeps working when the original moves. It goes on the first audio
+track, which is created when there is none.
 
 `x`/`y` are normalized (0..1) positions on the recording, `0,0` top-left.
 
@@ -116,6 +128,13 @@ LayoutSection, TapsLane, ExportPanel) and the op that does the same thing:
 | Zoom tab: Auto-focus, Dwell, Zoom to taps, Zoom depth | `zoom.autofocus/dwell/fromTaps/depth` | `zoomSettings {…}` |
 | Cursor tab: size, trail, colour | `style.cursorSize/cursorTrail/cursorHex` | `cursor {size?, trail?, hex?}` |
 | Audio tab: click sounds, voice cleanup | `audio.clickSounds/voiceCleanup` | `audio {clickSounds?, voiceCleanup?}` |
+| Add Music or Voiceover… (Audio tab, timeline right-click) | `tracks[t].items` | `addAudio {file, start?, volume?, fadeIn?, fadeOut?, loop?, sourceIn?, sourceOut?, fit?, name?}` |
+| Music lane: drag a block | `items[i].start` (output s) | `moveAudio {index\|id, start, track?}` |
+| Music lane: drag a block's edges | `items[i].sourceIn/sourceOut` (file s) | `trimAudio {index\|id, sourceIn?, sourceOut?, track?}` (start stays; the editor's left-edge drag also moves `start` by the same amount) |
+| Audio tab: item volume, fade in, fade out, Loop to fill | `items[i].gain/fadeIn/fadeOut/loop` | `editAudio {index\|id, volume?, fadeIn?, fadeOut?, loop?, name?}` |
+| Right-click a block: Fit to Video | `items[i]` | `fitAudio {index\|id}` (starts at 0; a longer file is cut at the end, a shorter one loops) |
+| Right-click a block: Remove (or ⌫) | `items` | `removeAudio {index\|id}` |
+| Mute track, Track volume, Lower the recording's sound under music | `tracks[t].muted/volume/duck` | `audioTrack {track?, muted?, volume?, duck?, name?}` (ducking turns the recording down 12 dB while the track plays) |
 | Smart cut (silences + fillers) | `clips` | `smartCut {thresholdDb?, minDur?}`; silences only: `cutSilences` (same ffmpeg silencedetect + planner) |
 | Transcript: cut a cue | `clips` | `cutCue {index\|id}` |
 | Transcript edit mode: cut selected words | `clips` | `cutWords {index\|id, from, to}` |
@@ -159,6 +178,10 @@ switch (they are drawn whenever the recording has keystrokes/clicks); use
 
 ## Caveats
 
+- **Audio tracks** are mixed into every export (MP4, presets, the
+  multi-format batch, headless); a GIF has no sound. A recording with no
+  audio stream still exports with its music. Volume is 0..1 for items and
+  tracks.
 - **Export speed**: the export renders every frame in the real renderer
   (seek → draw → ffmpeg), about 10–15× slower than real time for a 1080×1920
   canvas. A 26 s video took ~5 min. Use `--timeout` for long ones (default

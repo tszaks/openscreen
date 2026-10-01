@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSy
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { createCursorTracker, type CursorTracker } from './cursor';
 import { startFfmpegJob, type FfmpegJob } from './ffmpegJob';
 import { transcodePreset, type TranscodeRun } from './transcodeJob';
@@ -23,7 +24,8 @@ import type { Appearance } from '../shared/appearance';
 import type { ContextMenuItem, MenuPhase } from '../shared/menu';
 import { fileSafeName, normalizeProject, projectName, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
 import { parseHeadlessArgs, type HeadlessJob, type HeadlessResult } from '../shared/headless';
-import { analyzeTapsInFile, detectSilences, extractWav as extractBundleWav, transcribeBundle } from '../node/media';
+import { analyzeTapsInFile, audioFilePeaks, detectSilences, extractWav as extractBundleWav, importAudioFile, transcribeBundle } from '../node/media';
+import { AUDIO_EXTENSIONS, bundleRelative, insideDir, type MusicInput } from '../shared/audioTracks';
 import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
 import { getPreset, type PresetId } from '../shared/exportPresets';
 import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
@@ -865,6 +867,26 @@ app.whenReady().then(() => {
     return peaks;
   });
 
+  // Add Music or Voiceover: pick a sound file and copy it into the bundle's
+  // audio/ folder. Resolves null when the user cancels.
+  ipcMain.handle('audio:import', async (_e, dir: string) => {
+    if (typeof dir !== 'string' || !existsSync(join(dir, 'project.json'))) throw new Error('No project is open.');
+    const picked = await dialog.showOpenDialog(win!, {
+      title: 'Add Music or Voiceover',
+      properties: ['openFile'],
+      filters: [{ name: 'Audio', extensions: AUDIO_EXTENSIONS }],
+    });
+    if (picked.canceled || !picked.filePaths[0]) return null;
+    const id = randomUUID();
+    return { id, ...(await importAudioFile(dir, picked.filePaths[0], id, await ffmpegPath())) };
+  });
+
+  // Waveform peaks for an added sound inside the bundle (whole file, in file time).
+  ipcMain.handle('audio:filePeaks', async (_e, args: { dir: string; file: string; buckets?: number }) => {
+    if (!bundleRelative(args.file)) return [];
+    return audioFilePeaks(join(args.dir, args.file), args.buckets ?? 1000, await ffmpegPath());
+  });
+
   // Silence detection: ffmpeg silencedetect on the bundle audio →
   // [{start,end}] silent ranges in source seconds.
   ipcMain.handle(
@@ -882,15 +904,22 @@ app.whenReady().then(() => {
 
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
-  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number; master?: boolean }) => {
+  ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number; master?: boolean; music?: MusicInput[]; duck?: { start: number; end: number }[] }) => {
     await exportJob?.abort(); // a previous export that never ended
     exportJob = null;
+    // A missing music file would fail the whole encode with ffmpeg's own words.
+    // The bundle is the recording's folder; buildExportArgs refuses music outside it.
+    const bundleDir = args.audioIn ? dirname(resolve(args.audioIn)) : undefined;
+    const outside = (args.music ?? []).find((m) => !bundleDir || !insideDir(resolve(m.path), bundleDir));
+    if (outside) throw new Error(`The sound file ${outside.path} is outside this project, so it can't be exported.`);
+    const missing = (args.music ?? []).find((m) => !existsSync(m.path));
+    if (missing) throw new Error(`The sound file ${missing.path.split('/').pop()} is missing from this project's audio folder.`);
     const ffmpegBin = await ffmpegPath();
     // Confirm the source actually has an audio stream before filtering
     // (filter_complex on a missing stream aborts the whole encode).
     const hasAudio = args.audioIn ? await probeHasAudio(ffmpegBin, args.audioIn) : false;
     mkdirSync(dirname(args.outPath), { recursive: true });
-    exportJob = await startFfmpegJob(ffmpegBin, buildExportArgs({ ...args, hasAudio }), args.outPath);
+    exportJob = await startFfmpegJob(ffmpegBin, buildExportArgs({ ...args, hasAudio, bundleDir }), args.outPath);
     return true;
   });
 

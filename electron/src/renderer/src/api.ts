@@ -3,6 +3,7 @@ import type { TapSuggestion } from '../../shared/taps';
 import type { IosDevice, IosFinished, IosPreview, IosWarning } from '../../shared/iosCapture';
 import type { ContextMenuItem, MenuAction, MenuPhase } from '../../shared/menu';
 import type { PresetId } from '../../shared/exportPresets';
+import type { MusicInput } from '../../shared/audioTracks';
 
 export type { IosDevice, IosPreview };
 
@@ -92,7 +93,11 @@ declare global {
       /** Tap/swipe suggestions and still stretches (source seconds) for a phone recording. */
       analyzeTaps(dir: string, videoFile: string): Promise<{ taps: TapSuggestion[]; deadTime: WaitRange[] }>;
       audioPeaks(dir: string, videoFile: string, buckets?: number): Promise<number[]>;
-      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number, master?: boolean): Promise<boolean>;
+      /** Pick a music or voiceover file and copy it into the bundle's audio/ folder; null when cancelled. */
+      importAudio(dir: string): Promise<{ id: string; file: string; name: string; duration: number } | null>;
+      /** Waveform of a sound file inside the bundle (whole file). */
+      audioFilePeaks(dir: string, file: string, buckets?: number): Promise<number[]>;
+      exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number, master?: boolean, music?: MusicInput[], duck?: { start: number; end: number }[]): Promise<boolean>;
       /** Rejects with ffmpeg's reason once ffmpeg has stopped. */
       exportFrame(bytes: ArrayBuffer): Promise<boolean>;
       /** Finishes the file; rejects (and deletes it) when the encode failed. */

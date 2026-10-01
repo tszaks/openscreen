@@ -9,15 +9,17 @@ import { spawn, execFile } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
-import { applyOps, captionsFromSegments, needsSilences, needsTapAnalysis, needsTranscript, OP_NAMES, OpError, validateProject, type ApplyContext, type EditOp, type TranscriptSegment } from '../shared/agentOps';
+import { applyOps, audioImports, captionsFromSegments, needsSilences, needsTapAnalysis, needsTranscript, OP_NAMES, OpError, validateProject, type ApplyContext, type EditOp, type TranscriptSegment } from '../shared/agentOps';
 import { planPolish, type PolishStyle } from '../shared/polish';
-import { defaultProject, fileSafeName, normalizeProject, projectName, type Project } from '../shared/types';
+import { defaultProject, fileSafeName, normalizeProject, projectName, unsafeAudioFiles, type Project } from '../shared/types';
 import { Timeline } from '../shared/timeline';
 import { resolveDevice, projectCanvasSize, layoutPreset } from '../shared/mobileProject';
 import { parseFreezes, parseSilences, silenceDetectArgs } from '../shared/silence';
 import { IosHelperClient, createLineSplitter, parseDeviceList } from '../shared/iosCapture';
 import { withProbedDuration } from '../shared/recording';
-import { analyzeTapsInFile, detectSilences, ffmpegPath, ffmpegRun, ffmpegStderr, parseWhisperJson, probeMedia, transcribeBundle, whisperCli } from './media';
+import { randomUUID } from 'node:crypto';
+import { itemSpan } from '../shared/audioTracks';
+import { analyzeTapsInFile, bundleAudioPath, detectSilences, ffmpegPath, probeAudioDuration, ffmpegRun, ffmpegStderr, parseWhisperJson, probeMedia, transcribeBundle, whisperCli } from './media';
 
 // ---------------------------------------------------------------------------
 // Output + errors
@@ -93,6 +95,16 @@ function writeProject(dir: string, p: Project) {
   renameSync(tmp, file);
 }
 
+/** Sound files project.json points outside the bundle at; loading drops those items. */
+function droppedAudio(dir: string): string[] {
+  try {
+    return unsafeAudioFiles(JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'))?.tracks);
+  } catch {
+    return [];
+  }
+}
+const droppedNote = (files: string[]) => files.map((f) => `audio item dropped: its file "${f}" is outside the bundle`);
+
 function readTranscript(dir: string): TranscriptSegment[] | null {
   const f = join(dir, 'transcript.json');
   if (!existsSync(f)) return null;
@@ -142,8 +154,36 @@ function summarize(dir: string, p: Project) {
     layout: p.layout,
     cameraOverlay: p.cameraOverlay,
     audio: p.audio,
+    tracks: p.tracks.map((t, ti) => ({
+      index: ti,
+      id: t.id,
+      kind: t.kind,
+      name: t.name,
+      muted: t.muted,
+      volume: r2(t.volume),
+      duck: t.duck,
+      items: t.items.map((i, ii) => {
+        const span = itemSpan(i, tl.outputDuration);
+        return {
+          index: ii,
+          id: i.id,
+          name: i.name,
+          file: i.file,
+          start: r2(i.start),
+          end: r2(Math.max(span.start, span.end)),
+          sourceIn: r2(i.sourceIn),
+          sourceOut: r2(i.sourceOut),
+          fileDuration: r2(i.fileDuration),
+          volume: r2(i.gain),
+          fadeIn: r2(i.fadeIn),
+          fadeOut: r2(i.fadeOut),
+          loop: i.loop,
+          missing: !existsSync(join(dir, i.file)),
+        };
+      }),
+    })),
     export: { preset: p.exportPreset, fps: p.outputFPS },
-    problems: validateProject(p),
+    problems: [...validateProject(p), ...droppedNote(droppedAudio(dir))],
   };
 }
 
@@ -303,8 +343,11 @@ async function review(args: string[]) {
 // ---------------------------------------------------------------------------
 // apply / polish / undo
 
+/** Sound files addAudio will copy into the bundle: bundle-relative target → source path. */
+const audioCopies = new Map<string, string>();
+
 async function buildContext(dir: string, p: Project, ops: EditOp[], editsDir: string): Promise<ApplyContext> {
-  const ctx: ApplyContext = { files: {} };
+  const ctx: ApplyContext = { files: {}, audioFiles: {} };
   const bin = ffmpegPath();
   if (needsSilences(ops)) {
     const o = ops.find((x) => x.op === 'cutSilences' || x.op === 'smartCut')!;
@@ -321,6 +364,17 @@ async function buildContext(dir: string, p: Project, ops: EditOp[], editsDir: st
       progress({ step: 'transcribing' });
       ctx.transcript = await transcribeBundle(dir, p.recording.screenVideoFile, bin);
     }
+  }
+  // addAudio: measure each sound file now; apply() copies it into the bundle
+  // only once every op has succeeded, so a failed apply leaves no stray file.
+  for (const src of audioImports(ops)) {
+    const f = isAbsolute(src) ? src : resolve(editsDir, src);
+    if (!existsSync(f)) throw new CliError(`addAudio: file not found: ${f}`);
+    const duration = await probeAudioDuration(f, bin);
+    if (!duration) throw new CliError(`addAudio: ${f} has no sound OpenScreen can play`);
+    const file = bundleAudioPath(randomUUID(), f);
+    ctx.audioFiles![src] = { file, name: basename(f, extname(f)), duration };
+    audioCopies.set(file, f);
   }
   for (const o of ops) {
     if (o.op === 'importCaptions' && typeof o.file === 'string') {
@@ -368,7 +422,16 @@ async function apply(args: string[]) {
     if (e instanceof OpError) throw new CliError(e.message);
     throw e;
   }
-  if (!dry) writeProject(dir, result.project);
+  if (!dry) {
+    // Only the sounds the edited project still uses (a later op may have removed one).
+    const used = new Set(result.project.tracks.flatMap((t) => t.items.map((i) => i.file)));
+    for (const [file, src] of audioCopies) {
+      if (!used.has(file)) continue;
+      mkdirSync(dirname(join(dir, file)), { recursive: true });
+      copyFileSync(src, join(dir, file));
+    }
+    writeProject(dir, result.project);
+  }
   const tl = new Timeline(result.project.recording.duration, result.project.clips);
   return { ok: true, bundle: dir, dryRun: dry, applied: result.notes.length, changes: result.notes, outputDuration: r2(tl.outputDuration), backup: dry ? null : join(dir, 'project.json.bak') };
 }
@@ -735,7 +798,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'validate': {
         const dir = bundlePath(args.shift());
         const p = readProject(dir);
-        const problems = validateProject(p);
+        const problems = [...validateProject(p), ...droppedNote(droppedAudio(dir))];
         const video = join(dir, p.recording.screenVideoFile);
         if (!existsSync(video)) problems.push(`missing video file ${video}`);
         result = { ok: problems.length === 0, bundle: dir, problems };

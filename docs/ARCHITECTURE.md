@@ -33,11 +33,12 @@ Everything that decides how a video *looks and moves* is a pure function here, s
 | `backdrops.ts` | Backdrop presets shared by the editor and the agent CLI |
 | `exportPresets.ts` | App Store, social and landing-page export formats and their rules |
 | `agentOps.ts` | Every editor edit as a validated, serialisable operation |
+| `audioTracks.ts` | Music and voiceover tracks: where each item plays in output time, its volume and fades, ducking, and the edits the timeline lane makes |
 | `types.ts` | The project model, defaults, migration of older projects, reset |
 
 ## Rendering and export
 
-The editor's `CanvasCompositor` draws each frame in order: backdrop → content → cursor → ripples and taps → camera overlay → captions → keystrokes → annotations → device frame. Export runs **the same compositor** and pipes raw frames into ffmpeg (rawvideo → H.264), so the exported video always matches the preview. Audio follows the cuts through an ffmpeg filter graph (`atrim` / `atempo` / `concat`), with click sounds mixed in.
+The editor's `CanvasCompositor` draws each frame in order: backdrop → content → cursor → ripples and taps → camera overlay → captions → keystrokes → annotations → device frame. Export runs **the same compositor** and pipes raw frames into ffmpeg (rawvideo → H.264), so the exported video always matches the preview. Audio follows the cuts through an ffmpeg filter graph (`atrim` / `atempo` / `concat`), with click sounds mixed in. Items on the audio tracks are cut, looped, faded and delayed to their output time (`atrim` / `aloop` / `afade` / `adelay`) and mixed over the same silent bed, so the file always ends where the video ends.
 
 Headless export (`OpenScreen --export <bundle> --out file.mp4`) runs the real renderer with no window and no dialogs.
 
@@ -56,5 +57,6 @@ A recording is a folder named `<name>.openscreen`:
 | `project.json` | Every edit: clips, zooms, taps, captions, style, layout |
 | `cursor.json`, `keystrokes.json` | Input tracks for Mac recordings |
 | `transcript.json`, `audio.wav` | Created on demand for captions |
+| `audio/` | Music and voiceover files added to the project's audio track (copies, so the bundle stays self-contained) |
 
 Edits are non-destructive: the recording is never touched, and `project.json` can always be reset back to the raw take.
