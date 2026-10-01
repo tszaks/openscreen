@@ -40,8 +40,10 @@ import {
 } from '../../shared/exportJobs';
 import { ExportProgress, type ExportProgressState } from './components/ExportProgress';
 import { ExportPanel, ExportTasks, type TaskRowState } from './components/ExportPanel';
-import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Sheet, Slider, Switch, Tabs, cssToken, useColorScheme } from './ui';
+import { Button, EmptyState, FormRow, Icon, IconButton, Kbd, Section, Segmented, Sheet, Switch, Tabs, cssToken, useColorScheme } from './ui';
 import { ScrubField } from './components/ScrubField';
+import { useFilmstrip } from './useFilmstrip';
+import { clipFrames, filmstripTimes } from '../../shared/filmstrip';
 import { BACKDROPS, BACKDROP_GROUPS, backgroundCss, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
 import {
@@ -1464,6 +1466,8 @@ export function Editor({
     const g = cv.getContext('2d');
     if (!g) return;
     g.clearRect(0, 0, W, H);
+    // A silent recording draws nothing; the lane says so in words instead.
+    if (Math.max(...peaks) < 0.03) return;
     g.fillStyle = cssToken('--wave', 'rgba(128,128,128,0.4)');
     const outDur = timeline.outputDuration || duration || 1;
     const srcDur = proj.recording.duration || 1;
@@ -1494,6 +1498,18 @@ export function Editor({
 
   const zoomMarks = segments;
 
+  // Thumbnails for the clips lane, and the lanes' width to fit them to.
+  const filmTimes = useMemo(() => filmstripTimes(proj.recording.duration, 40), [proj.recording.duration]);
+  const filmstrip = useFilmstrip(videoUrl, proj.recording.duration, !headless, 40);
+  const [lanesW, setLanesW] = useState(0);
+  useEffect(() => {
+    const el = tlLanesRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setLanesW(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // ── resizable panes + timeline zoom ──
   useEffect(() => localStorage.setItem('openscreen.inspectorWidth', String(inspectorW)), [inspectorW]);
   useEffect(() => {
@@ -1503,7 +1519,7 @@ export function Editor({
 
   // The timeline's height with no override: its floor when dragging.
   const naturalTimelineH = () => {
-    const lanes = isPhone ? [34, 22, 26, 38] : [34, 22, 38];
+    const lanes = LANES(isPhone);
     return 6 + 14 + 22 + lanes.reduce((a, b) => a + b, 0) + lanes.length * 6;
   };
   const topbarH = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) || 52;
@@ -1637,7 +1653,10 @@ export function Editor({
   const outDur = timeline.outputDuration || duration || 1;
   const ruler = rulerTicks(outDur, tlZoom);
   // With a dragged height the lanes share the extra room in proportion to their base sizes.
-  const laneRows = `22px ${(isPhone ? [34, 22, 26, 38] : [34, 22, 38]).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
+  const laneRows = `22px ${LANES(isPhone).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
+  // Clip thumbnails: as many whole frames as the clip's width holds at the lane's height.
+  const tileW = Math.max(20, 44 * (proj.recording.sourceSize.width / Math.max(1, proj.recording.sourceSize.height)));
+  const silent = peaks.length > 0 && Math.max(...peaks) < 0.03;
   const bundleName = projectName(proj, bundleDir);
   const formatChoices = presetChoices(proj.recording.sourceSize);
   const selectedFormats =
@@ -1778,6 +1797,7 @@ export function Editor({
         </div>
         {proj.style.background.kind === 'imageFile' && !blurredBg && (
           <ScrubField
+            slider
             label="Image blur"
             min={0}
             max={60}
@@ -1808,6 +1828,7 @@ export function Editor({
             ] as const
           ).map(([label, key, min, max, step, unit, mul]) => (
             <ScrubField
+            slider
               key={key}
               label={label}
               // Percentages scrub and type as whole numbers.
@@ -1865,6 +1886,7 @@ export function Editor({
           )}
           {(isPhone ? proj.zoom.fromTaps : autofocusOn) && (
             <ScrubField
+            slider
               label="Zoom depth"
               min={1.2}
               max={4}
@@ -1895,6 +1917,7 @@ export function Editor({
   const cursorPanel = (
     <Section title="Cursor">
       <ScrubField
+            slider
         label="Size"
         min={5}
         max={30}
@@ -2342,17 +2365,19 @@ export function Editor({
       {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
 
       <header className="topbar ed-top">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="back-btn"
-          title="Back to the source picker (⌘N)"
-          disabled={exporting}
-          onClick={() => leave(onNewRecording)}
-        >
-          {Icon.chevronLeft(12)}
-          New recording
-        </Button>
+        <span className="tb-group no-drag">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="back-btn"
+            title="Back to the source picker (⌘N)"
+            disabled={exporting}
+            onClick={() => leave(onNewRecording)}
+          >
+            {Icon.chevronLeft(12)}
+            New Recording
+          </Button>
+        </span>
         {renameDraft === null ? (
           // no-drag: in the title bar a double-click would otherwise zoom the window.
           <span
@@ -2404,11 +2429,16 @@ export function Editor({
           />
         )}
         <div className="history no-drag">
-          <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
-          <IconButton label="Redo (⌘⇧Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
-          <Button size="sm" variant="ghost" disabled={exporting} onClick={() => setConfirmReset(true)} title="Undo every edit, keeping the recording and backdrop">
-            Reset
-          </Button>
+          <span className="tb-group">
+            <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
+            <span className="tb-sep" aria-hidden />
+            <IconButton label="Redo (⇧⌘Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
+          </span>
+          <span className="tb-group">
+            <Button size="sm" variant="ghost" disabled={exporting} onClick={() => setConfirmReset(true)} title="Undo every edit, keeping the recording and backdrop">
+              Reset
+            </Button>
+          </span>
         </div>
         <div className="spacer" />
         {status && !xp && (
@@ -2417,9 +2447,11 @@ export function Editor({
           </div>
         )}
         <div className="spacer" />
-        <Button variant="ghost" onClick={saveProject}>Save</Button>
+        <span className="tb-group no-drag">
+          <Button size="sm" variant="ghost" onClick={saveProject} title="Save (⌘S)">Save</Button>
+        </span>
         <div className="split-btn no-drag" ref={exportMenuRef}>
-          <Button variant="primary" className="split-main" disabled={exporting} onClick={() => exportVideo()}>
+          <Button variant="primary" className="split-main" disabled={exporting} onClick={() => exportVideo()} title="Export MP4 (⌘E)">
             Export MP4
           </Button>
           <Button
@@ -2494,7 +2526,25 @@ export function Editor({
           </div>
         </div>
         <div className="transport">
-          <div className="transport-group">
+          <div className="transport-group transport-edit">
+            <span className="tb-group">
+              <Button size="sm" variant="ghost" onClick={splitAtPlayhead} title="Split at playhead (S)">
+                Split
+              </Button>
+              <span className="tb-sep" aria-hidden />
+              <Button size="sm" variant="ghost" disabled={!selectedClip} onClick={() => trimClip('start')} title="Trim the selected clip's start to the playhead">
+                Trim Start
+              </Button>
+              <Button size="sm" variant="ghost" disabled={!selectedClip} onClick={() => trimClip('end')} title="Trim the selected clip's end to the playhead">
+                Trim End
+              </Button>
+              <span className="tb-sep" aria-hidden />
+              <Button size="sm" variant="ghost" onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1} title="Delete the selected clip (⌫)">
+                Delete
+              </Button>
+            </span>
+          </div>
+          <div className="transport-group transport-play">
             <button
               type="button"
               className="play-btn"
@@ -2509,19 +2559,7 @@ export function Editor({
               <span> / {fmtPrecise(timeline.outputDuration || duration)}</span>
             </span>
           </div>
-          <div className="transport-group">
-            <Button size="sm" variant="ghost" onClick={splitAtPlayhead} title="Split at playhead (S)">
-              Split
-            </Button>
-            <Button size="sm" variant="ghost" disabled={!selectedClip} onClick={() => trimClip('start')} title="Trim clip start to playhead">
-              Trim start
-            </Button>
-            <Button size="sm" variant="ghost" disabled={!selectedClip} onClick={() => trimClip('end')} title="Trim clip end to playhead">
-              Trim end
-            </Button>
-            <Button size="sm" variant="ghost" onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1} title="Delete clip (⌫)">
-              Delete clip
-            </Button>
+          <div className="transport-group transport-tools">
             {selectedClip && (
               <Segmented
                 size="sm"
@@ -2531,28 +2569,30 @@ export function Editor({
                 onChange={setClipSpeed}
               />
             )}
-          </div>
-          {!preset && (
-            <div className="transport-group">
+            {!preset && proj.style.cropRect && !cropMode && (
               <Button
                 size="sm"
                 variant="ghost"
-                className={cropMode ? 'is-on' : ''}
-                onClick={() => setCropMode((c) => !c)}
+                onClick={() => setProj((p) => ({ ...p, style: { ...p.style, cropRect: null } }))}
               >
-                {cropMode ? 'Drag on preview…' : 'Crop'}
+                Reset Crop
               </Button>
-              {proj.style.cropRect && !cropMode && (
+            )}
+            {!preset && (
+              <span className="tb-group">
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setProj((p) => ({ ...p, style: { ...p.style, cropRect: null } }))}
+                  className={cropMode ? 'is-on' : ''}
+                  aria-pressed={cropMode}
+                  title="Drag on the preview to crop the recording"
+                  onClick={() => setCropMode((c) => !c)}
                 >
-                  Reset crop
+                  {cropMode ? 'Drag to Crop' : 'Crop'}
                 </Button>
-              )}
-            </div>
-          )}
+              </span>
+            )}
+          </div>
         </div>
       </main>
 
@@ -2609,10 +2649,10 @@ export function Editor({
         <div className="tl-labels">
           <span className="tl-zoom">
             <button type="button" aria-label="Zoom out timeline" title="Zoom out (pinch or ⌘-scroll)" disabled={tlZoom <= 1} onClick={() => zoomTimeline(tlZoom / ZOOM_STEP)}>
-              −
+              {Icon.minus(12)}
             </button>
             <button type="button" aria-label="Zoom in timeline" title="Zoom in (pinch or ⌘-scroll)" disabled={tlZoom >= 40} onClick={() => zoomTimeline(tlZoom * ZOOM_STEP)}>
-              +
+              {Icon.plus(12)}
             </button>
           </span>
           <span>Clips</span>
@@ -2624,6 +2664,11 @@ export function Editor({
         <div className="tl-scroll" ref={tlScrollRef}>
         <div className="tl-lanes" ref={tlLanesRef} style={{ width: `${tlZoom * 100}%` }} onClick={seekTimeline} onContextMenu={timelineMenu}>
           <div className="tl-ruler">
+            <div
+              className="tl-minor"
+              aria-hidden
+              style={{ backgroundSize: `${((ruler.step / 4) / outDur) * 100}% 100%` }}
+            />
             {ruler.ticks.map((t) => (
               <span key={t} className="tick tnum" style={{ left: `${(t / outDur) * 100}%` }}>
                 {fmtTick(t, ruler.step)}
@@ -2664,6 +2709,16 @@ export function Editor({
                     width: `${((b.end - b.start) / (timeline.outputDuration || duration || 1)) * 100}%`,
                   }}
                 >
+                  {filmstrip.length > 0 && (
+                    <span className="clip-frames" aria-hidden>
+                      {clipFrames(
+                        filmTimes,
+                        timeline.clips[i]?.sourceStart ?? 0,
+                        timeline.clips[i]?.sourceEnd ?? 0,
+                        Math.max(1, Math.round((((b.end - b.start) / outDur) * lanesW) / tileW)),
+                      ).map((fi, k) => (filmstrip[fi] ? <img key={k} src={filmstrip[fi]!} alt="" draggable={false} /> : <span key={k} />))}
+                    </span>
+                  )}
                   <span className="clip-label tnum">
                     Clip {i + 1}
                     <span>
@@ -2719,11 +2774,9 @@ export function Editor({
               onAdd={addTapAtPlayhead}
             />
           )}
-          <div className="lane lane-audio">
+          <div className={`lane lane-audio${silent ? ' is-silent' : ''}`}>
             <canvas ref={waveRef} className="wave" />
-            {peaks.length > 0 && Math.max(...peaks) < 0.03 && (
-              <span className="lane-note">Silent recording</span>
-            )}
+            {silent && <span className="lane-note">No sound in this recording</span>}
           </div>
           {(smartCuts ?? []).map((p, i) => {
             const r = proposalOutRange(p);
@@ -2853,6 +2906,9 @@ export function Editor({
     </div>
   );
 }
+
+/** Base heights of the timeline's lanes under the ruler: clips, zoom, (taps), audio. */
+const LANES = (phone: boolean) => (phone ? [48, 22, 26, 38] : [48, 22, 38]);
 
 const FILLER = /^[\s.,!?]*(?:um+|uh+|er+|eh+|ah+|hmm+|mm+|mhm)[\s.,!?]*$/i;
 

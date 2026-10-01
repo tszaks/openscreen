@@ -71,7 +71,7 @@ export function Gallery({ view }: { view: string }) {
         <header className="topbar" />
         <main className="rec-screen">
           <RecordingCard
-            sourceName={ios ? 'iPhone 16 Pro' : 'Roadmap — Spring launch'}
+            sourceName={ios ? 'iPhone 16 Pro' : 'Roadmap'}
             elapsed={83}
             saving={view === 'saving'}
             onStop={noop}

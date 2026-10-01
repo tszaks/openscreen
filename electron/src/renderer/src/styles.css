@@ -296,6 +296,17 @@ input {
 }
 .tb-group .btn {
   height: 26px;
+  padding: 0 10px;
+  font-size: var(--text-body);
+}
+.tb-group .btn-ghost:hover:not(:disabled) {
+  background: var(--fill-2);
+}
+.tb-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 1px;
+  background: var(--separator-strong);
 }
 
 /* ───────────────────────── rows, switches, sliders ───────────────────────── */
@@ -329,6 +340,21 @@ input {
 
 .switch-row {
   padding: 2px 0;
+}
+
+/* Label left, control right: the inspector's grouped-form row. */
+.form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  min-height: 28px;
+}
+.form-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 /* The macOS switch: a capsule with a raised knob that stretches while held. */
@@ -1234,11 +1260,13 @@ canvas.preview.cropping {
     var(--shadow-preview);
 }
 
+/* Under the preview: clip editing on the left, play and time in the
+   middle (as in QuickTime and Final Cut's viewer), view tools on the right. */
 .transport {
   flex-shrink: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: var(--s3);
   height: 56px;
   padding: 0 var(--s4);
@@ -1247,11 +1275,14 @@ canvas.preview.cropping {
 .transport-group {
   display: flex;
   align-items: center;
-  gap: var(--s1);
+  gap: var(--s2);
   min-width: 0;
 }
-.transport-group .segmented {
-  margin-left: var(--s2);
+.transport-play {
+  gap: var(--s3);
+}
+.transport-tools {
+  justify-content: flex-end;
 }
 
 .play-btn {
@@ -1280,7 +1311,7 @@ canvas.preview.cropping {
 }
 
 .timecode {
-  margin-left: 10px;
+  min-width: 112px;
   font-size: var(--text-body);
   font-weight: 500;
   color: var(--label);
@@ -1619,7 +1650,7 @@ input[type='color']::-webkit-color-swatch {
 .tl-labels,
 .tl-lanes {
   display: grid;
-  grid-template-rows: 22px 34px 22px 38px;
+  grid-template-rows: 22px 48px 22px 38px;
   row-gap: 6px;
 }
 
@@ -1663,13 +1694,13 @@ input[type='color']::-webkit-color-swatch {
   padding-left: 10px;
 }
 .tl-zoom button {
+  display: grid;
+  place-items: center;
   border: 0;
   padding: 0;
   width: 20px;
   height: 18px;
   border-radius: 5px;
-  font-size: var(--text-body);
-  line-height: 1;
   color: var(--label-2);
   background: transparent;
   transition:
@@ -1695,13 +1726,13 @@ input[type='color']::-webkit-color-swatch {
 .pane-divider::after {
   content: '';
   position: absolute;
-  background: var(--accent);
+  background: var(--separator-strong);
   opacity: 0;
   transition: opacity var(--t1) var(--ease);
 }
 .pane-divider:hover::after,
 .pane-divider.dragging::after {
-  opacity: 0.7;
+  opacity: 1;
   transition-delay: 100ms;
 }
 .pane-divider-x {
@@ -1746,11 +1777,22 @@ body.resizing-y * {
   position: relative;
   box-shadow: inset 0 -1px 0 var(--separator);
 }
+/* Quarter ticks between the labelled ones, drawn as one repeating stroke. */
+.tl-minor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  background-image: linear-gradient(to right, var(--separator-strong) 1px, transparent 1px);
+  background-repeat: repeat-x;
+  pointer-events: none;
+}
 .tick {
   position: absolute;
   bottom: 0;
   height: 100%;
-  padding-left: 5px;
+  padding: 0 0 4px 5px;
   display: flex;
   align-items: center;
   font-size: var(--text-caption);
@@ -1761,7 +1803,7 @@ body.resizing-y * {
   white-space: nowrap;
 }
 
-.tick:first-child {
+.tick:first-of-type {
   padding-left: var(--s3);
   box-shadow: none;
 }
@@ -1793,18 +1835,47 @@ body.resizing-y * {
 .clipblock:active {
   cursor: grabbing;
 }
-.clipblock.selected {
-  background: var(--accent-tint-strong);
-  box-shadow: inset 0 0 0 2px var(--accent);
+.clipblock.selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow:
+    inset 0 0 0 2px var(--accent),
+    inset 0 0 0 3px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+/* The clip's own frames, cropped to fill it (Final Cut's filmstrip). */
+.clip-frames {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+  animation: fade-in var(--t3) var(--ease);
+}
+.clip-frames > * {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  object-fit: cover;
+  box-shadow: inset -0.5px 0 0 rgba(0, 0, 0, 0.18);
 }
 .clip-label {
+  position: absolute;
+  top: 4px;
+  left: 4px;
   display: flex;
   gap: 6px;
-  padding: 0 10px;
+  max-width: calc(100% - 8px);
+  padding: 1px 7px;
+  border-radius: var(--r-full);
+  background: var(--glass-strong);
+  backdrop-filter: var(--glass-blur);
   font-size: var(--text-caption);
   font-weight: 600;
   color: var(--label);
   white-space: nowrap;
+  overflow: hidden;
   pointer-events: none;
 }
 .clip-label span {
@@ -1843,6 +1914,9 @@ body.resizing-y * {
 
 .lane-audio {
   overflow: hidden;
+}
+.lane-audio.is-silent::before {
+  display: none;
 }
 .lane-audio::before {
   content: '';
