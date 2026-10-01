@@ -126,7 +126,7 @@ describe('phone layer layout', () => {
           expect(left - content.x).toBeCloseTo(content.x + content.w - end, 6);
         }
         // Each side gets a real share of the canvas.
-        expect(r.mac.w * r.mac.h).toBeGreaterThan(W * H * 0.1);
+        expect(r.mac.w * r.mac.h).toBeGreaterThan(W * H * 0.15);
         expect(r.phone.h).toBeGreaterThan(H * 0.25);
       });
     }
