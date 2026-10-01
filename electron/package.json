@@ -12,6 +12,9 @@
   },
   "author": "Tyler Szakacs",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite",
