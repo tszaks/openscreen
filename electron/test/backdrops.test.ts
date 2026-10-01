@@ -81,3 +81,18 @@ describe('backdrop presets', () => {
     expect(backgroundCss({ kind: 'gradient', startHex: '#000000', endHex: '#ffffff', angle: 0 })).toBe('linear-gradient(90deg, #000000, #ffffff)');
   });
 });
+
+describe('mesh validation', () => {
+  it('rejects blobs with missing or non-finite numbers, which would break every frame', () => {
+    const p = desktop();
+    const ok = { kind: 'mesh' as const, baseHex: '#101018', blobs: [{ x: 0.3, y: 0.4, r: 0.6, hex: '#ff8a3d' }] };
+    p.style.background = ok;
+    expect(validateProject(p)).toEqual([]);
+    for (const bad of [{ y: 0.4, r: 0.6, hex: '#ff8a3d' }, { x: 0.3, y: 0.4, r: Infinity, hex: '#ff8a3d' }, { x: NaN, y: 0.4, r: 0.6, hex: '#ff8a3d' }]) {
+      p.style.background = { ...ok, blobs: [bad as never] };
+      expect(validateProject(p).join(' ')).toMatch(/mesh/);
+    }
+    p.style.background = { ...ok, grain: NaN };
+    expect(validateProject(p).join(' ')).toMatch(/mesh/);
+  });
+});
