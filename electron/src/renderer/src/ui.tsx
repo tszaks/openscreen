@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 // Presentational primitives. No app state lives here: every component is
 // controlled by its caller, and styling comes from styles.css.
@@ -245,6 +245,79 @@ export function Section({
       <div className="section-body">{children}</div>
     </section>
   );
+}
+
+/**
+ * A sheet: drops from under the toolbar over a light dim, as macOS sheets do.
+ * Escape (and a click on the dim, when `onCancel` is given) cancels. Keyboard
+ * focus moves in, onto the element marked autoFocus or the sheet itself.
+ */
+export function Sheet({
+  title,
+  children,
+  actions,
+  onCancel,
+  role = 'alertdialog',
+  className = '',
+}: {
+  title: React.ReactNode;
+  children?: React.ReactNode;
+  actions: React.ReactNode;
+  onCancel?: () => void;
+  role?: 'dialog' | 'alertdialog';
+  className?: string;
+}) {
+  const id = useId();
+  const ref = useRef<HTMLDivElement>(null);
+  const cancel = useRef(onCancel);
+  cancel.current = onCancel;
+  useEffect(() => {
+    const el = ref.current;
+    if (el && !el.contains(document.activeElement)) el.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !cancel.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cancel.current();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+  return (
+    <div className="modal-scrim no-drag" onMouseDown={() => onCancel?.()}>
+      <div
+        ref={ref}
+        className={`modal ${className}`}
+        role={role}
+        aria-modal="true"
+        aria-labelledby={id}
+        tabIndex={-1}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <h2 id={id}>{title}</h2>
+        {children}
+        <div className="modal-actions">{actions}</div>
+      </div>
+    </div>
+  );
+}
+
+/** The window's appearance as the system (or View > Appearance) has it. */
+export function useColorScheme(): 'light' | 'dark' {
+  const query = () => (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const [scheme, setScheme] = useState<'light' | 'dark'>(query);
+  useEffect(() => {
+    const mq = matchMedia('(prefers-color-scheme: dark)');
+    const on = () => setScheme(query());
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return scheme;
+}
+
+/** A design token's current value (for canvas drawing, which can't read CSS). */
+export function cssToken(name: string, fallback = ''): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
 
 export function Kbd({ children }: { children: React.ReactNode }) {
