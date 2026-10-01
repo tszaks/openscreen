@@ -51,8 +51,9 @@ export interface FocusSegment {
 /**
  * Dwell-zoom: find spots where the cursor lingered (attention without a
  * click). Emits pseudo-click samples the planner can merge with real
- * clicks — Screen Studio zooms on both. A dwell starts when the cursor
- * stays within `radius` (normalized) for `minDur` seconds and won't
+ * clicks, so the camera follows attention as well as action. A dwell
+ * starts when the cursor stays within `radius` (normalized) for `minDur`
+ * seconds and won't
  * re-trigger until it leaves the radius for `debounce` seconds.
  */
 export function dwellFocusEvents(
