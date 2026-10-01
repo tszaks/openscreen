@@ -1,6 +1,7 @@
 // Export encode plumbing that doesn't need Electron: output size, the ffmpeg
 // argv for the frame pipe, and turning an ffmpeg exit into a readable error.
 
+import { DUCK_GAIN, insideDir, type MusicInput } from './audioTracks';
 import type { Project } from './types';
 
 /** libx264 + yuv420p needs even width and height. */
@@ -34,6 +35,12 @@ export interface ExportArgsInput {
   /** An intermediate for preset transcodes (a .mov): near-lossless video
    *  and PCM audio, so the second encode starts from clean pixels. */
   master?: boolean;
+  /** Added sounds from the audio tracks (audioTracks.musicInputs), in output time. */
+  music?: MusicInput[];
+  /** The project's bundle: every music path must be inside it. Required with music. */
+  bundleDir?: string;
+  /** Output-time ranges where the recording's own sound is lowered under music. */
+  duck?: { start: number; end: number }[];
 }
 
 // Voice cleanup: rumble cut → FFT denoise → gentle compression → limiter.
@@ -59,6 +66,11 @@ export function buildExportArgs(args: ExportArgsInput): string[] {
   }
 
   const cleanup = args.voiceCleanup === true;
+  const duck = (args.duck ?? []).filter((r) => r.end > r.start);
+  // Lower the recording under music: a fixed cut while any music plays.
+  const duckFilter = duck.length
+    ? `volume=${DUCK_GAIN}:enable='${duck.map((r) => `between(t,${r.start.toFixed(3)},${r.end.toFixed(3)})`).join('+')}'`
+    : '';
 
   const filters: string[] = [];
   let programPad = ''; // labeled pad feeding program audio into amix, or ''
@@ -69,31 +81,40 @@ export function buildExportArgs(args: ExportArgsInput): string[] {
         (c, i) =>
           `[1:a]atrim=start=${c.start.toFixed(3)}:end=${c.end.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${Math.min(100, Math.max(0.5, c.speed))}${cleanup ? ',' + CLEANUP : ''}[a${i}]`,
       ),
-      `${clips.map((_, i) => `[a${i}]`).join('')}concat=n=${clips.length}:v=0:a=1[prog]`,
+      `${clips.map((_, i) => `[a${i}]`).join('')}concat=n=${clips.length}:v=0:a=1${duckFilter ? `[cat];[cat]${duckFilter}` : ''}[prog]`,
     );
     programPad = '[prog]';
-  } else if (hasAudio && args.audioIn && cleanup) {
-    filters.push(`[1:a]${CLEANUP}[prog]`);
+  } else if (hasAudio && args.audioIn && (cleanup || duckFilter)) {
+    filters.push(`[1:a]${[cleanup ? CLEANUP : '', duckFilter].filter(Boolean).join(',')}[prog]`);
     programPad = '[prog]';
   } else if (hasAudio && args.audioIn) {
     programPad = '[1:a]'; // identity timeline: the source track as is
   }
 
+  // Inputs after the frame pipe: the recording (1), the click tick, then one per added sound.
   const lavfiIndex = args.audioIn ? 2 : 1;
   const lavfiInputs: string[] = clicks.length
     ? ['-f', 'lavfi', '-i', 'aevalsrc=0.5*sin(1900*2*PI*t)*exp(-t*70):s=44100:d=0.09']
     : [];
   if (clicks.length) filters.unshift(`[${lavfiIndex}:a]anull[sfxin]`, ...sfxParts);
 
+  const outside = (args.music ?? []).find((m) => !args.bundleDir || !insideDir(m.path, args.bundleDir));
+  if (outside) throw new Error(`The sound file ${outside.path} is outside this project, so it can't be exported.`);
+  const music = (args.music ?? []).filter((m) => m.length > 1e-3 && m.gain > 0 && m.sourceOut > m.sourceIn);
+  const musicBase = lavfiIndex + (clicks.length ? 1 : 0);
+  const musicInputs = music.flatMap((m) => ['-i', m.path]);
+  music.forEach((m, k) => filters.push(`[${musicBase + k}:a]${musicChain(m)}[m${k}]`));
+
   // Everything audible is mixed over a silent bed exactly as long as the
   // video, so the file always ends where the video ends. `-shortest` can't
   // be trusted for that: a click-only track ends at the last click and cut
   // the video off there, and ffmpeg 6 ignores apad in this graph.
-  const audible = [programPad, clicks.length ? '[sfx]' : ''].filter(Boolean);
+  const audible = [programPad, clicks.length ? '[sfx]' : '', ...music.map((_, k) => `[m${k}]`)].filter(Boolean);
   const audioArgs = audible.length
     ? [
         ...(args.audioIn ? ['-i', args.audioIn] : []),
         ...lavfiInputs,
+        ...musicInputs,
         '-filter_complex',
         [
           ...filters,
@@ -119,6 +140,38 @@ export function buildExportArgs(args: ExportArgsInput): string[] {
     ...(args.master ? ['-preset', 'veryfast', '-crf', '10'] : ['-crf', '18']),
     args.outPath,
   ];
+}
+
+/**
+ * One added sound's filter chain: cut the part of the file that plays,
+ * repeat it when looping, cut it where it stops (the video's end at the
+ * latest), set its volume and fades, then delay it to its start. Resampled to
+ * 48 kHz stereo first so a loop's length in samples is exact.
+ */
+export function musicChain(m: MusicInput): string {
+  const f = (n: number) => n.toFixed(3);
+  const parts = m.loop
+    ? [
+        `atrim=start=${f(m.sourceIn)}:end=${f(m.sourceOut)}`,
+        'asetpts=PTS-STARTPTS',
+        'aresample=48000',
+        'aformat=sample_fmts=fltp:channel_layouts=stereo',
+        `aloop=loop=-1:size=${Math.max(1, Math.round((m.sourceOut - m.sourceIn) * 48000))}`,
+        'asetpts=N/SR/TB',
+        `atrim=end=${f(m.length)}`,
+      ]
+    : [
+        `atrim=start=${f(m.sourceIn)}:end=${f(Math.min(m.sourceOut, m.sourceIn + m.length))}`,
+        'asetpts=PTS-STARTPTS',
+        'aresample=48000',
+        'aformat=sample_fmts=fltp:channel_layouts=stereo',
+      ];
+  if (Math.abs(m.gain - 1) > 1e-6) parts.push(`volume=${+m.gain.toFixed(4)}`);
+  if (m.fadeIn > 0) parts.push(`afade=t=in:st=0:d=${f(m.fadeIn)}`);
+  if (m.fadeOut > 0) parts.push(`afade=t=out:st=${f(Math.max(0, m.length - m.fadeOut))}:d=${f(m.fadeOut)}`);
+  const ms = Math.round(m.delay * 1000);
+  if (ms > 0) parts.push(`adelay=delays=${ms}:all=1`);
+  return parts.join(',');
 }
 
 export interface FfmpegExit {

@@ -2105,6 +2105,113 @@ body.resizing-y * {
   pointer-events: none;
 }
 
+/* The music track: one block per added sound, its waveform behind its name.
+   Its lane exists only while the project has a sound on it. */
+.ed-timeline.has-music .tl-labels,
+.ed-timeline.has-music .tl-lanes {
+  grid-template-rows: 22px 56px 22px 38px 34px;
+}
+.lane-music {
+  overflow: hidden;
+}
+.tl-labels span.is-muted,
+.lane-music.is-muted .musicblock {
+  opacity: 0.45;
+}
+.musicblock {
+  position: absolute;
+  min-width: 8px;
+  overflow: hidden;
+  border: 1.5px solid var(--surface);
+  border-radius: 8px;
+  background: var(--clip);
+  cursor: grab;
+  touch-action: none;
+  transition: background-color var(--t2) var(--ease);
+}
+.musicblock:hover {
+  background: var(--clip-hover);
+}
+.musicblock:active {
+  cursor: grabbing;
+}
+.musicblock.selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow:
+    inset 0 0 0 2px var(--accent),
+    inset 0 0 0 3px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+.music-wave {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.music-label {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  max-width: 100%;
+  padding: 0 7px;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  line-height: 15px;
+  color: var(--label);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.music-label span {
+  font-weight: 500;
+  color: var(--label-2);
+}
+/* Edge handles: a strip at each end that trims instead of moving. */
+.trim-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  z-index: 1;
+}
+.trim-handle.start {
+  left: 0;
+}
+.trim-handle.end {
+  right: 0;
+}
+.musicblock:hover .trim-handle::after,
+.musicblock.selected .trim-handle::after {
+  content: '';
+  position: absolute;
+  top: 30%;
+  bottom: 30%;
+  left: 2px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--label-3);
+}
+/* Overlapping sounds share the lane in rows: the name only, smaller. */
+.musicblock.stacked {
+  border-radius: 6px;
+}
+.musicblock.stacked .music-label {
+  font-size: 10px;
+  line-height: 12px;
+}
+.musicblock.stacked .music-label span {
+  display: none;
+}
+.music-row.selected {
+  background: var(--accent-tint);
+}
+
 .cutmark {
   position: absolute;
   top: 28px;

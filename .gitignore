@@ -17,7 +17,7 @@ OpenScreen.xcodeproj/
 
 # OS noise
 .DS_Store
-node_modules/
+node_modules
 dist/
 tsconfig.tsbuildinfo
 release/
