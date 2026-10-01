@@ -3,7 +3,7 @@
 // trim it, click to select it, right-click for Remove, Mute Track and Fit to
 // Video. Fades show as the waveform tapering at either end.
 import React, { useEffect, useRef } from 'react';
-import { effectiveFades, itemExtent, itemSpan, laneRows, moveItem, segmentLength, trimItemEnd, trimItemStart } from '../../shared/audioTracks';
+import { dragLatched, effectiveFades, itemExtent, itemSpan, laneRows, moveItem, segmentLength, trimItemEnd, trimItemStart } from '../../shared/audioTracks';
 import type { AudioItem, AudioTrack } from '../../shared/types';
 import { cssToken } from './ui';
 
@@ -33,7 +33,7 @@ export function AudioTrackLane({
   onMenu: (id: string | null, e: React.MouseEvent) => void;
 }) {
   const laneRef = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ mode: DragMode; pointer: number; x: number; item: AudioItem; moved: boolean } | null>(null);
+  const drag = useRef<{ mode: DragMode; pointer: number; x: number; at: number; item: AudioItem; moved: boolean } | null>(null);
   const pct = (t: number) => `${(t / outDur) * 100}%`;
 
   const onDown = (e: React.PointerEvent, item: AudioItem, mode: DragMode) => {
@@ -44,14 +44,14 @@ export function AudioTrackLane({
     } catch {
       // not an active pointer (synthetic events): moves over the block still drag it
     }
-    drag.current = { mode, pointer: e.pointerId, x: e.clientX, item, moved: false };
+    drag.current = { mode, pointer: e.pointerId, x: e.clientX, at: e.timeStamp, item, moved: false };
   };
   const onMovePointer = (e: React.PointerEvent) => {
     const d = drag.current;
     const lane = laneRef.current;
     if (!d || d.pointer !== e.pointerId || !lane) return;
     const dx = e.clientX - d.x;
-    if (!d.moved && Math.abs(dx) < 3) return;
+    if (!d.moved && !dragLatched(dx, e.timeStamp - d.at)) return;
     d.moved = true;
     const dt = (dx / (lane.getBoundingClientRect().width || 1)) * outDur;
     const it = d.item;
@@ -62,6 +62,7 @@ export function AudioTrackLane({
   const onUp = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d || d.pointer !== e.pointerId) return;
+    e.stopPropagation();
     drag.current = null;
     if (!d.moved) onSelect(d.item.id);
   };

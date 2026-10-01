@@ -25,7 +25,7 @@ import type { ContextMenuItem, MenuPhase } from '../shared/menu';
 import { fileSafeName, normalizeProject, projectName, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
 import { parseHeadlessArgs, type HeadlessJob, type HeadlessResult } from '../shared/headless';
 import { analyzeTapsInFile, audioFilePeaks, detectSilences, extractWav as extractBundleWav, importAudioFile, transcribeBundle } from '../node/media';
-import { AUDIO_EXTENSIONS, bundleRelative, type MusicInput } from '../shared/audioTracks';
+import { AUDIO_EXTENSIONS, bundleRelative, insideDir, type MusicInput } from '../shared/audioTracks';
 import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
 import { getPreset, type PresetId } from '../shared/exportPresets';
 import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
@@ -908,6 +908,10 @@ app.whenReady().then(() => {
     await exportJob?.abort(); // a previous export that never ended
     exportJob = null;
     // A missing music file would fail the whole encode with ffmpeg's own words.
+    // The bundle is the recording's folder; buildExportArgs refuses music outside it.
+    const bundleDir = args.audioIn ? dirname(resolve(args.audioIn)) : undefined;
+    const outside = (args.music ?? []).find((m) => !bundleDir || !insideDir(resolve(m.path), bundleDir));
+    if (outside) throw new Error(`The sound file ${outside.path} is outside this project, so it can't be exported.`);
     const missing = (args.music ?? []).find((m) => !existsSync(m.path));
     if (missing) throw new Error(`The sound file ${missing.path.split('/').pop()} is missing from this project's audio folder.`);
     const ffmpegBin = await ffmpegPath();
@@ -915,7 +919,7 @@ app.whenReady().then(() => {
     // (filter_complex on a missing stream aborts the whole encode).
     const hasAudio = args.audioIn ? await probeHasAudio(ffmpegBin, args.audioIn) : false;
     mkdirSync(dirname(args.outPath), { recursive: true });
-    exportJob = await startFfmpegJob(ffmpegBin, buildExportArgs({ ...args, hasAudio }), args.outPath);
+    exportJob = await startFfmpegJob(ffmpegBin, buildExportArgs({ ...args, hasAudio, bundleDir }), args.outPath);
     return true;
   });
 

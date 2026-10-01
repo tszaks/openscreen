@@ -6,7 +6,7 @@
 // Items live in OUTPUT seconds and play at normal speed; `sourceIn/sourceOut`
 // are seconds into the item's own file.
 
-import type { AudioItem, AudioTrack, Project, Track } from './types';
+import { bundleRelative, type AudioItem, type AudioTrack, type Project, type Track } from './types';
 
 /** How much "Lower the recording's sound under music" turns the recording down (−12 dB). */
 export const DUCK_GAIN = 0.25;
@@ -15,9 +15,26 @@ export const MIN_ITEM = 0.1;
 /** File types the import dialog offers. */
 export const AUDIO_EXTENSIONS = ['mp3', 'm4a', 'aac', 'wav', 'aiff', 'aif'];
 
-/** A path that stays inside the bundle: relative, with no ".." step. */
-export const bundleRelative = (file: unknown): file is string =>
-  typeof file === 'string' && file.length > 0 && !file.startsWith('/') && !file.split(/[\\/]/).includes('..');
+export { bundleRelative };
+
+/**
+ * Whether absolute `path` lies inside folder `dir` once "." and ".." steps are
+ * resolved (plain string work, so the renderer can use it too).
+ */
+export function insideDir(path: string, dir: string): boolean {
+  const norm = (p: string) => {
+    const out: string[] = [];
+    for (const seg of p.split('/')) {
+      if (seg === '' || seg === '.') continue;
+      if (seg === '..') out.pop();
+      else out.push(seg);
+    }
+    return '/' + out.join('/');
+  };
+  if (!path.startsWith('/') || !dir.startsWith('/') || path.includes('\0')) return false;
+  const root = norm(dir);
+  return norm(path).startsWith(root === '/' ? '/' : `${root}/`);
+}
 
 /** Seconds of the file that play once through. */
 export const segmentLength = (item: AudioItem) => Math.max(0, item.sourceOut - item.sourceIn);
@@ -140,6 +157,8 @@ export function musicInputs(tracks: Track[], bundleDir: string, outDur: number):
   const dir = bundleDir.replace(/\/+$/, '');
   return tracks.filter(audible).flatMap((track) =>
     track.items.flatMap((item) => {
+      // Normally dropped on load already; never hand ffmpeg a path outside the bundle.
+      if (!bundleRelative(item.file)) throw new Error(`The sound file "${String(item.file)}" is outside this project, so it can't be exported.`);
       const span = itemSpan(item, outDur);
       const length = span.end - span.start;
       const gain = track.volume * item.gain;
@@ -148,6 +167,17 @@ export function musicInputs(tracks: Track[], bundleDir: string, outDur: number):
       return [{ path: `${dir}/${item.file}`, delay: item.start, sourceIn: item.sourceIn, sourceOut: item.sourceOut, loop: item.loop, length, gain, ...fades }];
     }),
   );
+}
+
+/** A press only becomes a drag past DRAG_MIN_PX, and then only once it has
+ *  lasted DRAG_SURE_MS or gone past DRAG_SURE_PX, so a trackpad tap (a few
+ *  pixels of wobble in a few milliseconds) never nudges an item. */
+export const DRAG_MIN_PX = 3;
+export const DRAG_SURE_PX = 6;
+export const DRAG_SURE_MS = 80;
+export function dragLatched(dx: number, ms: number): boolean {
+  const d = Math.abs(dx);
+  return d >= DRAG_MIN_PX && (ms >= DRAG_SURE_MS || d >= DRAG_SURE_PX);
 }
 
 // ---------------------------------------------------------------------------

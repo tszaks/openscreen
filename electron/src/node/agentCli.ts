@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { applyOps, audioImports, captionsFromSegments, needsSilences, needsTapAnalysis, needsTranscript, OP_NAMES, OpError, validateProject, type ApplyContext, type EditOp, type TranscriptSegment } from '../shared/agentOps';
 import { planPolish, type PolishStyle } from '../shared/polish';
-import { defaultProject, fileSafeName, normalizeProject, projectName, type Project } from '../shared/types';
+import { defaultProject, fileSafeName, normalizeProject, projectName, unsafeAudioFiles, type Project } from '../shared/types';
 import { Timeline } from '../shared/timeline';
 import { resolveDevice, projectCanvasSize, layoutPreset } from '../shared/mobileProject';
 import { parseFreezes, parseSilences, silenceDetectArgs } from '../shared/silence';
@@ -95,6 +95,16 @@ function writeProject(dir: string, p: Project) {
   renameSync(tmp, file);
 }
 
+/** Sound files project.json points outside the bundle at; loading drops those items. */
+function droppedAudio(dir: string): string[] {
+  try {
+    return unsafeAudioFiles(JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8'))?.tracks);
+  } catch {
+    return [];
+  }
+}
+const droppedNote = (files: string[]) => files.map((f) => `audio item dropped: its file "${f}" is outside the bundle`);
+
 function readTranscript(dir: string): TranscriptSegment[] | null {
   const f = join(dir, 'transcript.json');
   if (!existsSync(f)) return null;
@@ -173,7 +183,7 @@ function summarize(dir: string, p: Project) {
       }),
     })),
     export: { preset: p.exportPreset, fps: p.outputFPS },
-    problems: validateProject(p),
+    problems: [...validateProject(p), ...droppedNote(droppedAudio(dir))],
   };
 }
 
@@ -788,7 +798,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'validate': {
         const dir = bundlePath(args.shift());
         const p = readProject(dir);
-        const problems = validateProject(p);
+        const problems = [...validateProject(p), ...droppedNote(droppedAudio(dir))];
         const video = join(dir, p.recording.screenVideoFile);
         if (!existsSync(video)) problems.push(`missing video file ${video}`);
         result = { ok: problems.length === 0, bundle: dir, problems };

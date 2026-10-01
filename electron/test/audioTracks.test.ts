@@ -4,7 +4,9 @@ import {
   MIN_ITEM,
   addItem,
   bundleRelative,
+  dragLatched,
   duckRanges,
+  insideDir,
   effectiveFades,
   fileTimeAt,
   fitToVideo,
@@ -22,8 +24,8 @@ import {
   updateItem,
 } from '../src/shared/audioTracks';
 import { buildExportArgs, musicChain } from '../src/shared/exportArgs';
-import { applyOps } from '../src/shared/agentOps';
-import { defaultProject, normalizeProject, type AudioItem, type AudioTrack, type Project } from '../src/shared/types';
+import { applyOps, validateProject } from '../src/shared/agentOps';
+import { defaultProject, normalizeProject, unsafeAudioFiles, type AudioItem, type AudioTrack, type Project } from '../src/shared/types';
 
 const item = (patch: Partial<AudioItem> = {}): AudioItem => ({ ...newAudioItem('a', 'audio/a.mp3', 'Song', 10, 2), ...patch });
 const track = (items: AudioItem[], patch: Partial<AudioTrack> = {}): AudioTrack => ({ id: 't', kind: 'audio', name: 'Music', muted: false, volume: 1, duck: false, items, ...patch });
@@ -156,7 +158,7 @@ describe('musicInputs', () => {
 });
 
 describe('export filter graph with audio tracks', () => {
-  const base = { outPath: '/o.mp4', w: 1920, h: 1080, fps: 30, duration: 8 };
+  const base = { outPath: '/o.mp4', w: 1920, h: 1080, fps: 30, duration: 8, bundleDir: '/b' };
   const song = { path: '/b/audio/a.mp3', delay: 2, sourceIn: 0, sourceOut: 10, loop: false, length: 6, gain: 1, fadeIn: 1, fadeOut: 0 };
   const filterOf = (argv: string[]) => argv[argv.indexOf('-filter_complex') + 1] ?? '';
   const inputsOf = (argv: string[]) => argv.filter((_, i) => argv[i - 1] === '-i');
@@ -261,5 +263,61 @@ describe('laneRows', () => {
     expect(laneRows([a, b, c], 20)).toEqual({ row: { a: 0, b: 1, c: 0 }, count: 2 });
     expect(laneRows([a], 20).count).toBe(1);
     expect(laneRows([], 20).count).toBe(1);
+  });
+});
+
+describe('sound files must stay inside the bundle', () => {
+  const saved = (file: string) =>
+    ({ ...project(), tracks: [{ id: 't', kind: 'audio', items: [{ id: 'bad', file, sourceOut: 4 }, { id: 'ok', file: 'audio/ok.mp3', sourceOut: 4 }] }] }) as unknown as Project;
+
+  for (const file of ['../../etc/hostname', '/etc/hostname', 'audio/../../../etc/hostname', '..\\..\\x.wav', 'C:/x.wav', '~/x.mp3']) {
+    it(`drops ${JSON.stringify(file)} on load and reports it`, () => {
+      const p = normalizeProject(saved(file));
+      expect(p.tracks[0].items.map((i) => i.id)).toEqual(['ok']);
+      expect(unsafeAudioFiles(saved(file).tracks)).toEqual([file]);
+    });
+  }
+
+  it('musicInputs refuses an unsafe file that got past loading', () => {
+    expect(() => musicInputs([track([item({ file: '../../etc/hostname' })])], '/b/rec.openscreen', 8)).toThrow(/outside this project/);
+  });
+
+  it('validate flags it (so an agent apply that sets one is refused)', () => {
+    const p = { ...project(), tracks: [track([item({ file: '/etc/hostname' })])] };
+    expect(validateProject(p).join(' ')).toMatch(/inside the bundle/);
+    expect(() => applyOps(project(), [{ op: 'set', path: '/tracks', value: [track([item({ file: '../x.mp3' })])] }])).toThrow(/inside the bundle/);
+  });
+
+  it('the export args builder refuses music outside the bundle, or with no bundle given', () => {
+    const base = { outPath: '/o.mp4', w: 2, h: 2, fps: 30, duration: 8, audioIn: '/b/rec.openscreen/screen.mov', hasAudio: true, bundleDir: '/b/rec.openscreen' };
+    const m = { delay: 0, sourceIn: 0, sourceOut: 4, loop: false, length: 4, gain: 1, fadeIn: 0, fadeOut: 0 };
+    expect(() => buildExportArgs({ ...base, music: [{ ...m, path: '/etc/hostname' }] })).toThrow(/outside this project/);
+    expect(() => buildExportArgs({ ...base, music: [{ ...m, path: '/b/rec.openscreen/audio/../../../etc/hostname' }] })).toThrow(/outside this project/);
+    expect(() => buildExportArgs({ ...base, music: [{ ...m, path: '/b/rec.openscreen-evil/audio/a.mp3' }] })).toThrow(/outside this project/);
+    expect(() => buildExportArgs({ ...base, bundleDir: undefined, music: [{ ...m, path: '/b/rec.openscreen/audio/a.mp3' }] })).toThrow(/outside this project/);
+    expect(() => buildExportArgs({ ...base, music: [{ ...m, path: '/b/rec.openscreen/audio/a.mp3' }] })).not.toThrow();
+  });
+
+  it('insideDir resolves dot steps and needs a real folder boundary', () => {
+    expect(insideDir('/b/x/audio/a.mp3', '/b/x')).toBe(true);
+    expect(insideDir('/b/x/./audio/../audio/a.mp3', '/b/x/')).toBe(true);
+    expect(insideDir('/b/x/../y/a.mp3', '/b/x')).toBe(false);
+    expect(insideDir('/b/xy/a.mp3', '/b/x')).toBe(false);
+    expect(insideDir('audio/a.mp3', '/b/x')).toBe(false);
+  });
+});
+
+describe('drag threshold on the music lane', () => {
+  it('a tap (wobble under 3px, or a quick few pixels) never drags', () => {
+    expect(dragLatched(2, 500)).toBe(false);
+    expect(dragLatched(-2.9, 1000)).toBe(false);
+    expect(dragLatched(4, 20)).toBe(false);
+    expect(dragLatched(-5, 79)).toBe(false);
+  });
+  it('drags once held long enough past 3px, or pulled past 6px', () => {
+    expect(dragLatched(3, 80)).toBe(true);
+    expect(dragLatched(-4, 120)).toBe(true);
+    expect(dragLatched(6, 5)).toBe(true);
+    expect(dragLatched(-30, 0)).toBe(true);
   });
 });
