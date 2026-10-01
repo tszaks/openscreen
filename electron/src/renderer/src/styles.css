@@ -708,6 +708,112 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 
 /* ───────────────────────── picker ───────────────────────── */
 
+/* New Recording is a sidebar window, as Mail and Notes are: the sources
+   down a translucent sidebar that holds the traffic lights, the chosen
+   source's cards on the right under its own toolbar. */
+.picker-window {
+  flex-direction: row;
+  background: transparent;
+}
+
+.sidebar {
+  width: 224px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--s2) var(--s4);
+  background: var(--sidebar-tint);
+  box-shadow: inset -1px 0 0 var(--separator);
+}
+.sidebar-drag {
+  height: var(--toolbar-h);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+.sidebar-heading {
+  padding: var(--s2) 10px var(--s1);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: var(--track-caption);
+  color: var(--label-2);
+}
+.sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--label);
+  font-size: var(--text-body);
+  text-align: left;
+  transition:
+    background-color var(--t1) var(--ease),
+    transform var(--t1) var(--ease);
+}
+.sidebar-item:hover {
+  background: var(--fill-1);
+}
+.sidebar-item.on {
+  background: var(--fill-3);
+  font-weight: 600;
+}
+.sidebar-item:active {
+  transform: scale(var(--press));
+}
+.sidebar-count {
+  color: var(--label-2);
+  font-size: var(--text-callout);
+  font-weight: 500;
+}
+.sidebar-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s1) 10px 0;
+}
+.sidebar-options .inline-switch {
+  justify-content: space-between;
+}
+.sidebar-options .cam-select {
+  max-width: none;
+  width: 100%;
+}
+
+.picker-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+.picker-top {
+  padding-left: var(--s6);
+}
+.toolbar-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+.toolbar-title-main {
+  font-size: var(--text-title3);
+  font-weight: 600;
+  letter-spacing: var(--track-title);
+}
+.toolbar-title-sub {
+  font-size: var(--text-caption);
+  color: var(--label-2);
+}
+
 .picker {
   flex: 1;
   min-height: 0;
@@ -717,9 +823,12 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   display: flex;
   flex-direction: column;
   gap: var(--s4);
-  padding: var(--s3) var(--s8) var(--s8);
+  padding: var(--s4) var(--s6) var(--s6);
 }
-
+.picker-hint {
+  font-size: var(--text-body);
+  color: var(--label-2);
+}
 /* A calm notice across the top of a view. Caution tint for a problem,
    neutral for good news. */
 .banner {
@@ -749,25 +858,6 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 .banner.is-info .banner-dot {
   background: var(--accent);
-}
-
-.picker-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--s6);
-  padding: var(--s3) 0 var(--s1);
-}
-.picker-head h1 {
-  font-size: var(--text-title1);
-  font-weight: 700;
-  letter-spacing: var(--track-title);
-  line-height: 1.15;
-}
-.picker-head p {
-  margin-top: var(--s1);
-  font-size: var(--text-body);
-  color: var(--label-2);
 }
 
 .cards {
@@ -904,12 +994,6 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   box-shadow: inset 0 0 0 1.5px #3a3a42;
 }
 
-.subhead {
-  margin-top: var(--s3);
-  font-size: var(--text-body);
-  font-weight: 600;
-  color: var(--label);
-}
 
 /* First appearance of a card grid cascades in; kept short. */
 .cards > .card {
@@ -939,15 +1023,14 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: var(--s6);
-  height: 64px;
-  padding: 0 var(--s5) 0 var(--s8);
+  gap: var(--s4);
+  height: 60px;
+  padding: 0 var(--s4) 0 var(--s6);
   background: var(--window);
   box-shadow: inset 0 1px 0 var(--separator);
 }
 .picker-foot .status {
-  max-width: 320px;
-  text-align: right;
+  max-width: 420px;
 }
 
 .inline-switch {
@@ -963,9 +1046,6 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 .inline-switch.disabled .switch {
   opacity: 0.4;
-}
-.subhead + .hint {
-  margin-top: -8px;
 }
 
 /* ───────────────────────── countdown ───────────────────────── */
@@ -2127,12 +2207,6 @@ body.resizing-y * {
 }
 
 /* ───────────────────────── recording notices ───────────────────────── */
-
-.picker-tools {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-}
 
 /* A pop-up button: a push button with the chevrons Apple draws. */
 .cam-select,
