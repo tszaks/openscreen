@@ -114,8 +114,14 @@ export interface Annotation {
 
 export interface CameraOverlay {
   enabled: boolean;
+  /** Where projects from before free placement put the bubble. Used only
+   *  while `position` is unset (cameraOverlay.ts draws it in that corner). */
   corner: 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight';
+  /** The bubble's centre as a fraction of the canvas (0..1 each way). */
+  position?: { x: number; y: number };
+  /** Diameter as a fraction of the visible recording's shorter side. */
   sizeFraction: number;
+  /** Round; otherwise a square with soft corners. */
   circular: boolean;
 }
 
@@ -142,7 +148,8 @@ export interface PhoneOverlay {
   sound: boolean;
 }
 
-export type SourceKind = 'display' | 'window' | 'region' | 'iosDevice' | 'synthetic';
+/** `camera`: a camera recorded as the main source ("Just me"). */
+export type SourceKind = 'display' | 'window' | 'region' | 'iosDevice' | 'synthetic' | 'camera';
 
 export interface RecordingRef {
   screenVideoFile: string;
@@ -155,7 +162,7 @@ export interface RecordingRef {
    *  to cursor.json/keystrokes.json times; kept for reference. */
   cursorOffset?: number;
   /** Seconds the camera recording started after the screen recording
-   *  (near zero: both recorders start together). Not applied anywhere. */
+   *  (negative when it started first). Camera time = source time - cameraOffset. */
   cameraOffset?: number;
   /** An iPhone/iPad screen recorded with this Mac take (bundle-relative, "phone.mov"). */
   phoneVideoFile?: string;
@@ -378,7 +385,8 @@ export function normalizePhoneOverlay(raw: unknown, r: RecordingRef): PhoneOverl
 
 export const defaultAudio = (): AudioSettings => ({ clickSounds: true, voiceCleanup: false });
 
-export const defaultCameraOverlay = (): CameraOverlay => ({ enabled: false, corner: 'bottomLeft', sizeFraction: 0.22, circular: true });
+/** Small, round, bottom-right. */
+export const defaultCameraOverlay = (): CameraOverlay => ({ enabled: false, corner: 'bottomRight', sizeFraction: 0.22, circular: true });
 
 export const defaultProject = (recording: RecordingRef): Project => ({
   recording,

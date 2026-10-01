@@ -33,6 +33,7 @@ import { fileUrl } from '../../shared/fileUrl';
 import { isColourBackground, paintBackdrop } from './backdrop';
 import { phoneAspect, phoneDevice, phoneLayerOn, phoneLayerRects, type PhoneDevice } from '../../shared/phoneLayer';
 import { api } from './api';
+import { macContentRect, overlayRect } from '../../shared/cameraOverlay';
 
 // Background images by raw path, shared by every compositor: the editor
 // builds a new compositor on each edit, and reloading the image each time
@@ -109,6 +110,9 @@ export class CanvasCompositor {
   private phoneLayer: (PhoneDevice & { aspect: number }) | null;
   /** Where the phone layer was drawn at the last render (its body, or its screen when unframed). */
   phoneRect: Rect | null = null;
+  /** Where the camera bubble goes on this canvas, as of the last render
+   *  (set even before the camera has a frame, so the editor can hit-test it). */
+  cameraRect: Rect | null = null;
   /** Filled by render(); see ScreenMap. */
   screenMap: ScreenMap | null = null;
 
@@ -218,7 +222,8 @@ export class CanvasCompositor {
         // A phone layer beside the screen takes its share of the content rect first.
         const placed = this.phoneLayer ? phoneLayerRects(contentRect, macAspect, this.phoneLayer.aspect, this.project.phoneOverlay) : null;
         this.phoneRect = placed?.phone ?? null;
-        rect = placed ? placed.mac : fitAspect(contentRect, macAspect);
+        // The same rect the editor's snap guides and the bubble placement use.
+        rect = macContentRect(this.project, { width: W, height: H });
         const r = style.cornerRadius;
         clip = () => {
           ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
@@ -319,13 +324,11 @@ export class CanvasCompositor {
       ctx.fill();
     }
 
-    // 5. Camera overlay PiP in a corner of the content frame.
+    // 5. The camera bubble, wherever it was placed (shared/cameraOverlay).
     const overlay = this.project.cameraOverlay;
-    if (overlay.enabled && input.cameraFrame) {
-      const d = Math.min(visible.w, visible.h) * overlay.sizeFraction;
-      const margin = Math.min(visible.w, visible.h) * 0.04;
-      const ox = /Right/.test(overlay.corner) ? visible.x + visible.w - d - margin : visible.x + margin;
-      const oy = /bottom/i.test(overlay.corner) ? visible.y + visible.h - d - margin : visible.y + margin;
+    this.cameraRect = overlay.enabled ? overlayRect(overlay, visible, { width: W, height: H }) : null;
+    if (this.cameraRect && input.cameraFrame) {
+      const { x: ox, y: oy, w: d } = this.cameraRect;
       ctx.save();
       ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
       ctx.shadowBlur = style.shadowRadius * 0.4;

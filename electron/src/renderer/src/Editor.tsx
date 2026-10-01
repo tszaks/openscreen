@@ -77,6 +77,15 @@ import { DevicePanel } from './mobile/DevicePanel';
 import { LayoutSection } from './mobile/LayoutSection';
 import { AudioTrackLane } from './AudioTrackLane';
 import { phoneLayerOn, phoneTimeForSource } from '../../shared/phoneLayer';
+import {
+  MAX_OVERLAY_SIZE,
+  MIN_OVERLAY_SIZE,
+  OVERLAY_SIZES,
+  clampOverlaySize,
+  overlaySizeName,
+  snapBubble,
+  type Guide,
+} from '../../shared/cameraOverlay';
 import { useMusicPlayback } from './useMusicPlayback';
 import {
   addItem,
@@ -229,6 +238,12 @@ export function Editor({
   // focus (the preview shows safe-zone guides meanwhile).
   const isPhone = isPhoneProject(proj);
   const [selectedTap, setSelectedTap] = useState<string | null>(null);
+  // The camera bubble on the preview: selected (accent outline), hovered,
+  // and while dragged, where it was grabbed and the snap guides it is on.
+  const [camSelected, setCamSelected] = useState(false);
+  const [camHover, setCamHover] = useState(false);
+  const [camGuides, setCamGuides] = useState<Guide[]>([]);
+  const camDrag = useRef<{ dx: number; dy: number } | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [titleFocus, setTitleFocus] = useState(false);
 
@@ -437,7 +452,27 @@ export function Editor({
     return { x: ((clientX - r.left) / r.width) * canvasSize.width, y: ((clientY - r.top) / r.height) * canvasSize.height };
   };
 
+  /** The camera bubble under a canvas point, if it is showing there. */
+  const cameraHit = (px: { x: number; y: number } | null) => {
+    const r = compositor.cameraRect;
+    if (!px || !r || !camUrl) return false;
+    if (proj.cameraOverlay.circular) return Math.hypot(px.x - (r.x + r.w / 2), px.y - (r.y + r.h / 2)) <= r.w / 2;
+    return px.x >= r.x && px.x <= r.x + r.w && px.y >= r.y && px.y <= r.y + r.h;
+  };
+
   const onCanvasDown = (e: React.MouseEvent) => {
+    // Click the camera to select it; drag to move it (one undo step).
+    if (!cropMode && !selectedTap) {
+      const px = canvasPoint(e.clientX, e.clientY);
+      const r = compositor.cameraRect;
+      if (px && r && cameraHit(px)) {
+        setCamSelected(true);
+        camDrag.current = { dx: px.x - (r.x + r.w / 2), dy: px.y - (r.y + r.h / 2) };
+        historyRef.current.hold();
+        return;
+      }
+      setCamSelected(false);
+    }
     if (!cropMode && selectedTap) {
       // Place the selected tap where the preview was clicked (zoom included).
       const px = canvasPoint(e.clientX, e.clientY);
@@ -464,6 +499,27 @@ export function Editor({
   };
 
   const onCanvasMove = (e: React.MouseEvent) => {
+    if (camDrag.current) {
+      const px = canvasPoint(e.clientX, e.clientY);
+      const r = compositor.cameraRect;
+      const visible = compositor.screenMap?.screen;
+      const shown = canvasRef.current?.getBoundingClientRect();
+      if (!px || !r || !visible || !shown) return;
+      // Snap within 8 screen points, whatever the preview's scale.
+      const threshold = (8 * canvasSize.width) / shown.width;
+      const grabbed = { x: px.x - camDrag.current.dx, y: px.y - camDrag.current.dy };
+      const snap = snapBubble(grabbed, r.w, canvasSize, visible, e.altKey ? 0 : threshold);
+      setCamGuides(snap.guides);
+      setProj((p) => ({
+        ...p,
+        cameraOverlay: { ...p.cameraOverlay, position: { x: snap.centre.x / canvasSize.width, y: snap.centre.y / canvasSize.height } },
+      }));
+      return;
+    }
+    if (!cropMode && !selectedTap) {
+      const over = cameraHit(canvasPoint(e.clientX, e.clientY));
+      if (over !== camHover) setCamHover(over);
+    }
     if (!cropMode || !cropDrag.current) return;
     const p = canvasToSource(e.clientX, e.clientY);
     if (!p) return;
@@ -489,13 +545,19 @@ export function Editor({
   };
 
   const onCanvasUp = () => {
+    if (camDrag.current) {
+      camDrag.current = null;
+      setCamGuides([]);
+      return;
+    }
     cropDrag.current = null;
     setCropMode(false);
   };
 
   // Leaving the canvas only ends crop mode mid-drag, not on the way in.
   const onCanvasLeave = () => {
-    if (cropDrag.current) onCanvasUp();
+    setCamHover(false);
+    if (cropDrag.current || camDrag.current) onCanvasUp();
   };
 
   // Draw the composited frame at output time `outT` onto the preview canvas.
@@ -560,13 +622,44 @@ export function Editor({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [compositor, canvasSize, smoothed, keys, clickEv, cropMode, proj, selectedTap, titleFocus],
+    [compositor, canvasSize, smoothed, keys, clickEv, cropMode, proj, selectedTap, titleFocus, camSelected, camGuides],
   );
 
   /** Preview-only marks, never exported: the selected tap and, while the
    *  title is being edited, the platform safe zone and title box. */
   const drawEditorGuides = (ctx: CanvasRenderingContext2D) => {
     const unit = Math.max(canvasSize.width, canvasSize.height) / 900;
+    // The selected camera: an accent outline just outside it, and, while
+    // it is dragged, the guide lines it has snapped to, across the canvas.
+    const cam = compositor.cameraRect;
+    if (camSelected && cam && camUrl) {
+      ctx.save();
+      ctx.strokeStyle = '#FF8A3D';
+      ctx.lineWidth = 2 * unit;
+      const g = 3 * unit;
+      ctx.beginPath();
+      if (proj.cameraOverlay.circular) ctx.arc(cam.x + cam.w / 2, cam.y + cam.h / 2, cam.w / 2 + g, 0, Math.PI * 2);
+      else ctx.roundRect(cam.x - g, cam.y - g, cam.w + 2 * g, cam.h + 2 * g, cam.w * 0.18 + g);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (camGuides.length) {
+      ctx.save();
+      ctx.strokeStyle = '#FF3B9A';
+      ctx.lineWidth = 1.5 * unit;
+      ctx.beginPath();
+      for (const g of camGuides) {
+        if (g.axis === 'x') {
+          ctx.moveTo(g.at, 0);
+          ctx.lineTo(g.at, canvasSize.height);
+        } else {
+          ctx.moveTo(0, g.at);
+          ctx.lineTo(canvasSize.width, g.at);
+        }
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
     const tap = selectedTap ? proj.taps.find((t) => t.id === selectedTap) : undefined;
     const at = tap && compositor.sourceToCanvas(tap);
     if (at) {
@@ -611,14 +704,20 @@ export function Editor({
 
   /** Phone seconds at Mac source time `srcT` (Mac + iPhone takes). */
   const phoneTime = (srcT: number) => phoneTimeForSource(srcT, proj.recording.phoneOffset ?? 0, proj.recording.phoneDuration);
+  /** Camera seconds at source time `srcT`: the camera started cameraOffset
+   *  after the recording (an iPhone take's camera can be a second or more). */
+  const camTime = (srcT: number) => phoneTimeForSource(srcT, proj.recording.cameraOffset ?? 0);
 
   /** Keep the phone video on the Mac video's clock while playing: it holds
    *  its first or last frame outside its own take, and is nudged back when it
    *  drifts more than a few frames. */
   const followPhone = (video: HTMLVideoElement, rate: number) => {
-    const phone = phoneRef.current;
+    follow(phoneRef.current, phoneTime(video.currentTime), video, rate);
+    // The camera too: it holds its first frame until it started.
+    if ((proj.recording.cameraOffset ?? 0) > 0.05) follow(camRef.current, camTime(video.currentTime), video, rate);
+  };
+  const follow = (phone: HTMLVideoElement | null, want: number, video: HTMLVideoElement, rate: number) => {
     if (!phone) return;
-    const want = phoneTime(video.currentTime);
     const end = Number.isFinite(phone.duration) ? phone.duration : Infinity;
     const live = !video.paused && want > 0 && want < end - 0.05;
     if (Math.abs(phone.currentTime - want) > 0.12) phone.currentTime = want;
@@ -634,9 +733,9 @@ export function Editor({
     const t = Math.min(Math.max(0, outT), tl.outputDuration);
     const at = locate(tl, t);
     playIndex.current = at.index;
-    for (const v of [videoRef.current, camRef.current]) {
+    for (const [v, t] of [[videoRef.current, at.srcT], [camRef.current, camTime(at.srcT)]] as const) {
       if (!v) continue;
-      if (Math.abs(v.currentTime - at.srcT) > 1e-3) v.currentTime = at.srcT;
+      if (Math.abs(v.currentTime - t) > 1e-3) v.currentTime = t;
       v.playbackRate = tl.clips[at.index].speed;
     }
     const phone = phoneRef.current;
@@ -661,7 +760,7 @@ export function Editor({
       if (tick.kind === 'jump') {
         playIndex.current = tick.index;
         video.currentTime = tick.seekTo;
-        if (cam) cam.currentTime = tick.seekTo;
+        if (cam) cam.currentTime = camTime(tick.seekTo);
       }
       if (tick.kind !== 'end' && video.playbackRate !== tick.rate) {
         video.playbackRate = tick.rate;
@@ -815,7 +914,7 @@ export function Editor({
         if (srcT === null) continue;
         await seekVideo(video, srcT);
         const cam = camRef.current;
-        if (cam) await seekVideo(cam, srcT);
+        if (cam) await seekVideo(cam, camTime(srcT));
         const phone = phoneOn ? phoneRef.current : null;
         if (phone) await seekVideo(phone, phoneTime(srcT));
         comp.render(outT, {
@@ -1302,6 +1401,8 @@ export function Editor({
         togglePlay();
       } else if (e.key === 'Escape' && selectedTap) {
         setSelectedTap(null);
+      } else if (e.key === 'Escape' && camSelected) {
+        setCamSelected(false);
       } else if (e.key === 'Escape' && selectedAudio) {
         setSelectedAudio(null);
       } else if (e.key === 's' || e.key === 'S') {
@@ -2233,48 +2334,46 @@ export function Editor({
     </Section>
   );
 
+  const setCamera = (patch: Partial<Project['cameraOverlay']>) =>
+    setProj((p) => ({ ...p, cameraOverlay: { ...p.cameraOverlay, ...patch } }));
   const cameraPanel = camUrl && (
     <Section title="Camera">
-      <Switch
-        label="Show camera"
-        checked={proj.cameraOverlay.enabled}
-        onChange={(v) =>
-          setProj((p) => ({
-            ...p,
-            cameraOverlay: { ...p.cameraOverlay, enabled: v },
-          }))
-        }
-      />
+      <Switch label="Show camera" checked={proj.cameraOverlay.enabled} onChange={(v) => setCamera({ enabled: v })} />
+      <p className="row-hint">Drag the camera in the preview to move it. Hold Option to move it without snapping.</p>
       <div className="field-block">
-        <span className="row-label">Corner</span>
+        <span className="row-label">Shape</span>
         <Segmented
-          label="Camera corner"
-          columns={2}
-          value={proj.cameraOverlay.corner}
+          label="Camera shape"
+          value={proj.cameraOverlay.circular ? 'round' : 'square'}
           options={[
-            { value: 'topLeft', label: 'Top left' },
-            { value: 'topRight', label: 'Top right' },
-            { value: 'bottomLeft', label: 'Bottom left' },
-            { value: 'bottomRight', label: 'Bottom right' },
+            { value: 'round', label: 'Round' },
+            { value: 'square', label: 'Square' },
           ]}
-          onChange={(corner) =>
-            setProj((p) => ({
-              ...p,
-              cameraOverlay: { ...p.cameraOverlay, corner },
-            }))
-          }
+          onChange={(v) => setCamera({ circular: v === 'round' })}
         />
       </div>
-      <Switch
-        label="Circle"
-        hint="Crop the camera to a circle"
-        checked={proj.cameraOverlay.circular}
-        onChange={(v) =>
-          setProj((p) => ({
-            ...p,
-            cameraOverlay: { ...p.cameraOverlay, circular: v },
-          }))
-        }
+      <div className="field-block">
+        <span className="row-label">Size</span>
+        <Segmented
+          label="Camera size"
+          value={overlaySizeName(proj.cameraOverlay.sizeFraction)}
+          options={[
+            { value: 'small', label: 'Small' },
+            { value: 'large', label: 'Large' },
+          ]}
+          onChange={(v) => setCamera({ sizeFraction: OVERLAY_SIZES[v] })}
+        />
+      </div>
+      <ScrubField
+        slider
+        label="Fine size"
+        min={MIN_OVERLAY_SIZE * 100}
+        max={MAX_OVERLAY_SIZE * 100}
+        step={1}
+        unit="%"
+        value={Math.round(clampOverlaySize(proj.cameraOverlay.sizeFraction) * 100)}
+        onCommit={sealHistory}
+        onChange={(v) => setCamera({ sizeFraction: v / 100 })}
       />
     </Section>
   );
@@ -3012,7 +3111,7 @@ export function Editor({
             <canvas
               ref={canvasRef}
               className={`preview${cropMode ? ' cropping' : ''}`}
-              style={{ cursor: cropMode || selectedTap ? 'crosshair' : undefined }}
+              style={{ cursor: cropMode || selectedTap ? 'crosshair' : camDrag.current ? 'grabbing' : camHover ? 'grab' : undefined }}
               title={selectedTap ? 'Click to place the selected tap' : undefined}
               onMouseDown={onCanvasDown}
               onMouseMove={onCanvasMove}
