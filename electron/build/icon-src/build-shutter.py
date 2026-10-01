@@ -113,6 +113,12 @@ def toplight(ang):
 
 # ---------- shared tile ----------
 
+BLURS = """
+    <filter id="blur6" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="6"/></filter>
+    <filter id="blur14" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="14"/></filter>
+    <filter id="blur30" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="30"/></filter>"""
+
+
 def tile_defs(top, mid, bot, sheen=0.09):
     return f"""
     <path id="sq" d="{SQ}"/>
@@ -130,10 +136,7 @@ def tile_defs(top, mid, bot, sheen=0.09):
     <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#fff" stop-opacity="0.40"/><stop offset="0.12" stop-color="#fff" stop-opacity="0.05"/>
       <stop offset="0.85" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity="0.08"/>
-    </linearGradient>
-    <filter id="blur6" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="6"/></filter>
-    <filter id="blur14" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="14"/></filter>
-    <filter id="blur30" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="30"/></filter>"""
+    </linearGradient>"""+BLURS
 
 
 TILE = """  <use href="#sq" fill="url(#tile)" filter="url(#shadow)"/>
@@ -245,12 +248,15 @@ def concept_a(small=False):
 
 # ---------- B: Ember iris ----------
 
+EMBER = lambda k: (mix("#CC4E16", "#EC6C24", k), mix("#FF9A55", "#FFC594", k))
+
+
 def concept_b(small=False):
     n = 6 if small else 7
-    iris = Iris(n, R=312, r=150 if small else 118, rho=560)
-    bd, under, over = barrel(336, 306, "#4A4A52", "#151518")
-    ember = lambda k: (mix("#CC4E16", "#EC6C24", k), mix("#FF9A55", "#FFC594", k))
-    ld, lb = iris_layers(iris, ember, "b", shadow=0.45, edge_light=0 if small else 0.7)
+    iris = Iris(n, R=324 if small else 312, r=150 if small else 118, rho=560)
+    bd, under, over = barrel(340, 320, "#4A4A52", "#151518") if small else barrel(336, 306, "#4A4A52", "#151518")
+    ld, lb = iris_layers(iris, EMBER, "b", shadow=0.6 if small else 0.45, edge_light=0 if small else 0.7,
+                         vignette=0.2 if small else 0.35)
     od, ob = opening_well(iris, "#2E2B2C", "#0A0A0C")
     gd, gb = lens_glass(iris) if not small else ("", "")
     defs = tile_defs("#2E2E34", "#18181B", "#0E0E10") + bd + ld + od + gd
@@ -263,7 +269,7 @@ def concept_b(small=False):
 def concept_c(small=False):
     # Six blades; the three that point at the centre close to a triangle and the
     # other three stop short, trimming its corners. The opening becomes Play.
-    near, far = (142, 236) if small else (112, 190)
+    near, far = (142, 224) if small else (122, 186)
     iris = Iris(6, R=300, r=near, rho=900, rot=180, dists=[near, far] * 3)
     bd, under, over = barrel(332, 292, "#6E6E78", "#1E1E22")
     graphite = lambda k: (mix("#141417", "#2C2C32", k), mix("#3A3A42", "#8A8A95", k))
@@ -292,7 +298,29 @@ def concept_d(small=False):
     return svg("OpenScreen shutter concept D: a graphite iris set into an orange tile.", defs, body)
 
 
+# B as Icon Composer layers. Icon Composer's canvas is the squircle itself, so
+# each layer views just the 824 px body; the system adds the tile, the glass,
+# the shadows and the dark, tinted and clear looks.
+
+def concept_b_layers():
+    iris = Iris(7, R=312, r=118, rho=560)
+    bd, under, over = barrel(336, 306, "#4A4A52", "#151518")
+    ld, lb = iris_layers(iris, EMBER, "b", shadow=0.45, edge_light=0.7)
+    od, ob = opening_well(iris, "#2E2B2C", "#0A0A0C")
+    gd, gb = lens_glass(iris)
+
+    def layer(defs, body):
+        return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 100 824 824" width="1024" height="1024">\n'
+                f'  <defs>{BLURS}{defs}\n  </defs>\n{body}</svg>\n')
+    return {"ring.svg": layer(bd, over + "\n"), "blades.svg": layer(ld, lb), "lens.svg": layer(od + gd, ob + gb)}
+
+
 for key, fn in (("a-graphite-iris", concept_a), ("b-ember-iris", concept_b),
                 ("c-play-iris", concept_c), ("d-orange-tile", concept_d)):
     write(f"shutter-{key}.svg", fn())
     write(f"shutter-{key}-small.svg", fn(small=True))
+
+icon_dir = os.path.join(HERE, "OpenScreen.icon", "Assets")
+os.makedirs(icon_dir, exist_ok=True)
+for name, text in concept_b_layers().items():
+    write(os.path.join("OpenScreen.icon", "Assets", name), text)
