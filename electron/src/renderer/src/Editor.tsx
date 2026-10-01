@@ -44,7 +44,7 @@ import { Button, EmptyState, FormRow, Icon, IconButton, Kbd, Section, Segmented,
 import { ScrubField } from './components/ScrubField';
 import { useFilmstrip } from './useFilmstrip';
 import { filmstripTile, filmstripTimes, slotFrame, tilesForClip, visibleSlots } from '../../shared/filmstrip';
-import { BACKDROPS, BACKDROP_GROUPS, backgroundCss, sameBackground } from '../../shared/backdrops';
+import { BACKDROPS, BACKDROP_GROUPS, SOLID_SWATCHES, backgroundCss, isCustomSolid, normalizeHex, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
 import {
   INSPECTOR_DEFAULT,
@@ -1784,6 +1784,13 @@ export function Editor({
     </label>
   );
 
+  const setSolid = (hex: string) => {
+    const h = normalizeHex(hex);
+    if (!h) return;
+    setProj((p) => ({ ...p, style: { ...p.style, background: { kind: 'solid', hex: h } }, layout: { ...p.layout, background: 'style' } }));
+  };
+  const customHex = isCustomSolid(proj.style.background) ? normalizeHex(proj.style.background.hex) : null;
+
   const backgroundPanel = (
     <>
       {isPhone && <LayoutSection proj={proj} setProj={setProj} onTitleFocus={setTitleFocus} />}
@@ -1807,6 +1814,39 @@ export function Editor({
           </div>
         </Section>
       ))}
+      <Section title="Solid Color">
+        <div className="tiles">
+          {SOLID_SWATCHES.map((s) => (
+            <button
+              key={s.hex}
+              type="button"
+              title={s.name}
+              className={`tile${!blurredBg && proj.style.background.kind === 'solid' && normalizeHex(proj.style.background.hex) === s.hex ? ' selected' : ''}`}
+              onClick={() => setSolid(s.hex)}
+            >
+              <span className="tile-swatch" style={{ background: s.hex }} />
+              <span className="tile-label">{s.name}</span>
+            </button>
+          ))}
+          {/* The native macOS color panel, live as you drag. */}
+          <label
+            className={`tile tile-picker${!blurredBg && isCustomSolid(proj.style.background) ? ' selected' : ''}`}
+            title="Pick any color"
+          >
+            <span className="tile-swatch" style={{ background: customHex ?? 'var(--control)' }}>
+              {!customHex && <span className="tile-text-inline">Pick…</span>}
+            </span>
+            <span className="tile-label tnum">{customHex ? customHex.toUpperCase() : 'Custom'}</span>
+            <input
+              type="color"
+              aria-label="Custom background color"
+              value={customHex ?? '#808080'}
+              onChange={(e) => setSolid(e.target.value)}
+              onBlur={sealHistory}
+            />
+          </label>
+        </div>
+      </Section>
       <Section title="Image">
         <div className="tiles">
           {isPhone && (

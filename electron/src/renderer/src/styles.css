@@ -1505,6 +1505,27 @@ canvas.preview.cropping {
 .tile:active .tile-swatch {
   transform: scale(var(--press));
 }
+/* Custom color tile: the swatch is the visible control; the native color
+   input sits invisibly over the whole tile so a click opens the macOS panel. */
+.tile-picker {
+  position: relative;
+  cursor: pointer;
+}
+.tile-picker input[type='color'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+  opacity: 0;
+  cursor: pointer;
+}
+.tile-text-inline {
+  font-size: var(--text-callout);
+  font-weight: 500;
+  color: var(--label-2);
+}
 .tile.selected .tile-swatch,
 .tile.selected:hover .tile-swatch {
   box-shadow:
