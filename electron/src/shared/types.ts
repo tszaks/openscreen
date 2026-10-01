@@ -132,6 +132,18 @@ export interface RecordingRef {
   cameraOffset?: number;
 }
 
+/** Whether any automatic zoom source is on: taps for phone takes; clicks or
+ *  lingering cursor for screen takes. Manual zooms are separate and unaffected. */
+export function autoZoomOn(zoom: Pick<ZoomSettings, 'autofocus' | 'dwell' | 'fromTaps'>, phone: boolean): boolean {
+  return phone ? !!zoom.fromTaps : zoom.autofocus || zoom.dwell;
+}
+
+/** The timeline's one-click switch: every automatic source off, or back to
+ *  the defaults. Manual zooms live in `manualZooms` and are never touched. */
+export function withAutoZoom<Z extends Pick<ZoomSettings, 'autofocus' | 'dwell' | 'fromTaps'>>(zoom: Z, phone: boolean, on: boolean): Z {
+  return phone ? { ...zoom, fromTaps: on } : { ...zoom, autofocus: on, dwell: on };
+}
+
 export interface ZoomSettings {
   /** Zoom toward each click. */
   autofocus: boolean;

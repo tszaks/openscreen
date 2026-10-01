@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BACKDROPS, BACKDROP_GROUPS, backdropById, backgroundCss, sameBackground } from '../src/shared/backdrops';
+import { BACKDROPS, BACKDROP_GROUPS, SOLID_SWATCHES, backdropById, backgroundCss, isCustomSolid, normalizeHex, sameBackground } from '../src/shared/backdrops';
 import { applyOp, validateProject } from '../src/shared/agentOps';
 import { defaultProject } from '../src/shared/types';
 import { isColourBackground, paintBackdrop } from '../src/renderer/src/backdrop';
@@ -94,5 +94,31 @@ describe('mesh validation', () => {
     }
     p.style.background = { ...ok, grain: NaN };
     expect(validateProject(p).join(' ')).toMatch(/mesh/);
+  });
+});
+
+describe('solid colors', () => {
+  it('normalizes hex input', () => {
+    expect(normalizeHex('#FFAA00')).toBe('#ffaa00');
+    expect(normalizeHex('fa0')).toBe('#ffaa00');
+    expect(normalizeHex(' #123abc ')).toBe('#123abc');
+    expect(normalizeHex('#12345')).toBeNull();
+    expect(normalizeHex('red')).toBeNull();
+  });
+  it('quick picks are valid and distinct from the presets', () => {
+    for (const s of SOLID_SWATCHES) expect(normalizeHex(s.hex)).toBe(s.hex);
+    expect(new Set(SOLID_SWATCHES.map((s) => s.hex)).size).toBe(SOLID_SWATCHES.length);
+  });
+  it('only a solid that is neither a quick pick nor a preset counts as custom', () => {
+    expect(isCustomSolid({ kind: 'solid', hex: '#3366cc' })).toBe(true);
+    expect(isCustomSolid({ kind: 'solid', hex: '#FFFFFF' })).toBe(false); // White quick pick
+    expect(isCustomSolid(backdropById('mono')!.bg)).toBe(false); // the Mono preset
+    expect(isCustomSolid(backdropById('aurora')!.bg)).toBe(false);
+  });
+  it('a custom solid validates and paints', () => {
+    const p = desktop();
+    p.style.background = { kind: 'solid', hex: '#3366cc' };
+    expect(validateProject(p)).toEqual([]);
+    expect(backgroundCss(p.style.background)).toBe('#3366cc');
   });
 });
