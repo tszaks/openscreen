@@ -18,6 +18,7 @@ export function RecordingCard({
   onStop,
   stream,
   device,
+  phone,
   warning,
 }: {
   sourceName: string;
@@ -29,6 +30,8 @@ export function RecordingCard({
   /** An iPhone/iPad take: its live frames come from the helper's preview,
    *  shown in the device outline. */
   device?: { id: string; name: string; tablet: boolean; preview: IosPreview | null } | null;
+  /** The phone of a Mac + iPhone take, shown live beside the screen. */
+  phone?: { id: string; name: string; tablet: boolean; preview: IosPreview | null } | null;
   /** A calm mid-take warning, e.g. the phone may be locked. */
   warning?: string | null;
 }) {
@@ -78,6 +81,13 @@ export function RecordingCard({
               size="stage"
               dimmed={!!warning}
             />
+          </div>
+        ) : stream && phone ? (
+          <div className="rec-card-dual">
+            <video ref={videoRef} className="rec-card-video" muted playsInline autoPlay />
+            <div className="rec-card-dual-phone">
+              <IosLivePreview deviceId={phone.id} deviceName={phone.name} tablet={phone.tablet} preview={phone.preview} size="card" />
+            </div>
           </div>
         ) : stream ? (
           <video ref={videoRef} className="rec-card-video" muted playsInline autoPlay />

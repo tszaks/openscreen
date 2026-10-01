@@ -119,6 +119,29 @@ export interface CameraOverlay {
   circular: boolean;
 }
 
+/**
+ * An iPhone/iPad screen recorded alongside a Mac take, drawn as a second
+ * layer next to (or over) the Mac screen. Like the camera, it is a second
+ * synced video: it plays at the Mac recording's source time minus
+ * `recording.phoneOffset`, so cuts and speed changes carry it along.
+ */
+export interface PhoneOverlay {
+  enabled: boolean;
+  /** Beside the Mac screen (which shrinks to make room), or over one of its corners. */
+  layout: 'side-by-side-right' | 'side-by-side-left' | 'corner';
+  corner: 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight';
+  /** 0.3..1: how much of the largest size the layout allows. */
+  size: number;
+  /** Wrap the phone in its hardware frame (model detected from the video's size). */
+  frame: boolean;
+  /** devices.ts model id; unset = detected. */
+  modelId?: string;
+  finishId?: string;
+  shadow: boolean;
+  /** Mix the phone's own sound into the export (the Mac's sound is always primary). */
+  sound: boolean;
+}
+
 export type SourceKind = 'display' | 'window' | 'region' | 'iosDevice' | 'synthetic';
 
 export interface RecordingRef {
@@ -134,6 +157,15 @@ export interface RecordingRef {
   /** Seconds the camera recording started after the screen recording
    *  (near zero: both recorders start together). Not applied anywhere. */
   cameraOffset?: number;
+  /** An iPhone/iPad screen recorded with this Mac take (bundle-relative, "phone.mov"). */
+  phoneVideoFile?: string;
+  /** Seconds the phone recording started after the screen recording
+   *  (negative when it started first). Phone time = source time - phoneOffset. */
+  phoneOffset?: number;
+  /** The phone video's pixel size, for the device model and the layout. */
+  phoneSize?: Size;
+  /** The phone video's length in seconds. */
+  phoneDuration?: number;
 }
 
 /** Whether any automatic zoom source is on: taps for phone takes; clicks or
@@ -255,6 +287,8 @@ export interface Project {
   audio: AudioSettings;
   style: StyleSettings;
   cameraOverlay: CameraOverlay;
+  /** The phone layer of a Mac + iPhone take. Off (and unused) without `recording.phoneVideoFile`. */
+  phoneOverlay: PhoneOverlay;
   captions: CaptionCue[];
   chapters: Chapter[];
   annotations: Annotation[];
@@ -309,6 +343,39 @@ export const defaultLayout = (r: RecordingRef): LayoutSettings => ({
   background: isPhone(r) ? 'blurred' : 'style',
 });
 
+export const defaultPhoneOverlay = (r?: RecordingRef): PhoneOverlay => ({
+  enabled: !!r?.phoneVideoFile,
+  layout: 'side-by-side-right',
+  corner: 'bottomRight',
+  size: 0.9,
+  frame: true,
+  shadow: true,
+  sound: false,
+});
+
+const PHONE_LAYOUTS: PhoneOverlay['layout'][] = ['side-by-side-right', 'side-by-side-left', 'corner'];
+const CORNERS: PhoneOverlay['corner'][] = ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'];
+
+/** A saved phone layer with every field present and in range. Absent (older
+ *  bundles, Mac-only takes) = no phone layer. */
+export function normalizePhoneOverlay(raw: unknown, r: RecordingRef): PhoneOverlay {
+  const d = defaultPhoneOverlay(r);
+  if (!raw || typeof raw !== 'object') return d;
+  const o = raw as Partial<PhoneOverlay>;
+  const out: PhoneOverlay = {
+    enabled: typeof o.enabled === 'boolean' ? o.enabled && !!r.phoneVideoFile : d.enabled,
+    layout: PHONE_LAYOUTS.includes(o.layout as PhoneOverlay['layout']) ? (o.layout as PhoneOverlay['layout']) : d.layout,
+    corner: CORNERS.includes(o.corner as PhoneOverlay['corner']) ? (o.corner as PhoneOverlay['corner']) : d.corner,
+    size: Math.min(1, Math.max(0.3, finite(o.size, d.size))),
+    frame: typeof o.frame === 'boolean' ? o.frame : d.frame,
+    shadow: typeof o.shadow === 'boolean' ? o.shadow : d.shadow,
+    sound: o.sound === true,
+  };
+  if (typeof o.modelId === 'string') out.modelId = o.modelId;
+  if (typeof o.finishId === 'string') out.finishId = o.finishId;
+  return out;
+}
+
 export const defaultAudio = (): AudioSettings => ({ clickSounds: true, voiceCleanup: false });
 
 export const defaultProject = (recording: RecordingRef): Project => ({
@@ -320,6 +387,7 @@ export const defaultProject = (recording: RecordingRef): Project => ({
   audio: defaultAudio(),
   style: defaultStyle(),
   cameraOverlay: { enabled: false, corner: 'bottomLeft', sizeFraction: 0.22, circular: true },
+  phoneOverlay: defaultPhoneOverlay(recording),
   captions: [],
   chapters: [],
   annotations: [],
@@ -381,6 +449,7 @@ export function normalizeProject(raw: Project): Project {
   p.tapsAnalyzed ??= false;
   p.layout = { ...defaultLayout(p.recording), ...p.layout };
   p.tracks = normalizeTracks(p.tracks);
+  if (p.recording) p.phoneOverlay = normalizePhoneOverlay(p.phoneOverlay, p.recording);
   return p;
 }
 

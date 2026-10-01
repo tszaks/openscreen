@@ -34,17 +34,22 @@ Everything that decides how a video *looks and moves* is a pure function here, s
 | `exportPresets.ts` | App Store, social and landing-page export formats and their rules |
 | `agentOps.ts` | Every editor edit as a validated, serialisable operation |
 | `audioTracks.ts` | Music and voiceover tracks: where each item plays in output time, its volume and fades, ducking, and the edits the timeline lane makes |
+| `phoneLayer.ts` | Mac + iPhone takes: the phone layer's time mapping (source time − offset), where the Mac screen and phone sit for each layout, and what to keep when one side of a dual take fails |
 | `types.ts` | The project model, defaults, migration of older projects, reset |
 
 ## Rendering and export
 
-The editor's `CanvasCompositor` draws each frame in order: backdrop → content → cursor → ripples and taps → camera overlay → captions → keystrokes → annotations → device frame. Export runs **the same compositor** and pipes raw frames into ffmpeg (rawvideo → H.264), so the exported video always matches the preview. Audio follows the cuts through an ffmpeg filter graph (`atrim` / `atempo` / `concat`), with click sounds mixed in. Items on the audio tracks are cut, looped, faded and delayed to their output time (`atrim` / `aloop` / `afade` / `adelay`) and mixed over the same silent bed, so the file always ends where the video ends.
+The editor's `CanvasCompositor` draws each frame in order: backdrop → content → cursor → ripples and taps → camera overlay → phone layer → captions → keystrokes → annotations → device frame. Export runs **the same compositor** and pipes raw frames into ffmpeg (rawvideo → H.264), so the exported video always matches the preview. Audio follows the cuts through an ffmpeg filter graph (`atrim` / `atempo` / `concat`), with click sounds mixed in. With "Phone sound" on, a Mac + iPhone take's phone audio is shifted onto the Mac's clock and goes through the same cuts. Items on the audio tracks are cut, looped, faded and delayed to their output time (`atrim` / `aloop` / `afade` / `adelay`) and mixed over the same silent bed, so the file always ends where the video ends.
 
 Headless export (`OpenScreen --export <bundle> --out file.mp4`) runs the real renderer with no window and no dialogs.
 
 ## iPhone and iPad capture
 
 macOS only exposes a wired iPhone's screen to apps that opt in to CoreMediaIO screen devices, which Chromium never does. The `ios-capture` helper opts in, records with AVFoundation to a fragmented H.264 `screen.mov` (so a crash keeps everything recorded up to that point), and streams a live preview to the app.
+
+## Mac + iPhone
+
+With a display or window selected, **Also record → iPhone or iPad** starts the helper on the phone first (it answers on the phone's first frame, with that frame's capture time), then the Mac recorders. The phone records into its own bundle; when the take is saved, its `screen.mov` moves into the Mac bundle as `phone.mov`, with `phoneOffset` = phone start − Mac start. Either side failing never costs the other (`phoneLayer.dualOutcome`): a phone that won't start, stops early or fails leaves the Mac take intact with a notice, and a Mac take that can't be saved leaves the phone's bundle to open as an iPhone take.
 
 ## Project bundles
 
@@ -54,6 +59,7 @@ A recording is a folder named `<name>.openscreen`:
 |---|---|
 | `screen.mov` / `screen.webm` | The original recording, never modified |
 | `cam.webm` | Camera overlay, if recorded |
+| `phone.mov` | The iPhone screen recorded alongside a Mac take, if any |
 | `project.json` | Every edit: clips, zooms, taps, captions, style, layout |
 | `cursor.json`, `keystrokes.json` | Input tracks for Mac recordings |
 | `transcript.json`, `audio.wav` | Created on demand for captions |

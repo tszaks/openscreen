@@ -49,7 +49,7 @@ $A undo latest                      # swap project.json <-> project.json.bak
 | `record status` | `idle`, `recording` (with `elapsed`), `finished`, `failed`, or `dead`. |
 | `record stop` | Finishes the take (the helper's normal finalize; the movie is fragmented, so even a crash keeps what was recorded), then writes `project.json` with the same defaults the app gives an iPhone take. |
 | `latest` / `list` | Newest bundle / all bundles in `~/Movies/OpenScreen` (or `$OPENSCREEN_RECORDINGS_DIR`). In the app, **File → Copy Path for Agent** copies the open project's path. |
-| `info <bundle>` | Summary JSON: source size/duration, output duration, canvas, device, clips (with ids, source and output ranges), captions, transcript, chapters, annotations, manual zooms, taps, waits, style, layout, camera, audio, tracks (music and voiceover items with their output `start`/`end`, file range, volume, fades, loop, and `missing` when the file is gone), export settings, `problems`. |
+| `info <bundle>` | Summary JSON: source size/duration, output duration, canvas, device, clips (with ids, source and output ranges), captions, transcript, chapters, annotations, manual zooms, taps, waits, style, layout, camera, `phone` (Mac + iPhone takes: the phone movie, its size, length, `offset`, detected `model`, whether it is `drawn`, and every `phoneOverlay` field; `null` otherwise), audio, tracks (music and voiceover items with their output `start`/`end`, file range, volume, fades, loop, and `missing` when the file is gone), export settings, `problems`. |
 | `validate <bundle>` | `{"ok":true,"problems":[]}` or the list of problems (exit 1). |
 | `review <bundle\|video> [--every 2s] [--out dir] [--max-sheets 10] [--transcribe] [--no-taps]` | Writes `review/` in the bundle (or `<video>.review/`): `sheet-NN.png` contact sheets (timestamped tiles, 6×2 for portrait, 4×3 for landscape; interval grows so there are at most ~10 sheets), up to 12 `scene-NNN.jpg` keyframes from scene detection, and `review.json` (duration, orientation, device, stills from freezedetect, silences from silencedetect, taps and waits from the editor's own tap analysis, the transcript, every image path with its timestamps). Works on an exported mp4 too. |
 | `apply <bundle> <edits.json\|-\|'[…]'> [--dry-run]` | Applies edit ops in order. All-or-nothing: if any op fails or the result doesn't validate, nothing is written. Writes `project.json.bak` first. |
@@ -145,6 +145,7 @@ LayoutSection, TapsLane, ExportPanel) and the op that does the same thing:
 | Chapters: suggest, rename, remove, clear | `chapters` | `suggestChapters`, `addChapter`, `editChapter`, `removeChapter`, `clearChapters` |
 | Text overlays: add, edit text, position band, delete | `annotations` | `addAnnotation`, `editAnnotation {text?, band?, hex?, start?, end?}`, `removeAnnotation` |
 | Camera tab: show, corner, circle | `cameraOverlay` | `camera {enabled?, corner?, circular?, sizeFraction?}` |
+| Phone tab (Mac + iPhone takes): show, layout, corner, size, device frame, shadow, phone sound | `phoneOverlay` | `phone {enabled?, layout?: side-by-side-right\|side-by-side-left\|corner, corner?, size? (0.3..1), frame?, shadow?, sound?, modelId?, finishId?}` (`null` resets a model or finish to detected; fails on a take with no phone video) |
 | Background tab: swatches, image, wallpaper, blur, blurred recording | `style.background`, `layout.background` | `background {swatch\|solid\|gradient\|image(+blur)\|blurred:true}` (wallpaper: pass the image path) |
 | Frame: padding, corner radius, shadow, shadow opacity | `style.*` | `style {paddingFraction?, cornerRadius?, shadowRadius?, shadowOpacity?}` |
 | Crop | `style.cropRect` | `crop {rect: {x,y,w,h} \| null}` |
@@ -162,6 +163,23 @@ LayoutSection, TapsLane, ExportPanel) and the op that does the same thing:
 Not in the editor, so not ops: keystroke overlay and click ripples have no
 switch (they are drawn whenever the recording has keystrokes/clicks); use
 `cursor`/`audio` for what is adjustable.
+
+### Mac + iPhone takes
+
+A display or window recorded with **Also record → iPhone or iPad** on has a
+second movie, `phone.mov`, next to `screen.webm`. It is a layer, like the
+camera: `recording.phoneOffset` is how many seconds after the Mac video the
+phone started (negative: before), and the phone plays at **source time −
+phoneOffset**, so `trim`/`cut`/`speed` carry it along with no extra work.
+Outside its own take it holds its first or last frame.
+
+`phoneOverlay.layout`: `side-by-side-right` / `side-by-side-left` put the
+phone beside the Mac screen, which shrinks to make room (on a portrait
+canvas they stack: Mac screen on top with the phone below for `right`, phone
+on top for `left`); `corner` keeps the Mac screen full size and puts the
+phone over `corner`. `size` is how much of the largest size the layout
+allows. The phone's own sound goes into exports only with `sound: true`
+(default off); the Mac's sound is always there. Its taps are not drawn.
 
 ### polish
 
