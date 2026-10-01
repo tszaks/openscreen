@@ -9,24 +9,37 @@ export function filmstripTimes(duration: number, count: number): number[] {
   return Array.from({ length: n }, (_, i) => +(((i + 0.5) / n) * duration).toFixed(3));
 }
 
-/**
- * The thumbnails a clip shows, in order: one per tile slot, each the grabbed
- * frame nearest that slot's moment in the clip's source range. A clip wider
- * than its grabbed frames repeats the nearest one (as Final Cut does when
- * zoomed in), so tiles keep their shape instead of stretching. Returns
- * indexes into `times`.
- */
+/** The grabbed frame nearest slot `k` of `slots` across a clip's source
+ *  range: an index into `times`. A clip with more slots than frames
+ *  repeats the nearest one (as Final Cut does zoomed in), so tiles keep
+ *  their shape instead of stretching. */
+export function slotFrame(times: number[], start: number, end: number, slots: number, k: number): number {
+  const t = start + ((k + 0.5) / Math.max(1, slots)) * (end - start);
+  let best = 0;
+  for (let i = 1; i < times.length; i++) if (Math.abs(times[i] - t) < Math.abs(times[best] - t)) best = i;
+  return best;
+}
+
+/** Every slot's frame, in order (see slotFrame). */
 export function clipFrames(times: number[], start: number, end: number, slots: number): number[] {
   if (!times.length || slots < 1) return [];
   const n = Math.floor(slots);
-  const out: number[] = [];
-  for (let k = 0; k < n; k++) {
-    const t = start + ((k + 0.5) / n) * (end - start);
-    let best = 0;
-    for (let i = 1; i < times.length; i++) if (Math.abs(times[i] - t) < Math.abs(times[best] - t)) best = i;
-    out.push(best);
-  }
-  return out;
+  return Array.from({ length: n }, (_, k) => slotFrame(times, start, end, n, k));
+}
+
+/**
+ * The slots of a clip worth drawing: those within the visible part of the
+ * timeline (`viewLeft`..`viewRight`, in lane pixels) plus one viewport of
+ * margin each side, so a deeply zoomed portrait take draws dozens of tiles
+ * rather than thousands. `clipLeft` is the clip's left edge in lane pixels.
+ * Returns [first, last) slot indexes.
+ */
+export function visibleSlots(slots: number, slotW: number, clipLeft: number, viewLeft: number, viewRight: number): [number, number] {
+  if (slots < 1 || !(slotW > 0)) return [0, 0];
+  const margin = Math.max(0, viewRight - viewLeft);
+  const first = Math.max(0, Math.floor((viewLeft - margin - clipLeft) / slotW));
+  const last = Math.min(slots, Math.ceil((viewRight + margin - clipLeft) / slotW));
+  return first < last ? [first, last] : [0, 0];
 }
 
 /**
@@ -42,13 +55,9 @@ export function filmstripTile(source: { width: number; height: number }, frameH:
   return { width: Math.max(12, Math.round(h * Math.min(aspect, 2.4))), portrait: aspect < 1 };
 }
 
-/** Most tiles one clip draws. Deep timeline zoom on a portrait take would
- *  otherwise mean thousands of images; past this the tiles widen instead. */
-export const MAX_TILES_PER_CLIP = 400;
-
 /** How many tiles of `tileW` fit a clip that covers `fraction` of lanes
  *  `lanesW` px wide (the lanes' width already includes the timeline zoom). */
-export function tilesForClip(fraction: number, lanesW: number, tileW: number, max = MAX_TILES_PER_CLIP): number {
+export function tilesForClip(fraction: number, lanesW: number, tileW: number): number {
   if (!(tileW > 0) || !(lanesW > 0) || !(fraction > 0)) return 1;
-  return Math.min(max, Math.max(1, Math.round((fraction * lanesW) / tileW)));
+  return Math.max(1, Math.round((fraction * lanesW) / tileW));
 }

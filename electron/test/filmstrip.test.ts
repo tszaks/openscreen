@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clipFrames, filmstripTile, filmstripTimes, MAX_TILES_PER_CLIP, tilesForClip } from '../src/shared/filmstrip';
+import { clipFrames, filmstripTile, filmstripTimes, slotFrame, tilesForClip, visibleSlots } from '../src/shared/filmstrip';
 
 describe('filmstripTimes', () => {
   it('spaces frames evenly at the middle of each slice', () => {
@@ -60,13 +60,37 @@ describe('tilesForClip', () => {
     const at = (zoom: number) => tilesForClip(0.25, 1000 * zoom, 30);
     expect([at(1), at(2), at(4)]).toEqual([8, 17, 33]);
   });
-  it('caps one clip at MAX_TILES_PER_CLIP at deep zoom', () => {
-    // A whole portrait take at 40× zoom on a 1200px timeline: ~2,800 slots wanted.
-    expect(tilesForClip(1, 1200 * 40, 17)).toBe(MAX_TILES_PER_CLIP);
-    expect(tilesForClip(1, 1200 * 40, 17, 50)).toBe(50);
+  it('keeps tiles at their own width at deep zoom (no cap: drawing is windowed)', () => {
+    // A whole portrait take at 40× zoom on a 1200px timeline.
+    expect(tilesForClip(1, 1200 * 40, 18)).toBe(2667);
   });
   it('always shows at least one tile', () => {
     expect(tilesForClip(0.001, 1000, 71)).toBe(1);
     expect(tilesForClip(0.5, 0, 30)).toBe(1);
+  });
+});
+
+describe('visibleSlots', () => {
+  it('draws only what is in view, plus a viewport of margin each side', () => {
+    // 2,667 slots of 18px from x=0; viewing 9,000..10,200 (1,200px wide).
+    expect(visibleSlots(2667, 18, 0, 9000, 10200)).toEqual([433, 634]);
+  });
+  it('draws a whole clip that fits in view', () => {
+    expect(visibleSlots(40, 30, 0, 0, 1200)).toEqual([0, 40]);
+  });
+  it('accounts for where the clip starts', () => {
+    expect(visibleSlots(100, 20, 5000, 0, 1000)).toEqual([0, 0]); // entirely past the margin
+    expect(visibleSlots(100, 20, 1500, 0, 1000)).toEqual([0, 25]);
+  });
+  it('is empty for no slots', () => {
+    expect(visibleSlots(0, 20, 0, 0, 1000)).toEqual([0, 0]);
+  });
+});
+
+describe('slotFrame', () => {
+  it('matches clipFrames slot by slot', () => {
+    const times = filmstripTimes(10, 10);
+    const all = clipFrames(times, 1, 9, 7);
+    expect(all.map((_, k) => slotFrame(times, 1, 9, 7, k))).toEqual(all);
   });
 });
