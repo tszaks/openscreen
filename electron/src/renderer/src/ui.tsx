@@ -320,6 +320,19 @@ export function cssToken(name: string, fallback = ''): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
 
+/** An inspector row: the label on the left, its control on the right. */
+export function FormRow({ label, children, hint }: { label: React.ReactNode; children: React.ReactNode; hint?: React.ReactNode }) {
+  return (
+    <div className="form-row">
+      <span className="row-text">
+        <span className="row-label">{label}</span>
+        {hint && <span className="row-hint">{hint}</span>}
+      </span>
+      <div className="form-control">{children}</div>
+    </div>
+  );
+}
+
 export function Kbd({ children }: { children: React.ReactNode }) {
   return <kbd className="kbd">{children}</kbd>;
 }
@@ -367,6 +380,8 @@ export const Icon = {
   chevronLeft: (s?: number) => svg(<path d="m10 4-4 4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />, s),
   chevronDown: (s?: number) => svg(<path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />, s),
   close: (s?: number) => svg(<path d="m4.5 4.5 7 7m0-7-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />, s),
+  plus: (s?: number) => svg(<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />, s),
+  minus: (s?: number) => svg(<path d="M3.5 8h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />, s),
   scissors: (s?: number) =>
     svg(
       <>

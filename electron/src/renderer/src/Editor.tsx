@@ -40,8 +40,10 @@ import {
 } from '../../shared/exportJobs';
 import { ExportProgress, type ExportProgressState } from './components/ExportProgress';
 import { ExportPanel, ExportTasks, type TaskRowState } from './components/ExportPanel';
-import { Button, EmptyState, Icon, IconButton, Kbd, Section, Segmented, Sheet, Slider, Switch, Tabs, cssToken, useColorScheme } from './ui';
+import { Button, EmptyState, FormRow, Icon, IconButton, Kbd, Section, Segmented, Sheet, Switch, Tabs, cssToken, useColorScheme } from './ui';
 import { ScrubField } from './components/ScrubField';
+import { useFilmstrip } from './useFilmstrip';
+import { filmstripTile, filmstripTimes, slotFrame, tilesForClip, visibleSlots } from '../../shared/filmstrip';
 import { BACKDROPS, BACKDROP_GROUPS, backgroundCss, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
 import {
@@ -52,6 +54,8 @@ import {
   clampTimeline,
   clampZoom,
   fmtTick,
+  laneHeights,
+  naturalTimelineHeight,
   rulerTicks,
 } from '../../shared/timelineView';
 import type { ContextMenuItem } from '../../shared/menu';
@@ -214,10 +218,15 @@ export function Editor({
     const v = Number(localStorage.getItem('openscreen.inspectorWidth'));
     return v ? clampInspector(v, window.innerWidth) : INSPECTOR_DEFAULT;
   });
-  // A height saved on a bigger display is capped so the preview keeps its room.
+  // A height saved on a bigger display is capped so the preview keeps its
+  // room; one saved under shorter lanes is lifted to today's floor (and at
+  // the floor means "no override", as a drag back down does).
   const [timelineH, setTimelineH] = useState<number | null>(() => {
     const v = Number(localStorage.getItem('openscreen.timelineHeight'));
-    return v ? clampTimeline(v, 0, window.innerHeight, 52) : null;
+    if (!v) return null;
+    const floor = naturalTimelineHeight(laneHeights(isPhoneProject(project)));
+    const h = clampTimeline(v, floor, window.innerHeight, 52);
+    return h <= floor + 2 ? null : h;
   });
   const [tlZoom, setTlZoom] = useState(1);
   const tlScrollRef = useRef<HTMLDivElement>(null);
@@ -1464,6 +1473,8 @@ export function Editor({
     const g = cv.getContext('2d');
     if (!g) return;
     g.clearRect(0, 0, W, H);
+    // A silent recording draws nothing; the lane says so in words instead.
+    if (Math.max(...peaks) < SILENT_PEAK) return;
     g.fillStyle = cssToken('--wave', 'rgba(128,128,128,0.4)');
     const outDur = timeline.outputDuration || duration || 1;
     const srcDur = proj.recording.duration || 1;
@@ -1494,6 +1505,48 @@ export function Editor({
 
   const zoomMarks = segments;
 
+  // Thumbnails for the clips lane, and the lanes' width to fit them to.
+  const filmTimes = useMemo(() => filmstripTimes(proj.recording.duration, 40), [proj.recording.duration]);
+  const filmstrip = useFilmstrip(videoUrl, proj.recording.duration, !headless, 40);
+  const [lanesW, setLanesW] = useState(0);
+  useEffect(() => {
+    const el = tlLanesRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setLanesW(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // The part of the lanes in view, in coarse steps (a re-render per 256px of
+  // scrolling, not per pixel): the filmstrip draws only near it.
+  const [tlView, setTlView] = useState<[number, number]>([0, 4096]);
+  useEffect(() => {
+    const sc = tlScrollRef.current;
+    if (!sc) return;
+    const update = () => {
+      const x0 = Math.floor(sc.scrollLeft / 256) * 256;
+      const x1 = x0 + Math.ceil(sc.clientWidth / 256) * 256 + 256;
+      setTlView((v) => (v[0] === x0 && v[1] === x1 ? v : [x0, x1]));
+    };
+    update();
+    sc.addEventListener('scroll', update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(sc);
+    return () => {
+      sc.removeEventListener('scroll', update);
+      ro.disconnect();
+    };
+  }, []);
+  // The clips lane grows with a dragged-taller timeline; tiles follow it.
+  const clipLaneRef = useRef<HTMLDivElement>(null);
+  const [clipLaneH, setClipLaneH] = useState(0);
+  useEffect(() => {
+    const el = clipLaneRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setClipLaneH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // ── resizable panes + timeline zoom ──
   useEffect(() => localStorage.setItem('openscreen.inspectorWidth', String(inspectorW)), [inspectorW]);
   useEffect(() => {
@@ -1502,10 +1555,7 @@ export function Editor({
   }, [timelineH]);
 
   // The timeline's height with no override: its floor when dragging.
-  const naturalTimelineH = () => {
-    const lanes = isPhone ? [34, 22, 26, 38] : [34, 22, 38];
-    return 6 + 14 + 22 + lanes.reduce((a, b) => a + b, 0) + lanes.length * 6;
-  };
+  const naturalTimelineH = () => naturalTimelineHeight(laneHeights(isPhone));
   const topbarH = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) || 52;
 
   /** Pointer-drag a divider; `apply` gets the pixel delta since the press. */
@@ -1637,7 +1687,41 @@ export function Editor({
   const outDur = timeline.outputDuration || duration || 1;
   const ruler = rulerTicks(outDur, tlZoom);
   // With a dragged height the lanes share the extra room in proportion to their base sizes.
-  const laneRows = `22px ${(isPhone ? [34, 22, 26, 38] : [34, 22, 38]).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
+  const laneRows = `22px ${laneHeights(isPhone).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
+  // Clip thumbnails sized to the frames strip under each clip's name.
+  // Portrait frames sit inset as small screens (styles.css .clip-frames.portrait: 5px padding, 3px gaps).
+  const portraitSource = proj.recording.sourceSize.width < proj.recording.sourceSize.height;
+  const framesH = clipLaneH ? Math.max(12, clipLaneH - CLIP_CHROME_H) : CLIP_FRAMES_H;
+  const tile = filmstripTile(proj.recording.sourceSize, portraitSource ? framesH - 5 : framesH);
+  const tileSlot = tile.width + (tile.portrait ? 3 : 0);
+  // Each clip's tiles, built only when the strip, the clips, the zoom, the
+  // lane size or the part in view change (never on a playhead tick), and
+  // only near what's on screen, so deep zoom stays cheap. Each tile keeps
+  // its frame's shape at any zoom.
+  const clipTiles = useMemo(
+    () =>
+      clipBlocks.map((b, i) => {
+        if (filmstrip.length === 0 || !lanesW) return null;
+        const clipLeft = (b.start / outDur) * lanesW;
+        const clipW = ((b.end - b.start) / outDur) * lanesW;
+        const slots = tilesForClip((b.end - b.start) / outDur, lanesW, tileSlot);
+        const slotW = clipW / slots;
+        const [first, last] = visibleSlots(slots, slotW, clipLeft, tlView[0], tlView[1]);
+        const inset = tile.portrait ? 1.5 : 0;
+        const src = timeline.clips[i];
+        const out = [];
+        for (let k = first; k < last; k++) {
+          const fi = slotFrame(filmTimes, src?.sourceStart ?? 0, src?.sourceEnd ?? 0, slots, k);
+          const style = { left: k * slotW + inset, width: slotW - inset * 2 };
+          out.push(filmstrip[fi] ? <img key={k} src={filmstrip[fi]!} alt="" draggable={false} style={style} /> : <span key={k} style={style} />);
+        }
+        return out;
+      }),
+    [clipBlocks, filmstrip, filmTimes, timeline, outDur, lanesW, tileSlot, tile.portrait, tlView],
+  );
+  // "No sound" only for a track that is really silent (about −54 dBFS or
+  // below); quiet speech still draws its waveform.
+  const silent = peaks.length > 0 && Math.max(...peaks) < SILENT_PEAK;
   const bundleName = projectName(proj, bundleDir);
   const formatChoices = presetChoices(proj.recording.sourceSize);
   const selectedFormats =
@@ -1778,6 +1862,7 @@ export function Editor({
         </div>
         {proj.style.background.kind === 'imageFile' && !blurredBg && (
           <ScrubField
+            slider
             label="Image blur"
             min={0}
             max={60}
@@ -1808,6 +1893,7 @@ export function Editor({
             ] as const
           ).map(([label, key, min, max, step, unit, mul]) => (
             <ScrubField
+            slider
               key={key}
               label={label}
               // Percentages scrub and type as whole numbers.
@@ -1865,6 +1951,7 @@ export function Editor({
           )}
           {(isPhone ? proj.zoom.fromTaps : autofocusOn) && (
             <ScrubField
+            slider
               label="Zoom depth"
               min={1.2}
               max={4}
@@ -1895,6 +1982,7 @@ export function Editor({
   const cursorPanel = (
     <Section title="Cursor">
       <ScrubField
+            slider
         label="Size"
         min={5}
         max={30}
@@ -2342,17 +2430,19 @@ export function Editor({
       {camUrl && <video ref={camRef} src={camUrl} className="hidden" preload="auto" muted />}
 
       <header className="topbar ed-top">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="back-btn"
-          title="Back to the source picker (⌘N)"
-          disabled={exporting}
-          onClick={() => leave(onNewRecording)}
-        >
-          {Icon.chevronLeft(12)}
-          New recording
-        </Button>
+        <span className="tb-group no-drag">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="back-btn"
+            title="Back to the source picker (⌘N)"
+            disabled={exporting}
+            onClick={() => leave(onNewRecording)}
+          >
+            {Icon.chevronLeft(12)}
+            New Recording
+          </Button>
+        </span>
         {renameDraft === null ? (
           // no-drag: in the title bar a double-click would otherwise zoom the window.
           <span
@@ -2404,11 +2494,16 @@ export function Editor({
           />
         )}
         <div className="history no-drag">
-          <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
-          <IconButton label="Redo (⌘⇧Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
-          <Button size="sm" variant="ghost" disabled={exporting} onClick={() => setConfirmReset(true)} title="Undo every edit, keeping the recording and backdrop">
-            Reset
-          </Button>
+          <span className="tb-group">
+            <IconButton label="Undo (⌘Z)" onClick={undo}>{Icon.undo(15)}</IconButton>
+            <span className="tb-sep" aria-hidden />
+            <IconButton label="Redo (⇧⌘Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
+          </span>
+          <span className="tb-group">
+            <Button size="sm" variant="ghost" disabled={exporting} onClick={() => setConfirmReset(true)} title="Undo every edit, keeping the recording and backdrop">
+              Reset
+            </Button>
+          </span>
         </div>
         <div className="spacer" />
         {status && !xp && (
@@ -2417,9 +2512,11 @@ export function Editor({
           </div>
         )}
         <div className="spacer" />
-        <Button variant="ghost" onClick={saveProject}>Save</Button>
+        <span className="tb-group no-drag">
+          <Button size="sm" variant="ghost" onClick={saveProject} title="Save (⌘S)">Save</Button>
+        </span>
         <div className="split-btn no-drag" ref={exportMenuRef}>
-          <Button variant="primary" className="split-main" disabled={exporting} onClick={() => exportVideo()}>
+          <Button variant="primary" className="split-main" disabled={exporting} onClick={() => exportVideo()} title="Export MP4 (⌘E)">
             Export MP4
           </Button>
           <Button
@@ -2494,7 +2591,25 @@ export function Editor({
           </div>
         </div>
         <div className="transport">
-          <div className="transport-group">
+          <div className="transport-group transport-edit">
+            <span className="tb-group">
+              <Button size="sm" variant="ghost" onClick={splitAtPlayhead} title="Split at playhead (S)">
+                Split
+              </Button>
+              <span className="tb-sep" aria-hidden />
+              <Button size="sm" variant="ghost" disabled={!selectedClip} onClick={() => trimClip('start')} title="Trim the selected clip's start to the playhead">
+                Trim Start
+              </Button>
+              <Button size="sm" variant="ghost" disabled={!selectedClip} onClick={() => trimClip('end')} title="Trim the selected clip's end to the playhead">
+                Trim End
+              </Button>
+              <span className="tb-sep" aria-hidden />
+              <Button size="sm" variant="ghost" onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1} title="Delete the selected clip (⌫)">
+                Delete
+              </Button>
+            </span>
+          </div>
+          <div className="transport-group transport-play">
             <button
               type="button"
               className="play-btn"
@@ -2509,19 +2624,7 @@ export function Editor({
               <span> / {fmtPrecise(timeline.outputDuration || duration)}</span>
             </span>
           </div>
-          <div className="transport-group">
-            <Button size="sm" variant="ghost" onClick={splitAtPlayhead} title="Split at playhead (S)">
-              Split
-            </Button>
-            <Button size="sm" variant="ghost" disabled={!selectedClip} onClick={() => trimClip('start')} title="Trim clip start to playhead">
-              Trim start
-            </Button>
-            <Button size="sm" variant="ghost" disabled={!selectedClip} onClick={() => trimClip('end')} title="Trim clip end to playhead">
-              Trim end
-            </Button>
-            <Button size="sm" variant="ghost" onClick={deleteSelectedClip} disabled={!selectedClip || proj.clips.length <= 1} title="Delete clip (⌫)">
-              Delete clip
-            </Button>
+          <div className="transport-group transport-tools">
             {selectedClip && (
               <Segmented
                 size="sm"
@@ -2531,28 +2634,30 @@ export function Editor({
                 onChange={setClipSpeed}
               />
             )}
-          </div>
-          {!preset && (
-            <div className="transport-group">
+            {!preset && proj.style.cropRect && !cropMode && (
               <Button
                 size="sm"
                 variant="ghost"
-                className={cropMode ? 'is-on' : ''}
-                onClick={() => setCropMode((c) => !c)}
+                onClick={() => setProj((p) => ({ ...p, style: { ...p.style, cropRect: null } }))}
               >
-                {cropMode ? 'Drag on preview…' : 'Crop'}
+                Reset Crop
               </Button>
-              {proj.style.cropRect && !cropMode && (
+            )}
+            {!preset && (
+              <span className="tb-group">
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setProj((p) => ({ ...p, style: { ...p.style, cropRect: null } }))}
+                  className={cropMode ? 'is-on' : ''}
+                  aria-pressed={cropMode}
+                  title="Drag on the preview to crop the recording"
+                  onClick={() => setCropMode((c) => !c)}
                 >
-                  Reset crop
+                  {cropMode ? 'Drag to Crop' : 'Crop'}
                 </Button>
-              )}
-            </div>
-          )}
+              </span>
+            )}
+          </div>
         </div>
       </main>
 
@@ -2609,10 +2714,10 @@ export function Editor({
         <div className="tl-labels">
           <span className="tl-zoom">
             <button type="button" aria-label="Zoom out timeline" title="Zoom out (pinch or ⌘-scroll)" disabled={tlZoom <= 1} onClick={() => zoomTimeline(tlZoom / ZOOM_STEP)}>
-              −
+              {Icon.minus(12)}
             </button>
             <button type="button" aria-label="Zoom in timeline" title="Zoom in (pinch or ⌘-scroll)" disabled={tlZoom >= 40} onClick={() => zoomTimeline(tlZoom * ZOOM_STEP)}>
-              +
+              {Icon.plus(12)}
             </button>
           </span>
           <span>Clips</span>
@@ -2624,13 +2729,18 @@ export function Editor({
         <div className="tl-scroll" ref={tlScrollRef}>
         <div className="tl-lanes" ref={tlLanesRef} style={{ width: `${tlZoom * 100}%` }} onClick={seekTimeline} onContextMenu={timelineMenu}>
           <div className="tl-ruler">
+            <div
+              className="tl-minor"
+              aria-hidden
+              style={{ backgroundSize: `${((ruler.step / 4) / outDur) * 100}% 100%` }}
+            />
             {ruler.ticks.map((t) => (
               <span key={t} className="tick tnum" style={{ left: `${(t / outDur) * 100}%` }}>
                 {fmtTick(t, ruler.step)}
               </span>
             ))}
           </div>
-          <div className="lane lane-clips">
+          <div className="lane lane-clips" ref={clipLaneRef}>
             {clipBlocks.map((b, i) => {
               const speed = timeline.clips[i]?.speed ?? 1;
               return (
@@ -2669,6 +2779,9 @@ export function Editor({
                     <span>
                       {(b.end - b.start).toFixed(1)}s{speed !== 1 ? ` · ${speed}×` : ''}
                     </span>
+                  </span>
+                  <span className={`clip-frames${tile.portrait ? ' portrait' : ''}`} aria-hidden>
+                    {clipTiles[i]}
                   </span>
                 </div>
               );
@@ -2719,11 +2832,9 @@ export function Editor({
               onAdd={addTapAtPlayhead}
             />
           )}
-          <div className="lane lane-audio">
+          <div className={`lane lane-audio${silent ? ' is-silent' : ''}`}>
             <canvas ref={waveRef} className="wave" />
-            {peaks.length > 0 && Math.max(...peaks) < 0.03 && (
-              <span className="lane-note">Silent recording</span>
-            )}
+            {silent && <span className="lane-note">No sound in this recording</span>}
           </div>
           {(smartCuts ?? []).map((p, i) => {
             const r = proposalOutRange(p);
@@ -2853,6 +2964,14 @@ export function Editor({
     </div>
   );
 }
+
+/** Height of the frames strip under a clip's name: the clips lane less the
+ *  name strip and the clip's border (styles.css .clipblock / .clip-label). */
+/** Below this normalized peak a track is treated as having no sound. */
+const SILENT_PEAK = 0.002;
+
+const CLIP_CHROME_H = 16 + 3;
+const CLIP_FRAMES_H = 56 - CLIP_CHROME_H;
 
 const FILLER = /^[\s.,!?]*(?:um+|uh+|er+|eh+|ah+|hmm+|mm+|mhm)[\s.,!?]*$/i;
 

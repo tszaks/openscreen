@@ -39,6 +39,9 @@ export interface ScrubFieldProps {
   /** Accessible name when `label` is not plain text. */
   ariaLabel?: string;
   className?: string;
+  /** Inspector row: the label on the left, a slider, then the value field
+   *  and a stepper (Keynote's Format inspector). Needs `min` and `max`. */
+  slider?: boolean;
 }
 
 type Mode = 'idle' | 'scrubbing' | 'editing';
@@ -64,6 +67,7 @@ export function ScrubField({
   disabled = false,
   ariaLabel,
   className = '',
+  slider = false,
 }: ScrubFieldProps) {
   const range = { min, max, step };
   const [mode, setMode] = useState<Mode>('idle');
@@ -228,10 +232,26 @@ export function ScrubField({
   const hasRange = min !== undefined && max !== undefined && max > min;
   const fraction = hasRange ? clamp((value - min) / (max - min), 0, 1) : 0;
 
-  return (
+  // ── the row's slider and stepper: each gesture is one commit ──
+  const sliderStart = useRef<number | null>(null);
+  const beginGesture = () => {
+    if (sliderStart.current === null) sliderStart.current = current.current;
+  };
+  const endGesture = () => {
+    const from = sliderStart.current;
+    sliderStart.current = null;
+    if (from !== null) commit(from);
+  };
+  const step1 = (dir: 1 | -1, e: React.MouseEvent) => {
+    const from = current.current;
+    emit(nudgeValue(current.current, dir, range, mods(e)));
+    commit(from);
+  };
+
+  const field = (
     <div
       ref={rootRef}
-      className={`scrub ${className}`}
+      className={`scrub ${slider ? 'scrub-compact' : className}`}
       data-state={mode}
       role="spinbutton"
       tabIndex={disabled ? -1 : mode === 'editing' ? -1 : 0}
@@ -248,8 +268,8 @@ export function ScrubField({
       onKeyDown={onKeyDown}
       onKeyUp={onKeyUp}
     >
-      {hasRange && <span className="scrub-fill" style={{ transform: `scaleX(${fraction})` }} aria-hidden />}
-      <span className="scrub-label">{label}</span>
+      {hasRange && !slider && <span className="scrub-fill" style={{ transform: `scaleX(${fraction})` }} aria-hidden />}
+      {!slider && <span className="scrub-label">{label}</span>}
       {mode === 'editing' ? (
         <input
           ref={inputRef}
@@ -268,6 +288,42 @@ export function ScrubField({
           {unit && <span className="scrub-unit">{unit}</span>}
         </span>
       )}
+    </div>
+  );
+
+  if (!slider || !hasRange) return field;
+  return (
+    <div className={`scrub-row ${className}`} aria-disabled={disabled || undefined}>
+      <span className="scrub-row-label">{label}</span>
+      <input
+        type="range"
+        className="scrub-slider"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        aria-label={name}
+        style={{ '--fill': `${fraction * 100}%` } as React.CSSProperties}
+        onPointerDown={beginGesture}
+        onKeyDown={beginGesture}
+        onChange={(e) => {
+          beginGesture();
+          emit(normalizeValue(+e.target.value, range));
+        }}
+        onPointerUp={endGesture}
+        onKeyUp={endGesture}
+        onBlur={endGesture}
+      />
+      {field}
+      <span className="stepper" aria-hidden>
+        <button type="button" tabIndex={-1} disabled={disabled || (max !== undefined && value >= max)} onClick={(e) => step1(1, e)}>
+          <svg width="8" height="5" viewBox="0 0 8 5" fill="none"><path d="M1 4 4 1l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+        <button type="button" tabIndex={-1} disabled={disabled || (min !== undefined && value <= min)} onClick={(e) => step1(-1, e)}>
+          <svg width="8" height="5" viewBox="0 0 8 5" fill="none"><path d="M1 1l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+      </span>
     </div>
   );
 }

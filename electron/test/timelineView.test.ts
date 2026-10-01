@@ -5,6 +5,8 @@ import {
   clampTimeline,
   clampZoom,
   fmtTick,
+  laneHeights,
+  naturalTimelineHeight,
   rulerTicks,
   ZOOM_MAX,
 } from '../src/shared/timelineView';
@@ -61,5 +63,20 @@ describe('ruler', () => {
     expect(fmtTick(75, 5)).toBe('1:15');
     expect(fmtTick(61.5, 0.5)).toBe('1:01.5');
     expect(fmtTick(0.1, 0.1)).toBe('0:00.1');
+  });
+});
+
+describe('lane heights and the natural timeline height', () => {
+  it('adds the phone taps lane', () => {
+    expect(laneHeights(false)).toEqual([56, 22, 38]);
+    expect(laneHeights(true)).toEqual([56, 22, 26, 38]);
+  });
+  it('is padding + ruler + lanes + gaps', () => {
+    expect(naturalTimelineHeight(laneHeights(false))).toBe(6 + 14 + 22 + 116 + 18);
+    expect(naturalTimelineHeight(laneHeights(true))).toBe(6 + 14 + 22 + 142 + 24);
+  });
+  it('lifts a height saved under shorter lanes up to the new floor', () => {
+    const floor = naturalTimelineHeight(laneHeights(false));
+    expect(clampTimeline(157, floor, 900, 52)).toBe(floor);
   });
 });

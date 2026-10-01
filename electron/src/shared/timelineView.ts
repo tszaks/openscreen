@@ -62,3 +62,14 @@ export function fmtTick(t: number, step: number) {
   const d = step === 0.25 ? 2 : 1;
   return `${m}:${(t - m * 60).toFixed(d).padStart(d + 3, '0')}`;
 }
+
+/** Base heights of the lanes under the ruler: clips, zoom, (taps), audio. */
+export function laneHeights(phone: boolean): number[] {
+  return phone ? [56, 22, 26, 38] : [56, 22, 38];
+}
+
+/** The timeline's height with no override: padding, ruler and lanes with
+ *  their gaps. It's also the floor a dragged or saved height clamps to. */
+export function naturalTimelineHeight(lanes: number[]): number {
+  return 6 + 14 + 22 + lanes.reduce((a, b) => a + b, 0) + lanes.length * 6;
+}
