@@ -1770,7 +1770,7 @@ input[type='color']::-webkit-color-swatch {
 .tl-labels,
 .tl-lanes {
   display: grid;
-  grid-template-rows: 22px 56px 22px 38px 34px;
+  grid-template-rows: 22px 56px 22px 38px;
   row-gap: 6px;
 }
 
@@ -2105,7 +2105,12 @@ body.resizing-y * {
   pointer-events: none;
 }
 
-/* The music track: one block per added sound, its waveform behind its name. */
+/* The music track: one block per added sound, its waveform behind its name.
+   Its lane exists only while the project has a sound on it. */
+.ed-timeline.has-music .tl-labels,
+.ed-timeline.has-music .tl-lanes {
+  grid-template-rows: 22px 56px 22px 38px 34px;
+}
 .lane-music {
   overflow: hidden;
 }

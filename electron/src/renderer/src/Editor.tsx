@@ -239,7 +239,7 @@ export function Editor({
   const [timelineH, setTimelineH] = useState<number | null>(() => {
     const v = Number(localStorage.getItem('openscreen.timelineHeight'));
     if (!v) return null;
-    const floor = naturalTimelineHeight(laneHeights(isPhoneProject(project)));
+    const floor = naturalTimelineHeight(laneHeights(isPhoneProject(project), (project.tracks?.find((t) => t.kind === 'audio')?.items?.length ?? 0) > 0));
     const h = clampTimeline(v, floor, window.innerHeight, 52);
     return h <= floor + 2 ? null : h;
   });
@@ -1650,7 +1650,21 @@ export function Editor({
   }, [timelineH]);
 
   // The timeline's height with no override: its floor when dragging.
-  const naturalTimelineH = () => naturalTimelineHeight(laneHeights(isPhone));
+  // The music lane joins the timeline with the first sound and leaves with the last.
+  const hasMusic = (proj.tracks.find((t) => t.kind === 'audio')?.items.length ?? 0) > 0;
+  const hasMusicRef = useRef(hasMusic);
+  hasMusicRef.current = hasMusic;
+  const naturalTimelineH = () => naturalTimelineHeight(laneHeights(isPhone, hasMusicRef.current));
+  // A dragged height under the new floor (the lane just appeared) is lifted to it.
+  useEffect(() => {
+    setTimelineH((h) => {
+      if (h == null) return null;
+      const floor = naturalTimelineH();
+      const next = clampTimeline(h, floor, window.innerHeight, topbarH());
+      return next <= floor + 2 ? null : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMusic]);
   const topbarH = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) || 52;
 
   /** Pointer-drag a divider; `apply` gets the pixel delta since the press. */
@@ -1783,7 +1797,7 @@ export function Editor({
   const outDur = timeline.outputDuration || duration || 1;
   const ruler = rulerTicks(outDur, tlZoom);
   // With a dragged height the lanes share the extra room in proportion to their base sizes.
-  const laneRows = `22px ${laneHeights(isPhone).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
+  const laneRows = `22px ${laneHeights(isPhone, hasMusic).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
   // Clip thumbnails sized to the frames strip under each clip's name.
   // Portrait frames sit inset as small screens (styles.css .clip-frames.portrait: 5px padding, 3px gaps).
   const portraitSource = proj.recording.sourceSize.width < proj.recording.sourceSize.height;
@@ -1823,8 +1837,9 @@ export function Editor({
   const selectedFormats =
     formatPick ?? [formatChoices[0].id, 'social-9x16' as const].filter((id) => formatChoices.some((p) => p.id === id));
   const exportLayoutPreset = layoutPresetOf(proj);
-  const hasMusic = musicInputs(proj.tracks, bundleDir, outDur).length > 0;
-  const audibleExport = hasMusic || (recordingHasAudio === undefined ? undefined : recordingHasAudio || (clickSfx && clickEv.length > 0));
+  // Unmuted sound on a track: the export has audio even if the recording has none.
+  const exportsMusic = musicInputs(proj.tracks, bundleDir, outDur).length > 0;
+  const audibleExport = exportsMusic || (recordingHasAudio === undefined ? undefined : recordingHasAudio || (clickSfx && clickEv.length > 0));
   const formatWarnings = Object.fromEntries(
     [...formatChoices, ...(exportLayoutPreset ? [exportLayoutPreset] : [])].map((p) => [
       p.id,
@@ -2965,7 +2980,7 @@ export function Editor({
 
       <footer
         ref={footerRef}
-        className={`ed-timeline${isPhone ? ' has-taps' : ''}${timelineH ? ' sized' : ''}`}
+        className={`ed-timeline${isPhone ? ' has-taps' : ''}${hasMusic ? ' has-music' : ''}${timelineH ? ' sized' : ''}`}
         style={
           timelineH
             ? ({ height: timelineH, '--tl-rows': laneRows, '--tl-scale': Math.min(2.2, timelineH / naturalTimelineH()).toFixed(2) } as React.CSSProperties)
@@ -3008,9 +3023,11 @@ export function Editor({
           </span>
           {isPhone && <span>Taps</span>}
           <span>Audio</span>
-          <span title={musicTrack?.muted ? 'Muted' : undefined} className={musicTrack?.muted ? 'is-muted' : undefined}>
-            {musicTrack?.name ?? 'Music'}
-          </span>
+          {hasMusic && (
+            <span title={musicTrack?.muted ? 'Muted' : undefined} className={musicTrack?.muted ? 'is-muted' : undefined}>
+              {musicTrack?.name ?? 'Music'}
+            </span>
+          )}
         </div>
         {/* The seek target spans exactly the lanes, so click % = time %. */}
         <div className="tl-scroll" ref={tlScrollRef}>
@@ -3125,6 +3142,7 @@ export function Editor({
             <canvas ref={waveRef} className="wave" />
             {silent && <span className="lane-note">No sound in this recording</span>}
           </div>
+          {hasMusic && (
           <AudioTrackLane
             track={musicTrack}
             outDur={outDur}
@@ -3135,6 +3153,7 @@ export function Editor({
             onChange={(item) => setProj((p) => updateItem(p, item.id, () => item))}
             onMenu={musicMenu}
           />
+          )}
           {(smartCuts ?? []).map((p, i) => {
             const r = proposalOutRange(p);
             if (!r) return null;
