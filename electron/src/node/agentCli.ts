@@ -10,7 +10,7 @@ import { copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSyn
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { applyOps, captionsFromSegments, needsSilences, needsTapAnalysis, needsTranscript, OP_NAMES, OpError, validateProject, type ApplyContext, type EditOp, type TranscriptSegment } from '../shared/agentOps';
-import { planPolish, type PolishStyle } from '../shared/polish';
+import { runPolish, type PolishStyle } from '../shared/polish';
 import { defaultProject, normalizeProject, type Project } from '../shared/types';
 import { Timeline } from '../shared/timeline';
 import { resolveDevice, projectCanvasSize, layoutPreset } from '../shared/mobileProject';
@@ -389,17 +389,15 @@ async function polish(args: string[]) {
     ctx.tapAnalysis = await analyzeTapsInFile(join(dir, p.recording.screenVideoFile));
   }
   ctx.transcript = readTranscript(dir) ?? undefined;
-  const ops = planPolish(p, { style, analyzed: !!ctx.tapAnalysis, transcript: !!ctx.transcript, title, subtitle });
   let result;
   try {
-    result = applyOps(p, ops, ctx);
+    result = runPolish(p, ctx, { style, title, subtitle });
   } catch (e) {
     if (e instanceof OpError) throw new CliError(e.message);
     throw e;
   }
   if (!dry) writeProject(dir, result.project);
-  const before = new Timeline(p.recording.duration, p.clips).outputDuration;
-  const after = new Timeline(result.project.recording.duration, result.project.clips).outputDuration;
+  const { ops, before, after } = result;
   return { ok: true, bundle: dir, style, dryRun: dry, ops, changes: result.notes, outputDuration: { before: r2(before), after: r2(after) }, backup: dry ? null : join(dir, 'project.json.bak') };
 }
 
