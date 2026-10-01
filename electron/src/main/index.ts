@@ -813,6 +813,8 @@ app.whenReady().then(() => {
   // peak per bucket in source-time order.
   ipcMain.handle('audio:peaks', async (_e, args: { dir: string; videoFile: string; buckets?: number }) => {
     const wav = await extractWav(args.dir, args.videoFile);
+    // No audio track: an empty waveform, not an error.
+    if (!wav) return [];
     const buf = readFileSync(wav);
     let off = 12;
     let dataOff = -1;

@@ -255,9 +255,15 @@ export function Editor({
   useEffect(() => {
     if (headless) return;
     let dead = false;
-    api.audioPeaks(bundleDir, proj.recording.screenVideoFile, 1200).then((p) => {
-      if (!dead) setPeaks(p);
-    });
+    api
+      .audioPeaks(bundleDir, proj.recording.screenVideoFile, 1200)
+      .then((p) => {
+        if (!dead) setPeaks(p);
+      })
+      // The waveform is decoration: an unreadable track leaves the lane empty.
+      .catch(() => {
+        if (!dead) setPeaks([]);
+      });
     return () => {
       dead = true;
     };
