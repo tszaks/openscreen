@@ -1,11 +1,22 @@
+# In both ecosystems, routine (minor/patch) updates arrive as one grouped PR.
+# Major versions still open one PR each, capped at three at a time. They are
+# deliberately NOT ignored: `ignore` rules also suppress security updates,
+# and some fixes (e.g. Electron's) only exist in a newer major.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /electron
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      dependencies:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        update-types: [minor, patch]
