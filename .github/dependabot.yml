@@ -1,11 +1,23 @@
+# Routine updates arrive as one grouped PR per ecosystem. Major versions are
+# left for deliberate upgrades (they can change behaviour); security fixes
+# still open on their own through Dependabot security updates.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /electron
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      dependencies:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
