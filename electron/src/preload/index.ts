@@ -100,6 +100,7 @@ const api = {
   headlessOpen: () => ipcRenderer.invoke('headless:open'),
   headlessProgress: (done: number, total: number, detail: string) => ipcRenderer.send('headless:progress', { done, total, detail }),
   headlessDone: (result: unknown) => ipcRenderer.send('headless:done', result),
+  showContextMenu: (items: unknown[]) => ipcRenderer.invoke('contextMenu:show', items),
   setMenuPhase: (phase: string, bundleDir?: string) => ipcRenderer.send('menu:phase', { phase, bundleDir }),
   onMenu: (cb: (action: string) => void) => {
     const listener = (_e: IpcRendererEvent, action: string) => cb(action);

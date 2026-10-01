@@ -20,6 +20,7 @@ export function TapsLane({
   onSelect,
   onMove,
   onRemove,
+  onMenu,
   onAdd,
 }: {
   /** Output-time taps. */
@@ -32,6 +33,8 @@ export function TapsLane({
   /** Live while dragging: the marker's new output time. */
   onMove: (id: string, outT: number) => void;
   onRemove: (id: string) => void;
+  /** Two-finger click on a marker; without it, that removes the tap. */
+  onMenu?: (id: string) => void;
   onAdd: () => void;
 }) {
   const laneRef = useRef<HTMLDivElement>(null);
@@ -102,7 +105,8 @@ export function TapsLane({
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              onRemove(s.id);
+              if (onMenu) onMenu(s.id);
+              else onRemove(s.id);
             }}
           >
             {s.kind === 'typing' && <span>Typing</span>}
