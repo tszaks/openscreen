@@ -78,10 +78,14 @@ export async function probeMedia(file: string, bin = ffmpegPath()): Promise<Medi
   };
 }
 
-/** 16 kHz mono audio.wav next to the video (for silencedetect and whisper). */
-export async function extractWav(dir: string, videoFile: string, bin = ffmpegPath()): Promise<string> {
+/** 16 kHz mono audio.wav next to the video (for silencedetect and whisper),
+ *  or null when the video has no audio track at all (ffmpeg would fail with
+ *  "Output file does not contain any stream"). */
+export async function extractWav(dir: string, videoFile: string, bin = ffmpegPath()): Promise<string | null> {
+  const video = join(dir, videoFile);
+  if (!/Stream #\d+:\d+.*Audio:/.test(await probeBanner(video, bin))) return null;
   const wav = join(dir, 'audio.wav');
-  await ffmpegRun(extractWavArgs(join(dir, videoFile), wav), bin);
+  await ffmpegRun(extractWavArgs(video, wav), bin);
   return wav;
 }
 
@@ -93,6 +97,7 @@ export async function detectSilences(
   bin = ffmpegPath(),
 ): Promise<{ start: number; end: number }[]> {
   const wav = await extractWav(dir, videoFile, bin);
+  if (!wav) return [];
   const se = await ffmpegStderr(silenceDetectArgs(wav, opts.thresholdDb, opts.minDur), bin);
   return parseSilences(se, parseFfmpegDuration(se) ?? undefined);
 }
@@ -180,6 +185,7 @@ export async function transcribeBundle(dir: string, videoFile: string, bin = ffm
   const wav = await extractWav(dir, videoFile, bin).catch(() => {
     throw new Error('Could not read the audio from this recording.');
   });
+  if (!wav) throw new Error('This recording has no audio track, so there is nothing to transcribe.');
   const jsonOut = join(dir, 'transcript.json');
   // Whisper hallucinates words ("You") on silent audio, which would become
   // bogus captions. A recording with no audible sound has no transcript.
