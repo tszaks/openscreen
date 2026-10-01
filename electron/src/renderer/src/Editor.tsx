@@ -2134,6 +2134,25 @@ export function Editor({
 
   const cursorPanel = (
     <Section title="Cursor">
+      <Switch
+        label="Show cursor"
+        hint="Draw OpenScreen's cursor over the recording"
+        checked={proj.style.cursorShow}
+        onChange={(v) => setProj((p) => ({ ...p, style: { ...p.style, cursorShow: v } }))}
+      />
+      {proj.style.cursorShow && (
+      <>
+      <ScrubField
+        slider
+        label="Opacity"
+        min={10}
+        max={100}
+        step={5}
+        unit="%"
+        value={Math.round(proj.style.cursorOpacity * 100)}
+        onCommit={sealHistory}
+        onChange={(v) => setProj((p) => ({ ...p, style: { ...p.style, cursorOpacity: v / 100 } }))}
+      />
       <ScrubField
             slider
         label="Size"
@@ -2163,6 +2182,8 @@ export function Editor({
           />
         </span>
       </label>
+      </>
+      )}
     </Section>
   );
 
