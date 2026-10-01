@@ -43,7 +43,7 @@ import { ExportPanel, ExportTasks, type TaskRowState } from './components/Export
 import { Button, EmptyState, FormRow, Icon, IconButton, Kbd, Section, Segmented, Sheet, Switch, Tabs, cssToken, useColorScheme } from './ui';
 import { ScrubField } from './components/ScrubField';
 import { useFilmstrip } from './useFilmstrip';
-import { clipFrames, filmstripTimes } from '../../shared/filmstrip';
+import { clipFrames, filmstripTile, filmstripTimes, tilesForClip } from '../../shared/filmstrip';
 import { BACKDROPS, BACKDROP_GROUPS, backgroundCss, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
 import {
@@ -54,6 +54,8 @@ import {
   clampTimeline,
   clampZoom,
   fmtTick,
+  laneHeights,
+  naturalTimelineHeight,
   rulerTicks,
 } from '../../shared/timelineView';
 import type { ContextMenuItem } from '../../shared/menu';
@@ -216,10 +218,15 @@ export function Editor({
     const v = Number(localStorage.getItem('openscreen.inspectorWidth'));
     return v ? clampInspector(v, window.innerWidth) : INSPECTOR_DEFAULT;
   });
-  // A height saved on a bigger display is capped so the preview keeps its room.
+  // A height saved on a bigger display is capped so the preview keeps its
+  // room; one saved under shorter lanes is lifted to today's floor (and at
+  // the floor means "no override", as a drag back down does).
   const [timelineH, setTimelineH] = useState<number | null>(() => {
     const v = Number(localStorage.getItem('openscreen.timelineHeight'));
-    return v ? clampTimeline(v, 0, window.innerHeight, 52) : null;
+    if (!v) return null;
+    const floor = naturalTimelineHeight(laneHeights(isPhoneProject(project)));
+    const h = clampTimeline(v, floor, window.innerHeight, 52);
+    return h <= floor + 2 ? null : h;
   });
   const [tlZoom, setTlZoom] = useState(1);
   const tlScrollRef = useRef<HTMLDivElement>(null);
@@ -1518,10 +1525,7 @@ export function Editor({
   }, [timelineH]);
 
   // The timeline's height with no override: its floor when dragging.
-  const naturalTimelineH = () => {
-    const lanes = LANES(isPhone);
-    return 6 + 14 + 22 + lanes.reduce((a, b) => a + b, 0) + lanes.length * 6;
-  };
+  const naturalTimelineH = () => naturalTimelineHeight(laneHeights(isPhone));
   const topbarH = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) || 52;
 
   /** Pointer-drag a divider; `apply` gets the pixel delta since the press. */
@@ -1653,9 +1657,12 @@ export function Editor({
   const outDur = timeline.outputDuration || duration || 1;
   const ruler = rulerTicks(outDur, tlZoom);
   // With a dragged height the lanes share the extra room in proportion to their base sizes.
-  const laneRows = `22px ${LANES(isPhone).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
-  // Clip thumbnails: as many whole frames as the clip's width holds at the lane's height.
-  const tileW = Math.max(20, 44 * (proj.recording.sourceSize.width / Math.max(1, proj.recording.sourceSize.height)));
+  const laneRows = `22px ${laneHeights(isPhone).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
+  // Clip thumbnails sized to the frames strip under each clip's name.
+  // Portrait frames sit inset as small screens (styles.css .clip-frames.portrait: 5px padding, 3px gaps).
+  const portraitSource = proj.recording.sourceSize.width < proj.recording.sourceSize.height;
+  const tile = filmstripTile(proj.recording.sourceSize, portraitSource ? CLIP_FRAMES_H - 5 : CLIP_FRAMES_H);
+  const tileSlot = tile.width + (tile.portrait ? 3 : 0);
   const silent = peaks.length > 0 && Math.max(...peaks) < 0.03;
   const bundleName = projectName(proj, bundleDir);
   const formatChoices = presetChoices(proj.recording.sourceSize);
@@ -2709,21 +2716,26 @@ export function Editor({
                     width: `${((b.end - b.start) / (timeline.outputDuration || duration || 1)) * 100}%`,
                   }}
                 >
-                  {filmstrip.length > 0 && (
-                    <span className="clip-frames" aria-hidden>
-                      {clipFrames(
-                        filmTimes,
-                        timeline.clips[i]?.sourceStart ?? 0,
-                        timeline.clips[i]?.sourceEnd ?? 0,
-                        Math.max(1, Math.round((((b.end - b.start) / outDur) * lanesW) / tileW)),
-                      ).map((fi, k) => (filmstrip[fi] ? <img key={k} src={filmstrip[fi]!} alt="" draggable={false} /> : <span key={k} />))}
-                    </span>
-                  )}
                   <span className="clip-label tnum">
                     Clip {i + 1}
                     <span>
                       {(b.end - b.start).toFixed(1)}s{speed !== 1 ? ` · ${speed}×` : ''}
                     </span>
+                  </span>
+                  <span className={`clip-frames${tile.portrait ? ' portrait' : ''}`} aria-hidden>
+                    {filmstrip.length > 0 &&
+                      clipFrames(
+                        filmTimes,
+                        timeline.clips[i]?.sourceStart ?? 0,
+                        timeline.clips[i]?.sourceEnd ?? 0,
+                        tilesForClip((b.end - b.start) / outDur, lanesW, tileSlot),
+                      ).map((fi, k) =>
+                        filmstrip[fi] ? (
+                          <img key={k} src={filmstrip[fi]!} alt="" draggable={false} />
+                        ) : (
+                          <span key={k} />
+                        ),
+                      )}
                   </span>
                 </div>
               );
@@ -2907,8 +2919,9 @@ export function Editor({
   );
 }
 
-/** Base heights of the timeline's lanes under the ruler: clips, zoom, (taps), audio. */
-const LANES = (phone: boolean) => (phone ? [48, 22, 26, 38] : [48, 22, 38]);
+/** Height of the frames strip under a clip's name: the clips lane less the
+ *  name strip and the clip's border (styles.css .clipblock / .clip-label). */
+const CLIP_FRAMES_H = 56 - 16 - 3;
 
 const FILLER = /^[\s.,!?]*(?:um+|uh+|er+|eh+|ah+|hmm+|mm+|mhm)[\s.,!?]*$/i;
 

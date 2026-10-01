@@ -404,7 +404,8 @@ html.is-scrubbing * {
    The value field still scrubs, types and steps with the arrow keys. */
 .scrub-row {
   display: grid;
-  grid-template-columns: 104px minmax(48px, 1fr) 64px 14px;
+  /* Fits the narrowest inspector (280px): the label gives way first, with an ellipsis. */
+  grid-template-columns: minmax(0, 104px) minmax(40px, 1fr) minmax(48px, 64px) 14px;
   align-items: center;
   gap: var(--s2);
   min-height: 28px;

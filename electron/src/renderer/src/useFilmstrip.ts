@@ -18,16 +18,18 @@ export function useFilmstrip(url: string, duration: number, enabled: boolean, co
     video.muted = true;
     video.preload = 'auto';
     video.src = url;
+    // Resolves true once the frame at `t` is decoded, false if the seek
+    // stalls: a stalled slot stays empty rather than showing the last frame.
     const seek = (t: number) =>
-      new Promise<void>((resolve) => {
-        const done = () => {
-          video.removeEventListener('seeked', done);
+      new Promise<boolean>((resolve) => {
+        const finish = (ok: boolean) => {
+          video.removeEventListener('seeked', onSeeked);
           clearTimeout(timer);
-          resolve();
+          resolve(ok);
         };
-        // A stalled seek skips this frame rather than hanging the strip.
-        const timer = setTimeout(done, 1500);
-        video.addEventListener('seeked', done);
+        const onSeeked = () => finish(true);
+        const timer = setTimeout(() => finish(false), 1500);
+        video.addEventListener('seeked', onSeeked);
         video.currentTime = t;
       });
     const run = async () => {
@@ -43,10 +45,12 @@ export function useFilmstrip(url: string, duration: number, enabled: boolean, co
       const g = canvas.getContext('2d');
       if (!g) return;
       for (let i = 0; i < times.length && alive; i++) {
-        await seek(times[i]);
+        const ok = await seek(times[i]);
         if (!alive) return;
-        g.drawImage(video, 0, 0, w, height);
-        out[i] = canvas.toDataURL('image/jpeg', 0.72);
+        if (ok) {
+          g.drawImage(video, 0, 0, w, height);
+          out[i] = canvas.toDataURL('image/jpeg', 0.72);
+        }
         // Publish in small batches: a re-render per frame would churn the timeline.
         if (i % 4 === 3 || i === times.length - 1) setFrames([...out]);
       }
