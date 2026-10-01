@@ -379,16 +379,19 @@ app.whenReady().then(() => {
   // main pops a native menu and resolves with the chosen id, or null.
   ipcMain.handle('contextMenu:show', (e, items: ContextMenuItem[]) =>
     new Promise<string | null>((resolve) => {
-      let picked: string | null = null;
+      // On macOS the close callback can fire before the item's click, so a
+      // click resolves at once and the close only settles "nothing picked"
+      // after a beat (a promise resolves once; the later call is a no-op).
       const menu = Menu.buildFromTemplate(
         items.map((it) =>
           it.type === 'separator'
             ? { type: 'separator' as const }
-            : { label: it.label, enabled: it.enabled !== false, click: () => (picked = it.id) },
+            : { label: it.label, enabled: it.enabled !== false, click: () => resolve(it.id) },
         ),
       );
-      const w = BrowserWindow.fromWebContents(e.sender) ?? undefined;
-      menu.popup({ window: w, callback: () => resolve(picked) });
+      const w = BrowserWindow.fromWebContents(e.sender);
+      if (!w || w.isDestroyed()) return resolve(null);
+      menu.popup({ window: w, callback: () => setTimeout(() => resolve(null), 250) });
     }),
   );
   ipcMain.on('menu:phase', (_e, next: { phase: MenuPhase; bundleDir?: string }) => {
