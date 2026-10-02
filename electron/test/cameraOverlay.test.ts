@@ -38,8 +38,12 @@ describe('camera overlay defaults', () => {
   it('names sizes and clamps the fine slider', () => {
     expect(overlaySizeName(OVERLAY_SIZES.small)).toBe('small');
     expect(overlaySizeName(OVERLAY_SIZES.large)).toBe('large');
-    expect(overlaySizeName(0.25)).toBe('small');
-    expect(overlaySizeName(0.33)).toBe('large');
+    // The midpoint between Small (0.325) and Large (0.465) is 0.395.
+    expect(overlaySizeName(0.36)).toBe('small');
+    expect(overlaySizeName(0.42)).toBe('large');
+    // Projects saved with the old Small (0.22) still read as Small.
+    expect(overlaySizeName(0.22)).toBe('small');
+    expect(OVERLAY_SIZES).toEqual({ small: 0.325, large: 0.465 });
     expect(clampOverlaySize(0.01)).toBe(0.1);
     expect(clampOverlaySize(2)).toBe(0.5);
     expect(clampOverlaySize(NaN)).toBe(OVERLAY_SIZES.small);

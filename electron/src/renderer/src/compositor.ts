@@ -329,15 +329,23 @@ export class CanvasCompositor {
     this.cameraRect = overlay.enabled ? overlayRect(overlay, visible, { width: W, height: H }) : null;
     if (this.cameraRect && input.cameraFrame) {
       const { x: ox, y: oy, w: d } = this.cameraRect;
+      const bubblePath = () => {
+        ctx.beginPath();
+        if (overlay.circular) ctx.ellipse(ox + d / 2, oy + d / 2, d / 2, d / 2, 0, 0, Math.PI * 2);
+        else roundedPath(ctx, ox, oy, d, d, d * 0.18);
+      };
+      // Depth from a soft shadow, never an outline. The shadow comes from a
+      // fill drawn before the clip; a shadow cast inside the clip is cut off.
       ctx.save();
       ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
       ctx.shadowBlur = style.shadowRadius * 0.4;
-      ctx.beginPath();
-      if (overlay.circular) {
-        ctx.ellipse(ox + d / 2, oy + d / 2, d / 2, d / 2, 0, 0, Math.PI * 2);
-      } else {
-        roundedPath(ctx, ox, oy, d, d, d * 0.18);
-      }
+      ctx.shadowOffsetY = d * 0.02;
+      ctx.fillStyle = '#000';
+      bubblePath();
+      ctx.fill();
+      ctx.restore();
+      ctx.save();
+      bubblePath();
       ctx.clip();
       // Cover-crop the camera frame to square.
       const cf = input.cameraFrame as CanvasImageSource;
@@ -346,15 +354,6 @@ export class CanvasCompositor {
       const side = Math.min(fw, fh);
       ctx.drawImage(cf, (fw - side) / 2, (fh - side) / 2, side, side, ox, oy, d, d);
       ctx.restore();
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-      ctx.lineWidth = Math.max(1.5, d * 0.02);
-      ctx.beginPath();
-      if (overlay.circular) {
-        ctx.ellipse(ox + d / 2, oy + d / 2, d / 2, d / 2, 0, 0, Math.PI * 2);
-      } else {
-        roundedPath(ctx, ox, oy, d, d, d * 0.18);
-      }
-      ctx.stroke();
     }
 
     // 6. The phone layer, beside the screen or over its corner.
