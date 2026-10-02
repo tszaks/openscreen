@@ -144,7 +144,7 @@ LayoutSection, TapsLane, ExportPanel) and the op that does the same thing:
 | Edit / remove caption | `captions[i]` | `addCaption`, `editCaption`, `removeCaption`, `clearCaptions`, `setCaptions` |
 | Chapters: suggest, rename, remove, clear | `chapters` | `suggestChapters`, `addChapter`, `editChapter`, `removeChapter`, `clearChapters` |
 | Text overlays: add, edit text, position band, delete | `annotations` | `addAnnotation`, `editAnnotation {text?, band?, hex?, start?, end?}`, `removeAnnotation` |
-| Camera tab: show, corner, circle | `cameraOverlay` | `camera {enabled?, corner?, circular?, sizeFraction?}` |
+| Camera tab: show, shape (Round/Square), size (Small 0.22 / Large 0.36 / fine 0.1..0.5); drag the bubble on the preview | `cameraOverlay` (`position` = centre as a fraction of the canvas; older projects have only `corner`) | `camera {enabled?, x?, y?, circular?, sizeFraction?, corner?}` (`x`/`y` 0..1 place it freely; `corner` alone puts it back in a corner) |
 | Phone tab (Mac + iPhone takes): show, layout, corner, size, device frame, shadow, phone sound | `phoneOverlay` | `phone {enabled?, layout?: side-by-side-right\|side-by-side-left\|corner, corner?, size? (0.3..1), frame?, shadow?, sound?, modelId?, finishId?}` (`null` resets a model or finish to detected; fails on a take with no phone video) |
 | Background tab: swatches, image, wallpaper, blur, blurred recording | `style.background`, `layout.background` | `background {swatch\|solid\|gradient\|image(+blur)\|blurred:true}` (wallpaper: pass the image path) |
 | Frame: padding, corner radius, shadow, shadow opacity | `style.*` | `style {paddingFraction?, cornerRadius?, shadowRadius?, shadowOpacity?}` |

@@ -20,6 +20,7 @@ export function RecordingCard({
   device,
   phone,
   warning,
+  mirror = false,
 }: {
   sourceName: string;
   elapsed: number;
@@ -34,6 +35,8 @@ export function RecordingCard({
   phone?: { id: string; name: string; tablet: boolean; preview: IosPreview | null } | null;
   /** A calm mid-take warning, e.g. the phone may be locked. */
   warning?: string | null;
+  /** Flip the preview like a mirror (a camera filming you). */
+  mirror?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -90,7 +93,7 @@ export function RecordingCard({
             </div>
           </div>
         ) : stream ? (
-          <video ref={videoRef} className="rec-card-video" muted playsInline autoPlay />
+          <video ref={videoRef} className={`rec-card-video${mirror ? ' is-mirrored' : ''}`} muted playsInline autoPlay />
         ) : (
           <span className="rec-card-empty">No preview</span>
         )}

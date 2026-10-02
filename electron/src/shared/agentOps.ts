@@ -635,7 +635,18 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
     // --- camera / style ----------------------------------------------------
     case 'camera': {
       const patch = pick<Project['cameraOverlay']>(o, ['enabled', 'corner', 'sizeFraction', 'circular']);
-      return { project: { ...p, cameraOverlay: { ...p.cameraOverlay, ...patch } }, note: `camera ${JSON.stringify(patch)}` };
+      const next = { ...p.cameraOverlay, ...patch };
+      // x/y: the bubble's centre as a fraction of the canvas. A corner on its own puts it back in that corner.
+      if (o.x !== undefined || o.y !== undefined) {
+        const x = Number(o.x ?? next.position?.x ?? 0.5);
+        const y = Number(o.y ?? next.position?.y ?? 0.5);
+        if (![x, y].every((v) => Number.isFinite(v) && v >= 0 && v <= 1)) throw new OpError('camera: x and y are fractions of the canvas, 0..1');
+        next.position = { x, y };
+        Object.assign(patch, { position: next.position });
+      } else if (o.corner !== undefined) {
+        delete next.position;
+      }
+      return { project: { ...p, cameraOverlay: next }, note: `camera ${JSON.stringify(patch)}` };
     }
     case 'phone': {
       if (!p.recording.phoneVideoFile) throw new OpError('phone: this recording has no phone video (only Mac takes recorded with "iPhone or iPad" on have one)');

@@ -7,6 +7,8 @@ export class History<T> {
   private undoStack: T[] = [];
   private redoStack: T[] = [];
   private lastChange = -Infinity;
+  // A gesture in progress (hold() until seal()): one step however slow it is.
+  private held = false;
 
   constructor(
     private windowMs = 400,
@@ -15,7 +17,8 @@ export class History<T> {
 
   /** `prev` is being replaced by an edit made at `now` (ms). */
   record(prev: T, now: number) {
-    if (now - this.lastChange > this.windowMs) {
+    const joins = this.held ? this.lastChange !== -Infinity : now - this.lastChange <= this.windowMs;
+    if (!joins) {
       this.undoStack.push(prev);
       if (this.undoStack.length > this.cap) this.undoStack.shift();
     }
@@ -26,6 +29,14 @@ export class History<T> {
   /** Close the current step so the next change starts a new one. */
   seal() {
     this.lastChange = -Infinity;
+    this.held = false;
+  }
+
+  /** Every change until the next seal() joins one step, however long the
+   *  pauses between them (a drag held still, then moved again). */
+  hold() {
+    this.seal();
+    this.held = true;
   }
 
   /** The state to restore, given what's showing now; undefined if none. */

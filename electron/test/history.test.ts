@@ -29,6 +29,19 @@ describe('History coalescing (BH-21)', () => {
     expect(h.undo('c')).toBe('b');
   });
 
+  it('a held gesture (a camera drag with pauses) is one step until sealed', () => {
+    const h = new History<string>(400);
+    h.hold();
+    h.record('start', 0);
+    h.record('m1', 2000); // held still for 2 s mid-drag
+    h.record('m2', 5000);
+    h.seal(); // pointer-up
+    h.record('after', 5100);
+    expect(h.undo('now')).toBe('after');
+    expect(h.undo('after')).toBe('start');
+    expect(h.undo('start')).toBeUndefined();
+  });
+
   it('redo restores, and a new edit after undo clears redo', () => {
     const h = new History<string>(400);
     h.record('a', 0);

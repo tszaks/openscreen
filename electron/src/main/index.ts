@@ -37,7 +37,9 @@ import {
   parseFfmpegProgressTime,
   parseFfmpegVideoSize,
   withProbedDuration,
+  pickDisplay,
 } from '../shared/recording';
+import { placeMonitor, resizeMonitor, type MonitorPlacement, type Rect } from '../shared/recordingMonitor';
 
 // Dev runs take the name from package.json ("openscreen"); the menu wants the product name.
 app.setName('OpenScreen');
@@ -83,6 +85,27 @@ let transcodeRun: TranscodeRun | null = null;
 let trackerStartedAtMs = 0;
 // The in-flight iPhone take's bundle, so a failed take can be salvaged or removed.
 let iosBundleDir: string | null = null;
+
+// The recording monitor shown during a take with the camera on
+// (shared/recordingMonitor.ts). The renderer opens it with window.open, so
+// it lives in the renderer's own process and plays the streams already being
+// recorded, with no second camera or screen capture. Main places it and
+// remembers where it was left.
+const MONITOR_FRAME = 'openscreen-recording-monitor';
+let monitorWin: BrowserWindow | null = null;
+let monitor: { token: string; display: Rect; workArea: Rect; last: Rect } | null = null;
+
+/** Close the monitor; resolves where it was (null when it never showed).
+ *  With a token, only the monitor that showed with it: a late close from
+ *  an earlier take must not close the next one. */
+const closeMonitor = (token?: string): MonitorPlacement | null => {
+  if (token !== undefined && monitor && monitor.token !== token) return null;
+  const placed = monitor ? { window: monitor.last, display: monitor.display, workArea: monitor.workArea } : null;
+  monitor = null;
+  if (monitorWin && !monitorWin.isDestroyed()) monitorWin.close();
+  monitorWin = null;
+  return placed;
+};
 
 // What the renderer is in the middle of ('recording', 'saving', …), so
 // closing or quitting can ask before throwing it away.
@@ -386,6 +409,51 @@ function createWindow() {
     },
   });
   win.loadFile(join(__dirname, '../renderer/index.html'), headless ? { query: { headless: '1' } } : undefined);
+  // The only window the renderer may open is the recording monitor.
+  win.webContents.setWindowOpenHandler(({ frameName, url }) =>
+    frameName === MONITOR_FRAME && (url === '' || url === 'about:blank')
+      ? {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            show: false,
+            frame: false,
+            transparent: true,
+            backgroundColor: '#00000000',
+            hasShadow: false,
+            resizable: false,
+            minimizable: false,
+            maximizable: false,
+            fullscreenable: false,
+            skipTaskbar: true,
+            // Never takes focus from the app being demoed; a click still
+            // lands on the first try.
+            focusable: false,
+            acceptFirstMouse: true,
+            alwaysOnTop: true,
+            webPreferences: { backgroundThrottling: false },
+          },
+        }
+      : { action: 'deny' },
+  );
+  // A reload drops the page that owned the monitor without running its
+  // cleanup: close the monitor with it.
+  win.webContents.on('did-navigate', () => closeMonitor());
+  win.webContents.on('did-create-window', (child, { frameName }) => {
+    if (frameName !== MONITOR_FRAME) return;
+    monitorWin?.close();
+    monitorWin = child;
+    // The monitor is never in the screen recording. The camera is recorded
+    // on its own (cam.webm) and composited in the editor, so a monitor that
+    // was captured too would put the face in the video twice (and the
+    // screen tile would film itself).
+    child.setContentProtection(true);
+    // Above full-screen apps, and on every Space the person switches to.
+    child.setAlwaysOnTop(true, 'screen-saver');
+    child.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+    child.on('closed', () => {
+      if (monitorWin === child) monitorWin = null;
+    });
+  });
   win.on('close', (e) => {
     if (!quitConfirmed && !confirmDiscard('close')) e.preventDefault();
   });
@@ -394,6 +462,7 @@ function createWindow() {
   const abandonTake = () => {
     rendererBusy = null;
     stopTracker();
+    closeMonitor();
     stopIosPreview();
     if (iosBundleDir) {
       const dir = iosBundleDir;
@@ -490,6 +559,37 @@ app.whenReady().then(() => {
   ipcMain.on('app:captureShield', (_e, on: boolean) => {
     win?.setContentProtection(!!on);
   });
+
+  // The recording monitor: show it on the recorded display (a window or
+  // iPhone take uses the display OpenScreen is on), move it while dragged,
+  // resize it when its layout changes, and close it, answering where it was.
+  const monitorDisplay = (displayId?: string) =>
+    pickDisplay(screen.getAllDisplays(), displayId, win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay());
+  const sizeOk = (s: { width: number; height: number }) =>
+    [s?.width, s?.height].every((n) => Number.isFinite(n) && n > 0 && n < 4000);
+  ipcMain.handle('monitor:show', async (_e, args: { token: string; displayId?: string; size: { width: number; height: number }; spot?: { u: number; v: number } }) => {
+    // did-create-window can land just after the renderer's window.open returns.
+    for (let i = 0; i < 20 && !monitorWin; i++) await new Promise((r) => setTimeout(r, 50));
+    if (!monitorWin || monitorWin.isDestroyed() || !sizeOk(args.size)) return null;
+    const display = monitorDisplay(args.displayId);
+    monitorWin.setBounds(placeMonitor(display.workArea, args.size, args.spot));
+    monitorWin.showInactive();
+    monitor = { token: String(args.token), display: display.bounds, workArea: display.workArea, last: monitorWin.getBounds() };
+    return monitor.last;
+  });
+  ipcMain.on('monitor:move', (_e, p: { x: number; y: number }) => {
+    if (!monitorWin || monitorWin.isDestroyed() || !monitor || !Number.isFinite(p?.x) || !Number.isFinite(p?.y)) return;
+    monitorWin.setPosition(Math.round(p.x), Math.round(p.y));
+    monitor.last = monitorWin.getBounds();
+  });
+  ipcMain.handle('monitor:resize', (_e, size: { width: number; height: number }) => {
+    if (!monitorWin || monitorWin.isDestroyed() || !monitor || !sizeOk(size)) return null;
+    const now = monitorWin.getBounds();
+    monitorWin.setBounds(resizeMonitor(now, size, screen.getDisplayMatching(now).workArea));
+    monitor.last = monitorWin.getBounds();
+    return monitor.last;
+  });
+  ipcMain.handle('monitor:close', (_e, token: string) => closeMonitor(String(token)));
 
   ipcMain.handle('permissions:openScreenSettings', async () => {
     const { shell } = await import('electron');

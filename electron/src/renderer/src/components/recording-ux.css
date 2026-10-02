@@ -452,3 +452,8 @@
 }
 
 /* The warning takes the note's place along the bottom of the stage. */
+
+/* "Just me": the camera preview is a mirror. */
+.rec-card-video.is-mirrored {
+  transform: scaleX(-1);
+}
