@@ -22,7 +22,8 @@ import { remapProject } from './remap';
 import { addItem, fitToVideo, newAudioItem, segmentLength, trackProblems, withMusicTrack } from './audioTracks';
 import { Timeline } from './timeline';
 import type { TapSuggestion } from './taps';
-import type { Annotation, AudioItem, Background, CaptionCue, Chapter, Clip, Project, TranscriptWord, WaitRange } from './types';
+import { MAX_CONTENT_SCALE, MIN_CONTENT_SCALE } from './contentTransform';
+import type { Annotation, AudioItem, Background, CaptionCue, Chapter, Clip, ContentTransform, Project, TranscriptWord, WaitRange } from './types';
 
 export interface TranscriptSegment {
   start: number;
@@ -203,6 +204,11 @@ export function validateProject(p: Project): string[] {
     const b = s.background as Background | undefined;
     if (!b || !['solid', 'gradient', 'mesh', 'imageFile', 'wallpaper'].includes(b.kind)) errs.push('style.background.kind must be solid|gradient|mesh|imageFile|wallpaper');
     else if (b.kind === 'mesh' && !(/^#[0-9a-f]{6}$/i.test(b.baseHex) && Array.isArray(b.blobs) && b.blobs.every((o) => /^#[0-9a-f]{6}$/i.test(o.hex) && Number.isFinite(o.x) && Number.isFinite(o.y) && Number.isFinite(o.r) && o.r > 0) && (b.grain === undefined || Number.isFinite(b.grain)))) errs.push('style.background mesh needs baseHex #rrggbb, blobs [{x,y,r>0,hex}] with finite numbers, and a finite grain if set');
+    if (s.contentTransform !== undefined) {
+      const t = s.contentTransform;
+      if (!t || typeof t !== 'object' || !(t.scale >= MIN_CONTENT_SCALE && t.scale <= MAX_CONTENT_SCALE)) errs.push(`style.contentTransform.scale must be ${MIN_CONTENT_SCALE}..${MAX_CONTENT_SCALE}`);
+      else if ((t.x !== undefined && !Number.isFinite(t.x)) || (t.y !== undefined && !Number.isFinite(t.y))) errs.push('style.contentTransform x and y must be numbers (fractions of the canvas)');
+    }
     if (s.cropRect) {
       const c = s.cropRect;
       if (!(c.x >= 0 && c.y >= 0 && c.w > 0 && c.h > 0 && c.x + c.w <= 1 + EPS && c.y + c.h <= 1 + EPS)) errs.push('style.cropRect must be normalized and inside the frame');
@@ -330,7 +336,7 @@ export const OP_NAMES = [
   'addCaption', 'editCaption', 'removeCaption', 'clearCaptions', 'setCaptions', 'importCaptions', 'captionsFromTranscript',
   'addChapter', 'editChapter', 'removeChapter', 'clearChapters', 'suggestChapters',
   'addAnnotation', 'editAnnotation', 'removeAnnotation',
-  'camera', 'phone', 'style', 'background', 'crop',
+  'camera', 'content', 'phone', 'style', 'background', 'crop',
   'device', 'tapStyle', 'addTap', 'moveTap', 'removeTap', 'clearTaps', 'analyzeTaps',
   'speedUpWaits', 'cutWaits', 'setWaits',
   'layout', 'titleCard', 'exportSettings',
@@ -647,6 +653,30 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
         delete next.position;
       }
       return { project: { ...p, cameraOverlay: next }, note: `camera ${JSON.stringify(patch)}` };
+    }
+    case 'content': {
+      // The recording moved and resized on the canvas: x/y its centre (canvas fractions), scale against the fitted size.
+      if (o.reset === true) {
+        const { contentTransform: _, ...style } = p.style;
+        return { project: { ...p, style }, note: 'content back where the layout fits it' };
+      }
+      if (o.x === undefined && o.y === undefined && o.scale === undefined) throw new OpError('content: pass x, y, scale, or reset:true');
+      const cur = p.style.contentTransform;
+      const next: ContentTransform = { scale: cur?.scale ?? 1 };
+      if (cur?.x !== undefined) next.x = cur.x;
+      if (cur?.y !== undefined) next.y = cur.y;
+      for (const k of ['x', 'y'] as const) {
+        if (o[k] === undefined) continue;
+        const v = Number(o[k]);
+        if (!Number.isFinite(v)) throw new OpError(`content: ${k} is the centre as a fraction of the canvas (0..1; 0.5 is the middle)`);
+        next[k] = v;
+      }
+      if (o.scale !== undefined) {
+        const v = Number(o.scale);
+        if (!(v >= MIN_CONTENT_SCALE && v <= MAX_CONTENT_SCALE)) throw new OpError(`content: scale is ${MIN_CONTENT_SCALE}..${MAX_CONTENT_SCALE} (1 = the size the layout fits it at)`);
+        next.scale = v;
+      }
+      return { project: { ...p, style: { ...p.style, contentTransform: next } }, note: `content ${JSON.stringify(next)}` };
     }
     case 'phone': {
       if (!p.recording.phoneVideoFile) throw new OpError('phone: this recording has no phone video (only Mac takes recorded with "iPhone or iPad" on have one)');

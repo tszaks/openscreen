@@ -173,6 +173,8 @@ function summarize(dir: string, p: Project) {
     waits: p.waits.map((w) => ({ start: r2(w.start), end: r2(w.end), ...(w.edge ? { edge: w.edge } : {}) })),
     style: p.style,
     layout: p.layout,
+    // The recording moved/resized by hand (the `content` op); null = where the layout fits it.
+    content: p.style.contentTransform ?? null,
     cameraOverlay: p.cameraOverlay,
     phone: phoneSummary(dir, p),
     audio: p.audio,

@@ -343,6 +343,17 @@ input {
   padding: 2px 0;
 }
 
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.row-value {
+  font-size: var(--text-body);
+  color: var(--label-2);
+}
+
 /* Label left, control right: the inspector's grouped-form row. */
 .form-row {
   display: flex;

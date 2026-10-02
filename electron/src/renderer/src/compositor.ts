@@ -21,6 +21,7 @@ import { isPhoneProject, layoutPreset, presetAllowsZoom, resolveDevice, tapsToOu
 import {
   clipToScreen,
   continuousRectPath,
+  deviceBodyRect,
   drawDeviceFrame,
   pointScaleFor,
   screenRectFor,
@@ -33,7 +34,8 @@ import { fileUrl } from '../../shared/fileUrl';
 import { isColourBackground, paintBackdrop } from './backdrop';
 import { phoneAspect, phoneDevice, phoneLayerOn, phoneLayerRects, type PhoneDevice } from '../../shared/phoneLayer';
 import { api } from './api';
-import { macContentRect, overlayRect } from '../../shared/cameraOverlay';
+import { macContentRect, macFittedRect, overlayRect } from '../../shared/cameraOverlay';
+import { mapRect, placeContent } from '../../shared/contentTransform';
 
 // Background images by raw path, shared by every compositor: the editor
 // builds a new compositor on each edit, and reloading the image each time
@@ -113,8 +115,17 @@ export class CanvasCompositor {
   /** Where the camera bubble goes on this canvas, as of the last render
    *  (set even before the camera has a frame, so the editor can hit-test it). */
   cameraRect: Rect | null = null;
+  /** What the camera bubble's size is measured against at the last render:
+   *  the visible screen where the layout fits it, before any hand move. */
+  cameraBasis: Rect | null = null;
   /** Filled by render(); see ScreenMap. */
   screenMap: ScreenMap | null = null;
+  /** The recording's box as placed at the last render (its frame body when
+   *  framed), which the editor selects, moves and resizes; null when it
+   *  can't be moved (App Store previews). */
+  contentRect: Rect | null = null;
+  /** The same box where the layout fits it, before the hand move (scale 1). */
+  contentBase: Rect | null = null;
 
   constructor(
     private project: Project,
@@ -174,37 +185,59 @@ export class CanvasCompositor {
       this.drawBackground(W, H);
     }
 
-    // 2. Where the screen goes, and how to clip to it.
+    // 2. Where the screen goes, and how to clip to it. The layout fits it
+    // (`base`, the frame body or the screen); a hand move or resize
+    // (style.contentTransform) then places that rect, and the screen inside
+    // it rides along.
+    const canvasSize = { width: W, height: H };
+    const t = style.contentTransform;
     let rect: Rect;
     let clip: () => void;
     let frameBody: Rect | null = null;
+    // The screen where the layout fits it, before the hand move (sizes the camera bubble).
+    let fittedScreen: Rect;
+    this.contentRect = null;
+    this.contentBase = null;
     if (layout && phone) {
-      rect = layout.screen;
       if (layout.mode === 'full-bleed') {
+        // App Store previews fill the canvas with the app itself: never moved.
+        rect = layout.screen;
+        fittedScreen = rect;
         clip = () => {
           ctx.beginPath();
           ctx.rect(0, 0, W, H);
           ctx.clip();
         };
       } else if (phone.frame && layout.device) {
-        frameBody = layout.device;
-        const body = frameBody;
+        const base = layout.device;
+        const body = placeContent(base, t, canvasSize);
+        frameBody = body;
+        fittedScreen = layout.screen;
+        rect = mapRect(layout.screen, base, body);
+        this.contentBase = base;
+        this.contentRect = body;
         clip = () => clipToScreen(ctx, body, phone.device, { orientation: phone.orientation });
       } else {
         // No hardware: a floating screen with the device's real corners.
-        const r = layout.screenRadius;
+        const base = layout.screen;
+        const placed = placeContent(base, t, canvasSize);
+        fittedScreen = base;
+        rect = placed;
+        this.contentBase = base;
+        this.contentRect = placed;
+        const r = layout.screenRadius * (placed.w / base.w);
         ctx.save();
         ctx.shadowColor = 'rgba(0,0,0,0.38)';
-        ctx.shadowBlur = Math.max(rect.w, rect.h) * 0.06;
-        ctx.shadowOffsetY = Math.max(rect.w, rect.h) * 0.025;
+        ctx.shadowBlur = Math.max(placed.w, placed.h) * 0.06;
+        ctx.shadowOffsetY = Math.max(placed.w, placed.h) * 0.025;
         ctx.fillStyle = '#000';
         ctx.beginPath();
-        continuousRectPath(ctx, rect.x, rect.y, rect.w, rect.h, r);
+        continuousRectPath(ctx, placed.x, placed.y, placed.w, placed.h, r);
         ctx.fill();
         ctx.restore();
         clip = () => {
           ctx.beginPath();
-          continuousRectPath(ctx, rect.x, rect.y, rect.w, rect.h, r);
+          continuousRectPath(ctx, placed.x, placed.y, placed.w, placed.h, r);
           ctx.clip();
         };
       }
@@ -212,23 +245,34 @@ export class CanvasCompositor {
       const pad = Math.min(W, H) * style.paddingFraction;
       const contentRect = { x: pad, y: pad, w: W - pad * 2, h: H - pad * 2 };
       if (phone?.frame) {
-        // Phone in the classic padded frame: the body fills the content rect.
+        // Phone in the classic padded frame: the body, fitted in the content rect.
         const opts = { orientation: phone.orientation };
-        frameBody = contentRect;
-        rect = screenRectFor(contentRect, phone.device, opts);
-        clip = () => clipToScreen(ctx, contentRect, phone.device, opts);
+        const base = deviceBodyRect(contentRect, phone.device, opts);
+        const body = placeContent(base, t, canvasSize);
+        frameBody = body;
+        fittedScreen = screenRectFor(base, phone.device, opts);
+        rect = screenRectFor(body, phone.device, opts);
+        this.contentBase = base;
+        this.contentRect = body;
+        clip = () => clipToScreen(ctx, body, phone.device, opts);
       } else {
         const macAspect = style.cropRect ? (style.cropRect.w * fullW) / (style.cropRect.h * fullH) : fullW / fullH;
         // A phone layer beside the screen takes its share of the content rect first.
         const placed = this.phoneLayer ? phoneLayerRects(contentRect, macAspect, this.phoneLayer.aspect, this.project.phoneOverlay) : null;
-        this.phoneRect = placed?.phone ?? null;
-        // The same rect the editor's snap guides and the bubble placement use.
-        rect = macContentRect(this.project, { width: W, height: H });
+        // The same rects the editor's snap guides and the bubble placement use.
+        const base = macFittedRect(this.project, canvasSize);
+        rect = macContentRect(this.project, canvasSize);
+        fittedScreen = base;
+        this.contentBase = base;
+        this.contentRect = rect;
+        // Beside the screen, the phone keeps its place; over its corner, it moves with it.
+        this.phoneRect = placed ? (placed.arrangement === 'corner' ? mapRect(placed.phone, base, rect) : placed.phone) : null;
         const r = style.cornerRadius;
+        const screen = rect;
         clip = () => {
           ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
           ctx.shadowBlur = style.shadowRadius;
-          roundedPath(ctx, rect.x, rect.y, rect.w, rect.h, r);
+          roundedPath(ctx, screen.x, screen.y, screen.w, screen.h, r);
           ctx.clip();
         };
       }
@@ -326,7 +370,8 @@ export class CanvasCompositor {
 
     // 5. The camera bubble, wherever it was placed (shared/cameraOverlay).
     const overlay = this.project.cameraOverlay;
-    this.cameraRect = overlay.enabled ? overlayRect(overlay, visible, { width: W, height: H }) : null;
+    this.cameraBasis = intersect(fittedScreen, { x: 0, y: 0, w: W, h: H });
+    this.cameraRect = overlay.enabled ? overlayRect(overlay, visible, canvasSize, this.cameraBasis) : null;
     if (this.cameraRect && input.cameraFrame) {
       const { x: ox, y: oy, w: d } = this.cameraRect;
       const bubblePath = () => {

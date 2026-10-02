@@ -35,6 +35,8 @@ Everything that decides how a video *looks and moves* is a pure function here, s
 | `agentOps.ts` | Every editor edit as a validated, serialisable operation |
 | `audioTracks.ts` | Music and voiceover tracks: where each item plays in output time, its volume and fades, ducking, and the edits the timeline lane makes |
 | `phoneLayer.ts` | Mac + iPhone takes: the phone layer's time mapping (source time − offset), where the Mac screen and phone sit for each layout, and what to keep when one side of a dual take fails |
+| `contentTransform.ts` | The recording moved and resized by hand: the layout's fitted rect placed by `style.contentTransform` (centre + scale, kept at least 10% on the canvas), and the aspect-locked corner resize the recording and the camera bubble share |
+| `previewPointer.ts` | What a press on the editor's preview does, in order: crop, place a tap, a selected item's corner handle, the camera bubble, the recording, empty canvas |
 | `types.ts` | The project model, defaults, migration of older projects, reset |
 
 ## Rendering and export
@@ -56,6 +58,12 @@ With a display or window selected, **Also record → iPhone or iPad** starts the
 With **Also record → Camera** on, a display, window or iPhone take shows a **recording monitor** (**Show me while recording**, on by default): a small floating window with what is being recorded (a live thumbnail of the captured screen, or the iPhone's preview) beside the face camera, Small or Large, Round or Square, either side, draggable, the source tile switchable off to leave just the face. The renderer opens it with `window.open`, so its tiles are clones of the tracks already being recorded (capped at 30 fps and 640 px; nothing is captured twice) and the iPhone tile draws the helper's preview frames. Main makes it frameless, transparent, always on top, unfocusable, on every Space, and hidden from screen capture: the camera is recorded separately and composited in the editor, so a captured monitor would show the face twice. Every choice and where it was left are remembered (`shared/recordingMonitor.ts`).
 
 In the project the camera is a **bubble**: `cameraOverlay.position` is its centre as a fraction of the canvas, `sizeFraction` its diameter against the visible recording, `circular` Round or Square (`shared/cameraOverlay.ts`; older projects keep drawing in their `corner` until moved). When a take stops, the monitor's face size and shape become the bubble's, and on a display take so does its position: the bubble lands over the spot of the recording the face covered on screen. In the editor the bubble is dragged on the preview, snapping to the canvas centre lines, safe-inset edges and the recording's edges, one undo step per drag; preview and export draw it through the same compositor. The camera plays at source time − `recording.cameraOffset` (an iPhone take's camera is timed against the helper's first frame).
+
+## Moving and resizing the recording
+
+The layout decides where the recording fits (padding, crop, device frame, canvas preset, the phone layer). `style.contentTransform` then moves that fitted rect's centre and scales it about its centre, aspect kept; absent, the recording sits exactly where the layout fits it, so older projects draw unchanged. The compositor places the frame body (or, unframed, the screen) and carries the screen, shadow, zoom, touch indicators, keystrokes, captions and text along. With the phone layer side by side the Mac screen moves alone and the phone keeps its place; over the Mac screen's corner, the phone moves with it. The camera bubble is sized against the fitted rect, so resizing the recording leaves it alone. App Store previews (full-bleed) ignore the transform.
+
+In the editor, clicking the recording selects it (accent outline, four corner handles, never exported): the body drags with the camera's snap guides (canvas centre lines, safe-inset edges and the bubble's edges), a corner resizes it from the opposite corner (Option: from the centre), snapping at 100%, and a double-click resets it. The bubble gets the same corner handles. Each gesture is one undo step. `shared/previewPointer.ts` sets who gets a press: crop mode, then placing a selected tap, then a selected item's handles, then the bubble, then the recording.
 
 ## "Just me"
 
