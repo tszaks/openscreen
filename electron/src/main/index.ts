@@ -39,7 +39,7 @@ import {
   withProbedDuration,
   pickDisplay,
 } from '../shared/recording';
-import { BUBBLE_SIZES, defaultBubbleWindow, resizeBubbleWindow, type BubblePlacement, type BubbleSize, type Rect } from '../shared/cameraBubble';
+import { placeMonitor, resizeMonitor, type MonitorPlacement, type Rect } from '../shared/recordingMonitor';
 
 // Dev runs take the name from package.json ("openscreen"); the menu wants the product name.
 app.setName('OpenScreen');
@@ -86,20 +86,24 @@ let trackerStartedAtMs = 0;
 // The in-flight iPhone take's bundle, so a failed take can be salvaged or removed.
 let iosBundleDir: string | null = null;
 
-// The camera bubble shown during a take (shared/cameraBubble.ts). The
-// renderer opens it with window.open, so it lives in the renderer's own
-// process and plays the camera stream being recorded, with no second
-// camera capture. Main places it and remembers where it was left.
-const BUBBLE_FRAME = 'openscreen-camera-bubble';
-let bubbleWin: BrowserWindow | null = null;
-let bubble: { display: Rect; last: Rect } | null = null;
+// The recording monitor shown during a take with the camera on
+// (shared/recordingMonitor.ts). The renderer opens it with window.open, so
+// it lives in the renderer's own process and plays the streams already being
+// recorded, with no second camera or screen capture. Main places it and
+// remembers where it was left.
+const MONITOR_FRAME = 'openscreen-recording-monitor';
+let monitorWin: BrowserWindow | null = null;
+let monitor: { token: string; display: Rect; workArea: Rect; last: Rect } | null = null;
 
-/** Close the bubble; resolves where it was (null when it never showed). */
-const closeBubble = (): BubblePlacement | null => {
-  const placed = bubble ? { window: bubble.last, display: bubble.display } : null;
-  bubble = null;
-  if (bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.close();
-  bubbleWin = null;
+/** Close the monitor; resolves where it was (null when it never showed).
+ *  With a token, only the monitor that showed with it: a late close from
+ *  an earlier take must not close the next one. */
+const closeMonitor = (token?: string): MonitorPlacement | null => {
+  if (token !== undefined && monitor && monitor.token !== token) return null;
+  const placed = monitor ? { window: monitor.last, display: monitor.display, workArea: monitor.workArea } : null;
+  monitor = null;
+  if (monitorWin && !monitorWin.isDestroyed()) monitorWin.close();
+  monitorWin = null;
   return placed;
 };
 
@@ -405,9 +409,9 @@ function createWindow() {
     },
   });
   win.loadFile(join(__dirname, '../renderer/index.html'), headless ? { query: { headless: '1' } } : undefined);
-  // The only window the renderer may open is the camera bubble.
+  // The only window the renderer may open is the recording monitor.
   win.webContents.setWindowOpenHandler(({ frameName, url }) =>
-    frameName === BUBBLE_FRAME && (url === '' || url === 'about:blank')
+    frameName === MONITOR_FRAME && (url === '' || url === 'about:blank')
       ? {
           action: 'allow',
           overrideBrowserWindowOptions: {
@@ -432,18 +436,19 @@ function createWindow() {
       : { action: 'deny' },
   );
   win.webContents.on('did-create-window', (child, { frameName }) => {
-    if (frameName !== BUBBLE_FRAME) return;
-    bubbleWin?.close();
-    bubbleWin = child;
-    // The bubble is never in the screen recording. The camera is recorded
-    // on its own (cam.webm) and composited in the editor, so a bubble that
-    // was captured too would put the face in the video twice.
+    if (frameName !== MONITOR_FRAME) return;
+    monitorWin?.close();
+    monitorWin = child;
+    // The monitor is never in the screen recording. The camera is recorded
+    // on its own (cam.webm) and composited in the editor, so a monitor that
+    // was captured too would put the face in the video twice (and the
+    // screen tile would film itself).
     child.setContentProtection(true);
     // Above full-screen apps, and on every Space the person switches to.
     child.setAlwaysOnTop(true, 'screen-saver');
     child.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     child.on('closed', () => {
-      if (bubbleWin === child) bubbleWin = null;
+      if (monitorWin === child) monitorWin = null;
     });
   });
   win.on('close', (e) => {
@@ -454,7 +459,7 @@ function createWindow() {
   const abandonTake = () => {
     rendererBusy = null;
     stopTracker();
-    closeBubble();
+    closeMonitor();
     stopIosPreview();
     if (iosBundleDir) {
       const dir = iosBundleDir;
@@ -552,35 +557,36 @@ app.whenReady().then(() => {
     win?.setContentProtection(!!on);
   });
 
-  // The camera bubble: show it on the recorded display (a window take uses
-  // the display OpenScreen is on), move it while dragged, resize it, and
-  // close it, answering where it was left.
-  const bubbleDisplay = (displayId?: string) =>
+  // The recording monitor: show it on the recorded display (a window or
+  // iPhone take uses the display OpenScreen is on), move it while dragged,
+  // resize it when its layout changes, and close it, answering where it was.
+  const monitorDisplay = (displayId?: string) =>
     pickDisplay(screen.getAllDisplays(), displayId, win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay());
-  ipcMain.handle('bubble:show', async (_e, args: { displayId?: string; size: BubbleSize }) => {
+  const sizeOk = (s: { width: number; height: number }) =>
+    [s?.width, s?.height].every((n) => Number.isFinite(n) && n > 0 && n < 4000);
+  ipcMain.handle('monitor:show', async (_e, args: { token: string; displayId?: string; size: { width: number; height: number }; spot?: { u: number; v: number } }) => {
     // did-create-window can land just after the renderer's window.open returns.
-    for (let i = 0; i < 20 && !bubbleWin; i++) await new Promise((r) => setTimeout(r, 50));
-    if (!bubbleWin || bubbleWin.isDestroyed()) return null;
-    const display = bubbleDisplay(args.displayId);
-    const bounds = defaultBubbleWindow(display.workArea, BUBBLE_SIZES.includes(args.size) ? args.size : undefined);
-    bubbleWin.setBounds(bounds);
-    bubbleWin.showInactive();
-    bubble = { display: display.bounds, last: bubbleWin.getBounds() };
-    return bubble.last;
+    for (let i = 0; i < 20 && !monitorWin; i++) await new Promise((r) => setTimeout(r, 50));
+    if (!monitorWin || monitorWin.isDestroyed() || !sizeOk(args.size)) return null;
+    const display = monitorDisplay(args.displayId);
+    monitorWin.setBounds(placeMonitor(display.workArea, args.size, args.spot));
+    monitorWin.showInactive();
+    monitor = { token: String(args.token), display: display.bounds, workArea: display.workArea, last: monitorWin.getBounds() };
+    return monitor.last;
   });
-  ipcMain.on('bubble:move', (_e, p: { x: number; y: number }) => {
-    if (!bubbleWin || bubbleWin.isDestroyed() || !bubble || !Number.isFinite(p?.x) || !Number.isFinite(p?.y)) return;
-    bubbleWin.setPosition(Math.round(p.x), Math.round(p.y));
-    bubble.last = bubbleWin.getBounds();
+  ipcMain.on('monitor:move', (_e, p: { x: number; y: number }) => {
+    if (!monitorWin || monitorWin.isDestroyed() || !monitor || !Number.isFinite(p?.x) || !Number.isFinite(p?.y)) return;
+    monitorWin.setPosition(Math.round(p.x), Math.round(p.y));
+    monitor.last = monitorWin.getBounds();
   });
-  ipcMain.handle('bubble:resize', (_e, size: BubbleSize) => {
-    if (!bubbleWin || bubbleWin.isDestroyed() || !bubble || !BUBBLE_SIZES.includes(size)) return null;
-    const now = bubbleWin.getBounds();
-    bubbleWin.setBounds(resizeBubbleWindow(now, size, screen.getDisplayMatching(now).workArea));
-    bubble.last = bubbleWin.getBounds();
-    return bubble.last;
+  ipcMain.handle('monitor:resize', (_e, size: { width: number; height: number }) => {
+    if (!monitorWin || monitorWin.isDestroyed() || !monitor || !sizeOk(size)) return null;
+    const now = monitorWin.getBounds();
+    monitorWin.setBounds(resizeMonitor(now, size, screen.getDisplayMatching(now).workArea));
+    monitor.last = monitorWin.getBounds();
+    return monitor.last;
   });
-  ipcMain.handle('bubble:close', () => closeBubble());
+  ipcMain.handle('monitor:close', (_e, token: string) => closeMonitor(String(token)));
 
   ipcMain.handle('permissions:openScreenSettings', async () => {
     const { shell } = await import('electron');

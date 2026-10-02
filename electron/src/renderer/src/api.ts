@@ -4,7 +4,7 @@ import type { IosDevice, IosFinished, IosPreview, IosWarning } from '../../share
 import type { ContextMenuItem, MenuAction, MenuPhase } from '../../shared/menu';
 import type { PresetId } from '../../shared/exportPresets';
 import type { MusicInput } from '../../shared/audioTracks';
-import type { BubblePlacement, BubbleSize, Rect } from '../../shared/cameraBubble';
+import type { MonitorPlacement, Rect } from '../../shared/recordingMonitor';
 
 export type { IosDevice, IosPreview };
 
@@ -118,13 +118,15 @@ declare global {
       exportReveal(path: string): Promise<boolean>;
       /** Hide OpenScreen's window from screen capture (during countdown and recording). */
       setCaptureShield(on: boolean): void;
-      /** Place the camera bubble (already opened with window.open) on a
-       *  display and show it without focus; resolves its window frame. */
-      bubbleShow(displayId: string | undefined, size: BubbleSize): Promise<Rect | null>;
-      bubbleMove(x: number, y: number): void;
-      bubbleResize(size: BubbleSize): Promise<Rect | null>;
-      /** Close the bubble; resolves where it was left, or null if it never showed. */
-      bubbleClose(): Promise<BubblePlacement | null>;
+      /** Place the recording monitor (already opened with window.open) on
+       *  a display, where it was last left (`spot`) or bottom-right, and show
+       *  it without focus; resolves its window frame. */
+      monitorShow(token: string, displayId: string | undefined, size: { width: number; height: number }, spot?: { u: number; v: number }): Promise<Rect | null>;
+      monitorMove(x: number, y: number): void;
+      /** New window size, same centre, kept on screen. */
+      monitorResize(size: { width: number; height: number }): Promise<Rect | null>;
+      /** Close the monitor shown with `token`; resolves where it was left, or null if it never showed. */
+      monitorClose(token: string): Promise<MonitorPlacement | null>;
       /** Folder picker for a multi-format export; null when cancelled. */
       exportPickFolder(bundleDir: string, name?: string): Promise<string | null>;
       /** A temp path for a rendered master (.mov). */

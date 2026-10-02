@@ -4,7 +4,8 @@ import { ExportProgress } from './components/ExportProgress';
 import { ExportTasks, type TaskRowState } from './components/ExportPanel';
 import { IosSetupCard } from './components/IosSetupCard';
 import { getPreset } from '../../shared/exportPresets';
-import { openCameraBubble, type CameraBubble } from './cameraBubble';
+import { openRecordingMonitor, type RecordingMonitor } from './recordingMonitor';
+import { readMonitorPrefs, writeMonitorPrefs } from '../../shared/recordingMonitor';
 
 /**
  * Development only: `index.html?gallery=<state>` renders one screen that is
@@ -60,34 +61,108 @@ function useFakeCapture(): MediaStream | null {
 
 const preset = (id: Parameters<typeof getPreset>[0]) => getPreset(id);
 
+/** A stand-in for an iPhone's live preview: JPEG frames of a drawn home
+ *  screen, about 12 a second, the way the helper sends them. */
+function fakePhoneFrames(): (draw: (jpeg: Uint8Array) => void) => () => void {
+  return (draw) => {
+    const c = document.createElement('canvas');
+    c.width = 360;
+    c.height = 780;
+    const g = c.getContext('2d')!;
+    let n = 0;
+    const t = setInterval(() => {
+      const grad = g.createLinearGradient(0, 0, 0, 780);
+      grad.addColorStop(0, '#5b7cfa');
+      grad.addColorStop(1, '#c86dd7');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 360, 780);
+      for (let i = 0; i < 20; i++) {
+        g.fillStyle = `hsl(${(i * 37 + n * 3) % 360} 70% 60%)`;
+        g.beginPath();
+        g.roundRect(28 + (i % 4) * 80, 90 + Math.floor(i / 4) * 96, 60, 60, 14);
+        g.fill();
+      }
+      g.fillStyle = 'rgba(255,255,255,0.9)';
+      g.font = '600 22px system-ui';
+      g.fillText(`9:41`, 30, 44);
+      n++;
+      c.toBlob((b) => b && void b.arrayBuffer().then((buf) => draw(new Uint8Array(buf))), 'image/jpeg', 0.8);
+    }, 83);
+    return () => clearInterval(t);
+  };
+}
+
+/** A Retina-sized moving stand-in for a 60 fps screen capture. */
+function animatedScreen(): { stream: MediaStream; stop: () => void } {
+  const c = document.createElement('canvas');
+  c.width = 2880;
+  c.height = 1800;
+  const g = c.getContext('2d')!;
+  let raf = 0;
+  const tick = (t: number) => {
+    g.fillStyle = '#eef0f4';
+    g.fillRect(0, 0, 2880, 1800);
+    g.fillStyle = '#ffffff';
+    g.fillRect(240, 180, 2400, 1440);
+    g.fillStyle = '#5b7cfa';
+    g.fillRect(240 + ((t / 4) % 2200), 700, 200, 200);
+    g.fillStyle = '#1d1d1f';
+    g.font = '600 64px system-ui';
+    g.fillText('Spring launch', 320, 300);
+    raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+  const stream = c.captureStream(60);
+  return { stream, stop: () => (cancelAnimationFrame(raf), stream.getTracks().forEach((t) => t.stop())) };
+}
+
 /**
- * The camera bubble as a take opens it, on the display OpenScreen is on.
- * Run with --use-fake-device-for-media-stream so the camera is Chromium's
- * test pattern, not a real one. `window.cameraBubble.close()` closes it and
- * resolves where it was left, as Stop does.
+ * The recording monitor as a take opens it, on the display OpenScreen is
+ * on: `monitor` beside a drawn stand-in screen, `monitor-phone` beside a
+ * stand-in iPhone preview, `monitor-face` with the face alone. Run with
+ * --use-fake-device-for-media-stream so the camera is Chromium's test
+ * pattern, not a real one. `window.recordingMonitor.close()` closes it as
+ * Stop does and resolves where it was left.
  */
-function BubbleDemo({ circular }: { circular: boolean }) {
+function MonitorDemo({ view }: { view: string }) {
   const [state, setState] = useState('Opening the camera…');
   useEffect(() => {
+    // monitor-off: the same streams with no monitor, to measure what it costs.
+    const fake = view === 'monitor' || view === 'monitor-off' ? animatedScreen() : null;
+    const screen = fake?.stream ?? null;
     let live = true;
     let stream: MediaStream | null = null;
-    let bubble: CameraBubble | null = null;
+    let monitor: RecordingMonitor | null = null;
     void navigator.mediaDevices
       .getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } } })
       .then((s) => {
         stream = s;
         if (!live) return s.getTracks().forEach((t) => t.stop());
-        bubble = openCameraBubble({ stream: s, circular, onCameraLost: setState });
-        (window as unknown as { cameraBubble: CameraBubble | null }).cameraBubble = bubble;
-        setState(bubble ? 'The camera bubble is open.' : 'The bubble window could not open.');
+        if (view === 'monitor-off') return setState('Streams running, no monitor.');
+        const prefs = { ...readMonitorPrefs(localStorage), sourceTile: view !== 'monitor-face' };
+        monitor = openRecordingMonitor({
+          camera: s,
+          source:
+            view === 'monitor-phone'
+              ? { kind: 'frames', aspect: 360 / 780, subscribe: fakePhoneFrames() }
+              : screen
+                ? { kind: 'stream', stream: screen, aspect: 2880 / 1800 }
+                : null,
+          prefs,
+          onPrefs: (p) => writeMonitorPrefs(localStorage, p),
+          onCameraLost: setState,
+        });
+        Object.assign(window, { recordingMonitor: monitor, monitorCamera: s });
+        setState(monitor ? 'The recording monitor is open.' : 'The monitor window could not open.');
       })
       .catch((e) => setState(`No camera: ${String(e)}`));
     return () => {
       live = false;
-      void bubble?.close();
+      void monitor?.close();
       stream?.getTracks().forEach((t) => t.stop());
+      fake?.stop();
     };
-  }, [circular]);
+  }, [view]);
   return <p style={{ padding: 40 }}>{state}</p>;
 }
 
@@ -173,7 +248,7 @@ export function Gallery({ view }: { view: string }) {
     );
   }
 
-  if (view === 'camera-bubble' || view === 'camera-bubble-square') return <BubbleDemo circular={view === 'camera-bubble'} />;
+  if (view.startsWith('monitor')) return <MonitorDemo view={view} />;
 
   return <p style={{ padding: 40 }}>Unknown gallery view: {view}</p>;
 }

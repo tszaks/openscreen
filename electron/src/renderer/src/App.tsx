@@ -19,8 +19,8 @@ import { IosLivePreview } from './components/IosLivePreview';
 import { recoveryNotice } from '../../shared/recovery';
 import { RecordingCard } from './components/RecordingCard';
 import { checklistFor, readSetupPrefs, recordingWarning, writeSetupPref, type SetupPrefs, type SetupTrigger } from './components/iosSetup';
-import { openCameraBubble, type CameraBubble } from './cameraBubble';
-import { bubbleOpensFor, overlayFromBubble, readShowBubble, writeShowBubble } from '../../shared/cameraBubble';
+import { openRecordingMonitor, type MonitorSource, type RecordingMonitor } from './recordingMonitor';
+import { monitorOpensFor, overlayFromMonitor, readMonitorPrefs, spotFor, writeMonitorPrefs, type MonitorPrefs } from '../../shared/recordingMonitor';
 
 type PickerTab = 'displays' | 'windows' | 'devices' | 'cameras';
 
@@ -92,8 +92,12 @@ export function App() {
   const [camOn, setCamOn] = useState(false);
   // Camera for the overlay (null = the first one).
   const [camId, setCamId] = useState<string | null>(null);
-  // "Show me while recording": the floating camera bubble during a take.
-  const [showBubble, setShowBubble] = useState(() => readShowBubble(localStorage));
+  // The recording monitor's remembered choices, "Show me while recording" included.
+  const [monitorPrefs, setMonitorPrefsState] = useState(() => readMonitorPrefs(localStorage));
+  const setMonitorPrefs = useCallback((next: MonitorPrefs) => {
+    setMonitorPrefsState(next);
+    writeMonitorPrefs(localStorage, next);
+  }, []);
   // Also record a wired iPhone/iPad screen with a display or window take
   // (null = the first one connected).
   const [phoneOn, setPhoneOn] = useState(false);
@@ -131,8 +135,8 @@ export function App() {
   const camStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const camChunksRef = useRef<Blob[]>([]);
-  // The camera bubble of the running display or window take, if it opened.
-  const bubbleRef = useRef<CameraBubble | null>(null);
+  // The recording monitor of the running take, if it opened.
+  const monitorRef = useRef<RecordingMonitor | null>(null);
   // Epoch ms each recorder actually started, and when cursor tracking did.
   const startsRef = useRef({ video: 0, cam: 0, tracker: 0 });
   // Size read from the live track at start, in case it has ended by Stop.
@@ -394,12 +398,35 @@ export function App() {
     return new Blob(camChunksRef.current, { type: camRec.mimeType });
   }, []);
 
-  /** Close the take's camera bubble; resolves where it was left, or null. */
-  const closeBubble = useCallback(async () => {
-    const bubble = bubbleRef.current;
-    bubbleRef.current = null;
-    return bubble ? bubble.close().catch(() => null) : null;
-  }, []);
+  /** Close the take's monitor; resolves where it was left and the face's
+   *  last size and shape (null when none was open), and remembers them. */
+  const closeMonitor = useCallback(async () => {
+    const m = monitorRef.current;
+    monitorRef.current = null;
+    const done = m ? await m.close().catch(() => null) : null;
+    if (done) setMonitorPrefs({ ...done.prefs, ...(done.placement ? { spot: spotFor(done.placement.window, done.placement.workArea) } : {}) });
+    return done;
+  }, [setMonitorPrefs]);
+
+  /** The live iPhone preview frames of `deviceId`, for the monitor's phone tile. */
+  const phoneFrames = (deviceId: string, size: { width: number; height: number }): MonitorSource => ({
+    kind: 'frames',
+    aspect: size.width / size.height,
+    subscribe: (draw) => api.onIosPreviewFrame((f) => f.id === deviceId && draw(f.jpeg)),
+  });
+
+  /** Open the monitor for a take that just started, if it should. */
+  const openMonitor = (take: { source: 'display' | 'window' | 'iosDevice'; camera: MediaStream | null; tile: MonitorSource | null; displayId?: string }) => {
+    if (!take.camera || !monitorOpensFor({ source: take.source, cameraOpen: true, show: monitorPrefs.show })) return;
+    monitorRef.current = openRecordingMonitor({
+      camera: take.camera,
+      source: take.tile,
+      displayId: take.displayId,
+      prefs: monitorPrefs,
+      onPrefs: setMonitorPrefs,
+      onCameraLost: setNotice,
+    });
+  };
 
   // The latest stop(), for handlers attached when a take starts.
   const stopRef = useRef<(reason?: EndReason, detail?: string | null) => Promise<void>>(async () => {});
@@ -427,12 +454,17 @@ export function App() {
       try {
         setStatus(`Starting ${selectedIos.name}…`);
         const take = await api.iosStart(selectedIos.id);
+        startsRef.current = { video: 0, cam: 0, tracker: 0 };
         const camRec = startCamRecorder(camStream);
         camRec?.start(250);
-        iosTakeRef.current = { ...take, startedAtMs: Date.now() };
+        // The helper's first-frame time is the movie's t=0: the camera's
+        // offset is measured against it, as a Mac + iPhone take's phone is.
+        iosTakeRef.current = { ...take, startedAtMs: take.startedAtMs ?? Date.now() };
         setStatus('');
         beginRecordingPhase();
+        openMonitor({ source: 'iosDevice', camera: camStream, tile: phoneFrames(selectedIos.id, take) });
       } catch (e) {
+        void closeMonitor();
         iosTakeRef.current = null;
         stopRecorder(camRecRef.current);
         camRecRef.current = null;
@@ -508,22 +540,24 @@ export function App() {
       streamRef.current = stream;
       setLiveStream(stream);
       beginRecordingPhase();
-      // Show the camera live while recording, on the recorded display. A
-      // camera-source take records the camera itself, so it gets none.
-      const take = { source: selectedDevice ? 'camera' : sourceKindFor(selected!.id), cameraOpen: !!camStream, showWhileRecording: showBubble } as const;
-      if (camStream && bubbleOpensFor(take)) {
-        bubbleRef.current = openCameraBubble({
-          stream: camStream,
-          displayId: take.source === 'display' ? selected?.displayId : undefined,
-          // The shape the new project's overlay will have.
-          circular: defaultCameraOverlay().circular,
-          onCameraLost: setNotice,
+      // Show the camera live while recording, beside the iPhone of a Mac +
+      // iPhone take or else the screen being recorded. A camera-source take
+      // ("Just me") has its own big preview instead.
+      if (!selectedDevice) {
+        const kind = sourceKindFor(selected!.id) === 'window' ? 'window' : 'display';
+        const phoneTake = phoneTakeRef.current;
+        const size = sourceSizeRef.current;
+        openMonitor({
+          source: kind,
+          camera: camStream,
+          tile: phoneTake && phone ? phoneFrames(phone.id, phoneTake) : size ? { kind: 'stream', stream, aspect: size.width / size.height } : null,
+          displayId: kind === 'display' ? selected?.displayId : undefined,
         });
       }
     } catch (e) {
       // Nothing may keep running after a failed start: no recorder, no
-      // capture indicator, no camera light, no camera bubble, no cursor tracker.
-      void closeBubble();
+      // capture indicator, no camera light, no monitor, no cursor tracker.
+      void closeMonitor();
       stopRecorder(rec);
       stopRecorder(camRecRef.current);
       stopTracks(stream);
@@ -545,7 +579,7 @@ export function App() {
       }
       setStatus(captureErrorMessage(e, selectedDevice ? cameraLabel(selectedDevice, 0) : selected?.name));
     }
-  }, [selected, selectedDevice, selectedIos, micOn, openCamera, openSetup, alsoPhone, showBubble, closeBubble]);
+  }, [selected, selectedDevice, selectedIos, micOn, openCamera, openSetup, alsoPhone, monitorPrefs, closeMonitor, setMonitorPrefs]);
 
   useEffect(() => {
     if (countdown === null) return;
@@ -563,6 +597,7 @@ export function App() {
       const take = iosTakeRef.current;
       if (!take) return;
       iosTakeRef.current = null;
+      const monitorClosed = closeMonitor();
       let done;
       try {
         done = await api.iosStop();
@@ -581,8 +616,14 @@ export function App() {
         // The finished file's size wins: the phone may have rotated mid-take.
         sourceSize: { width: done.width ?? take.width, height: done.height ?? take.height },
         duration: done.duration ?? (Date.now() - take.startedAtMs) / 1000,
+        cameraOffset: camBytes && startsRef.current.cam ? (startsRef.current.cam - take.startedAtMs) / 1000 : undefined,
       });
-      if (camBytes) project.cameraOverlay.enabled = true;
+      if (camBytes) {
+        // The face's size and shape from the monitor; an iPhone take keeps the default spot.
+        const m = await monitorClosed;
+        const placed = m ? overlayFromMonitor(project.cameraOverlay, { ...m, size: m.prefs.size, shape: m.prefs.shape }, project, 'iosDevice') : project.cameraOverlay;
+        project.cameraOverlay = { ...placed, enabled: true };
+      }
       try {
         const saved = await api.saveBundleWithVideoFile(take.bundleDir, [], project, camBytes, []);
         openEditor({ bundleDir: saved.dir, videoUrl: saved.videoUrl, camUrl: saved.camUrl, project: saved.project, cursor: [], keys: [] });
@@ -592,7 +633,7 @@ export function App() {
         setPhase({ name: 'picker' });
       }
     },
-    [stopCamOverlay, openEditor],
+    [stopCamOverlay, openEditor, closeMonitor],
   );
 
   /** The screen side of a Mac + iPhone take was lost: open the phone's own
@@ -619,8 +660,8 @@ export function App() {
 
   const stopScreen = useCallback(
     async (reason?: EndReason) => {
-      // The bubble goes the moment Stop is pressed.
-      const bubbleClosed = closeBubble();
+      // The monitor goes the moment Stop is pressed.
+      const monitorClosed = closeMonitor();
       const rec = recorderRef.current;
       const stream = streamRef.current;
       const latch = latchRef.current;
@@ -672,8 +713,11 @@ export function App() {
           ...(phoneTake ? phoneRecordingFields(phoneSide, phoneOffsetSeconds(starts.video, phoneTake.startedAtMs)) : {}),
         });
         if (camBytes) {
-          // The overlay starts where the bubble was left (display takes).
-          project.cameraOverlay = { ...overlayFromBubble(project.cameraOverlay, await bubbleClosed, sourceKindFor(selected?.id ?? '')), enabled: true };
+          // The bubble starts as the face was in the monitor: its size and
+          // shape, and on a display take where it was on screen.
+          const m = await monitorClosed;
+          const placed = m ? overlayFromMonitor(project.cameraOverlay, { ...m, size: m.prefs.size, shape: m.prefs.shape }, project, project.recording.sourceKind) : project.cameraOverlay;
+          project.cameraOverlay = { ...placed, enabled: true };
         }
         const saved = await api.saveBundle(videoBytes, cursor, project, camBytes, keys, phoneUsable(phoneSide) ? phoneTake?.bundleDir : undefined);
         chunksRef.current = [];
@@ -703,7 +747,7 @@ export function App() {
         setLiveStream(null);
       }
     },
-    [selected, stopCamOverlay, openEditor, openPhoneOnly, closeBubble],
+    [selected, stopCamOverlay, openEditor, openPhoneOnly, closeMonitor],
   );
 
   // One stop for every path: the Stop button, a source that went away, or
@@ -726,11 +770,11 @@ export function App() {
   );
   stopRef.current = stop;
 
-  // Never leave a bubble up outside a take, whatever path ended it.
+  // Never leave the monitor up outside a take, whatever path ended it.
   useEffect(() => {
-    if (phase.name !== 'recording') void closeBubble();
-  }, [phase.name, closeBubble]);
-  useEffect(() => () => void closeBubble(), [closeBubble]);
+    if (phase.name !== 'recording') void closeMonitor();
+  }, [phase.name, closeMonitor]);
+  useEffect(() => () => void closeMonitor(), [closeMonitor]);
 
   // The helper reports a take that ended on its own; finish it right away.
   useEffect(
@@ -1006,18 +1050,18 @@ export function App() {
               ) : devices.length === 0 ? (
                 <span className="hint">No camera found</span>
               ) : null)}
-            {camOn && (tab === 'displays' || tab === 'windows') && (
-              <label className="inline-switch" title="A small bubble of your camera floats over everything while you record. It isn't in the screen recording.">
+            {camOn && tab !== 'cameras' && (
+              <label
+                className="inline-switch"
+                title="See yourself beside what you're recording, in a small window over everything. It isn't in the recording."
+              >
                 <span>Show me while recording</span>
                 <input
                   type="checkbox"
                   role="switch"
                   className="switch"
-                  checked={showBubble}
-                  onChange={(e) => {
-                    setShowBubble(e.target.checked);
-                    writeShowBubble(localStorage, e.target.checked);
-                  }}
+                  checked={monitorPrefs.show}
+                  onChange={(e) => setMonitorPrefs({ ...monitorPrefs, show: e.target.checked })}
                 />
               </label>
             )}
