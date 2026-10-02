@@ -65,6 +65,18 @@ export interface StyleSettings {
   cursorShow: boolean;
   /** Opacity of the drawn cursor, 0..1. */
   cursorOpacity: number;
+  /** Where the recording was moved and resized to on the preview. Absent:
+   *  where the layout fits it (shared/contentTransform.ts). */
+  contentTransform?: ContentTransform;
+}
+
+/** The recording moved and resized by hand: its centre as a fraction of the
+ *  canvas (absent: where the layout centres it) and its size against the
+ *  layout's fitted size (1 = unchanged). */
+export interface ContentTransform {
+  x?: number;
+  y?: number;
+  scale: number;
 }
 
 export type Background =

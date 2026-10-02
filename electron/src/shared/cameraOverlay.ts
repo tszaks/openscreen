@@ -1,12 +1,14 @@
 import { fitAspect, phoneAspect, phoneLayerOn, phoneLayerRects, type Rect } from './phoneLayer';
+import { placeContent, resizeFromCorner, type Corner } from './contentTransform';
 import type { CameraOverlay, Project, Size } from './types';
 
 // Where the camera overlay (the face bubble) sits on the canvas. It is free:
 // `position` is the bubble's centre as a fraction of the canvas, so it can go
 // anywhere, padding included. Its diameter is `sizeFraction` × the shorter
-// side of the visible recording. Projects from before free placement have
-// only `corner`; they draw exactly where they always did (cornerCentre) until
-// the bubble is first moved.
+// side of the visible recording as the layout fits it, so moving or resizing
+// the recording by hand leaves the bubble's size alone. Projects from before
+// free placement have only `corner`; they draw exactly where they always did
+// (cornerCentre) until the bubble is first moved.
 
 /** Small and Large, the two sizes the recording monitor and the inspector offer.
  *  Tyler's call (2026-10-01): on a 1-5 scale where 0.22 was 1 and 0.36 was 5,
@@ -39,10 +41,12 @@ export function cornerCentre(corner: CameraOverlay['corner'], d: number, visible
 
 /**
  * The bubble's square on the canvas. A free position is clamped so the whole
- * bubble stays on the canvas; a corner-only (older) project uses the corner.
+ * bubble stays on the canvas; a corner-only (older) project uses the corner
+ * of `visible`. `basis` is what the size is measured against: the visible
+ * recording before any hand move or resize (the same rect without one).
  */
-export function overlayRect(overlay: CameraOverlay, visible: Rect, canvas: Size): Rect {
-  const d = overlayDiameter(overlay, visible);
+export function overlayRect(overlay: CameraOverlay, visible: Rect, canvas: Size, basis: Rect = visible): Rect {
+  const d = overlayDiameter(overlay, basis);
   const c = overlay.position
     ? { x: overlay.position.x * canvas.width, y: overlay.position.y * canvas.height }
     : cornerCentre(overlay.corner, d, visible);
@@ -53,19 +57,18 @@ export function overlayRect(overlay: CameraOverlay, visible: Rect, canvas: Size)
 }
 
 /** The overlay with its corner turned into the free position it draws at. */
-export function withFreePosition(overlay: CameraOverlay, visible: Rect, canvas: Size): CameraOverlay {
+export function withFreePosition(overlay: CameraOverlay, visible: Rect, canvas: Size, basis: Rect = visible): CameraOverlay {
   if (overlay.position) return overlay;
-  const r = overlayRect(overlay, visible, canvas);
+  const r = overlayRect(overlay, visible, canvas, basis);
   return { ...overlay, position: { x: (r.x + r.w / 2) / canvas.width, y: (r.y + r.h / 2) / canvas.height } };
 }
 
 /**
- * The visible recording's rect on the canvas for a Mac take (display,
- * window or camera): the padded content rect, fitted to the recording (or
- * its crop), sharing room with a phone layer when there is one. The
- * compositor draws the recording here, unzoomed.
+ * Where the layout fits a Mac take's recording (display, window or camera):
+ * the padded content rect, fitted to the recording (or its crop), sharing
+ * room with a phone layer when there is one. Before any hand move or resize.
  */
-export function macContentRect(project: Project, canvas: Size): Rect {
+export function macFittedRect(project: Project, canvas: Size): Rect {
   const { width: W, height: H } = canvas;
   const pad = Math.min(W, H) * project.style.paddingFraction;
   const content = { x: pad, y: pad, w: W - pad * 2, h: H - pad * 2 };
@@ -77,6 +80,37 @@ export function macContentRect(project: Project, canvas: Size): Rect {
     return phoneLayerRects(content, macAspect, phoneAspect(phoneSize, project.phoneOverlay), project.phoneOverlay).mac;
   }
   return fitAspect(content, macAspect);
+}
+
+/**
+ * The visible recording's rect on the canvas for a Mac take: the fitted rect
+ * moved and resized by `style.contentTransform`. The compositor draws the
+ * recording here, unzoomed.
+ */
+export function macContentRect(project: Project, canvas: Size): Rect {
+  return placeContent(macFittedRect(project, canvas), project.style.contentTransform, canvas);
+}
+
+/**
+ * The bubble resized by dragging corner `c` of its square `rect` to
+ * `pointer`: the opposite corner stays put (the centre, with `fromCentre`),
+ * within the Small..fine-slider limits. Returns the new centre (canvas
+ * fraction) and size.
+ */
+export function resizeBubble(
+  rect: Rect,
+  c: Corner,
+  pointer: { x: number; y: number },
+  basis: Rect,
+  canvas: Size,
+  fromCentre = false,
+): Pick<CameraOverlay, 'sizeFraction'> & { position: { x: number; y: number } } {
+  const side = Math.min(basis.w, basis.h);
+  const r = resizeFromCorner(rect, c, pointer, { fromCentre, minW: side * MIN_OVERLAY_SIZE, maxW: side * MAX_OVERLAY_SIZE });
+  return {
+    sizeFraction: r.w / side,
+    position: { x: (r.x + r.w / 2) / canvas.width, y: (r.y + r.h / 2) / canvas.height },
+  };
 }
 
 /**
@@ -100,32 +134,36 @@ export type Guide = { axis: 'x'; at: number } | { axis: 'y'; at: number };
 /** The edge inset that counts as "safe": 4% of the canvas's shorter side. */
 export const SAFE_INSET = 0.04;
 
-/** Lines the bubble's edges and centre snap to: the canvas centre lines,
- *  the canvas edges inset by SAFE_INSET, and the recording's edges. */
-export function snapLines(canvas: Size, content: Rect): { x: number[]; y: number[] } {
+/** Lines a dragged box's edges and centre snap to: the canvas centre lines,
+ *  the canvas edges inset by SAFE_INSET, and the edges of `other` (the
+ *  recording, for the bubble; the bubble, for the recording). */
+export function snapLines(canvas: Size, other: Rect | null): { x: number[]; y: number[] } {
   const inset = Math.min(canvas.width, canvas.height) * SAFE_INSET;
+  const ox = other ? [other.x, other.x + other.w] : [];
+  const oy = other ? [other.y, other.y + other.h] : [];
   return {
-    x: [canvas.width / 2, inset, canvas.width - inset, content.x, content.x + content.w],
-    y: [canvas.height / 2, inset, canvas.height - inset, content.y, content.y + content.h],
+    x: [canvas.width / 2, inset, canvas.width - inset, ...ox],
+    y: [canvas.height / 2, inset, canvas.height - inset, ...oy],
   };
 }
 
 /**
- * Snap a dragged bubble (`centre`, diameter `d`): on each axis, the nearest
- * line within `threshold` px of its left/centre/right (top/middle/bottom)
- * wins and pulls the bubble onto it. Returns the snapped centre and the
- * guides to draw.
+ * Snap a dragged box (`centre`, `w` × `h`): on each axis, the nearest line
+ * within `threshold` px of its left/centre/right (top/middle/bottom) wins
+ * and pulls the box onto it. Returns the snapped centre and the guides to
+ * draw.
  */
-export function snapBubble(
+export function snapBox(
   centre: { x: number; y: number },
-  d: number,
+  w: number,
+  h: number,
   canvas: Size,
-  content: Rect,
+  other: Rect | null,
   threshold: number,
 ): { centre: { x: number; y: number }; guides: Guide[] } {
-  const lines = snapLines(canvas, content);
+  const lines = snapLines(canvas, other);
   const guides: Guide[] = [];
-  const axis = (c: number, list: number[]) => {
+  const axis = (c: number, list: number[], d: number) => {
     let best: { delta: number; at: number } | null = null;
     for (const at of list) {
       for (const off of [-d / 2, 0, d / 2]) {
@@ -135,9 +173,13 @@ export function snapBubble(
     }
     return best;
   };
-  const sx = axis(centre.x, lines.x);
-  const sy = axis(centre.y, lines.y);
+  const sx = axis(centre.x, lines.x, w);
+  const sy = axis(centre.y, lines.y, h);
   if (sx) guides.push({ axis: 'x', at: sx.at });
   if (sy) guides.push({ axis: 'y', at: sy.at });
   return { centre: { x: centre.x + (sx?.delta ?? 0), y: centre.y + (sy?.delta ?? 0) }, guides };
 }
+
+/** Snap a dragged bubble of diameter `d` to the canvas and the recording `content`. */
+export const snapBubble = (centre: { x: number; y: number }, d: number, canvas: Size, content: Rect, threshold: number) =>
+  snapBox(centre, d, d, canvas, content, threshold);
