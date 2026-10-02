@@ -118,7 +118,7 @@ describe('older projects are unchanged', () => {
   const projects: [string, Project][] = [
     ['16:9 display', macProject({ width: 1920, height: 1080 })],
     ['ultrawide on a square preset', macProject({ width: 3440, height: 1440 }, 'square')],
-    ['portrait window on 9:16', macProject({ width: 900, height: 1600 }, 'vertical-9x16')],
+    ['portrait window on 9:16', macProject({ width: 900, height: 1600 }, 'social-9x16')],
   ];
   for (const [name, p] of projects) {
     it(`${name}: no transform → the same rect as before`, () => {
