@@ -8,8 +8,10 @@ import type { CameraOverlay, Project, Size } from './types';
 // only `corner`; they draw exactly where they always did (cornerCentre) until
 // the bubble is first moved.
 
-/** Small and Large, the two sizes the recording monitor and the inspector offer. */
-export const OVERLAY_SIZES = { small: 0.22, large: 0.36 } as const;
+/** Small and Large, the two sizes the recording monitor and the inspector offer.
+ *  Tyler's call (2026-10-01): on a 1-5 scale where 0.22 was 1 and 0.36 was 5,
+ *  Small should sit near 4 and Large near 8 (3.5 points of height per step). */
+export const OVERLAY_SIZES = { small: 0.325, large: 0.465 } as const;
 export type OverlaySizeName = keyof typeof OVERLAY_SIZES;
 /** The inspector's fine size slider. */
 export const MIN_OVERLAY_SIZE = 0.1;

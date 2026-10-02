@@ -386,7 +386,7 @@ export function normalizePhoneOverlay(raw: unknown, r: RecordingRef): PhoneOverl
 export const defaultAudio = (): AudioSettings => ({ clickSounds: true, voiceCleanup: false });
 
 /** Small, round, bottom-right. */
-export const defaultCameraOverlay = (): CameraOverlay => ({ enabled: false, corner: 'bottomRight', sizeFraction: 0.22, circular: true });
+export const defaultCameraOverlay = (): CameraOverlay => ({ enabled: false, corner: 'bottomRight', sizeFraction: 0.325, circular: true });
 
 export const defaultProject = (recording: RecordingRef): Project => ({
   recording,

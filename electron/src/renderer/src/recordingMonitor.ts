@@ -41,8 +41,6 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 .monitor.dragging { cursor: grabbing; }
 .tile { position: absolute; overflow: hidden; background: #1c1c1e; border-radius: 12px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.25); }
-.tile::after { content: ''; position: absolute; inset: 0; border-radius: inherit;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); pointer-events: none; }
 .tile video, .tile canvas { width: 100%; height: 100%; display: block; pointer-events: none; }
 .source { background: #000; }
 .source video, .source canvas { object-fit: cover; }
