@@ -52,7 +52,7 @@ export class ImportCancelled extends Error {
 
 const STAGING_PREFIX = '.import-';
 // Below this much free space, a conversion is not worth starting.
-const MIN_FREE_BYTES = 256 * 1024 * 1024;
+const MIN_FREE_BYTES = 64 * 1024 * 1024;
 
 /** Staging folders a crash left behind (older than a day; a running import's is fresh). */
 function removeStaleStaging(root: string) {
@@ -85,7 +85,8 @@ async function copyIn(src: string, dest: string, size: number, onFraction: (f: n
   } catch {
     rmSync(dest, { force: true });
   }
-  if (freeBytes(join(dest, '..')) < size + MIN_FREE_BYTES / 4) throw noSpace();
+  // A copy needs its own size, plus room for project.json and the disk's own breathing space.
+  if (freeBytes(join(dest, '..')) < size + 16 * 1024 * 1024) throw noSpace();
   let done = 0;
   let last = 0;
   const count = new Transform({

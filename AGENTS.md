@@ -30,6 +30,7 @@ $A record start                     # optional: record the phone yourself…
 $A record status
 $A record stop                      # …writes project.json; bundle path in the output
 $A latest                           # or take the newest recording made in the app
+$A import ~/Desktop/demo.mov        # or start from a video you already have
 
 $A review latest                    # contact sheets + review.json — LOOK at the sheet PNGs
 $A info latest                      # clips, captions, taps, style, … (times, ids, indexes)
@@ -48,6 +49,7 @@ $A undo latest                      # swap project.json <-> project.json.bak
 | `record start [--device id\|name]` | Starts a wired iPhone screen recording into a new `rec-<ts>.openscreen` in the recordings folder, detached. Waits for the first frame. Fails clearly when no phone is connected or it is locked. |
 | `record status` | `idle`, `recording` (with `elapsed`), `finished`, `failed`, or `dead`. |
 | `record stop` | Finishes the take (the helper's normal finalize; the movie is fragmented, so even a crash keeps what was recorded), then writes `project.json` with the same defaults the app gives an iPhone take. |
+| `import <file> [--name N]` | Imports a video (mp4, mov, m4v, webm, mkv) as a new bundle `<name>.openscreen` in the recordings folder, named after the file (`Name 2`, `Name 3`… when taken), exactly as **File → Import Video…** and dropping a file on the app do. The original is only read. A file the editor can't play is converted with the bundled ffmpeg (`converted`: `none`, `audio` = the sound re-encoded to AAC, or `full` = H.264 + AAC). An iPhone or iPad screen size (e.g. 1179×2556, 1206×2622) gets `sourceKind: "iosDevice"`, so the device frame, 9:16 canvas and tap analysis apply; anything else is `display`. Prints `bundle`, `name`, `sourceKind`, `size`, `duration`, `video`, `converted`, `hasAudio`; progress (`{"stage":"copy"\|"convert","progress":0..1}`) on stderr. A failed import leaves nothing behind. |
 | `latest` / `list` | Newest bundle / all bundles in `~/Movies/OpenScreen` (or `$OPENSCREEN_RECORDINGS_DIR`). In the app, **File → Copy Path for Agent** copies the open project's path. |
 | `info <bundle>` | Summary JSON: source size/duration, output duration, canvas, device, clips (with ids, source and output ranges), captions, transcript, chapters, annotations, manual zooms, taps, waits, style, layout, camera, `phone` (Mac + iPhone takes: the phone movie, its size, length, `offset`, detected `model`, whether it is `drawn`, and every `phoneOverlay` field; `null` otherwise), audio, `content` (the recording's hand move and resize, `style.contentTransform`, or `null`), `layers` (the canvas layers bottom to top), tracks (music and voiceover items with their output `start`/`end`, file range, volume, fades, loop, and `missing` when the file is gone), export settings, `problems`. |
 | `validate <bundle>` | `{"ok":true,"problems":[]}` or the list of problems (exit 1). |
@@ -211,6 +213,10 @@ allows. The phone's own sound goes into exports only with `sound: true`
 - **Live reload**: if the project is open in the app while you `apply`, the
   editor reloads it within about a second. If it has unsaved edits of its
   own, it asks (Load From Disk / Keep Mine) instead of overwriting either.
+- An imported video has no cursor, click or keystroke track: `info` shows
+  `recording.imported: true`, auto-focus and dwell zooms start off and do
+  nothing, and the editor hides the Cursor tab. Manual zooms (`addZoom`),
+  captions, music and everything else work as on a recording.
 - `record start` needs the phone unlocked and trusted; `--mic` is not
   supported (the helper records the phone's own audio). Only one agent
   recording at a time. The GUI and an agent recording can't use the phone at
