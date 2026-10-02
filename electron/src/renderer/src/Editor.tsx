@@ -77,6 +77,7 @@ import { DevicePanel } from './mobile/DevicePanel';
 import { LayoutSection } from './mobile/LayoutSection';
 import { AudioTrackLane } from './AudioTrackLane';
 import { phoneLayerOn, phoneTimeForSource } from '../../shared/phoneLayer';
+import { CAMERA_CANVASES, cameraDefaults, editorFeatures, isCameraProject, withCameraCanvas, type CameraCanvas } from '../../shared/justMe';
 import {
   MAX_OVERLAY_SIZE,
   MIN_OVERLAY_SIZE,
@@ -237,6 +238,8 @@ export function Editor({
   // places it), a tap analysis in flight, and whether the title field has
   // focus (the preview shows safe-zone guides meanwhile).
   const isPhone = isPhoneProject(proj);
+  // "Just me" and the rest: which tabs, zoom switches and lanes apply.
+  const features = editorFeatures(proj);
   const [selectedTap, setSelectedTap] = useState<string | null>(null);
   // The camera bubble on the preview: selected (accent outline), hovered,
   // and while dragged, where it was grabbed and the snap guides it is on.
@@ -2001,7 +2004,7 @@ export function Editor({
     { value: 'background' as const, label: 'Background' },
     ...(isPhone ? [{ value: 'device' as const, label: 'Device' }] : []),
     { value: 'zoom' as const, label: 'Zoom' },
-    ...(isPhone ? [] : [{ value: 'cursor' as const, label: 'Cursor' }]),
+    ...(features.cursorTab ? [{ value: 'cursor' as const, label: 'Cursor' }] : []),
     ...(camUrl ? [{ value: 'camera' as const, label: 'Camera' }] : []),
     ...(hasPhoneLayer ? [{ value: 'phone' as const, label: 'Phone' }] : []),
     { value: 'audio' as const, label: 'Audio' },
@@ -2015,7 +2018,13 @@ export function Editor({
   const doReset = () => {
     setConfirmReset(false);
     historyRef.current.seal();
-    setProj((p) => resetProject(p));
+    setProj((p) => {
+      const fresh = resetProject(p);
+      // "Just me" goes back to its own starting look, keeping the backdrop.
+      if (!isCameraProject(p)) return fresh;
+      const cam = cameraDefaults(fresh);
+      return { ...cam, style: { ...cam.style, background: fresh.style.background } };
+    });
     // Sealed after the change lands, so a quick next edit can't merge into it.
     requestAnimationFrame(() => historyRef.current.seal());
     setSelectedClip(null);
@@ -2054,6 +2063,16 @@ export function Editor({
   const backgroundPanel = (
     <>
       {isPhone && <LayoutSection proj={proj} setProj={setProj} onTitleFocus={setTitleFocus} />}
+      {features.canvasChoice && (
+        <Section title="Canvas">
+          <Segmented
+            label="Canvas"
+            value={(CAMERA_CANVASES.some((c) => c.id === proj.layout.presetId) ? proj.layout.presetId : 'landscape-16x9') as CameraCanvas}
+            options={CAMERA_CANVASES.map((c) => ({ value: c.id, label: c.label }))}
+            onChange={(c) => setProj((p) => withCameraCanvas(p, c))}
+          />
+        </Section>
+      )}
       {BACKDROP_GROUPS.map((group) => (
         <Section key={group.id} title={group.title}>
           <div className="tiles">
@@ -2221,7 +2240,7 @@ export function Editor({
           </p>
         </Section>
       )}
-      {presetAllowsZoom(preset) && (
+      {presetAllowsZoom(preset) && features.autoZoom && (
         <Section title="Automatic">
           {isPhone ? (
             <Switch
@@ -3254,6 +3273,7 @@ export function Editor({
           <span>Clips</span>
           <span className="tl-label-switch">
             Zoom
+            {features.autoZoom && (
             <input
               type="checkbox"
               role="switch"
@@ -3267,6 +3287,7 @@ export function Editor({
               checked={autoZoomOn(proj.zoom, isPhone)}
               onChange={(e) => setProj((p) => ({ ...p, zoom: withAutoZoom(p.zoom, isPhone, e.target.checked) }))}
             />
+            )}
           </span>
           {isPhone && <span>Taps</span>}
           <span>Audio</span>

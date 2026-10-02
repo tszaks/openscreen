@@ -50,6 +50,10 @@ export function planPolish(p: Project, o: PolishOptions): EditOp[] {
     // Dead air at the very start/end goes; stills in the middle play fast.
     ops.push({ op: 'cutWaits', which: 'edge', maxFraction: 0.5 });
     ops.push({ op: 'speedUpWaits', which: 'interior', speed: look.waitSpeed, maxFraction: 0.5 });
+  } else if (p.recording.sourceKind === 'camera') {
+    // "Just me": a face video has no clicks to zoom to and no cursor.
+    ops.push({ op: 'background', swatch: look.swatch });
+    ops.push({ op: 'style', ...look.style });
   } else {
     ops.push({ op: 'background', swatch: look.swatch });
     ops.push({ op: 'style', ...look.style });

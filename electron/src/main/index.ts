@@ -435,6 +435,9 @@ function createWindow() {
         }
       : { action: 'deny' },
   );
+  // A reload drops the page that owned the monitor without running its
+  // cleanup: close the monitor with it.
+  win.webContents.on('did-navigate', () => closeMonitor());
   win.webContents.on('did-create-window', (child, { frameName }) => {
     if (frameName !== MONITOR_FRAME) return;
     monitorWin?.close();

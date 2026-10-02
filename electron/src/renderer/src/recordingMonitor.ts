@@ -82,13 +82,8 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 
 /** A track for a tile: a clone of `track`, held to 30 fps and tile size. */
 async function tileTrack(track: MediaStreamTrack): Promise<MediaStreamTrack> {
-  const mode = new URLSearchParams(location.search).get('tile') ?? 'scaled';
-  if (mode === 'raw') return track;
   const clone = track.clone();
-  if (mode === 'fps') await clone.applyConstraints({ frameRate: { max: 30 } }).catch(() => {});
-  else if (mode === 'fps15') await clone.applyConstraints({ frameRate: { max: 15 } }).catch(() => {});
-  else if (mode === 'small15') await clone.applyConstraints({ frameRate: { max: 15 }, width: { max: 640 }, height: { max: 640 } }).catch(() => {});
-  else await clone.applyConstraints(TILE_CONSTRAINTS).catch(() => {});
+  await clone.applyConstraints(TILE_CONSTRAINTS).catch(() => {});
   return clone;
 }
 

@@ -19,6 +19,7 @@ import { IosLivePreview } from './components/IosLivePreview';
 import { recoveryNotice } from '../../shared/recovery';
 import { RecordingCard } from './components/RecordingCard';
 import { checklistFor, readSetupPrefs, recordingWarning, writeSetupPref, type SetupPrefs, type SetupTrigger } from './components/iosSetup';
+import { cameraDefaults } from '../../shared/justMe';
 import { openRecordingMonitor, type MonitorSource, type RecordingMonitor } from './recordingMonitor';
 import { monitorOpensFor, overlayFromMonitor, readMonitorPrefs, spotFor, writeMonitorPrefs, type MonitorPrefs } from '../../shared/recordingMonitor';
 
@@ -484,7 +485,8 @@ export function App() {
     let rec: MediaRecorder | null = null;
     let tracking = false;
     try {
-      camStream = await openCamera();
+      // "Just me" records the camera itself; there's no second camera to add.
+      camStream = selectedDevice ? null : await openCamera();
       stream = selectedDevice
         ? await captureDevice(selectedDevice.deviceId)
         : await captureStream(selected!.id);
@@ -701,10 +703,11 @@ export function App() {
         const camBytes = camBlob?.size ? await camBlob.arrayBuffer() : undefined;
         const size =
           live?.width && live?.height ? { width: live.width, height: live.height } : sourceSizeRef.current ?? { width: 1920, height: 1080 };
-        const project = defaultProject({
+        let project = defaultProject({
           screenVideoFile: 'screen.webm',
           cameraVideoFile: camBytes ? 'cam.webm' : undefined,
-          sourceKind: sourceKindFor(selected?.id ?? ''),
+          // "Just me": a camera recorded on its own.
+          sourceKind: selectedDevice ? 'camera' : sourceKindFor(selected?.id ?? ''),
           sourceSize: size,
           // A stand-in: main replaces it with the saved file's real duration.
           duration: Math.max(0.1, (stoppedAtMs - starts.video) / 1000),
@@ -712,6 +715,7 @@ export function App() {
           cameraOffset: camBytes && starts.cam ? (starts.cam - starts.video) / 1000 : undefined,
           ...(phoneTake ? phoneRecordingFields(phoneSide, phoneOffsetSeconds(starts.video, phoneTake.startedAtMs)) : {}),
         });
+        if (selectedDevice) project = cameraDefaults(project);
         if (camBytes) {
           // The bubble starts as the face was in the monitor: its size and
           // shape, and on a display take where it was on screen.
@@ -747,7 +751,7 @@ export function App() {
         setLiveStream(null);
       }
     },
-    [selected, stopCamOverlay, openEditor, openPhoneOnly, closeMonitor],
+    [selected, selectedDevice, stopCamOverlay, openEditor, openPhoneOnly, closeMonitor],
   );
 
   // One stop for every path: the Stop button, a source that went away, or
@@ -886,7 +890,7 @@ export function App() {
       { value: 'displays', label: 'Displays', count: displays.length },
       { value: 'windows', label: 'Windows', count: windows.length },
       { value: 'devices', label: 'iPhone & iPad', count: iosDevices.length },
-      { value: 'cameras', label: 'Cameras', count: otherCameras.length },
+      { value: 'cameras', label: 'Just me', count: otherCameras.length },
     ];
     if (iosDevices.length) sections.unshift(sections.splice(2, 1)[0]);
     const section = sections.find((x) => x.value === tab)!;
@@ -894,7 +898,7 @@ export function App() {
       displays: 'Records the whole screen, with the cursor, click effects and auto-zoom.',
       windows: "Records one window. Window recordings don't include the cursor, click effects or auto-zoom.",
       devices: 'Records the screen of an iPhone or iPad connected with a cable, with its own sound.',
-      cameras: "Records a camera, not a screen. Continuity Camera is your iPhone's camera.",
+      cameras: "Record only yourself: a camera and your microphone, no screen. Continuity Camera is your iPhone's camera.",
     };
     const shown = tab === 'displays' ? displays : tab === 'windows' ? windows : [];
     // A selection made on another tab isn't visible; dropping it keeps Start
@@ -904,6 +908,11 @@ export function App() {
       setSelected(null);
       setSelectedDevice(null);
       setSelectedIos(null);
+      // "Just me" is ready to go: the default camera, with the microphone on.
+      if (t === 'cameras' && otherCameras[0]) {
+        setSelectedDevice(otherCameras[0]);
+        setMicOn(true);
+      }
     };
     const selectedName =
       selectedIos?.name ?? (selectedDevice ? cameraLabel(selectedDevice, 0) : selected && alsoPhone ? `${selected.name} + ${alsoPhone.name}` : selected?.name);
@@ -916,6 +925,7 @@ export function App() {
           setSelectedDevice(d);
           setSelected(null);
           setSelectedIos(null);
+          if (selectedDevice?.deviceId !== d.deviceId) setMicOn(true);
         }}
       >
         <div className="card-thumb device-thumb">
@@ -1023,6 +1033,7 @@ export function App() {
               />
             </label>
             {selectedIos && <span className="hint">The iPhone's own sound is recorded.</span>}
+            {tab !== 'cameras' && (
             <label className="inline-switch">
               <span>Camera</span>
               <input
@@ -1033,7 +1044,8 @@ export function App() {
                 onChange={(e) => void toggleCamera(e.target.checked)}
               />
             </label>
-            {camOn &&
+            )}
+            {camOn && tab !== 'cameras' &&
               (devices.length > 1 ? (
                 <select
                   className="cam-select"
@@ -1279,6 +1291,8 @@ export function App() {
             saving={saving}
             onStop={() => void stop()}
             stream={selectedIos ? null : liveStream}
+            // "Just me" sees itself as in a mirror.
+            mirror={!!selectedDevice}
             device={
               selectedIos
                 ? {
