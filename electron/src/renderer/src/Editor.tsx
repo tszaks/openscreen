@@ -2001,7 +2001,9 @@ export function Editor({
   const hasPhoneLayer = !isPhone && !!phoneUrl && !!proj.recording.phoneVideoFile;
   // Phone recordings have no cursor; they get the Device tab instead.
   const inspectorTabs = [
-    { value: 'background' as const, label: 'Background' },
+    // 'Style' (as in Keynote): the canvas, backdrop and frame. Short so up to
+    // seven tabs fit the inspector.
+    { value: 'background' as const, label: 'Style' },
     ...(isPhone ? [{ value: 'device' as const, label: 'Device' }] : []),
     { value: 'zoom' as const, label: 'Zoom' },
     ...(features.cursorTab ? [{ value: 'cursor' as const, label: 'Cursor' }] : []),

@@ -596,6 +596,26 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   box-shadow: var(--shadow-thumb);
   pointer-events: none;
 }
+/* Many panes: tighter type and padding so every label fits on one row. */
+.tabs[data-count='6'] .tab,
+.tabs[data-count='7'] .tab,
+.tabs[data-count='8'] .tab {
+  padding: 0 3px;
+  font-size: var(--text-callout);
+}
+.tabs[data-count='7'],
+.tabs[data-count='8'] {
+  gap: 0;
+}
+/* A narrow inspector (dragged to its minimum) with seven panes. */
+@container inspector (max-width: 300px) {
+  .tabs[data-count='7'] .tab,
+  .tabs[data-count='8'] .tab {
+    padding: 0 1px;
+    font-size: 11px;
+    letter-spacing: -0.01em;
+  }
+}
 .tabs.ready .tab-indicator {
   transition:
     transform var(--t3) var(--ease),
@@ -1426,6 +1446,7 @@ canvas.preview.cropping {
    (main turns that on), opaque under Reduce Transparency. */
 .inspector {
   grid-area: inspector;
+  container: inspector / inline-size;
   display: flex;
   flex-direction: column;
   min-height: 0;

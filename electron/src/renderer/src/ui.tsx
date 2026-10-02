@@ -207,7 +207,7 @@ export function Tabs<T extends string>({
 }) {
   const glide = useGlide(tabs.findIndex((t) => t.value === value), tabs.length);
   return (
-    <div ref={glide.ref} className={`tabs${glide.ready ? ' ready' : ''}`} role="tablist">
+    <div ref={glide.ref} className={`tabs${glide.ready ? ' ready' : ''}`} role="tablist" data-count={tabs.length}>
       {tabs.map((t) => (
         <button
           key={t.value}
