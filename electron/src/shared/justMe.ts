@@ -24,6 +24,8 @@ export function editorFeatures(p: Pick<Project, 'recording'>): EditorFeatures {
   const kind = p.recording.sourceKind;
   if (kind === 'camera') return { cursorTab: false, autoZoom: false, taps: false, canvasChoice: true };
   if (kind === 'iosDevice') return { cursorTab: false, autoZoom: true, taps: true, canvasChoice: false };
+  // An imported screen video: no cursor to draw and no clicks to zoom toward.
+  if (p.recording.imported) return { cursorTab: false, autoZoom: false, taps: false, canvasChoice: false };
   return { cursorTab: true, autoZoom: true, taps: false, canvasChoice: false };
 }
 

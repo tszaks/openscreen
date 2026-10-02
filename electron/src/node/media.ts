@@ -63,6 +63,9 @@ export interface MediaInfo {
   height: number | null;
   hasAudio: boolean;
   videoCodec: string | null;
+  audioCodec: string | null;
+  /** Degrees the picture is turned when played (a phone held upright stores it sideways); 0 when none. */
+  rotation: number;
 }
 
 export async function probeMedia(file: string, bin = ffmpegPath()): Promise<MediaInfo> {
@@ -75,6 +78,8 @@ export async function probeMedia(file: string, bin = ffmpegPath()): Promise<Medi
     height: size?.height ?? null,
     hasAudio: /Stream #\d+:\d+.*Audio:/.test(banner),
     videoCodec: codec,
+    audioCodec: banner.match(/Stream #\d+:\d+.*Audio:\s*([a-z0-9_]+)/)?.[1] ?? null,
+    rotation: Number(banner.match(/displaymatrix: rotation of (-?[\d.]+) degrees/)?.[1] ?? 0) || 0,
   };
 }
 
