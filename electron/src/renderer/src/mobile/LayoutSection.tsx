@@ -77,15 +77,20 @@ export function LayoutSection({
           <Switch
             label="Title card"
             hint="A headline beside the phone"
-            checked={!!title}
+            checked={!!title && !title.hidden}
             onChange={(v) =>
-              setProj((p) => ({
-                ...p,
-                layout: { ...p.layout, titleCard: v ? { title: '', subtitle: '' } : undefined },
-              }))
+              setProj((p) => {
+                const tc = p.layout.titleCard;
+                // Hidden on the canvas: switching it back on keeps its text and place.
+                if (v && tc?.hidden) {
+                  const { hidden: _, ...shown } = tc;
+                  return { ...p, layout: { ...p.layout, titleCard: shown } };
+                }
+                return { ...p, layout: { ...p.layout, titleCard: v ? { title: '', subtitle: '' } : undefined } };
+              })
             }
           />
-          {title && (
+          {title && !title.hidden && (
             <div className="title-fields">
               <input
                 className="field"

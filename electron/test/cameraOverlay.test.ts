@@ -8,10 +8,9 @@ import {
   overlayRect,
   overlaySizeName,
   positionForScreenPoint,
-  snapBubble,
-  snapLines,
   withFreePosition,
 } from '../src/shared/cameraOverlay';
+import { snapBox, snapLines as layerSnapLines } from '../src/shared/canvasLayers';
 import { defaultCameraOverlay, defaultProject, type CameraOverlay, type Project, type Size } from '../src/shared/types';
 import { projectCanvasSize } from '../src/shared/mobileProject';
 
@@ -131,6 +130,11 @@ describe('screen position → canvas position', () => {
     expect(pos.y * c.height).toBeCloseTo(content.y);
   });
 });
+
+// The bubble snaps like every canvas layer (shared/canvasLayers), here against the recording alone.
+const snapBubble = (c: { x: number; y: number }, d: number, canvas: Size, content: { x: number; y: number; w: number; h: number }, t: number) =>
+  snapBox(c, d, d, canvas, [content], t);
+const snapLines = (canvas: Size, content: { x: number; y: number; w: number; h: number }) => layerSnapLines(canvas, [content]);
 
 describe('snapping', () => {
   const content = { x: 200, y: 100, w: 1520, h: 880 };

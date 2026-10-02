@@ -1,5 +1,5 @@
 import { fitAspect, phoneAspect, phoneLayerOn, phoneLayerRects, type Rect } from './phoneLayer';
-import { placeContent, resizeFromCorner, type Corner } from './contentTransform';
+import { placeContent } from './contentTransform';
 import type { CameraOverlay, Project, Size } from './types';
 
 // Where the camera overlay (the face bubble) sits on the canvas. It is free:
@@ -92,28 +92,6 @@ export function macContentRect(project: Project, canvas: Size): Rect {
 }
 
 /**
- * The bubble resized by dragging corner `c` of its square `rect` to
- * `pointer`: the opposite corner stays put (the centre, with `fromCentre`),
- * within the Small..fine-slider limits. Returns the new centre (canvas
- * fraction) and size.
- */
-export function resizeBubble(
-  rect: Rect,
-  c: Corner,
-  pointer: { x: number; y: number },
-  basis: Rect,
-  canvas: Size,
-  fromCentre = false,
-): Pick<CameraOverlay, 'sizeFraction'> & { position: { x: number; y: number } } {
-  const side = Math.min(basis.w, basis.h);
-  const r = resizeFromCorner(rect, c, pointer, { fromCentre, minW: side * MIN_OVERLAY_SIZE, maxW: side * MAX_OVERLAY_SIZE });
-  return {
-    sizeFraction: r.w / side,
-    position: { x: (r.x + r.w / 2) / canvas.width, y: (r.y + r.h / 2) / canvas.height },
-  };
-}
-
-/**
  * The free position for a point on the recorded display: `u`,`v` are where
  * the bubble's centre was as a fraction of the display, and the recording
  * shows that display (uncropped) in `content`. The bubble lands over the
@@ -124,62 +102,3 @@ export function positionForScreenPoint(u: number, v: number, content: Rect, canv
   const y = content.y + Math.min(1, Math.max(0, v)) * content.h;
   return { x: x / canvas.width, y: y / canvas.height };
 }
-
-// ---------------------------------------------------------------------------
-// Snapping while the bubble is dragged in the editor
-
-/** A guide line: vertical (`x`) or horizontal (`y`), in canvas pixels. */
-export type Guide = { axis: 'x'; at: number } | { axis: 'y'; at: number };
-
-/** The edge inset that counts as "safe": 4% of the canvas's shorter side. */
-export const SAFE_INSET = 0.04;
-
-/** Lines a dragged box's edges and centre snap to: the canvas centre lines,
- *  the canvas edges inset by SAFE_INSET, and the edges of `other` (the
- *  recording, for the bubble; the bubble, for the recording). */
-export function snapLines(canvas: Size, other: Rect | null): { x: number[]; y: number[] } {
-  const inset = Math.min(canvas.width, canvas.height) * SAFE_INSET;
-  const ox = other ? [other.x, other.x + other.w] : [];
-  const oy = other ? [other.y, other.y + other.h] : [];
-  return {
-    x: [canvas.width / 2, inset, canvas.width - inset, ...ox],
-    y: [canvas.height / 2, inset, canvas.height - inset, ...oy],
-  };
-}
-
-/**
- * Snap a dragged box (`centre`, `w` × `h`): on each axis, the nearest line
- * within `threshold` px of its left/centre/right (top/middle/bottom) wins
- * and pulls the box onto it. Returns the snapped centre and the guides to
- * draw.
- */
-export function snapBox(
-  centre: { x: number; y: number },
-  w: number,
-  h: number,
-  canvas: Size,
-  other: Rect | null,
-  threshold: number,
-): { centre: { x: number; y: number }; guides: Guide[] } {
-  const lines = snapLines(canvas, other);
-  const guides: Guide[] = [];
-  const axis = (c: number, list: number[], d: number) => {
-    let best: { delta: number; at: number } | null = null;
-    for (const at of list) {
-      for (const off of [-d / 2, 0, d / 2]) {
-        const delta = at - (c + off);
-        if (Math.abs(delta) <= threshold && (!best || Math.abs(delta) < Math.abs(best.delta))) best = { delta, at };
-      }
-    }
-    return best;
-  };
-  const sx = axis(centre.x, lines.x, w);
-  const sy = axis(centre.y, lines.y, h);
-  if (sx) guides.push({ axis: 'x', at: sx.at });
-  if (sy) guides.push({ axis: 'y', at: sy.at });
-  return { centre: { x: centre.x + (sx?.delta ?? 0), y: centre.y + (sy?.delta ?? 0) }, guides };
-}
-
-/** Snap a dragged bubble of diameter `d` to the canvas and the recording `content`. */
-export const snapBubble = (centre: { x: number; y: number }, d: number, canvas: Size, content: Rect, threshold: number) =>
-  snapBox(centre, d, d, canvas, content, threshold);
