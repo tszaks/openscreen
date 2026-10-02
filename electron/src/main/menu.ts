@@ -16,7 +16,7 @@ export function buildAppMenu(
     else app.emit('activate');
   };
   const inEditor = state.phase === 'editor';
-  const idle = state.phase !== 'recording';
+  const idle = state.phase !== 'recording' && state.phase !== 'importing';
 
   const template: MenuItemConstructorOptions[] = [
     {
@@ -38,6 +38,7 @@ export function buildAppMenu(
       submenu: [
         { label: 'New Recording', accelerator: 'CmdOrCtrl+N', enabled: idle, click: sendOrOpen('newRecording') },
         { label: 'Open Project…', accelerator: 'CmdOrCtrl+O', enabled: idle, click: sendOrOpen('openProject') },
+        { label: 'Import Video…', accelerator: 'CmdOrCtrl+I', enabled: idle, click: sendOrOpen('importVideo') },
         { type: 'separator' },
         { label: 'Save Project', accelerator: 'CmdOrCtrl+S', enabled: inEditor, click: send('save') },
         { label: 'Export MP4…', accelerator: 'CmdOrCtrl+E', enabled: inEditor, click: send('exportMp4') },

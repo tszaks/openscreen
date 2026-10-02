@@ -26,6 +26,8 @@ import { fileSafeName, normalizeProject, projectName, type CursorSample, type Ke
 import { parseHeadlessArgs, type HeadlessJob, type HeadlessResult } from '../shared/headless';
 import { analyzeTapsInFile, audioFilePeaks, detectSilences, extractWav as extractBundleWav, importAudioFile, transcribeBundle } from '../node/media';
 import { AUDIO_EXTENSIONS, bundleRelative, insideDir, type MusicInput } from '../shared/audioTracks';
+import { isAudioFile, VIDEO_EXTENSIONS } from '../shared/importVideo';
+import { ImportCancelled, importVideoFile } from '../node/importVideo';
 import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
 import { getPreset, type PresetId } from '../shared/exportPresets';
 import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
@@ -85,6 +87,8 @@ let transcodeRun: TranscodeRun | null = null;
 let trackerStartedAtMs = 0;
 // The in-flight iPhone take's bundle, so a failed take can be salvaged or removed.
 let iosBundleDir: string | null = null;
+// Stops the Import Video… in flight (its staging folder is removed).
+let importAbort: AbortController | null = null;
 
 // The recording monitor shown during a take with the camera on
 // (shared/recordingMonitor.ts). The renderer opens it with window.open, so
@@ -124,6 +128,8 @@ const confirmDiscard = (action: 'close' | 'quit') => {
   const what =
     reason === 'exporting'
       ? ['An export is still running.', 'it stops the export and leaves an unfinished file']
+      : reason === 'importing'
+        ? ['A video is still being imported.', 'the import stops and nothing is kept']
       : reason === 'saving'
         ? ['A recording is still being saved.', 'the recording may be lost']
         : iosBundleDir
@@ -438,6 +444,9 @@ function createWindow() {
   // A reload drops the page that owned the monitor without running its
   // cleanup: close the monitor with it.
   win.webContents.on('did-navigate', () => closeMonitor());
+  // A file dropped where nothing handles it would replace the app with the
+  // file. The renderer never navigates itself.
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.on('did-create-window', (child, { frameName }) => {
     if (frameName !== MONITOR_FRAME) return;
     monitorWin?.close();
@@ -461,6 +470,7 @@ function createWindow() {
   // iPhone take. The take's movie is kept if it plays, for recovery.
   const abandonTake = () => {
     rendererBusy = null;
+    importAbort?.abort();
     stopTracker();
     closeMonitor();
     stopIosPreview();
@@ -823,6 +833,45 @@ app.whenReady().then(() => {
     return loadBundle(picked.filePaths[0]);
   });
 
+  // Import Video…: pick a video file; null when cancelled.
+  ipcMain.handle('import:pick', async () => {
+    const picked = await dialog.showOpenDialog(win!, {
+      title: 'Import Video',
+      properties: ['openFile'],
+      filters: [{ name: 'Videos', extensions: VIDEO_EXTENSIONS }],
+    });
+    return picked.canceled ? null : picked.filePaths[0] ?? null;
+  });
+
+  // Copy (or convert) a video into a new bundle in the recordings folder and
+  // open it. Progress arrives as import:progress; import:cancel stops it.
+  // Resolves null when cancelled; rejects with a sentence for the person.
+  ipcMain.handle('import:start', async (e, path: string) => {
+    if (typeof path !== 'string' || !isAbsolute(path)) throw new Error('Pick a video file to import.');
+    importAbort?.abort();
+    const abort = new AbortController();
+    importAbort = abort;
+    const sender = e.sender;
+    try {
+      const r = await importVideoFile(path, {
+        root: recordingsRoot(),
+        bin: await ffmpegPath(),
+        signal: abort.signal,
+        onProgress: (p) => !sender.isDestroyed() && sender.send('import:progress', p),
+      });
+      return await loadBundle(r.dir);
+    } catch (err) {
+      if (err instanceof ImportCancelled) return null;
+      throw err;
+    } finally {
+      if (importAbort === abort) importAbort = null;
+    }
+  });
+  ipcMain.handle('import:cancel', () => {
+    importAbort?.abort();
+    return true;
+  });
+
   // Open a bundle by path (e.g. one just recovered). Only our own bundles.
   ipcMain.handle('bundle:openDir', (_e, dir: string) => {
     if (!isInRecordingsRoot(dir) && resolve(dir) !== openOnLaunch) throw new Error('That recording is outside the recordings folder.');
@@ -1005,18 +1054,27 @@ app.whenReady().then(() => {
     return peaks;
   });
 
-  // Add Music or Voiceover: pick a sound file and copy it into the bundle's
-  // audio/ folder. Resolves null when the user cancels.
-  ipcMain.handle('audio:import', async (_e, dir: string) => {
+  // Add Music or Voiceover: pick a sound file (or take the one dropped on the
+  // editor, `path`) and copy it into the bundle's audio/ folder. Resolves
+  // null when the user cancels.
+  ipcMain.handle('audio:import', async (_e, dir: string, path?: string) => {
     if (typeof dir !== 'string' || !existsSync(join(dir, 'project.json'))) throw new Error('No project is open.');
-    const picked = await dialog.showOpenDialog(win!, {
-      title: 'Add Music or Voiceover',
-      properties: ['openFile'],
-      filters: [{ name: 'Audio', extensions: AUDIO_EXTENSIONS }],
-    });
-    if (picked.canceled || !picked.filePaths[0]) return null;
+    let source = path;
+    if (source !== undefined) {
+      if (typeof source !== 'string' || !isAbsolute(source) || !isAudioFile(source)) {
+        throw new Error(`OpenScreen adds ${AUDIO_EXTENSIONS.filter((x) => x !== 'aif').map((x) => x.toUpperCase()).join(', ')} sound files.`);
+      }
+    } else {
+      const picked = await dialog.showOpenDialog(win!, {
+        title: 'Add Music or Voiceover',
+        properties: ['openFile'],
+        filters: [{ name: 'Audio', extensions: AUDIO_EXTENSIONS }],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return null;
+      source = picked.filePaths[0];
+    }
     const id = randomUUID();
-    return { id, ...(await importAudioFile(dir, picked.filePaths[0], id, await ffmpegPath())) };
+    return { id, ...(await importAudioFile(dir, source, id, await ffmpegPath())) };
   });
 
   // Waveform peaks for an added sound inside the bundle (whole file, in file time).
@@ -1257,9 +1315,10 @@ app.on('before-quit', (e) => {
     return;
   }
   quitConfirmed = true;
-  // Don't leave ffmpeg running or a half-written export behind.
+  // Don't leave ffmpeg running or a half-written export or import behind.
   void exportJob?.abort();
   void transcodeRun?.cancel();
+  importAbort?.abort();
 });
 
 // Quitting mid-take keeps the take: the helper is asked to finish the file

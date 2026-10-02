@@ -109,7 +109,8 @@ function convert(bin: string, args: string[], duration: number, onFraction: (f: 
     const ff = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     const onAbort = () => ff.kill('SIGKILL');
-    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
     ff.stdout.on('data', (d: Buffer) => {
       const last = d.toString().split('\n').filter((l) => l.startsWith('out_time_us=')).pop();
       const us = last ? Number(last.slice('out_time_us='.length)) : NaN;

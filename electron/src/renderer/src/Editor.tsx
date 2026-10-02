@@ -169,6 +169,7 @@ export function Editor({
   bundleDir,
   onNewRecording,
   onOpenProject,
+  onImportVideo,
   headless,
 }: {
   videoUrl: string;
@@ -183,6 +184,8 @@ export function Editor({
   onNewRecording: () => void;
   /** Pick and open another project in place of this one. */
   onOpenProject: () => void;
+  /** Import a video as a new project in place of this one (`path`: a dropped file; else a dialog). */
+  onImportVideo?: (path?: string) => void;
   /** Headless export (`OpenScreen --export`): export this, report, never save. */
   headless?: { out: string; gif: boolean; presets?: string[] };
 }) {
@@ -1619,6 +1622,8 @@ export function Editor({
           return leave(onNewRecording);
         case 'openProject':
           return leave(onOpenProject);
+        case 'importVideo':
+          return onImportVideo && leave(() => onImportVideo());
         case 'save':
           return void saveProject();
         case 'exportMp4':
@@ -1643,6 +1648,20 @@ export function Editor({
     };
     window.addEventListener('openscreen:menu', onMenu);
     return () => window.removeEventListener('openscreen:menu', onMenu);
+  });
+
+  // Files dropped on the window (App routes them here): a video replaces
+  // this project once unsaved changes are dealt with; a sound joins the
+  // music track at the playhead.
+  useEffect(() => {
+    const onDrop = (e: Event) => {
+      const { action, path } = (e as CustomEvent<{ action: 'import' | 'addMusic'; path: string }>).detail;
+      if (pendingLeave) return;
+      if (action === 'import' && onImportVideo) leave(() => onImportVideo(path));
+      else if (action === 'addMusic' && !exporting) void addMusic(playheadRef.current, path);
+    };
+    window.addEventListener('openscreen:drop', onDrop);
+    return () => window.removeEventListener('openscreen:drop', onDrop);
   });
 
   /**
@@ -1735,10 +1754,11 @@ export function Editor({
     setInspectorTab('audio');
   };
 
-  /** Add Music or Voiceover…: pick a file, copy it into the bundle, start it at output time `at`. */
-  const addMusic = async (at: number) => {
+  /** Add Music or Voiceover…: pick a file (or take `path`, one dropped on the
+   *  window), copy it into the bundle, start it at output time `at`. */
+  const addMusic = async (at: number, path?: string) => {
     try {
-      const got = await api.importAudio(bundleDir);
+      const got = await api.importAudio(bundleDir, path);
       if (!got || disposed.current) return;
       const item = newAudioItem(got.id, got.file, got.name, got.duration, at);
       setProj((p) => addItem(p, item, () => crypto.randomUUID()));

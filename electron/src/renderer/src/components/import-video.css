@@ -1,0 +1,51 @@
+/* ───────────────────────── import video ───────────────────────── */
+
+.import-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s2);
+}
+.progress.import-bar {
+  flex: 1;
+  width: auto;
+}
+.import-pct {
+  width: 4ch;
+  text-align: right;
+  font-size: var(--text-callout);
+  color: var(--label-2);
+}
+
+/* Over everything (sheets included) while a file is dragged over the window.
+   It never takes the pointer: the drag events belong to the window. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  padding: var(--s4);
+  background: var(--scrim-under-toolbar);
+  pointer-events: none;
+  animation: fade-in var(--t2) var(--ease);
+}
+.drop-target {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--r-xl);
+  background: var(--accent-tint);
+}
+.drop-hint {
+  padding: var(--s3) var(--s5);
+  border-radius: var(--r-full);
+  background: var(--glass-strong);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-sheet);
+  font-size: var(--text-title2);
+  font-weight: 600;
+  letter-spacing: var(--track-title);
+  color: var(--label);
+}
