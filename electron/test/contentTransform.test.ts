@@ -13,11 +13,10 @@ import {
   transformFor,
   type Corner,
 } from '../src/shared/contentTransform';
-import { macContentRect, macFittedRect, overlayRect, resizeBubble, snapBox, snapLines } from '../src/shared/cameraOverlay';
+import { macContentRect, macFittedRect } from '../src/shared/cameraOverlay';
 import { fitAspect, type Rect } from '../src/shared/phoneLayer';
-import { previewCursor, previewTarget, type PreviewState } from '../src/shared/previewPointer';
 import { applyOp, validateProject, OP_NAMES } from '../src/shared/agentOps';
-import { defaultCameraOverlay, defaultProject, normalizeProject, resetProject, type Project, type Size } from '../src/shared/types';
+import { defaultProject, normalizeProject, resetProject, type Project, type Size } from '../src/shared/types';
 import { projectCanvasSize } from '../src/shared/mobileProject';
 
 const CANVASES: Record<string, Size> = {
@@ -219,123 +218,6 @@ describe('aspect-locked corner resize', () => {
     expect(cornerAt(r, { x: 100, y: 300 }, 10)).toBe('sw');
     expect(cornerAt(r, { x: 300, y: 200 }, 10)).toBeNull();
     expect(cornerAt(r, { x: 115, y: 100 }, 10)).toBeNull();
-  });
-});
-
-describe('snapping a dragged recording', () => {
-  const canvas = CANVASES['16:9'];
-
-  it('snaps its centre to the canvas centre lines', () => {
-    const s = snapBox({ x: 955, y: 545 }, 800, 450, canvas, null, 8);
-    expect(s.centre).toEqual({ x: 960, y: 540 });
-    expect(s.guides).toEqual([{ axis: 'x', at: 960 }, { axis: 'y', at: 540 }]);
-  });
-
-  it('snaps its edges to the safe inset', () => {
-    const inset = 1080 * 0.04;
-    const s = snapBox({ x: 400 + inset + 5, y: 540 }, 800, 450, canvas, null, 8);
-    expect(s.centre.x - 400).toBeCloseTo(inset, 9);
-  });
-
-  it("snaps to the camera bubble's edges", () => {
-    const bubble = { x: 1500, y: 700, w: 300, h: 300 };
-    expect(snapLines(canvas, bubble).x).toContain(1500);
-    // The recording's right edge 4 px short of the bubble's left edge.
-    const s = snapBox({ x: 1500 - 4 - 300, y: 300 }, 600, 338, canvas, bubble, 8);
-    expect(s.centre.x + 300).toBeCloseTo(1500, 9);
-    expect(s.guides).toContainEqual({ axis: 'x', at: 1500 });
-  });
-
-  it('a threshold of 0 (Option held) does not snap', () => {
-    const s = snapBox({ x: 955, y: 545 }, 800, 450, canvas, null, 0);
-    expect(s.centre).toEqual({ x: 955, y: 545 });
-    expect(s.guides).toEqual([]);
-  });
-});
-
-describe('camera bubble corner resize', () => {
-  const canvas = CANVASES['16:9'];
-  const basis = { x: 160, y: 90, w: 1600, h: 900 };
-  const overlay = { ...defaultCameraOverlay(), enabled: true, position: { x: 0.5, y: 0.5 }, sizeFraction: 0.22 };
-
-  for (const c of ['nw', 'ne', 'sw', 'se'] as Corner[]) {
-    it(`${c} corner: uniform, opposite corner fixed`, () => {
-      const rect = overlayRect(overlay, basis, canvas);
-      const grab = cornerPoint(rect, c);
-      const dir = { x: c.endsWith('e') ? 1 : -1, y: c.startsWith('s') ? 1 : -1 };
-      const next = resizeBubble(rect, c, { x: grab.x + dir.x * 45, y: grab.y + dir.y * 10 }, basis, canvas);
-      expect(next.sizeFraction).toBeCloseTo((rect.w + 45) / 900, 9);
-      const after = overlayRect({ ...overlay, ...next }, basis, canvas);
-      expect(after.w).toBeCloseTo(after.h, 9);
-      const opp = ({ nw: 'se', ne: 'sw', sw: 'ne', se: 'nw' } as const)[c];
-      const fixed = cornerPoint(rect, opp);
-      expect(cornerPoint(after, opp).x).toBeCloseTo(fixed.x, 6);
-      expect(cornerPoint(after, opp).y).toBeCloseTo(fixed.y, 6);
-    });
-  }
-
-  it('with Option, about its centre', () => {
-    const rect = overlayRect(overlay, basis, canvas);
-    const next = resizeBubble(rect, 'se', { x: rect.x + rect.w + 30, y: rect.y + rect.h }, basis, canvas, true);
-    expect(next.position.x).toBeCloseTo(0.5, 9);
-    expect(next.position.y).toBeCloseTo(0.5, 9);
-    expect(next.sizeFraction).toBeCloseTo((rect.w + 60) / 900, 9);
-  });
-
-  it('stays within the fine size limits', () => {
-    const rect = overlayRect(overlay, basis, canvas);
-    expect(resizeBubble(rect, 'se', { x: 99999, y: 99999 }, basis, canvas).sizeFraction).toBeCloseTo(0.5, 9);
-    expect(resizeBubble(rect, 'se', { x: 0, y: 0 }, basis, canvas).sizeFraction).toBeCloseTo(0.1, 9);
-  });
-
-  it('is sized against the fitted recording, so moving the recording leaves it alone', () => {
-    const moved = { x: 900, y: 500, w: 800, h: 450 }; // the recording at 50%, moved
-    expect(overlayRect(overlay, moved, canvas, basis).w).toBeCloseTo(overlayRect(overlay, basis, canvas).w, 9);
-  });
-});
-
-describe('what a press on the preview does', () => {
-  const cam = { rect: { x: 1500, y: 700, w: 300, h: 300 }, circular: true, selected: false };
-  const content = { rect: { x: 160, y: 90, w: 1600, h: 900 }, selected: false };
-  const state = (o: Partial<PreviewState> = {}): PreviewState => ({ cropMode: false, placingTap: false, camera: cam, content, handleRadius: 12, ...o });
-
-  it('crop mode wins over everything', () => {
-    expect(previewTarget({ x: 1650, y: 850 }, state({ cropMode: true, placingTap: true }))).toEqual({ kind: 'crop' });
-  });
-  it('then placing a selected tap', () => {
-    expect(previewTarget({ x: 1650, y: 850 }, state({ placingTap: true }))).toEqual({ kind: 'placeTap' });
-    expect(previewTarget({ x: 500, y: 500 }, state({ placingTap: true, content: { ...content, selected: true } }))).toEqual({ kind: 'placeTap' });
-  });
-  it("then the selected item's corner handles", () => {
-    expect(previewTarget({ x: 162, y: 92 }, state({ content: { ...content, selected: true } }))).toEqual({ kind: 'resize', what: 'content', corner: 'nw' });
-    expect(previewTarget({ x: 1800, y: 1000 }, state({ camera: { ...cam, selected: true } }))).toEqual({ kind: 'resize', what: 'camera', corner: 'se' });
-    // Unselected: a corner is just the body (or nothing).
-    expect(previewTarget({ x: 162, y: 92 }, state())).toEqual({ kind: 'move', what: 'content' });
-  });
-  it("a selected recording's handle under the bubble still resizes the recording", () => {
-    const under = { rect: { x: 160, y: 90, w: 1500, h: 843.75 }, selected: true };
-    const bubble = { rect: { x: 1500, y: 780, w: 300, h: 300 }, circular: false, selected: false };
-    expect(previewTarget({ x: 1660, y: 933 }, state({ content: under, camera: bubble }))).toEqual({ kind: 'resize', what: 'content', corner: 'se' });
-  });
-  it('then the camera bubble, above the recording', () => {
-    expect(previewTarget({ x: 1650, y: 850 }, state())).toEqual({ kind: 'move', what: 'camera' });
-    // Outside a round bubble's circle (its square's corner) is the recording.
-    expect(previewTarget({ x: 1510, y: 710 }, state())).toEqual({ kind: 'move', what: 'content' });
-  });
-  it('then the recording, then nothing', () => {
-    expect(previewTarget({ x: 600, y: 400 }, state())).toEqual({ kind: 'move', what: 'content' });
-    expect(previewTarget({ x: 40, y: 40 }, state())).toEqual({ kind: 'none' });
-    // An App Store preview's recording can't be moved: the press deselects.
-    expect(previewTarget({ x: 600, y: 400 }, state({ content: null }))).toEqual({ kind: 'none' });
-  });
-  it('cursors', () => {
-    expect(previewCursor({ kind: 'resize', what: 'content', corner: 'nw' })).toBe('nwse-resize');
-    expect(previewCursor({ kind: 'resize', what: 'camera', corner: 'ne' })).toBe('nesw-resize');
-    expect(previewCursor({ kind: 'move', what: 'content' })).toBe('move');
-    expect(previewCursor({ kind: 'move', what: 'camera' })).toBe('grab');
-    expect(previewCursor({ kind: 'move', what: 'camera' }, true)).toBe('grabbing');
-    expect(previewCursor({ kind: 'crop' })).toBe('crosshair');
-    expect(previewCursor({ kind: 'none' })).toBeUndefined();
   });
 });
 

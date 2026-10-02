@@ -84,11 +84,25 @@ import {
   OVERLAY_SIZES,
   clampOverlaySize,
   overlaySizeName,
-  resizeBubble,
-  snapBox,
-  snapBubble,
-  type Guide,
 } from '../../shared/cameraOverlay';
+import {
+  canHide,
+  hideLayer,
+  hitLayer,
+  layerLabel,
+  layerOrder,
+  nudgeLayer,
+  placeLayer,
+  resetLayer,
+  resizeLimits,
+  restack,
+  snapBox,
+  withLayerTransform,
+  type Guide,
+  type LayerBox,
+  type LayerId,
+  type Restack,
+} from '../../shared/canvasLayers';
 import {
   CORNERS,
   MAX_CONTENT_SCALE,
@@ -256,17 +270,17 @@ export function Editor({
   // "Just me" and the rest: which tabs, zoom switches and lanes apply.
   const features = editorFeatures(proj);
   const [selectedTap, setSelectedTap] = useState<string | null>(null);
-  // The camera bubble and the recording on the preview: which is selected
-  // (accent outline and corner handles), the cursor for what the pointer is
-  // over, and while one is dragged, how (shared/previewPointer) and the snap
-  // guides it is on.
-  const [camSelected, setCamSelected] = useState(false);
-  const [contentSelected, setContentSelected] = useState(false);
+  // The layers on the preview (shared/canvasLayers): which is selected
+  // (accent outline and corner handles) and which hovered (a thin outline),
+  // the cursor for what the pointer is over, and while one is dragged, how
+  // (shared/previewPointer) and the snap guides it is on.
+  const [selectedLayer, setSelectedLayer] = useState<LayerId | null>(null);
+  const [hoveredLayer, setHoveredLayer] = useState<LayerId | null>(null);
   const [hoverCursor, setHoverCursor] = useState<string | undefined>(undefined);
-  const [camGuides, setCamGuides] = useState<Guide[]>([]);
+  const [guides, setGuides] = useState<Guide[]>([]);
   const previewDrag = useRef<
-    | { kind: 'move'; what: 'camera' | 'content'; dx: number; dy: number }
-    | { kind: 'resize'; what: 'camera' | 'content'; corner: Corner; start: Rect }
+    | { kind: 'move'; layer: LayerBox; dx: number; dy: number }
+    | { kind: 'resize'; layer: LayerBox; corner: Corner }
     | null
   >(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -482,13 +496,11 @@ export function Editor({
   /** What is on the preview for a press to pick (shared/previewPointer). */
   const previewState = (): PreviewState => {
     const shown = canvasRef.current?.getBoundingClientRect();
-    const cam = compositor.cameraRect;
-    const content = compositor.contentRect;
     return {
       cropMode,
       placingTap: !!selectedTap,
-      camera: cam && camUrl ? { rect: cam, circular: proj.cameraOverlay.circular, selected: camSelected } : null,
-      content: content ? { rect: content, selected: contentSelected } : null,
+      layers: compositor.layers,
+      selected: selectedLayer,
       // Handles answer within 9 screen points, whatever the preview's scale.
       handleRadius: shown ? (9 * canvasSize.width) / shown.width : 12,
     };
@@ -500,16 +512,10 @@ export function Editor({
     return shown ? canvasSize.width / shown.width : 1;
   };
 
-  const select = (what: 'camera' | 'content' | null) => {
-    setCamSelected(what === 'camera');
-    setContentSelected(what === 'content');
-  };
+  /** The selected layer as drawn at the last render. */
+  const selectedBox = () => (selectedLayer ? compositor.layers.find((l) => l.id === selectedLayer) : undefined);
 
-  const setContentTransform = (t: ContentTransform | undefined) =>
-    setProj((p) => {
-      const { contentTransform: _, ...style } = p.style;
-      return { ...p, style: t ? { ...style, contentTransform: t } : style };
-    });
+  const setContentTransform = (t: ContentTransform | undefined) => setProj((p) => withLayerTransform(p, 'content', t));
 
   const onCanvasDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.button !== 0) return;
@@ -542,67 +548,40 @@ export function Editor({
       return;
     }
     if (target.kind === 'none') {
-      select(null);
+      setSelectedLayer(null);
       return;
     }
     // Select it; a drag moves or resizes it, one undo step however long.
-    const r = target.what === 'camera' ? compositor.cameraRect : compositor.contentRect;
-    if (!r) return;
-    select(target.what);
+    const { layer } = target;
+    setSelectedLayer(layer.id);
+    const r = layer.rect;
     previewDrag.current =
       target.kind === 'resize'
-        ? { kind: 'resize', what: target.what, corner: target.corner, start: r }
-        : { kind: 'move', what: target.what, dx: px.x - (r.x + r.w / 2), dy: px.y - (r.y + r.h / 2) };
+        ? { kind: 'resize', layer, corner: target.corner }
+        : { kind: 'move', layer, dx: px.x - (r.x + r.w / 2), dy: px.y - (r.y + r.h / 2) };
     historyRef.current.hold();
     e.currentTarget.setPointerCapture(e.pointerId);
     setHoverCursor(previewCursor(target, true));
   };
 
-  /** A press-and-drag on the camera or the recording, under way. */
+  /** A press-and-drag on a layer, under way. Works from the layer as it was
+   *  grabbed, so the gesture never feeds back on itself. */
   const dragPreview = (e: React.PointerEvent, px: { x: number; y: number }) => {
     const drag = previewDrag.current!;
+    const { layer } = drag;
     const threshold = 8 * canvasPerPoint(); // snap within 8 screen points
-    if (drag.what === 'camera') {
-      const r = compositor.cameraRect;
-      const visible = compositor.screenMap?.screen;
-      const basis = compositor.cameraBasis;
-      if (!r || !visible || !basis) return;
-      if (drag.kind === 'resize') {
-        // Square, so any corner resizes it evenly; Option resizes about the centre.
-        const next = resizeBubble(drag.start, drag.corner, px, basis, canvasSize, e.altKey);
-        setProj((p) => ({ ...p, cameraOverlay: { ...p.cameraOverlay, ...next } }));
-        return;
-      }
-      const grabbed = { x: px.x - drag.dx, y: px.y - drag.dy };
-      const snap = snapBubble(grabbed, r.w, canvasSize, visible, e.altKey ? 0 : threshold);
-      setCamGuides(snap.guides);
-      setProj((p) => ({
-        ...p,
-        cameraOverlay: { ...p.cameraOverlay, position: { x: snap.centre.x / canvasSize.width, y: snap.centre.y / canvasSize.height } },
-      }));
-      return;
-    }
-    const r = compositor.contentRect;
-    const base = compositor.contentBase;
-    if (!r || !base) return;
     if (drag.kind === 'resize') {
-      // Aspect locked, from the opposite corner (Option: the centre), snapping at 100%.
-      const next = resizeFromCorner(drag.start, drag.corner, px, {
-        fromCentre: e.altKey,
-        minW: base.w * MIN_CONTENT_SCALE,
-        maxW: base.w * MAX_CONTENT_SCALE,
-        snapW: { at: base.w, threshold },
-      });
-      setContentTransform(transformFor(base, keepOnCanvas(next, canvasSize), canvasSize));
+      // Aspect locked, from the opposite corner (Option: the centre).
+      const next = resizeFromCorner(layer.rect, drag.corner, px, { ...resizeLimits(layer, threshold), fromCentre: e.altKey });
+      setProj((p) => placeLayer(p, layer, next, canvasSize));
       return;
     }
-    // The bubble's edges are guides for the recording, and the other way round.
-    const cam = camUrl ? compositor.cameraRect : null;
-    const grabbed = { x: px.x - drag.dx, y: px.y - drag.dy };
-    const snap = snapBox(grabbed, r.w, r.h, canvasSize, cam, e.altKey ? 0 : threshold);
-    setCamGuides(snap.guides);
-    const placed = keepOnCanvas({ x: snap.centre.x - r.w / 2, y: snap.centre.y - r.h / 2, w: r.w, h: r.h }, canvasSize);
-    setContentTransform({ ...transformFor(base, placed, canvasSize), scale: contentScale(proj.style.contentTransform) });
+    // Every other layer's edges and centre are guides (Option: no snapping).
+    const others = compositor.layers.filter((l) => l.id !== layer.id).map((l) => l.rect);
+    const { w, h } = layer.rect;
+    const snap = snapBox({ x: px.x - drag.dx, y: px.y - drag.dy }, w, h, canvasSize, others, e.altKey ? 0 : threshold);
+    setGuides(snap.guides);
+    setProj((p) => placeLayer(p, layer, { x: snap.centre.x - w / 2, y: snap.centre.y - h / 2, w, h }, canvasSize));
   };
 
   const onCanvasMove = (e: React.PointerEvent) => {
@@ -613,8 +592,11 @@ export function Editor({
       return;
     }
     if (!cropDrag.current) {
-      const cursor = previewCursor(previewTarget(px, previewState()));
+      const target = previewTarget(px, previewState());
+      const cursor = previewCursor(target);
       if (cursor !== hoverCursor) setHoverCursor(cursor);
+      const over = target.kind === 'move' || target.kind === 'resize' ? target.layer.id : null;
+      if (over !== hoveredLayer) setHoveredLayer(over);
     }
     if (!cropMode || !cropDrag.current) return;
     const p = canvasToSource(e.clientX, e.clientY);
@@ -643,7 +625,7 @@ export function Editor({
   const onCanvasUp = () => {
     if (previewDrag.current) {
       previewDrag.current = null;
-      setCamGuides([]);
+      setGuides([]);
       setHoverCursor(undefined);
       return;
     }
@@ -652,12 +634,46 @@ export function Editor({
     setCropMode(false);
   };
 
-  // Double-click the recording: back to where the layout fits it.
-  const onCanvasDoubleClick = (e: React.MouseEvent) => {
+  /** The layer under a pointer event, ignoring handles (double-click, right-click). */
+  const layerAt = (e: React.MouseEvent) => {
     const px = canvasPoint(e.clientX, e.clientY);
-    if (!px || !proj.style.contentTransform) return;
-    const target = previewTarget(px, { ...previewState(), content: compositor.contentRect ? { rect: compositor.contentRect, selected: false } : null });
-    if (target.kind === 'move' && target.what === 'content') setContentTransform(undefined);
+    if (!px || cropMode || selectedTap) return null;
+    return hitLayer(compositor.layers, px);
+  };
+
+  // Double-click a layer: back to where the layout puts it.
+  const onCanvasDoubleClick = (e: React.MouseEvent) => {
+    const layer = layerAt(e);
+    if (layer) setProj((p) => resetLayer(p, layer.id));
+  };
+
+  const restackLayer = (id: LayerId, how: Restack) => setProj((p) => restack(p, id, how));
+
+  // Right-click a layer: stacking, reset and hide.
+  const onCanvasMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const layer = layerAt(e);
+    if (!layer) return;
+    setSelectedLayer(layer.id);
+    const order = layerOrder(proj);
+    const at = order.indexOf(layer.id);
+    void popMenu([
+      { id: 'front', label: 'Bring to Front', enabled: at < order.length - 1, run: () => restackLayer(layer.id, 'front') },
+      { id: 'back', label: 'Send to Back', enabled: at > 0, run: () => restackLayer(layer.id, 'back') },
+      { type: 'separator' },
+      { id: 'reset', label: 'Reset Position & Size', run: () => setProj((p) => resetLayer(p, layer.id)) },
+      ...(canHide(layer.id)
+        ? [{ id: 'hide', label: `Hide ${layerLabel(proj, layer.id)}`, run: () => hideSelected(layer.id) }]
+        : []),
+    ]);
+  };
+
+  /** Hide a layer (never the recording) and let go of it. */
+  const hideSelected = (id: LayerId) => {
+    if (!canHide(id)) return;
+    setProj((p) => hideLayer(p, id));
+    setSelectedLayer(null);
+    setHoveredLayer(null);
   };
 
   // Draw the composited frame at output time `outT` onto the preview canvas.
@@ -722,7 +738,7 @@ export function Editor({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [compositor, canvasSize, smoothed, keys, clickEv, cropMode, proj, selectedTap, titleFocus, camSelected, contentSelected, camGuides],
+    [compositor, canvasSize, smoothed, keys, clickEv, cropMode, proj, selectedTap, titleFocus, selectedLayer, hoveredLayer, guides],
   );
 
   /** Preview-only marks, never exported: the selected tap and, while the
@@ -746,22 +762,39 @@ export function Editor({
         ctx.stroke();
       }
     };
-    const content = compositor.contentRect;
-    if (contentSelected && content) {
+    // A box's outline, just outside it: round for a round bubble.
+    const outline = (l: LayerBox, width: number) => {
+      const r = l.rect;
+      const g = 2 * pt;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      if (l.round) ctx.arc(r.x + r.w / 2, r.y + r.h / 2, r.w / 2 + g, 0, Math.PI * 2);
+      else ctx.rect(r.x - g / 2, r.y - g / 2, r.w + g, r.h + g);
+      ctx.stroke();
+    };
+    const hovered = hoveredLayer && hoveredLayer !== selectedLayer ? compositor.layers.find((l) => l.id === hoveredLayer) : undefined;
+    if (hovered && !previewDrag.current) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,138,61,0.85)';
+      outline(hovered, 1 * pt);
+      ctx.restore();
+    }
+    const sel = selectedBox();
+    if (sel) {
       ctx.save();
       ctx.strokeStyle = '#FF8A3D';
-      ctx.lineWidth = 1.5 * pt;
-      ctx.strokeRect(content.x, content.y, content.w, content.h);
-      handles(content);
+      outline(sel, 1.5 * pt);
+      handles(sel.rect);
       const drag = previewDrag.current;
-      if (drag?.kind === 'resize' && drag.what === 'content') {
+      if (drag?.kind === 'resize' && sel.base) {
         // The size as it changes, under the box.
-        const label = `${Math.round(contentScale(proj.style.contentTransform) * 100)}%`;
+        const label = `${Math.round((sel.rect.w / sel.base.w) * 100)}%`;
+        const r = sel.rect;
         const fs = 11 * pt;
         ctx.font = `600 ${fs}px -apple-system, sans-serif`;
         const w = ctx.measureText(label).width + fs;
-        const x = Math.min(Math.max(content.x + content.w / 2 - w / 2, 0), canvasSize.width - w);
-        const y = Math.min(content.y + content.h + 8 * pt, canvasSize.height - fs * 1.8);
+        const x = Math.min(Math.max(r.x + r.w / 2 - w / 2, 0), canvasSize.width - w);
+        const y = Math.min(r.y + r.h + 8 * pt, canvasSize.height - fs * 1.8);
         ctx.fillStyle = '#FF8A3D';
         ctx.beginPath();
         ctx.roundRect(x, y, w, fs * 1.8, fs * 0.9);
@@ -773,25 +806,12 @@ export function Editor({
       }
       ctx.restore();
     }
-    const cam = compositor.cameraRect;
-    if (camSelected && cam && camUrl) {
-      ctx.save();
-      ctx.strokeStyle = '#FF8A3D';
-      ctx.lineWidth = 2 * unit;
-      const g = 3 * unit;
-      ctx.beginPath();
-      if (proj.cameraOverlay.circular) ctx.arc(cam.x + cam.w / 2, cam.y + cam.h / 2, cam.w / 2 + g, 0, Math.PI * 2);
-      else ctx.roundRect(cam.x - g, cam.y - g, cam.w + 2 * g, cam.h + 2 * g, cam.w * 0.18 + g);
-      ctx.stroke();
-      handles(cam);
-      ctx.restore();
-    }
-    if (camGuides.length) {
+    if (guides.length) {
       ctx.save();
       ctx.strokeStyle = '#FF3B9A';
       ctx.lineWidth = 1.5 * unit;
       ctx.beginPath();
-      for (const g of camGuides) {
+      for (const g of guides) {
         if (g.axis === 'x') {
           ctx.moveTo(g.at, 0);
           ctx.lineTo(g.at, canvasSize.height);
@@ -1536,22 +1556,43 @@ export function Editor({
       }
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
       if ((e.target as HTMLElement)?.getAttribute?.('role') === 'spinbutton') return;
+      // ⌘] / ⌘[ bring the selected layer forward / send it back a step; with ⇧, all the way.
+      if (e.metaKey && selectedLayer && (e.code === 'BracketRight' || e.code === 'BracketLeft')) {
+        e.preventDefault();
+        const up = e.code === 'BracketRight';
+        restackLayer(selectedLayer, e.shiftKey ? (up ? 'front' : 'back') : up ? 'forward' : 'backward');
+        return;
+      }
       // ⌘Z / ⇧⌘Z come from the app menu (Edit > Undo/Redo) so one press is one undo.
       // ⌘S, ⌘⌫ and friends belong to the menu, not to split and delete.
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // The arrow keys nudge the selected layer 1 px (⇧: 10 px), unless a control has them.
+      const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+      const role = (e.target as HTMLElement)?.getAttribute?.('role');
+      const box = selectedBox();
+      if (arrow && box && !role) {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        setProj((p) => nudgeLayer(p, box, arrow[0] * step, arrow[1] * step, canvasSize));
+        return;
+      }
       if (e.code === 'Space') {
         e.preventDefault();
         togglePlay();
       } else if (e.key === 'Escape' && selectedTap) {
         setSelectedTap(null);
-      } else if (e.key === 'Escape' && (camSelected || contentSelected)) {
-        select(null);
+      } else if (e.key === 'Escape' && selectedLayer) {
+        setSelectedLayer(null);
       } else if (e.key === 'Escape' && selectedAudio) {
         setSelectedAudio(null);
       } else if (e.key === 's' || e.key === 'S') {
         splitAtPlayhead();
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
-        if (editTranscript && wordSel) {
+        if (selectedLayer) {
+          // A selected layer hides (camera, phone, text, title); the recording never does.
+          e.preventDefault();
+          hideSelected(selectedLayer);
+        } else if (editTranscript && wordSel) {
           e.preventDefault();
           cutSelectedWords();
         } else if (selectedTap) {
@@ -2172,6 +2213,7 @@ export function Editor({
     setSelectedClip(null);
     setSelectedTap(null);
     setSelectedAudio(null);
+    setSelectedLayer(null);
     setCropMode(false);
     setSmartCuts(null);
     setWordSel(null);
@@ -2509,7 +2551,7 @@ export function Editor({
   const cameraPanel = camUrl && (
     <Section title="Camera">
       <Switch label="Show camera" checked={proj.cameraOverlay.enabled} onChange={(v) => setCamera({ enabled: v })} />
-      <p className="row-hint">Drag the camera in the preview to move it, or its corners to resize it. Hold Option to move it without snapping, or to resize it about its centre.</p>
+      <p className="row-hint">Drag the camera in the preview to move it, or its corners to resize it. Hold Option to move it without snapping, or to resize it about its centre. Right-click it to restack, reset or hide it.</p>
       <div className="field-block">
         <span className="row-label">Shape</span>
         <Segmented
@@ -2570,9 +2612,10 @@ export function Editor({
               { value: 'side-by-side-right', label: 'Right' },
               { value: 'corner', label: 'Corner' },
             ]}
-            onChange={(layout) => setPhone({ layout, enabled: true })}
+            onChange={(layout) => setProj((p) => withLayerTransform({ ...p, phoneOverlay: { ...p.phoneOverlay, layout, enabled: true } }, 'phone', undefined))}
           />
         </div>
+        <p className="row-hint">Quick placements. Drag the phone in the preview to put it anywhere, or its corners to resize it.</p>
         {phoneOverlay.layout === 'corner' && (
           <div className="field-block">
             <span className="row-label">Corner</span>
@@ -2586,7 +2629,7 @@ export function Editor({
                 { value: 'bottomLeft', label: 'Bottom left' },
                 { value: 'bottomRight', label: 'Bottom right' },
               ]}
-              onChange={(corner) => setPhone({ corner })}
+              onChange={(corner) => setProj((p) => withLayerTransform({ ...p, phoneOverlay: { ...p.phoneOverlay, corner } }, 'phone', undefined))}
             />
           </div>
         )}
@@ -2859,22 +2902,41 @@ export function Editor({
                     }))
                   }
                 />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="band-btn"
-                  title="Position: top / middle / bottom"
-                  onClick={() =>
-                    setProj((p) => ({
-                      ...p,
-                      annotations: p.annotations.map((x) =>
-                        x.id === a.id ? { ...x, band: ((x.band + 1) % 3) as 0 | 1 | 2 } : x,
-                      ),
-                    }))
-                  }
-                >
-                  {a.band === 0 ? 'Top' : a.band === 1 ? 'Middle' : 'Bottom'}
-                </Button>
+                {a.hidden ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="band-btn"
+                    title="Hidden on the canvas. Click to show it again."
+                    onClick={() =>
+                      setProj((p) => ({
+                        ...p,
+                        annotations: p.annotations.map((x) => (x.id === a.id ? { ...x, hidden: undefined } : x)),
+                      }))
+                    }
+                  >
+                    Show
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="band-btn"
+                    title="Quick placement: top / middle / bottom (or drag it in the preview)"
+                    onClick={() =>
+                      setProj((p) => ({
+                        ...p,
+                        annotations: p.annotations.map((x) => {
+                          if (x.id !== a.id) return x;
+                          const { transform: _, ...rest } = x;
+                          return { ...rest, band: ((x.band + 1) % 3) as 0 | 1 | 2 };
+                        }),
+                      }))
+                    }
+                  >
+                    {a.band === 0 ? 'Top' : a.band === 1 ? 'Middle' : 'Bottom'}
+                  </Button>
+                )}
                 <IconButton
                   label="Delete"
                   className="sm"
@@ -3287,8 +3349,13 @@ export function Editor({
               onPointerMove={onCanvasMove}
               onPointerUp={onCanvasUp}
               onPointerCancel={onCanvasUp}
-              onPointerLeave={() => !previewDrag.current && setHoverCursor(undefined)}
+              onPointerLeave={() => {
+                if (previewDrag.current) return;
+                setHoverCursor(undefined);
+                setHoveredLayer(null);
+              }}
               onDoubleClick={onCanvasDoubleClick}
+              onContextMenu={onCanvasMenu}
             />
           </div>
         </div>

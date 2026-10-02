@@ -20,6 +20,7 @@ import { withProbedDuration } from '../shared/recording';
 import { randomUUID } from 'node:crypto';
 import { itemSpan } from '../shared/audioTracks';
 import { phoneDevice, phoneLayerOn } from '../shared/phoneLayer';
+import { layerOrder } from '../shared/canvasLayers';
 import { analyzeTapsInFile, bundleAudioPath, detectSilences, ffmpegPath, probeAudioDuration, ffmpegRun, ffmpegStderr, parseWhisperJson, probeMedia, transcribeBundle, whisperCli } from './media';
 
 // ---------------------------------------------------------------------------
@@ -175,6 +176,8 @@ function summarize(dir: string, p: Project) {
     layout: p.layout,
     // The recording moved/resized by hand (the `content` op); null = where the layout fits it.
     content: p.style.contentTransform ?? null,
+    // Canvas layers bottom to top (the `layer` op restacks them).
+    layers: layerOrder(p),
     cameraOverlay: p.cameraOverlay,
     phone: phoneSummary(dir, p),
     audio: p.audio,

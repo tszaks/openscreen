@@ -122,6 +122,10 @@ export interface Annotation {
   /** 0=top, 1=middle, 2=bottom third of the content frame */
   band: 0 | 1 | 2;
   hex: string;
+  /** Moved and resized on the canvas, from where its band puts it. */
+  transform?: ContentTransform;
+  /** Hidden from the canvas (and exports), kept in the list. */
+  hidden?: boolean;
 }
 
 export interface CameraOverlay {
@@ -158,6 +162,8 @@ export interface PhoneOverlay {
   shadow: boolean;
   /** Mix the phone's own sound into the export (the Mac's sound is always primary). */
   sound: boolean;
+  /** Moved and resized on the canvas, from where `layout` puts it. */
+  transform?: ContentTransform;
 }
 
 /** `camera`: a camera recorded as the main source ("Just me"). */
@@ -242,7 +248,7 @@ export interface LayoutSettings {
   /** exportPresets.ts id, or 'none' for the classic padded frame. */
   presetId: string;
   background: 'style' | 'blurred';
-  titleCard?: { title: string; subtitle: string };
+  titleCard?: { title: string; subtitle: string; transform?: ContentTransform; hidden?: boolean };
 }
 
 export interface AudioSettings {
@@ -324,6 +330,9 @@ export interface Project {
   layout: LayoutSettings;
   /** Extra tracks under the recording (music, voiceover). Empty for most projects. */
   tracks: Track[];
+  /** The canvas layers bottom to top, when reordered by hand (shared/canvasLayers.ts).
+   *  Absent: the order they have always drawn in. */
+  layerOrder?: string[];
 }
 
 export const defaultStyle = (): StyleSettings => ({

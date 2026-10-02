@@ -23,6 +23,7 @@ import { addItem, fitToVideo, newAudioItem, segmentLength, trackProblems, withMu
 import { Timeline } from './timeline';
 import type { TapSuggestion } from './taps';
 import { MAX_CONTENT_SCALE, MIN_CONTENT_SCALE } from './contentTransform';
+import { canHide, defaultLayerOrder, hideLayer, layerOrder, resetLayer, restack, textLayer, withLayerTransform, type LayerId, type Restack } from './canvasLayers';
 import type { Annotation, AudioItem, Background, CaptionCue, Chapter, Clip, ContentTransform, Project, TranscriptWord, WaitRange } from './types';
 
 export interface TranscriptSegment {
@@ -95,6 +96,40 @@ const ranges = (o: EditOp, k = 'ranges'): TimeRange[] => {
     return { start: r.start, end: r.end };
   });
 };
+/** A layer transform with `o`'s x/y/scale over `cur` (x/y: centre as canvas fractions; scale against the fitted size). */
+function patchTransform(op: string, cur: ContentTransform | undefined, o: EditOp): ContentTransform {
+  const next: ContentTransform = { scale: cur?.scale ?? 1 };
+  if (cur?.x !== undefined) next.x = cur.x;
+  if (cur?.y !== undefined) next.y = cur.y;
+  for (const k of ['x', 'y'] as const) {
+    if (o[k] === undefined) continue;
+    const v = Number(o[k]);
+    if (!Number.isFinite(v)) throw new OpError(`${op}: ${k} is the centre as a fraction of the canvas (0..1; 0.5 is the middle)`);
+    next[k] = v;
+  }
+  if (o.scale !== undefined) {
+    const v = Number(o.scale);
+    if (!(v >= MIN_CONTENT_SCALE && v <= MAX_CONTENT_SCALE)) throw new OpError(`${op}: scale is ${MIN_CONTENT_SCALE}..${MAX_CONTENT_SCALE} (1 = the size the layout gives it)`);
+    next.scale = v;
+  }
+  return next;
+}
+
+/** The layer an op names: content | camera | phone | title | text:<annotation id or index>. */
+function layerIdFor(o: EditOp, p: Project): LayerId {
+  const raw = typeof o.id === 'string' ? o.id : '';
+  if (raw === 'content' || raw === 'camera' || raw === 'phone' || raw === 'title') return raw;
+  const m = /^text:(.+)$/.exec(raw);
+  if (m) {
+    const byId = p.annotations.find((a) => a.id === m[1]);
+    const byIndex = /^\d+$/.test(m[1]) ? p.annotations[Number(m[1])] : undefined;
+    const a = byId ?? byIndex;
+    if (a) return textLayer(a.id);
+    throw new OpError(`layer: no text overlay "${m[1]}" (info lists their ids and indexes)`);
+  }
+  throw new OpError('layer: id is content | camera | phone | title | text:<annotation id or index>');
+}
+
 const pick = <T extends object>(o: EditOp, keys: (keyof T & string)[]): Partial<T> => {
   const out: Partial<T> = {};
   for (const k of keys) if (o[k] !== undefined) (out as Record<string, unknown>)[k] = o[k];
@@ -153,6 +188,13 @@ const SPEED_MIN = 0.1;
 const SPEED_MAX = 16;
 
 /** Problems that would make the editor or the export misbehave. Empty = valid. */
+/** A layer transform that is set must have a scale in range and numeric x/y. */
+function transformProblem(path: string, t: ContentTransform | undefined, errs: string[]) {
+  if (t === undefined) return;
+  if (!t || typeof t !== 'object' || !(t.scale >= MIN_CONTENT_SCALE && t.scale <= MAX_CONTENT_SCALE)) errs.push(`${path}.scale must be ${MIN_CONTENT_SCALE}..${MAX_CONTENT_SCALE}`);
+  else if ((t.x !== undefined && !Number.isFinite(t.x)) || (t.y !== undefined && !Number.isFinite(t.y))) errs.push(`${path} x and y must be numbers (fractions of the canvas)`);
+}
+
 export function validateProject(p: Project): string[] {
   const errs: string[] = [];
   const d = p.recording?.duration;
@@ -204,11 +246,7 @@ export function validateProject(p: Project): string[] {
     const b = s.background as Background | undefined;
     if (!b || !['solid', 'gradient', 'mesh', 'imageFile', 'wallpaper'].includes(b.kind)) errs.push('style.background.kind must be solid|gradient|mesh|imageFile|wallpaper');
     else if (b.kind === 'mesh' && !(/^#[0-9a-f]{6}$/i.test(b.baseHex) && Array.isArray(b.blobs) && b.blobs.every((o) => /^#[0-9a-f]{6}$/i.test(o.hex) && Number.isFinite(o.x) && Number.isFinite(o.y) && Number.isFinite(o.r) && o.r > 0) && (b.grain === undefined || Number.isFinite(b.grain)))) errs.push('style.background mesh needs baseHex #rrggbb, blobs [{x,y,r>0,hex}] with finite numbers, and a finite grain if set');
-    if (s.contentTransform !== undefined) {
-      const t = s.contentTransform;
-      if (!t || typeof t !== 'object' || !(t.scale >= MIN_CONTENT_SCALE && t.scale <= MAX_CONTENT_SCALE)) errs.push(`style.contentTransform.scale must be ${MIN_CONTENT_SCALE}..${MAX_CONTENT_SCALE}`);
-      else if ((t.x !== undefined && !Number.isFinite(t.x)) || (t.y !== undefined && !Number.isFinite(t.y))) errs.push('style.contentTransform x and y must be numbers (fractions of the canvas)');
-    }
+    transformProblem('style.contentTransform', s.contentTransform, errs);
     if (s.cropRect) {
       const c = s.cropRect;
       if (!(c.x >= 0 && c.y >= 0 && c.w > 0 && c.h > 0 && c.x + c.w <= 1 + EPS && c.y + c.h <= 1 + EPS)) errs.push('style.cropRect must be normalized and inside the frame');
@@ -226,8 +264,17 @@ export function validateProject(p: Project): string[] {
     if (!['white', 'accent'].includes(p.tapStyle.color)) errs.push('tapStyle.color must be white|accent');
   }
   if (p.cameraOverlay && !['topLeft', 'topRight', 'bottomLeft', 'bottomRight'].includes(p.cameraOverlay.corner)) errs.push('cameraOverlay.corner is invalid');
+  (p.annotations ?? []).forEach((a, i) => transformProblem(`annotations[${i}].transform`, a.transform, errs));
+  transformProblem('layout.titleCard.transform', p.layout?.titleCard?.transform, errs);
+  if (p.layerOrder !== undefined) {
+    const known = new Set<string>(defaultLayerOrder(p));
+    if (!Array.isArray(p.layerOrder) || p.layerOrder.some((x) => typeof x !== 'string' || !known.has(x))) {
+      errs.push('layerOrder must list layer ids: content, camera, phone, title, text:<annotation id>');
+    }
+  }
   if (p.phoneOverlay) {
     const ph = p.phoneOverlay;
+    transformProblem('phoneOverlay.transform', ph.transform, errs);
     if (!['side-by-side-right', 'side-by-side-left', 'corner'].includes(ph.layout)) errs.push('phoneOverlay.layout must be side-by-side-right|side-by-side-left|corner');
     if (!['topLeft', 'topRight', 'bottomLeft', 'bottomRight'].includes(ph.corner)) errs.push('phoneOverlay.corner must be topLeft|topRight|bottomLeft|bottomRight');
     if (!(ph.size >= 0.3 && ph.size <= 1)) errs.push('phoneOverlay.size must be 0.3..1');
@@ -339,7 +386,7 @@ export const OP_NAMES = [
   'camera', 'content', 'phone', 'style', 'background', 'crop',
   'device', 'tapStyle', 'addTap', 'moveTap', 'removeTap', 'clearTaps', 'analyzeTaps',
   'speedUpWaits', 'cutWaits', 'setWaits',
-  'layout', 'titleCard', 'exportSettings',
+  'layout', 'titleCard', 'layer', 'exportSettings',
   'addAudio', 'moveAudio', 'trimAudio', 'editAudio', 'fitAudio', 'removeAudio', 'audioTrack',
   'set',
 ] as const;
@@ -630,7 +677,11 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
     }
     case 'editAnnotation': {
       const i = locateItem(o, p.annotations, 'annotation');
-      const a = { ...p.annotations[i], ...pick<Annotation>(o, ['start', 'end', 'text', 'band', 'hex']) };
+      const a: Annotation = { ...p.annotations[i], ...pick<Annotation>(o, ['start', 'end', 'text', 'band', 'hex', 'hidden']) };
+      if (o.hidden === false) delete a.hidden;
+      // A band is a quick placement; x/y/scale move and resize it on the canvas from there.
+      if (o.band !== undefined || o.reset === true) delete a.transform;
+      if (o.x !== undefined || o.y !== undefined || o.scale !== undefined) a.transform = patchTransform('editAnnotation', a.transform, o);
       return { project: { ...p, annotations: p.annotations.map((x, j) => (j === i ? a : x)) }, note: `annotation ${i} edited` };
     }
     case 'removeAnnotation': {
@@ -656,27 +707,10 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
     }
     case 'content': {
       // The recording moved and resized on the canvas: x/y its centre (canvas fractions), scale against the fitted size.
-      if (o.reset === true) {
-        const { contentTransform: _, ...style } = p.style;
-        return { project: { ...p, style }, note: 'content back where the layout fits it' };
-      }
+      if (o.reset === true) return { project: withLayerTransform(p, 'content', undefined), note: 'content back where the layout fits it' };
       if (o.x === undefined && o.y === undefined && o.scale === undefined) throw new OpError('content: pass x, y, scale, or reset:true');
-      const cur = p.style.contentTransform;
-      const next: ContentTransform = { scale: cur?.scale ?? 1 };
-      if (cur?.x !== undefined) next.x = cur.x;
-      if (cur?.y !== undefined) next.y = cur.y;
-      for (const k of ['x', 'y'] as const) {
-        if (o[k] === undefined) continue;
-        const v = Number(o[k]);
-        if (!Number.isFinite(v)) throw new OpError(`content: ${k} is the centre as a fraction of the canvas (0..1; 0.5 is the middle)`);
-        next[k] = v;
-      }
-      if (o.scale !== undefined) {
-        const v = Number(o.scale);
-        if (!(v >= MIN_CONTENT_SCALE && v <= MAX_CONTENT_SCALE)) throw new OpError(`content: scale is ${MIN_CONTENT_SCALE}..${MAX_CONTENT_SCALE} (1 = the size the layout fits it at)`);
-        next.scale = v;
-      }
-      return { project: { ...p, style: { ...p.style, contentTransform: next } }, note: `content ${JSON.stringify(next)}` };
+      const next = patchTransform('content', p.style.contentTransform, o);
+      return { project: withLayerTransform(p, 'content', next), note: `content ${JSON.stringify(next)}` };
     }
     case 'phone': {
       if (!p.recording.phoneVideoFile) throw new OpError('phone: this recording has no phone video (only Mac takes recorded with "iPhone or iPad" on have one)');
@@ -684,6 +718,12 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
       const next = { ...p.phoneOverlay, ...patch };
       if (o.modelId === null) delete next.modelId;
       if (o.finishId === null) delete next.finishId;
+      // A layout or corner is a quick placement: it puts the phone back where that layout fits it.
+      if (o.layout !== undefined || o.corner !== undefined || o.reset === true) delete next.transform;
+      if (o.x !== undefined || o.y !== undefined || o.scale !== undefined) {
+        next.transform = patchTransform('phone', next.transform, o);
+        Object.assign(patch, { transform: next.transform });
+      }
       return { project: { ...p, phoneOverlay: next }, note: `phone ${JSON.stringify(patch)}` };
     }
     case 'style': {
@@ -791,8 +831,38 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
         const { titleCard: _t, ...rest } = p.layout;
         return { project: { ...p, layout: rest }, note: 'title card off' };
       }
-      const tc = { title: optStr(o, 'title') ?? p.layout.titleCard?.title ?? '', subtitle: optStr(o, 'subtitle') ?? p.layout.titleCard?.subtitle ?? '' };
+      const tc: NonNullable<Project['layout']['titleCard']> = {
+        ...p.layout.titleCard,
+        title: optStr(o, 'title') ?? p.layout.titleCard?.title ?? '',
+        subtitle: optStr(o, 'subtitle') ?? p.layout.titleCard?.subtitle ?? '',
+      };
+      if (o.hidden === true) tc.hidden = true;
+      else if (o.hidden === false || o.enabled === true) delete tc.hidden;
+      if (o.reset === true) delete tc.transform;
+      if (o.x !== undefined || o.y !== undefined || o.scale !== undefined) tc.transform = patchTransform('titleCard', tc.transform, o);
       return { project: { ...p, layout: { ...p.layout, titleCard: tc } }, note: `title card "${tc.title}"` };
+    }
+    case 'layer': {
+      // Any canvas layer: content | camera | phone | title | text:<annotation id or index>.
+      const lid = layerIdFor(o, p);
+      let next = p;
+      const did: string[] = [];
+      if (o.restack !== undefined) {
+        if (!['front', 'back', 'forward', 'backward'].includes(String(o.restack))) throw new OpError('layer: restack is front|back|forward|backward');
+        next = restack(next, lid, o.restack as Restack);
+        did.push(`restacked ${o.restack}`);
+      }
+      if (o.reset === true) {
+        next = resetLayer(next, lid);
+        did.push('reset');
+      }
+      if (o.hide === true) {
+        if (!canHide(lid)) throw new OpError('layer: the recording itself can\'t be hidden');
+        next = hideLayer(next, lid);
+        did.push('hidden');
+      }
+      if (!did.length) throw new OpError('layer: pass restack, reset:true or hide:true');
+      return { project: next, note: `layer ${lid} ${did.join(', ')}; order ${layerOrder(next).join(' < ')}` };
     }
     case 'exportSettings': {
       const patch: Partial<Project> = {};

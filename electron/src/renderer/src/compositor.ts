@@ -1,6 +1,9 @@
-// Canvas compositor — port of the RenderKit compositor. Draw order:
-// background → screen frame (zoomed via camera, rounded corners, shadow)
-// → software cursor → click ripples → caption pill.
+// Canvas compositor — port of the RenderKit compositor. It draws the
+// background, then every canvas layer (shared/canvasLayers) in the project's
+// order: the recording (zoomed via camera, rounded corners, shadow, with the
+// software cursor and click ripples), the camera bubble, the phone layer,
+// text overlays and the title card, with the caption pill docked on the
+// recording. Each layer's box is reported in `layers` for the editor.
 //
 // Phone recordings add: a blurred-recording backdrop, the video clipped to
 // the real screen shape, touch indicators inside the zoom camera (so they
@@ -36,6 +39,7 @@ import { phoneAspect, phoneDevice, phoneLayerOn, phoneLayerRects, type PhoneDevi
 import { api } from './api';
 import { macContentRect, macFittedRect, overlayRect } from '../../shared/cameraOverlay';
 import { mapRect, placeContent } from '../../shared/contentTransform';
+import { layerOrder, textLayer, type LayerBox, type LayerId } from '../../shared/canvasLayers';
 
 // Background images by raw path, shared by every compositor: the editor
 // builds a new compositor on each edit, and reloading the image each time
@@ -126,6 +130,10 @@ export class CanvasCompositor {
   contentRect: Rect | null = null;
   /** The same box where the layout fits it, before the hand move (scale 1). */
   contentBase: Rect | null = null;
+  /** The phone layer's box where its layout puts it, before its hand move. */
+  phoneBase: Rect | null = null;
+  /** Every layer drawn at the last render, bottom to top (shared/canvasLayers). */
+  layers: LayerBox[] = [];
 
   constructor(
     private project: Project,
@@ -194,10 +202,14 @@ export class CanvasCompositor {
     let rect: Rect;
     let clip: () => void;
     let frameBody: Rect | null = null;
+    // A frameless phone screen's drop shadow, drawn just before it.
+    let shadow: (() => void) | null = null;
     // The screen where the layout fits it, before the hand move (sizes the camera bubble).
     let fittedScreen: Rect;
     this.contentRect = null;
     this.contentBase = null;
+    this.phoneRect = null;
+    this.phoneBase = null;
     if (layout && phone) {
       if (layout.mode === 'full-bleed') {
         // App Store previews fill the canvas with the app itself: never moved.
@@ -226,15 +238,17 @@ export class CanvasCompositor {
         this.contentBase = base;
         this.contentRect = placed;
         const r = layout.screenRadius * (placed.w / base.w);
-        ctx.save();
-        ctx.shadowColor = 'rgba(0,0,0,0.38)';
-        ctx.shadowBlur = Math.max(placed.w, placed.h) * 0.06;
-        ctx.shadowOffsetY = Math.max(placed.w, placed.h) * 0.025;
-        ctx.fillStyle = '#000';
-        ctx.beginPath();
-        continuousRectPath(ctx, placed.x, placed.y, placed.w, placed.h, r);
-        ctx.fill();
-        ctx.restore();
+        shadow = () => {
+          ctx.save();
+          ctx.shadowColor = 'rgba(0,0,0,0.38)';
+          ctx.shadowBlur = Math.max(placed.w, placed.h) * 0.06;
+          ctx.shadowOffsetY = Math.max(placed.w, placed.h) * 0.025;
+          ctx.fillStyle = '#000';
+          ctx.beginPath();
+          continuousRectPath(ctx, placed.x, placed.y, placed.w, placed.h, r);
+          ctx.fill();
+          ctx.restore();
+        };
         clip = () => {
           ctx.beginPath();
           continuousRectPath(ctx, placed.x, placed.y, placed.w, placed.h, r);
@@ -265,8 +279,10 @@ export class CanvasCompositor {
         fittedScreen = base;
         this.contentBase = base;
         this.contentRect = rect;
-        // Beside the screen, the phone keeps its place; over its corner, it moves with it.
-        this.phoneRect = placed ? (placed.arrangement === 'corner' ? mapRect(placed.phone, base, rect) : placed.phone) : null;
+        // Beside the screen, the phone keeps its place; over its corner, it
+        // moves with it. Then its own hand move and resize.
+        this.phoneBase = placed ? (placed.arrangement === 'corner' ? mapRect(placed.phone, base, rect) : placed.phone) : null;
+        this.phoneRect = this.phoneBase ? placeContent(this.phoneBase, this.project.phoneOverlay.transform, canvasSize) : null;
         const r = style.cornerRadius;
         const screen = rect;
         clip = () => {
@@ -303,133 +319,172 @@ export class CanvasCompositor {
     const source = { x: rect.x - sx * kx, y: rect.y - sy * ky, w: fullW * kx, h: fullH * ky };
     this.screenMap = { source, screen: intersect(rect, { x: 0, y: 0, w: W, h: H }) };
 
-    ctx.save();
-    clip();
-    ctx.drawImage(input.frame, sx, sy, cropW, cropH, rect.x, rect.y, rect.w, rect.h);
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    // Touch indicators ride the camera: same clip, same zoom as the video.
-    if (phone && this.project.tapStyle.show && phone.taps.length) {
-      const ts = this.project.tapStyle;
-      drawTouchIndicators(ctx, phone.taps, time, source, pointScaleFor(rect, phone.device) * cam.scale, {
-        style: ts.style,
-        color: ts.color === 'accent' ? ACCENT_TOUCH_COLOR : '#FFFFFF',
-        sizePt: ts.sizePt,
-      });
-    }
-    ctx.restore();
-
     // Overlays sit on the part of the screen that is on the canvas.
     const visible = this.screenMap.screen;
 
-    // 3. Cursor (full-source normalized → crop-relative → rect pixels).
-    const dot = (px: number, py: number, d: number, fill: string) => {
-      ctx.fillStyle = fill;
-      ctx.beginPath();
-      ctx.ellipse(px, py, d / 2, d / 2, 0, 0, Math.PI * 2);
-      ctx.fill();
-    };
-    const toPx = (p: Point) => ({
-      x: rect.x + ((p.x * fullW - sx) / cropW) * rect.w,
-      y: rect.y + ((p.y * fullH - sy) / cropH) * rect.h,
-    });
-    const d = H * style.cursorSize;
-    const showCursor = style.cursorShow !== false;
-    const op = Math.min(1, Math.max(0, style.cursorOpacity ?? 0.85));
-    const alphaHex = (a: number) => Math.round(255 * a).toString(16).padStart(2, '0');
-    if (showCursor && input.cursorTrail?.length) {
-      const n = input.cursorTrail.length;
-      for (let i = 0; i < n; i++) {
-        const t = (i + 1) / n; // fade oldest→newest
-        const { x, y } = toPx(input.cursorTrail[i]);
-        dot(x, y, d * (0.4 + 0.6 * t), `${style.cursorHex}${alphaHex(Math.min(1, 0.4 * t * (op / 0.85)))}`);
+    // The recording's own layer: the video, its touch indicators, cursor and ripples.
+    const drawContent = () => {
+      shadow?.();
+      ctx.save();
+      clip();
+      ctx.drawImage(input.frame, sx, sy, cropW, cropH, rect.x, rect.y, rect.w, rect.h);
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      // Touch indicators ride the camera: same clip, same zoom as the video.
+      if (phone && this.project.tapStyle.show && phone.taps.length) {
+        const ts = this.project.tapStyle;
+        drawTouchIndicators(ctx, phone.taps, time, source, pointScaleFor(rect, phone.device) * cam.scale, {
+          style: ts.style,
+          color: ts.color === 'accent' ? ACCENT_TOUCH_COLOR : '#FFFFFF',
+          sizePt: ts.sizePt,
+        });
       }
-    }
-    if (showCursor && input.cursor) {
-      const { x, y } = toPx(input.cursor);
-      dot(x, y, d, `${style.cursorHex}${alphaHex(op)}`);
-    }
+      ctx.restore();
 
-    // 4. Click ripples — same full-source→crop-relative mapping.
-    for (const r of input.ripples) {
-      const rx = rect.x + ((r.position.x * fullW - sx) / cropW) * rect.w;
-      const ry = rect.y + ((r.position.y * fullH - sy) / cropH) * rect.h;
-      const maxR = H * 0.055;
-      const rad = maxR * (0.25 + 0.75 * r.progress);
-      const alpha = Math.max(0, 0.75 * (1 - r.progress));
-      ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-      ctx.lineWidth = Math.max(1.5, H * 0.002);
-      ctx.beginPath();
-      ctx.ellipse(rx, ry, rad, rad, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = `rgba(255,255,255,${alpha * 0.35})`;
-      ctx.beginPath();
-      ctx.ellipse(rx, ry, rad * 0.45, rad * 0.45, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
+      // 3. Cursor (full-source normalized → crop-relative → rect pixels).
+      const dot = (px: number, py: number, d: number, fill: string) => {
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.ellipse(px, py, d / 2, d / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+      };
+      const toPx = (p: Point) => ({
+        x: rect.x + ((p.x * fullW - sx) / cropW) * rect.w,
+        y: rect.y + ((p.y * fullH - sy) / cropH) * rect.h,
+      });
+      const d = H * style.cursorSize;
+      const showCursor = style.cursorShow !== false;
+      const op = Math.min(1, Math.max(0, style.cursorOpacity ?? 0.85));
+      const alphaHex = (a: number) => Math.round(255 * a).toString(16).padStart(2, '0');
+      if (showCursor && input.cursorTrail?.length) {
+        const n = input.cursorTrail.length;
+        for (let i = 0; i < n; i++) {
+          const t = (i + 1) / n; // fade oldest→newest
+          const { x, y } = toPx(input.cursorTrail[i]);
+          dot(x, y, d * (0.4 + 0.6 * t), `${style.cursorHex}${alphaHex(Math.min(1, 0.4 * t * (op / 0.85)))}`);
+        }
+      }
+      if (showCursor && input.cursor) {
+        const { x, y } = toPx(input.cursor);
+        dot(x, y, d, `${style.cursorHex}${alphaHex(op)}`);
+      }
 
-    // 5. The camera bubble, wherever it was placed (shared/cameraOverlay).
+      // 4. Click ripples — same full-source→crop-relative mapping.
+      for (const r of input.ripples) {
+        const rx = rect.x + ((r.position.x * fullW - sx) / cropW) * rect.w;
+        const ry = rect.y + ((r.position.y * fullH - sy) / cropH) * rect.h;
+        const maxR = H * 0.055;
+        const rad = maxR * (0.25 + 0.75 * r.progress);
+        const alpha = Math.max(0, 0.75 * (1 - r.progress));
+        ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+        ctx.lineWidth = Math.max(1.5, H * 0.002);
+        ctx.beginPath();
+        ctx.ellipse(rx, ry, rad, rad, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = `rgba(255,255,255,${alpha * 0.35})`;
+        ctx.beginPath();
+        ctx.ellipse(rx, ry, rad * 0.45, rad * 0.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+    };
+
+    // 5. Every layer, in the project's order (shared/canvasLayers). Each
+    // reports the box it drew at, so the editor can pick and move it.
     const overlay = this.project.cameraOverlay;
     this.cameraBasis = intersect(fittedScreen, { x: 0, y: 0, w: W, h: H });
     this.cameraRect = overlay.enabled ? overlayRect(overlay, visible, canvasSize, this.cameraBasis) : null;
+    const boxes = new Map<LayerId, LayerBox>();
+    const draws = new Map<LayerId, () => void>([['content', drawContent]]);
+    if (this.contentRect && this.contentBase) boxes.set('content', { id: 'content', rect: this.contentRect, base: this.contentBase });
+    if (this.cameraRect && this.project.recording.cameraVideoFile) {
+      boxes.set('camera', { id: 'camera', rect: this.cameraRect, round: overlay.circular, basis: this.cameraBasis });
+    }
     if (this.cameraRect && input.cameraFrame) {
-      const { x: ox, y: oy, w: d } = this.cameraRect;
-      const bubblePath = () => {
-        ctx.beginPath();
-        if (overlay.circular) ctx.ellipse(ox + d / 2, oy + d / 2, d / 2, d / 2, 0, 0, Math.PI * 2);
-        else roundedPath(ctx, ox, oy, d, d, d * 0.18);
-      };
-      // Depth from a soft shadow, never an outline. The shadow comes from a
-      // fill drawn before the clip; a shadow cast inside the clip is cut off.
-      ctx.save();
-      ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
-      ctx.shadowBlur = style.shadowRadius * 0.4;
-      ctx.shadowOffsetY = d * 0.02;
-      ctx.fillStyle = '#000';
-      bubblePath();
-      ctx.fill();
-      ctx.restore();
-      ctx.save();
-      bubblePath();
-      ctx.clip();
-      // Cover-crop the camera frame to square.
-      const cf = input.cameraFrame as CanvasImageSource;
-      const fw = (cf as HTMLVideoElement).videoWidth || (cf as HTMLCanvasElement).width || 1;
-      const fh = (cf as HTMLVideoElement).videoHeight || (cf as HTMLCanvasElement).height || 1;
-      const side = Math.min(fw, fh);
-      ctx.drawImage(cf, (fw - side) / 2, (fh - side) / 2, side, side, ox, oy, d, d);
-      ctx.restore();
+      const camRect = this.cameraRect;
+      const camFrame = input.cameraFrame;
+      draws.set('camera', () => this.drawCamera(camRect, camFrame));
     }
-
-    // 6. The phone layer, beside the screen or over its corner.
-    if (this.phoneLayer && this.phoneRect) this.drawPhoneLayer(this.phoneRect, input.phoneFrame);
-
-    // 7. Keystroke keycaps, bottom-left inside the content frame.
-    if (input.keystrokes?.length) this.drawKeystrokes(input.keystrokes, visible, H);
-
-    // 8. Device frame — hardware drawn over the screen's edge.
-    if (phone && frameBody) {
-      drawDeviceFrame(ctx, frameBody, phone.device, this.project.device.finishId, { orientation: phone.orientation });
+    // The phone layer, beside the screen or over its corner.
+    if (this.phoneLayer && this.phoneRect && this.phoneBase) {
+      const box = this.phoneRect;
+      boxes.set('phone', { id: 'phone', rect: box, base: this.phoneBase });
+      draws.set('phone', () => this.drawPhoneLayer(box, input.phoneFrame));
     }
-
-    // 9. Text overlays and the caption pill, above the hardware so the
-    // frame never cuts through them.
+    // Text overlays, above the hardware so the frame never cuts through them.
     for (const a of this.project.annotations ?? []) {
-      if (time >= a.start && time <= a.end) this.drawAnnotation(a, visible, H);
+      if (a.hidden || !(time >= a.start && time <= a.end)) continue;
+      const placed = this.annotationPlacement(a, visible, H, canvasSize);
+      const id = textLayer(a.id);
+      boxes.set(id, { id, rect: placed.rect, base: placed.base });
+      draws.set(id, () => this.drawAnnotation(a, placed));
     }
-    const cue = this.project.captions.find((c) => c.start <= time && time <= c.end);
-    if (cue && cue.text) this.drawCaption(cue, visible, W, H);
-
-    // 10. Title card beside the phone.
+    // The title card beside the phone.
     const title = this.project.layout.titleCard;
-    if (layout?.title && title?.title.trim()) {
-      drawTitleCard(
-        ctx,
-        layout.title,
-        { title: title.title, subtitle: title.subtitle },
-        { align: layout.titleTextAlign, valign: layout.titleAlign },
+    if (layout?.title && title?.title.trim() && !title.hidden) {
+      const base = layout.title;
+      const placed = placeContent(base, title.transform, canvasSize);
+      boxes.set('title', { id: 'title', rect: placed, base });
+      draws.set('title', () =>
+        drawTitleCard(ctx, placed, { title: title.title, subtitle: title.subtitle }, { align: layout.titleTextAlign, valign: layout.titleAlign }),
       );
     }
+    // What rides on the recording: keystroke keycaps (bottom-left inside it)
+    // and the device hardware drawn over the screen's edge.
+    const decor = () => {
+      if (input.keystrokes?.length) this.drawKeystrokes(input.keystrokes, visible, H);
+      if (phone && frameBody) drawDeviceFrame(ctx, frameBody, phone.device, this.project.device.finishId, { orientation: phone.orientation });
+    };
+    const cue = this.project.captions.find((c) => c.start <= time && time <= c.end);
+    const captions = () => {
+      if (cue && cue.text) this.drawCaption(cue, visible, W, H);
+    };
+    // In the order it has always had, the recording's extras go above the
+    // camera and phone and captions sit under the title, exactly as before.
+    // Reordered by hand, they ride on the recording and captions stay on top.
+    const custom = !!this.project.layerOrder?.length;
+    this.layers = [];
+    for (const id of layerOrder(this.project)) {
+      if (!custom && id === 'title') captions();
+      draws.get(id)?.();
+      if (custom ? id === 'content' : id === 'phone') decor();
+      const box = boxes.get(id);
+      if (box) this.layers.push(box);
+    }
+    if (custom) captions();
+  }
+
+  /** The camera bubble's video in its square: a round or soft-cornered cut of the frame. */
+  private drawCamera(rect: Rect, cameraFrame: CanvasImageSource) {
+    const { ctx } = this;
+    const style = this.project.style;
+    const overlay = this.project.cameraOverlay;
+    const { x: ox, y: oy, w: d } = rect;
+    const bubblePath = () => {
+      ctx.beginPath();
+      if (overlay.circular) ctx.ellipse(ox + d / 2, oy + d / 2, d / 2, d / 2, 0, 0, Math.PI * 2);
+      else roundedPath(ctx, ox, oy, d, d, d * 0.18);
+    };
+    // Depth from a soft shadow, never an outline. The shadow comes from a
+    // fill drawn before the clip; a shadow cast inside the clip is cut off.
+    ctx.save();
+    ctx.shadowColor = `rgba(0,0,0,${style.shadowOpacity})`;
+    ctx.shadowBlur = style.shadowRadius * 0.4;
+    ctx.shadowOffsetY = d * 0.02;
+    ctx.fillStyle = '#000';
+    bubblePath();
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    bubblePath();
+    ctx.clip();
+    // Cover-crop the camera frame to square.
+    const cf = cameraFrame;
+    const fw = (cf as HTMLVideoElement).videoWidth || (cf as HTMLCanvasElement).width || 1;
+    const fh = (cf as HTMLVideoElement).videoHeight || (cf as HTMLCanvasElement).height || 1;
+    const side = Math.min(fw, fh);
+    ctx.drawImage(cf, (fw - side) / 2, (fh - side) / 2, side, side, ox, oy, d, d);
+    ctx.restore();
   }
 
   /** The phone's video in `box`: inside its hardware frame, or as a floating
@@ -518,13 +573,25 @@ export class CanvasCompositor {
     }
   }
 
-  private drawAnnotation(a: Annotation, rect: { x: number; y: number; w: number; h: number }, H: number) {
+  /** Where a text overlay goes: its band in the recording (`base`), then its hand move and resize. */
+  private annotationPlacement(a: Annotation, rect: Rect, H: number, canvas: Size) {
     const { ctx } = this;
     const fontSize = Math.max(20, H * 0.055);
     ctx.font = `800 ${fontSize}px -apple-system, sans-serif`;
     const tw = ctx.measureText(a.text).width;
-    const x = rect.x + rect.w / 2 - tw / 2;
-    const y = rect.y + (a.band === 0 ? rect.h * 0.12 : a.band === 1 ? rect.h * 0.47 : rect.h * 0.82);
+    const cx = rect.x + rect.w / 2;
+    const cy = rect.y + (a.band === 0 ? rect.h * 0.12 : a.band === 1 ? rect.h * 0.47 : rect.h * 0.82);
+    const base = { x: cx - tw / 2, y: cy - fontSize * 0.6, w: tw, h: fontSize * 1.2 };
+    const placed = placeContent(base, a.transform, canvas);
+    return { base, rect: placed, fontSize: fontSize * (base.w > 0 ? placed.w / base.w : 1) };
+  }
+
+  private drawAnnotation(a: Annotation, at: { rect: Rect; fontSize: number }) {
+    const { ctx } = this;
+    const { fontSize } = at;
+    ctx.font = `800 ${fontSize}px -apple-system, sans-serif`;
+    const x = at.rect.x;
+    const y = at.rect.y + at.rect.h / 2;
     ctx.textBaseline = 'middle';
     ctx.lineWidth = fontSize * 0.12;
     ctx.strokeStyle = 'rgba(0,0,0,0.55)';
