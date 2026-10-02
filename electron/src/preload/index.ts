@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 
 const api = {
   listSources: () => ipcRenderer.invoke('sources:list'),
@@ -59,7 +59,19 @@ const api = {
   analyzeTaps: (dir: string, videoFile: string) => ipcRenderer.invoke('taps:analyze', { dir, videoFile }),
   audioPeaks: (dir: string, videoFile: string, buckets?: number) =>
     ipcRenderer.invoke('audio:peaks', { dir, videoFile, buckets }),
-  importAudio: (dir: string) => ipcRenderer.invoke('audio:import', dir),
+  importAudio: (dir: string, path?: string) => ipcRenderer.invoke('audio:import', dir, path),
+  importPick: () => ipcRenderer.invoke('import:pick'),
+  importVideo: (path: string) => ipcRenderer.invoke('import:start', path),
+  importCancel: () => ipcRenderer.invoke('import:cancel'),
+  onImportProgress: (cb: (p: { stage: 'copy' | 'convert'; fraction: number }) => void) => {
+    const listener = (_e: IpcRendererEvent, p: { stage: 'copy' | 'convert'; fraction: number }) => cb(p);
+    ipcRenderer.on('import:progress', listener);
+    return () => {
+      ipcRenderer.removeListener('import:progress', listener);
+    };
+  },
+  /** The path of a File dropped on the window (Electron no longer puts it on File.path). */
+  pathForFile: (file: File) => webUtils.getPathForFile(file),
   audioFilePeaks: (dir: string, file: string, buckets?: number) => ipcRenderer.invoke('audio:filePeaks', { dir, file, buckets }),
   exportBegin: (outPath: string, w: number, h: number, fps: number, audioIn?: string, audioClips?: unknown, clicks?: number[], voiceCleanup?: boolean, duration?: number, master?: boolean, music?: unknown, duck?: unknown, phone?: unknown) =>
     ipcRenderer.invoke('export:begin', { outPath, w, h, fps, audioIn, audioClips, clicks, voiceCleanup, duration, master, music, duck, phone }),

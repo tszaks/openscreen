@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { itemSpan } from '../shared/audioTracks';
 import { phoneDevice, phoneLayerOn } from '../shared/phoneLayer';
 import { layerOrder } from '../shared/canvasLayers';
+import { importVideoFile } from './importVideo';
 import { analyzeTapsInFile, bundleAudioPath, detectSilences, ffmpegPath, probeAudioDuration, ffmpegRun, ffmpegStderr, parseWhisperJson, probeMedia, transcribeBundle, whisperCli } from './media';
 
 // ---------------------------------------------------------------------------
@@ -769,6 +770,27 @@ function recordStatus() {
   return { ok: true, ...s, ...(running && !alive(s.pid) ? { state: 'dead', error: 'the recorder process is gone' } : {}), ...(s.startedAt && s.state === 'recording' ? { elapsed: r2((Date.now() - Date.parse(s.startedAt)) / 1000) } : {}) };
 }
 
+/** `import <file> [--name N]`: the same import as the app's Import Video…. */
+async function importCmd(args: string[]) {
+  const name = flag(args, '--name');
+  const file = args.shift();
+  if (!file) throw new CliError('usage: import <video file> [--name N]', 2);
+  const r = await importVideoFile(resolve(file), { root: recordingsRoot(), name, onProgress: (p) => progress({ stage: p.stage, progress: r2(p.fraction) }) });
+  const rec = r.project.recording;
+  return {
+    ok: true,
+    bundle: r.dir,
+    name: r.project.name,
+    sourceKind: rec.sourceKind,
+    size: rec.sourceSize,
+    duration: r2(rec.duration),
+    video: rec.screenVideoFile,
+    converted: r.conversion,
+    hasAudio: r.hasAudio,
+    next: `openscreen-agent review "${r.dir}"`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 
 const HELP = {
@@ -778,6 +800,7 @@ const HELP = {
     'record start': 'record start [--device id|name]  start an iPhone recording into a new bundle (detached)',
     'record stop': 'record stop  finish it and write project.json',
     'record status': 'record status',
+    import: 'import <video file> [--name N]  copy (or convert) a video into a new bundle, as File > Import Video… does',
     latest: 'latest  newest bundle in the recordings folder',
     list: 'list  all bundles, newest first',
     info: 'info <bundle>  project summary: clips, captions, transcript, style, taps…',
@@ -852,6 +875,9 @@ export async function main(argv: string[]): Promise<number> {
         break;
       case 'devices':
         result = await devices(args);
+        break;
+      case 'import':
+        result = await importCmd(args);
         break;
       case 'record': {
         const sub = args.shift();

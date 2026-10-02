@@ -1,9 +1,11 @@
 /** Where the app is, so the native menu can enable only what applies. */
-export type MenuPhase = 'picker' | 'recording' | 'editor';
+/** 'importing': an Import Video… in flight holds the menu like a take. */
+export type MenuPhase = 'picker' | 'recording' | 'editor' | 'importing';
 
 export type MenuAction =
   | 'newRecording'
   | 'openProject'
+  | 'importVideo'
   | 'save'
   | 'exportMp4'
   | 'exportGif'

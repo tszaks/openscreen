@@ -22,6 +22,9 @@ import { checklistFor, readSetupPrefs, recordingWarning, writeSetupPref, type Se
 import { cameraDefaults } from '../../shared/justMe';
 import { openRecordingMonitor, type MonitorSource, type RecordingMonitor } from './recordingMonitor';
 import { monitorOpensFor, overlayFromMonitor, readMonitorPrefs, spotFor, writeMonitorPrefs, type MonitorPrefs } from '../../shared/recordingMonitor';
+import { DropOverlay, ImportSheet, type ImportState } from './components/ImportVideo';
+import { useFileDrop } from './useFileDrop';
+import type { DropAction } from '../../shared/importVideo';
 
 type PickerTab = 'displays' | 'windows' | 'devices' | 'cameras';
 
@@ -817,6 +820,39 @@ export function App() {
     [openEditor],
   );
   const openProject = useCallback(() => openBundle(api.openBundle), [openBundle]);
+
+  // Import Video… (File menu, the toolbar, or a video dropped on the window):
+  // copy or convert it into a new project, with a progress sheet, then open
+  // it. In the editor this runs once unsaved changes are dealt with.
+  const [importing, setImporting] = useState<ImportState | null>(null);
+  const importingRef = useRef(false);
+  useEffect(
+    () => api.onImportProgress((p) => setImporting((s) => (s && !('error' in s) ? { ...s, ...p } : s))),
+    [],
+  );
+  const importVideo = useCallback(
+    async (path?: string) => {
+      if (importingRef.current) return;
+      const file = path ?? (await api.importPick().catch(() => null));
+      if (!file) return;
+      const name = file.split('/').pop() ?? file;
+      importingRef.current = true;
+      setImporting({ file: name, stage: 'starting', fraction: 0 });
+      api.setBusy('importing');
+      try {
+        const b = await api.importVideo(file);
+        setImporting(null);
+        if (b) openEditor({ bundleDir: b.bundleDir, videoUrl: b.videoUrl, camUrl: b.camUrl, phoneUrl: b.phoneUrl, project: b.project, cursor: b.cursor, keys: b.keys });
+      } catch (e) {
+        setImporting({ file: name, error: ipcMessage(e) });
+      } finally {
+        importingRef.current = false;
+        api.setBusy(null);
+      }
+    },
+    [openEditor],
+  );
+  const cancelImport = useCallback(() => void api.importCancel(), []);
   const openRecovered = useCallback(() => {
     const dir = recovered[recovered.length - 1];
     setRecovered([]);
@@ -834,24 +870,50 @@ export function App() {
 
   const backToPicker = useCallback(() => setPhase({ name: 'picker' }), []);
 
+  // Files dropped on the window: a video imports (the editor first asks
+  // about unsaved changes); a sound dropped on the editor joins its music
+  // track. The editor gets its drops as `openscreen:drop` events.
+  const onFileDrop = useCallback(
+    (action: DropAction, path: string | null) => {
+      if (action === 'ignore' || !path) {
+        setNotice(
+          phase.name === 'editor'
+            ? 'OpenScreen imports MP4, MOV, M4V, WebM and MKV videos, and adds MP3, M4A, AAC, WAV and AIFF sounds to the music track.'
+            : 'OpenScreen imports MP4, MOV, M4V, WebM and MKV videos.',
+        );
+      } else if (phase.name === 'editor') {
+        window.dispatchEvent(new CustomEvent('openscreen:drop', { detail: { action, path } }));
+      } else if (action === 'import') {
+        void importVideo(path);
+      }
+    },
+    [phase.name, importVideo],
+  );
+  const dropWhere = phase.name === 'recording' || countdown !== null ? 'recording' : phase.name;
+  const dropHint = useFileDrop(dropWhere, !importing, onFileDrop);
+
   // Native menu clicks arrive over IPC; re-broadcast them in this world as
   // `openscreen:menu` events for the picker and editor to handle.
   useEffect(() => api.onMenu((a) => window.dispatchEvent(new CustomEvent('openscreen:menu', { detail: a }))), []);
 
   // Keep the menu's enabled items in step with what's on screen.
   const menuBundle = phase.name === 'editor' ? phase.bundleDir : undefined;
-  useEffect(() => api.setMenuPhase(phase.name, menuBundle), [phase.name, menuBundle]);
+  // An import in flight holds the menu like a take does.
+  const menuPhase = importing && !('error' in importing) ? 'importing' : phase.name;
+  useEffect(() => api.setMenuPhase(menuPhase, menuBundle), [menuPhase, menuBundle]);
 
   // The app menu dispatches `openscreen:menu` events. The editor handles
   // its own; the picker only opens projects.
   useEffect(() => {
     if (phase.name !== 'picker') return;
     const onMenu = (e: Event) => {
-      if ((e as CustomEvent<string>).detail === 'openProject') void openProject();
+      const action = (e as CustomEvent<string>).detail;
+      if (action === 'openProject') void openProject();
+      else if (action === 'importVideo') void importVideo();
     };
     window.addEventListener('openscreen:menu', onMenu);
     return () => window.removeEventListener('openscreen:menu', onMenu);
-  }, [phase.name, openProject]);
+  }, [phase.name, openProject, importVideo]);
 
   // Release any blob URLs an editor was opened with when it goes. (Saved
   // takes now open from their files, so this is only a safety net.)
@@ -864,6 +926,14 @@ export function App() {
       }
     },
     [editorVideoUrl, editorCamUrl],
+  );
+
+  // Over whatever screen is up: the import's progress sheet and the drop overlay.
+  const importLayer = (
+    <>
+      {importing && <ImportSheet state={importing} onCancel={cancelImport} onClose={() => setImporting(null)} />}
+      {dropHint && <DropOverlay hint={dropHint} />}
+    </>
   );
 
   const noticeToast = notice && (
@@ -1137,6 +1207,9 @@ export function App() {
               <Button size="sm" variant="ghost" onClick={openProject} title="Open a saved project (⌘O)">
                 Open Project…
               </Button>
+              <Button size="sm" variant="ghost" onClick={() => void importVideo()} title="Edit a video you already have (⌘I). You can also drop one on this window.">
+                Import Video…
+              </Button>
             </span>
           </header>
 
@@ -1251,6 +1324,7 @@ export function App() {
         </div>
 
         {noticeToast}
+        {importLayer}
         {setupDialog && (
           <IosSetupCard
             key={setupDialog.key}
@@ -1335,8 +1409,10 @@ export function App() {
         bundleDir={phase.bundleDir}
         onNewRecording={backToPicker}
         onOpenProject={openProject}
+        onImportVideo={(path) => void importVideo(path)}
       />
       {noticeToast}
+      {importLayer}
     </>
   );
 }

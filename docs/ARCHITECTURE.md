@@ -37,6 +37,7 @@ Everything that decides how a video *looks and moves* is a pure function here, s
 | `phoneLayer.ts` | Mac + iPhone takes: the phone layer's time mapping (source time − offset), where the Mac screen and phone sit for each layout, and what to keep when one side of a dual take fails |
 | `contentTransform.ts` | The recording moved and resized by hand: the layout's fitted rect placed by `style.contentTransform` (centre + scale, kept at least 10% on the canvas), and the aspect-locked corner resize the recording and the camera bubble share |
 | `canvasLayers.ts` | One layer model for the recording, camera, phone, text and title: stacking order, hit-testing (topmost wins), snapping across layers, moving, nudging, resizing limits, reset and hide |
+| `importVideo.ts` | Import Video…: the bundle name and its de-duplication, whether a video is an iPhone/iPad screen, whether Chromium plays it as it is or it needs converting, and what a file dropped on the window does |
 | `previewPointer.ts` | What a press on the editor's preview does, in order: crop, place a tap, the selected layer's corner handle, the topmost layer, empty canvas |
 | `types.ts` | The project model, defaults, migration of older projects, reset |
 
@@ -70,13 +71,17 @@ Everything on the preview is a layer: the recording, the camera bubble, the phon
 
 The **Just me** source records a camera on its own (`sourceKind: 'camera'`) with the microphone on by default and a mirrored preview. The editor leaves out the Cursor tab, click and dwell zooms and taps, and offers a Wide 16:9 or Vertical 9:16 canvas with the camera cropped to fill its frame (`shared/justMe.ts`).
 
+## Importing a video
+
+**File → Import Video…** (⌘I), the New Recording toolbar's **Import Video…**, dropping a video anywhere on the window, and the agent CLI's `import` all run `node/importVideo.ts`. It builds the bundle in a hidden `.import-<id>` folder in the recordings folder (recovery and the bundle lists skip it), so a failed or cancelled import leaves nothing behind, then renames it to `<file name>.openscreen` once `project.json` is written. The original file is only read: it is cloned (APFS, instant) or streamed in with progress, or, when Chromium can't play it, converted by the bundled ffmpeg. What plays was measured in Electron 41 by decoding a file of each kind (`shared/importVideo.ts`): h264, hevc, vp8, vp9 and av1 play in every accepted container; ProRes and mpeg4 show a blank picture and ac3/alac play silently, all without an error, so the decision is a codec list rather than `canPlayType`. A file whose size is an iPhone or iPad screen opens as an iPhone take (`sourceKind: 'iosDevice'`: device frame, 9:16, tap analysis); everything else as a screen video with `recording.imported` set, which turns off the Cursor tab and click zooms because there is no cursor track. In the editor a dropped video goes through the unsaved-changes question first, and a dropped sound joins the music track at the playhead. The renderer reads a dropped file's path through the preload (`webUtils.getPathForFile`); main also refuses navigation, so a file dropped outside the drop handler can never replace the app.
+
 ## Project bundles
 
 A recording is a folder named `<name>.openscreen`:
 
 | File | Contents |
 |---|---|
-| `screen.mov` / `screen.webm` | The original recording, never modified |
+| `screen.mov` / `screen.webm` | The original recording, never modified (an imported video keeps its own extension, or is `screen.mp4` when converted) |
 | `cam.webm` | Camera overlay, if recorded |
 | `phone.mov` | The iPhone screen recorded alongside a Mac take, if any |
 | `project.json` | Every edit: clips, zooms, taps, captions, style, layout |

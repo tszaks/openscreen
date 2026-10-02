@@ -54,7 +54,7 @@ declare global {
       /** Quit and reopen (macOS applies a Screen Recording grant only then). */
       relaunch(): Promise<void>;
       /** What is running that closing/quitting would throw away, or null. */
-      setBusy(reason: 'recording' | 'saving' | 'exporting' | null): void;
+      setBusy(reason: 'recording' | 'saving' | 'exporting' | 'importing' | null): void;
       /** Starts cursor tracking; `startedAtMs` is the epoch time of its t=0. */
       startRecording(sourceId: string, displayId?: string): Promise<{ startedAtMs: number; hooks: boolean }>;
       /** Stops tracking; samples are shifted so t=0 is `videoStartedAtMs`. */
@@ -99,8 +99,18 @@ declare global {
       /** Tap/swipe suggestions and still stretches (source seconds) for a phone recording. */
       analyzeTaps(dir: string, videoFile: string): Promise<{ taps: TapSuggestion[]; deadTime: WaitRange[] }>;
       audioPeaks(dir: string, videoFile: string, buckets?: number): Promise<number[]>;
-      /** Pick a music or voiceover file and copy it into the bundle's audio/ folder; null when cancelled. */
-      importAudio(dir: string): Promise<{ id: string; file: string; name: string; duration: number } | null>;
+      /** Pick a music or voiceover file (or use `path`, a dropped one) and copy it into the bundle's audio/ folder; null when cancelled. */
+      importAudio(dir: string, path?: string): Promise<{ id: string; file: string; name: string; duration: number } | null>;
+      /** Import Video…'s open dialog; the picked file, or null. */
+      importPick(): Promise<string | null>;
+      /** Copy (or convert) a video into a new bundle and open it; null when cancelled. */
+      importVideo(path: string): Promise<OpenedBundle | null>;
+      /** Stop the import in flight; it leaves nothing behind. */
+      importCancel(): Promise<boolean>;
+      /** Import progress (0..1 per stage); returns the unsubscribe. */
+      onImportProgress(cb: (p: { stage: 'copy' | 'convert'; fraction: number }) => void): () => void;
+      /** The file system path of a dropped File. */
+      pathForFile(file: File): string;
       /** Waveform of a sound file inside the bundle (whole file). */
       audioFilePeaks(dir: string, file: string, buckets?: number): Promise<number[]>;
       exportBegin(outPath: string, w: number, h: number, fps: number, audioIn: string | undefined, audioClips: { start: number; end: number; speed: number }[] | undefined, clicks: number[] | undefined, voiceCleanup: boolean, duration: number, master?: boolean, music?: MusicInput[], duck?: { start: number; end: number }[], phone?: { path: string; offset: number }): Promise<boolean>;

@@ -191,6 +191,9 @@ export interface RecordingRef {
   phoneSize?: Size;
   /** The phone video's length in seconds. */
   phoneDuration?: number;
+  /** Brought in with Import Video… from a file made elsewhere: there is no
+   *  cursor, click or keystroke track. */
+  imported?: boolean;
 }
 
 /** Whether any automatic zoom source is on: taps for phone takes; clicks or
@@ -351,10 +354,11 @@ export const defaultStyle = (): StyleSettings => ({
 });
 
 // Phone footage zooms gentler: at 2x a tap target plus its context no longer
-// fits the screen, so the push-in crops the UI the viewer needs to see.
+// fits the screen, so the push-in crops the UI the viewer needs to see. An
+// imported video has no clicks or cursor to zoom toward.
 export const defaultZoom = (r?: RecordingRef): ZoomSettings => ({
-  autofocus: true,
-  dwell: true,
+  autofocus: !r?.imported,
+  dwell: !r?.imported,
   depth: isPhone(r) ? 1.6 : 2,
   motionEvents: [],
   fromTaps: true,
