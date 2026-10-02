@@ -1,6 +1,9 @@
-// Canvas compositor — port of the RenderKit compositor. Draw order:
-// background → screen frame (zoomed via camera, rounded corners, shadow)
-// → software cursor → click ripples → caption pill.
+// Canvas compositor — port of the RenderKit compositor. It draws the
+// background, then every canvas layer (shared/canvasLayers) in the project's
+// order: the recording (zoomed via camera, rounded corners, shadow, with the
+// software cursor and click ripples), the camera bubble, the phone layer,
+// text overlays and the title card, with the caption pill docked on the
+// recording. Each layer's box is reported in `layers` for the editor.
 //
 // Phone recordings add: a blurred-recording backdrop, the video clipped to
 // the real screen shape, touch indicators inside the zoom camera (so they
