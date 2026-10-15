@@ -1,0 +1,70 @@
+/* Undo toasts: what just changed, with the one way back. Bottom centre,
+   newest at the bottom. Shadow, not border; the accent acts on Undo only. */
+.toasts {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--s6);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  max-width: min(420px, calc(100vw - 48px));
+  padding: var(--s1) var(--s1) var(--s1) var(--s4);
+  min-height: 36px;
+  border-radius: var(--r-full);
+  background: var(--glass-strong);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-float);
+  color: var(--label);
+  font-size: var(--text-body);
+  letter-spacing: var(--track-body);
+  animation: toast-in var(--t3) var(--ease);
+}
+.toast-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toast:not(:has(.toast-action)) {
+  padding-right: var(--s4);
+}
+.toast-action {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 var(--s3);
+  border: 0;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-weight: 600;
+  transition:
+    background-color var(--t1) var(--ease),
+    transform var(--t1) var(--ease);
+}
+.toast-action:hover {
+  background: var(--accent-hover);
+}
+.toast-action:active {
+  background: var(--accent-pressed);
+  transform: scale(var(--press));
+}
+.toast-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-action:active {
+    transform: none;
+  }
+}
