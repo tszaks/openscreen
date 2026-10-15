@@ -4,8 +4,9 @@ import './toasts.css';
 
 /**
  * The editor's toast stack, bottom centre. One polite live region; the timer
- * pauses while the pointer is over the stack or focus is inside it; Esc
- * dismisses the newest toast (an edit stays done: Esc never undoes).
+ * pauses while the pointer is over the stack or focus is inside it; Esc,
+ * in that state only, dismisses the newest toast (an edit stays done: Esc
+ * never undoes).
  */
 export function Toasts({ queue }: { queue: ToastQueue }) {
   const items = useSyncExternalStore(
@@ -18,15 +19,23 @@ export function Toasts({ queue }: { queue: ToastQueue }) {
     return () => window.clearInterval(id);
   }, [queue]);
 
+  // A removed node fires no pointerleave or blur, so an emptied stack must
+  // un-pause itself or the next toast would never expire.
+  useEffect(() => {
+    if (!items.length) queue.resume(performance.now());
+  }, [items, queue]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || !queue.items.length) return;
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      // Only while the pointer is over the stack or focus is inside it (the
+      // queue is paused exactly then). Any other Esc belongs to the editor.
+      if (e.key !== 'Escape' || !queue.paused || !queue.items.length) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
       queue.dismissNewest();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [queue]);
 
   const pause = () => queue.pause(performance.now());

@@ -1,10 +1,12 @@
 /* Undo toasts: what just changed, with the one way back. Bottom centre,
-   newest at the bottom. Shadow, not border; the accent acts on Undo only. */
+   newest at the bottom. Shadow, not border; the accent acts on Undo only.
+   Lives inside the preview area, so it never covers the edit bar or the
+   timeline lanes, and sits well clear of the app-level .notice pill. */
 .toasts {
-  position: fixed;
+  position: absolute;
   left: 0;
   right: 0;
-  bottom: var(--s6);
+  bottom: var(--s3);
   z-index: 60;
   display: flex;
   flex-direction: column;

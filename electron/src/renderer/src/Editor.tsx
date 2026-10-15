@@ -3381,6 +3381,7 @@ export function Editor({
 
       <main className="ed-stage">
         <div className="stage-canvas">
+          <Toasts queue={toasts} />
           <div className="stage-inner">
             <canvas
               ref={canvasRef}
@@ -3769,7 +3770,6 @@ export function Editor({
           <p>Something outside OpenScreen (an agent, a text editor) changed this project, and you have unsaved edits. Load the version on disk, or keep yours and overwrite it?</p>
         </Sheet>
       )}
-      <Toasts queue={toasts} />
       {pendingLeave && (
         <Sheet
           title={`Save changes to ${bundleName}?`}
