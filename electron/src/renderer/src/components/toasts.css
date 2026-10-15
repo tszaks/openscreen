@@ -70,3 +70,8 @@
     transform: none;
   }
 }
+
+/* A modal sheet is open: nothing here may act behind it. */
+.toasts[data-blocked] {
+  visibility: hidden;
+}

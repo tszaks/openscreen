@@ -10,6 +10,7 @@ export class History<T> {
   private undoIds: number[] = [];
   private nextId = 1;
   private sealAfterNext = false;
+  private listeners = new Set<() => void>();
   private redoStack: T[] = [];
   private lastChange = -Infinity;
   // A gesture in progress (hold() until seal()): one step however slow it is.
@@ -32,6 +33,17 @@ export class History<T> {
       this.sealAfterNext = false;
       this.seal();
     }
+    this.notify();
+  }
+
+  /** Told after every change to the stacks (record, undo, redo). */
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private notify() {
+    for (const fn of this.listeners) fn();
   }
 
   private push(prev: T) {
@@ -84,6 +96,7 @@ export class History<T> {
     this.undoIds.pop();
     this.redoStack.push(current);
     this.seal();
+    this.notify();
     return prev;
   }
 
@@ -92,6 +105,7 @@ export class History<T> {
     if (next === undefined) return undefined;
     this.push(current);
     this.seal();
+    this.notify();
     return next;
   }
 }

@@ -33,7 +33,7 @@ export interface Toast extends ToastSpec {
 export class ToastQueue {
   private list: Toast[] = [];
   private nextId = 1;
-  private pausedAt: number | null = null;
+  private holds = new Set<string>();
   private listeners = new Set<() => void>();
 
   constructor(private max = 3) {}
@@ -82,27 +82,45 @@ export class ToastQueue {
   /** Run a toast's action once and remove the toast. False if it could not run. */
   runAction(id: number): boolean {
     const t = this.list.find((x) => x.id === id);
-    if (!t?.action) return false;
+    if (!t?.action || this.holds.has('modal')) return false;
     if (t.action.canRun && !t.action.canRun()) return false;
     this.dismiss(id);
     t.action.run();
     return true;
   }
 
+  /** Held by anything: pointer over the stack, focus inside it, a modal. */
   get paused() {
-    return this.pausedAt !== null;
+    return this.holds.size > 0;
+  }
+
+  isHeld(key: string) {
+    return this.holds.has(key);
+  }
+
+  /** Stop the timer for `key`. It runs again only when every key is released. */
+  hold(key: string, now: number) {
+    if (this.holds.has(key)) return;
+    if (this.holds.size === 0) for (const t of this.list) t.remaining = Math.max(0, t.expiresAt - now);
+    this.holds.add(key);
+  }
+
+  release(key: string, now: number) {
+    if (!this.holds.delete(key)) return;
+    if (this.holds.size === 0) for (const t of this.list) t.expiresAt = now + t.remaining;
+  }
+
+  releaseAll(now: number) {
+    this.holds.clear();
+    for (const t of this.list) t.expiresAt = now + t.remaining;
   }
 
   pause(now: number) {
-    if (this.pausedAt !== null) return;
-    this.pausedAt = now;
-    for (const t of this.list) t.remaining = Math.max(0, t.expiresAt - now);
+    this.hold('default', now);
   }
 
   resume(now: number) {
-    if (this.pausedAt === null) return;
-    this.pausedAt = null;
-    for (const t of this.list) t.expiresAt = now + t.remaining;
+    this.release('default', now);
   }
 
   /** Remove toasts whose action can no longer run (a stale Undo): the
@@ -117,7 +135,7 @@ export class ToastQueue {
 
   /** Drop toasts whose time is up. Nothing expires while paused. */
   tick(now: number) {
-    if (this.pausedAt !== null) return;
+    if (this.holds.size) return;
     const keep = this.list.filter((t) => t.expiresAt > now);
     if (keep.length !== this.list.length) {
       this.list = keep;

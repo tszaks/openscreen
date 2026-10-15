@@ -1516,6 +1516,7 @@ export function Editor({
   const applySmartCuts = () => {
     const sel = (smartCuts ?? []).filter((p) => p.on);
     setSmartCuts(null);
+    setStatus(''); // "N cuts proposed, review & apply" is done; the toast says what was cut
     if (!sel.length) return;
     cutSourceRanges(sel, `${sel.length} cut${sel.length === 1 ? '' : 's'}`);
   };
@@ -1666,7 +1667,8 @@ export function Editor({
           if (!exporting) splitAtPlayhead();
           return;
         case 'resetProject':
-          if (!exporting) doReset();
+          // Not behind a blocking sheet (the conflict sheet or the save prompt).
+          if (!exporting && !externalChange) doReset();
           return;
       }
     };
@@ -3381,7 +3383,7 @@ export function Editor({
 
       <main className="ed-stage">
         <div className="stage-canvas">
-          <Toasts queue={toasts} />
+          <Toasts queue={toasts} blocked={!!externalChange || !!pendingLeave} />
           <div className="stage-inner">
             <canvas
               ref={canvasRef}

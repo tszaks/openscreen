@@ -129,4 +129,41 @@ describe('ToastQueue', () => {
     q.prune();
     expect(q.items).toHaveLength(0);
   });
+
+  it('hover and focus hold separately: the timer resumes only when neither holds', () => {
+    const q = new ToastQueue();
+    q.add({ message: 'x', action: undo() }, 0);
+    q.hold('pointer', 1_000);
+    q.hold('focus', 1_500);
+    q.release('pointer', 2_000); // pointer leaves, Undo still has focus
+    q.tick(100_000);
+    expect(q.items).toHaveLength(1);
+    expect(q.isHeld('focus')).toBe(true);
+    q.release('focus', 100_000);
+    q.tick(104_999);
+    expect(q.items).toHaveLength(1); // 5 s were left at the first hold
+    q.tick(105_000);
+    expect(q.items).toHaveLength(0);
+  });
+
+  it('a modal hold blocks the toast action and the timer until released', () => {
+    const q = new ToastQueue();
+    const a = undo();
+    const id = q.add({ message: 'x', action: a }, 0);
+    q.hold('modal', 0);
+    expect(q.runAction(id)).toBe(false);
+    expect(a.run).not.toHaveBeenCalled();
+    q.tick(60_000);
+    expect(q.items).toHaveLength(1);
+    q.release('modal', 60_000);
+    expect(q.runAction(id)).toBe(true);
+  });
+
+  it('releaseAll clears every hold', () => {
+    const q = new ToastQueue();
+    q.hold('pointer', 0);
+    q.hold('focus', 0);
+    q.releaseAll(0);
+    expect(q.paused).toBe(false);
+  });
 });

@@ -105,28 +105,25 @@ describe('toast Undo versus the user pressing Cmd+Z first', () => {
     h.announce('Clip deleted', withClips(h.proj, h.proj.clips.slice(1)));
     h.cmdZ();
     sameJson(h.proj, before);
-    expect(h.toasts.items[0].action?.canRun?.()).toBe(false);
-    expect(h.toastUndo()).toBe(false);
-    sameJson(h.proj, before);
-    h.toasts.prune(); // the toast would say "Clip deleted" about a clip that is back
+    // No render in between: the history itself takes the toast away, so it
+    // never says "Clip deleted" about a clip that is back.
     expect(h.toasts.items).toHaveLength(0);
   });
 
   it('the toast is removed once an unrelated later edit lands', () => {
     h.announce('Clip deleted', withClips(h.proj, h.proj.clips.slice(0, 1)));
-    h.toasts.prune();
     expect(h.toasts.items).toHaveLength(1); // still the newest step: stays
     h.set({ ...h.proj, annotations: [] });
-    h.toasts.prune();
-    expect(h.toasts.items).toHaveLength(0);
+    expect(h.toasts.items).toHaveLength(0); // no render, no prune() call
   });
 
   it('does not undo a second, unrelated change after Cmd+Z and a new edit', () => {
     h.announce('Clip deleted', withClips(h.proj, h.proj.clips.slice(1)));
+    const id = h.toasts.items[0].id;
     h.cmdZ();
     h.set({ ...h.proj, annotations: [] }); // unrelated edit
     const after = structuredClone(h.proj);
-    expect(h.toastUndo()).toBe(false);
+    expect(h.toasts.runAction(id)).toBe(false);
     sameJson(h.proj, after);
     h.cmdZ();
     expect(h.proj.annotations).toHaveLength(1); // only the unrelated change came back
@@ -134,9 +131,10 @@ describe('toast Undo versus the user pressing Cmd+Z first', () => {
 
   it('does not undo a newer edit made after the announced one', () => {
     h.announce('Clip deleted', withClips(h.proj, h.proj.clips.slice(1)));
+    const id = h.toasts.items[0].id;
     h.set({ ...h.proj, annotations: [] });
     const after = structuredClone(h.proj);
-    expect(h.toastUndo()).toBe(false);
+    expect(h.toasts.runAction(id)).toBe(false);
     sameJson(h.proj, after);
   });
 
@@ -145,7 +143,7 @@ describe('toast Undo versus the user pressing Cmd+Z first', () => {
     const first = h.toasts.items[0];
     h.announce('Text deleted', { ...h.proj, annotations: [] });
     expect(h.toasts.runAction(first.id)).toBe(false);
-    expect(h.toasts.items).toHaveLength(2);
+    expect(h.toasts.items.map((t) => t.message)).toEqual(['Text deleted']); // the older one went stale
     expect(h.toastUndo()).toBe(true); // newest still works
     expect(h.proj.annotations).toHaveLength(1);
     expect(h.proj.clips).toHaveLength(1);

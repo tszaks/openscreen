@@ -20,7 +20,11 @@ export class UndoableEdits<T> {
       restore: (prev: T) => void;
       now: () => number;
     },
-  ) {}
+  ) {
+    // A toast whose Undo can no longer apply goes away as the history
+    // changes, with or without a render in between.
+    io.history.subscribe(() => io.toasts.prune());
+  }
 
   run(message: string, edit: () => void) {
     const { history, toasts, current, restore, now } = this.io;
