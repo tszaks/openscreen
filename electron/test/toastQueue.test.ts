@@ -108,4 +108,25 @@ describe('ToastQueue', () => {
     q.dismissNewest();
     expect(q.items.map((t) => t.message)).toEqual(['a']);
   });
+
+  it('prune removes toasts whose action can no longer run, and keeps the rest', () => {
+    const q = new ToastQueue();
+    let stale = false;
+    q.add({ message: 'Clip deleted', action: { ...undo(), canRun: () => !stale } }, 0);
+    q.add({ message: 'plain' }, 0);
+    q.add({ message: 'Reset', action: undo() }, 0);
+    q.prune();
+    expect(q.items).toHaveLength(3);
+    stale = true;
+    q.prune();
+    expect(q.items.map((t) => t.message)).toEqual(['plain', 'Reset']);
+  });
+
+  it('prune works while the stack is paused', () => {
+    const q = new ToastQueue();
+    q.add({ message: 'x', action: { ...undo(), canRun: () => false } }, 0);
+    q.pause(0);
+    q.prune();
+    expect(q.items).toHaveLength(0);
+  });
 });

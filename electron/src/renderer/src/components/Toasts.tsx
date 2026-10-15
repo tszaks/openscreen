@@ -19,6 +19,12 @@ export function Toasts({ queue }: { queue: ToastQueue }) {
     return () => window.clearInterval(id);
   }, [queue]);
 
+  // A stale Undo takes its toast with it. The editor re-renders on every
+  // change to the project, which is when a step can go stale.
+  useEffect(() => {
+    queue.prune();
+  });
+
   // A removed node fires no pointerleave or blur, so an emptied stack must
   // un-pause itself or the next toast would never expire.
   useEffect(() => {
@@ -56,7 +62,7 @@ export function Toasts({ queue }: { queue: ToastQueue }) {
       {items.map((t) => (
         <div className="toast" key={t.id}>
           <span className="toast-text">{t.message}</span>
-          {t.action && (!t.action.canRun || t.action.canRun()) && (
+          {t.action && (
             <button type="button" className="toast-action" onClick={() => queue.runAction(t.id)}>
               {t.action.label}
             </button>

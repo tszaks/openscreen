@@ -105,6 +105,16 @@ export class ToastQueue {
     for (const t of this.list) t.expiresAt = now + t.remaining;
   }
 
+  /** Remove toasts whose action can no longer run (a stale Undo): the
+   *  message would describe a change that is no longer the latest. */
+  prune() {
+    const keep = this.list.filter((t) => !t.action?.canRun || t.action.canRun());
+    if (keep.length !== this.list.length) {
+      this.list = keep;
+      this.emit();
+    }
+  }
+
   /** Drop toasts whose time is up. Nothing expires while paused. */
   tick(now: number) {
     if (this.pausedAt !== null) return;

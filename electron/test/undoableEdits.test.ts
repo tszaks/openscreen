@@ -108,6 +108,17 @@ describe('toast Undo versus the user pressing Cmd+Z first', () => {
     expect(h.toasts.items[0].action?.canRun?.()).toBe(false);
     expect(h.toastUndo()).toBe(false);
     sameJson(h.proj, before);
+    h.toasts.prune(); // the toast would say "Clip deleted" about a clip that is back
+    expect(h.toasts.items).toHaveLength(0);
+  });
+
+  it('the toast is removed once an unrelated later edit lands', () => {
+    h.announce('Clip deleted', withClips(h.proj, h.proj.clips.slice(0, 1)));
+    h.toasts.prune();
+    expect(h.toasts.items).toHaveLength(1); // still the newest step: stays
+    h.set({ ...h.proj, annotations: [] });
+    h.toasts.prune();
+    expect(h.toasts.items).toHaveLength(0);
   });
 
   it('does not undo a second, unrelated change after Cmd+Z and a new edit', () => {
