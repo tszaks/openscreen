@@ -1068,4 +1068,5 @@ No gap was rejected outright: each one was checked against the code (or three r1
 3. Depth and plateau numbers: WP1 fills `devices3d.ts` from Apple's official tech-spec pages (apple.com/iphone/compare and support.apple.com tech specs), with the URL per row. Values from memory are not allowed to merge.
 4. D18 accepted (reuse `uhd4k` for preset layouts). Flagged to Tyler: an old project with a hidden `uhd4k` and a layout preset will export at 4K.
 5. `focus` as an 8th pose channel (0..2) accepted.
-6. Shadow follows D14 (matches the 2D DEFAULT_FRAME_SHADOW): wall 1 mm behind the rearmost hull point, ROI padded by blur + CoC + 2. This overrides the §2.3/§3.7 shadow numbers. The 4K GPU budget is 340 MB (440 MB at ss 2).
+6. Shadow follows D14 (matches the 2D DEFAULT_FRAME_SHADOW): wall 1 mm behind the rearmost hull point, ROI padded by blur + CoC + 2. This overrides the §2.3/§3.7 shadow numbers. The 4K GPU budget is 340 MB (440 MB at ss 2); keep the double buffer and the 3-sigma blur.
+7. Key-light elevation (hard shadow about 15% of body height below the phone vs the 2D 4%) is a LOOK decision for the look-check stage: judges compare renders; WP4b keeps the light elevation a single constant so it is a one-line change.
