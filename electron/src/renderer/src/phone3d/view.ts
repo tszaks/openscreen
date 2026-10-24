@@ -12,6 +12,7 @@
 //   6. the output pass into the engine canvas's top-left roi.w × roi.h
 // Returns the engine canvas and the ROI; the compositor copies that area
 // 1:1 at integer coordinates, so drawImage never resamples the phone.
+import * as THREE from 'three';
 import type { Rect } from '../../../shared/deviceGeometry';
 import {
   camAt,
@@ -26,7 +27,7 @@ import {
 } from '../../../shared/phone3d/projection';
 import type { Engine, PhoneLook } from './engine';
 import { planSamples, planTiles, Passes, type SamplePlan } from './passes';
-import { planScreenTexture } from './screenTexture';
+import { planScreenTexture, screenRoom } from './screenTexture';
 import { catcherFrame } from './shadow';
 
 const DEG = Math.PI / 180;
@@ -63,10 +64,17 @@ export type Render3DResult =
   | { lost: true }
   | { empty: true; roi: Rect };
 
+/** Most distinct shadow poses per frame while the phone moves. */
+export const SHADOW_SAMPLES = 6;
 /** DoF below this largest blur (render px) is invisible and skipped. */
-export const DOF_MIN_PX = 0.25;
-/** Vogel taps for the DoF gather. */
-export const DOF_TAPS = { full: 64, preview: 16 } as const;
+export const DOF_MIN_PX = 0.5;
+/** Vogel taps for the DoF gather: the most, and taps per px² of the gather disc (a 1 px blur needs few). */
+export const DOF_TAPS = { full: 64, preview: 16, perPx2: 2 } as const;
+
+/** Taps for a gather of radius `coc` render px: enough to cover the disc (~2 per px²), capped by quality. */
+export function dofTaps(coc: number, full: boolean): number {
+  return Math.max(8, Math.min(full ? DOF_TAPS.full : DOF_TAPS.preview, Math.ceil(Math.PI * coc * coc * DOF_TAPS.perPx2)));
+}
 
 /** Timing for stats only: never affects pixels (§3.9). On with ?p3dstats or window.__p3dStatsOn. */
 function statsOn(): boolean {
@@ -112,8 +120,9 @@ function applyCamera(
   return range;
 }
 
-/** Makes sure the phone for this scene and look, its light rig and the environment are in the scene. */
-function prepareScene(engine: Engine, a: Render3DArgs): void {
+/** Makes sure the phone for this scene and look, its light rig and the environment are in the scene. Returns the
+ *  phone model's cache key. */
+function prepareScene(engine: Engine, a: Render3DArgs): string {
   const s = a.scene;
   const p3 = s.p3;
   const look = a.look;
@@ -152,13 +161,25 @@ function prepareScene(engine: Engine, a: Render3DArgs): void {
   });
   engine.scene.environment = env.tex;
   engine.scene.environmentIntensity = p3.light.intensity * engine.kit.envStrength(preset);
+  return phoneKey;
 }
 
 /** Render one frame of the 3D phone into the engine canvas. */
 export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   if (engine.lost || engine.renderer.getContext().isContextLost()) return { lost: true };
   const timing = statsOn();
-  const t0 = timing ? performance.now() : 0;
+  const t0 = timing ? performance.now() : 0; // stats only
+  const prof = timing && (globalThis as { __p3dProfile?: boolean }).__p3dProfile ? new Map<string, number>() : null;
+  let lap = t0;
+  /** Stats only: finishes the GPU work so far and books the time since the last mark under `k`. */
+  const syncMarks = (globalThis as { __p3dProfileCpu?: boolean }).__p3dProfileCpu !== true;
+  const mark = (k: string) => {
+    if (!prof) return;
+    if (syncMarks) syncGpu(engine);
+    const now = performance.now(); // stats only
+    prof.set(k, (prof.get(k) ?? 0) + now - lap);
+    lap = now;
+  };
   const s = a.scene;
   const p3 = s.p3;
   const t = a.time;
@@ -179,20 +200,27 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   const rw = roi.w * ss;
   const rh = roi.h * ss;
 
-  prepareScene(engine, a);
+  mark('plan');
+  const phoneKey = prepareScene(engine, a);
   const phone = engine.current.phone!;
 
   // 3. The screen texture, at the frame's centre pose (the video frame is fixed for the frame).
   const camT = camAt(s, t);
   const { quad } = screenQuadAt(s, t, camT);
   const layout = planScreenTexture(quad, s.home.screen, ss, maxSide);
-  const tctx = engine.screen.begin(layout.w, layout.h);
+  const p3t = p3.transitions;
+  const sizes = [p3.pose.size, ...p3t.map((tr) => tr.to.size), ...p3t.map((tr) => tr.from?.size ?? 0)];
+  const tctx = engine.screen.begin(layout.w, layout.h, maxSide, screenRoom(s.home.screen, ss, sizes));
   a.drawScreen(tctx, layout.dst, layout.scale);
   const tex = engine.screen.commit(layout, camT.landscape);
   if (phone.screen.material.map !== tex) {
     phone.screen.material.map = tex;
     phone.screen.material.needsUpdate = true;
   }
+  mark('screen2d');
+  // Upload once, now (not inside the first sample's draw).
+  r.initTexture(tex);
+  mark('upload');
 
   // DoF reach (render px) over the frame's samples.
   const cams = plan.times.map((tt, k) => (k > 0 && tt === plan.times[0] ? null : camAt(s, tt)));
@@ -215,12 +243,28 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   for (const tile of tiles) {
     if (N > 1) passes.clearAccum(tile.pw, tile.ph);
     let range = { near: 1, far: 2 };
+    let last = passes.msaa!;
+    let shadowSlot = -1;
     for (let k = 0; k < N; k++) {
       const cam = camFor(k);
       const tk = plan.times[k];
       applyPose(engine, s, cam);
       engine.poseGroup.updateMatrixWorld(true);
-      if (shadowOn && (k === 0 || plan.nMotion > 1)) engine.shadow.render(engine.poseGroup, catcherFrame(s, cam), p3.shadow.opacity);
+      // The shadow follows at most SHADOW_SAMPLES poses over the shutter (it is soft; every sample's would cost
+      // a silhouette and four blurs each); a still phone renders it once.
+      const slot = plan.nMotion > 1 ? Math.floor((k * Math.min(SHADOW_SAMPLES, N)) / N) : 0;
+      if (shadowOn && slot !== shadowSlot) {
+        shadowSlot = slot;
+        const ks = plan.nMotion > 1 ? Math.min(N - 1, Math.floor(((slot + 0.5) * N) / Math.min(SHADOW_SAMPLES, N))) : 0;
+        const sc = camFor(ks);
+        applyPose(engine, s, sc);
+        engine.poseGroup.updateMatrixWorld(true);
+        // Reused as is while nothing it depends on changes (every tile of a still frame, a paused preview).
+        engine.shadow.render(engine.poseGroup, catcherFrame(s, sc), p3.shadow.opacity, phoneKey);
+        applyPose(engine, s, cam);
+        engine.poseGroup.updateMatrixWorld(true);
+        mark('shadow');
+      }
       const [jx, jy] = plan.jitter[k];
       range = applyCamera(engine, s, cam, tk, ss, {
         x: roi.x * ss + tile.px + jx,
@@ -228,30 +272,37 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
         w: tile.pw,
         h: tile.ph,
       });
-      const msaa = passes.msaa!;
-      Passes.view(msaa, tile.pw, tile.ph);
-      r.setRenderTarget(msaa);
+      // Sample 0 renders with MSAA (the preview's only sample; a still phone's screen); jittered ones without.
+      const target = k === 0 && plan.nMotion === 1 ? passes.msaa! : passes.plain!;
+      // Only the last sample's depth is read (by DoF): skip resolving it otherwise.
+      target.resolveDepthBuffer = dofOn && k === N - 1;
+      Passes.view(target, tile.pw, tile.ph);
+      r.setRenderTarget(target);
       r.setClearColor(0x000000, 0);
       r.clear(true, true, false);
       r.render(engine.scene, engine.camera);
+      last = target;
+      mark('scene');
       if (N > 1) {
         const w1 = plan.screenFromFirst ? (k === 0 ? 1 : 0) : 1 / N;
-        passes.accumulate(tile.pw, tile.ph, 1 / N, w1);
+        passes.accumulate(target, tile.pw, tile.ph, 1 / N, w1);
+        mark('accumulate');
       }
     }
-    let src = N > 1 ? passes.accum! : passes.msaa!;
+    let src = N > 1 ? passes.accum! : last;
     if (dofOn) {
       // Focus on the screen centre at the frame's centre pose.
       const focusZ = projectScreenCentreDepth(s, camT) ?? projectWorld(camT.pos, camT)[2];
       const pose = camT.pose;
-      src = passes.dof(src, tile.pw, tile.ph, {
+      src = passes.dof(src, last.depthTexture!, tile.pw, tile.ph, {
         near: range.near,
         far: range.far,
         focusZ,
         cocScale: p3.dof.amount * pose.focus * 0.02 * H * ss,
         maxCoc: coc,
-        taps: a.quality.full ? DOF_TAPS.full : DOF_TAPS.preview,
+        taps: dofTaps(coc, a.quality.full),
       });
+      mark('dof');
     }
     passes.output(
       src,
@@ -260,6 +311,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
       ss,
       canvas.h,
     );
+    mark('output');
   }
   r.setRenderTarget(null);
 
@@ -272,21 +324,41 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   st.gpuBytes = engine.gpuBytes();
   if (timing) {
     // Finish the GPU work so the time is the real cost, not just the submit (stats runs only).
-    const gl = r.getContext();
-    const px = new Uint8Array(4);
-    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    st.lastMs = performance.now() - t0;
+    syncGpu(engine);
+    st.lastMs = performance.now() - t0; // stats only
     const g = globalThis as { __p3d?: { n: number; ms: number[]; last: EngineStatsSnapshot } };
     const rec = (g.__p3d ??= { n: 0, ms: [], last: null as unknown as EngineStatsSnapshot });
     rec.n++;
     rec.ms.push(st.lastMs);
     if (rec.ms.length > 2000) rec.ms.shift();
-    rec.last = { ...st, W, H, ss, travelPx, nMotion: plan.nMotion, dof: dofOn, gpu: engine.gpuName() };
+    rec.last = { ...st, W, H, ss, travelPx, nMotion: plan.nMotion, dof: dofOn, gpu: engine.gpuName(), profile: prof ? Object.fromEntries(prof) : undefined };
   }
   return { canvas: engine.canvas, roi, samples: N, tiles: tiles.length };
 }
 
-type EngineStatsSnapshot = Engine['stats'] & { W: number; H: number; ss: number; travelPx: number; nMotion: number; dof: boolean; gpu: string };
+type EngineStatsSnapshot = Engine['stats'] & {
+  W: number;
+  H: number;
+  ss: number;
+  travelPx: number;
+  nMotion: number;
+  dof: boolean;
+  gpu: string;
+  profile?: Record<string, number>;
+};
+
+/** Waits for the GPU to finish everything queued (a 1-pixel readback from a 1 × 1 target). Stats runs only. */
+let syncTarget: THREE.WebGLRenderTarget | null = null;
+function syncGpu(engine: Engine): void {
+  const r = engine.renderer;
+  const prev = r.getRenderTarget();
+  syncTarget ??= new THREE.WebGLRenderTarget(1, 1);
+  r.setRenderTarget(syncTarget);
+  r.clear(true, false, false);
+  const px = new Uint8Array(4);
+  r.readRenderTargetPixels(syncTarget, 0, 0, 1, 1, px);
+  r.setRenderTarget(prev);
+}
 
 /** View depth of the screen centre (the DoF focus), px. */
 function projectScreenCentreDepth(s: Scene3D, cam: Cam3D): number | null {

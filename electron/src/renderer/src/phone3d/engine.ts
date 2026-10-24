@@ -16,7 +16,7 @@ import { LIGHT_PRESETS } from '../../../shared/phone3d/lighting';
 import type { LightPreset, Phone3D } from '../../../shared/phone3d/model';
 import { continuousRectPoints } from '../../../shared/phone3d/outline';
 import type { Scene3D } from '../../../shared/phone3d/projection';
-import { mrtOutput, lodBias, Passes } from './passes';
+import { mrtOutput, lodBias, needsRealloc, Passes } from './passes';
 import { ScreenTexture } from './screenTexture';
 import { ShadowPass } from './shadow';
 import { renderPhone3D, type Render3DArgs, type Render3DResult } from './view';
@@ -34,8 +34,8 @@ export interface PhoneModel {
    * The screen mesh. Its material is a MeshBasicMaterial (toneMapped false)
    * with the mrtOutput 'screen' and lodBias patches; its UVs are planar, u
    * along +x and v along +y (up), 0..1 over the screen outline; it lies ON
-   * the front glass plane (z = depth/2) as an overlay layer (polygonOffset,
-   * depthWrite false), so at FRONT it projects exactly onto the flat screen
+   * the front glass plane (z = depth/2) as an overlay layer (polygonOffset),
+   * so at FRONT it projects exactly onto the flat screen
    * rect and the screen texture stays texel exact.
    */
   screen: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
@@ -144,7 +144,9 @@ export const STAND_IN_KIT: PhoneKit = {
       mrtOutput(
         new THREE.MeshBasicMaterial({
           toneMapped: false,
-          depthWrite: false,
+          // Writes depth (pulled forward by the polygon offset), so the GPU's hidden-surface removal skips shading
+          // the glass cap under the screen: the screen covers most of a FRONT phone.
+          depthWrite: true,
           polygonOffset: true,
           polygonOffsetFactor: -1,
           polygonOffsetUnits: reversed ? 4 : -4,
@@ -287,8 +289,6 @@ export class Engine {
     this.canvas = document.createElement('canvas');
     this.canvas.width = 1;
     this.canvas.height = 1;
-    this.canvas.addEventListener('webglcontextlost', this.onLost, false);
-    this.canvas.addEventListener('webglcontextrestored', this.onRestored, false);
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
       alpha: true,
@@ -300,6 +300,10 @@ export class Engine {
       powerPreference: 'high-performance',
       reversedDepthBuffer: opts.reversedDepth !== false,
     });
+    // After three's own handlers (registered by the constructor above): on restore, three must re-create its GL
+    // state and re-enable extensions (EXT_color_buffer_float, anisotropy) before anything here touches GL.
+    this.canvas.addEventListener('webglcontextlost', this.onLost, false);
+    this.canvas.addEventListener('webglcontextrestored', this.onRestored, false);
     const r = this.renderer;
     r.setPixelRatio(1);
     r.autoClear = false;
@@ -331,12 +335,15 @@ export class Engine {
     return Math.min(8192, caps.maxTextureSize, rb || 8192);
   }
 
-  /** Makes the canvas at least w × h, re-created only past the 8% hysteresis (§3.7 step 7). */
+  /** Makes the canvas at least w × h, re-created only when the ROI outgrows it or falls below half of it
+   *  (needsRealloc); the output pass writes its top-left roi.w × roi.h (§3.7 step 7). */
   sizeCanvas(w: number, h: number): { w: number; h: number } {
     const cur = this.canvasSize;
-    if (w > cur.w || h > cur.h || w < cur.w * 0.92 || h < cur.h * 0.92) {
-      this.renderer.setSize(w, h, false);
-      this.canvasSize = { w, h };
+    if (needsRealloc(cur.w ? cur : null, w, h)) {
+      const nw = Math.max(w, Math.min(cur.w, w * 2));
+      const nh = Math.max(h, Math.min(cur.h, h * 2));
+      this.renderer.setSize(nw, nh, false);
+      this.canvasSize = { w: nw, h: nh };
     }
     return this.canvasSize;
   }
@@ -386,7 +393,9 @@ export class Engine {
     this.canvasSize = { w: 0, h: 0 };
     const waiters = this.restoreWaiters;
     this.restoreWaiters = [];
-    waiters.forEach((f) => f());
+    // In a later task: microtasks run between event listeners, and nothing may render before every
+    // restore handler has run.
+    setTimeout(() => waiters.forEach((f) => f()), 0);
   };
 
   /** Drop every cached model, environment and rig (dispose only while the context is alive). */

@@ -135,11 +135,11 @@ describe('tiles (§3.7 step 8)', () => {
     });
   }
 
-  it('hysteresis: re-create on growth or a shrink below 92% only', () => {
+  it('targets: re-create on growth, or when the need falls below half in both axes', () => {
     expect(needsRealloc(null, 10, 10)).toBe(true);
     expect(needsRealloc({ w: 100, h: 100 }, 101, 100)).toBe(true);
-    expect(needsRealloc({ w: 100, h: 100 }, 93, 95)).toBe(false);
-    expect(needsRealloc({ w: 100, h: 100 }, 91, 100)).toBe(true);
+    expect(needsRealloc({ w: 100, h: 100 }, 60, 40)).toBe(false);
+    expect(needsRealloc({ w: 100, h: 100 }, 49, 49)).toBe(true);
   });
 });
 

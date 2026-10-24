@@ -12,16 +12,36 @@
 // the flat draw onto the canvas, and every render pixel then reads exactly
 // one texel: the screen at FRONT is the flat screen.
 //
-// Hysteresis: the canvas is re-created only when the needed size changes by
-// more than 8%; otherwise the content is drawn into its top-left and the
-// texture matrix maps the mesh's 0..1 UVs onto that area.
+// Hysteresis: the canvas size is the needed size rounded UP to a fixed
+// geometric ladder with 8% steps (textureSide), so it is re-created only when
+// the need crosses a rung; the content is drawn into its top-left and the
+// texture matrix maps the mesh's 0..1 UVs onto that area. A ladder (not
+// "keep the last size unless it is 8% off") makes the size a pure function of
+// the frame: the mip chain, and so every oblique frame, is then identical
+// whatever was rendered before (seek order never changes a pixel). The whole
+// canvas is cleared each frame for the same reason (stale texels would reach
+// the coarse mips).
 import * as THREE from 'three';
 import type { Rect } from '../../../shared/deviceGeometry';
 import type { Quad } from '../../../shared/phone3d/projection';
-import { needsRealloc } from './passes';
 
 /** Largest texture side used, whatever the GPU allows. */
 export const MAX_SCREEN_TEXTURE = 8192;
+
+/** Texture canvas sides: 64·1.08^k rounded up (an 8% ladder), capped at MAX_SCREEN_TEXTURE. */
+const LADDER: number[] = (() => {
+  const out: number[] = [];
+  for (let v = 64; v < MAX_SCREEN_TEXTURE; v *= 1.08) out.push(Math.ceil(v));
+  out.push(MAX_SCREEN_TEXTURE);
+  return out;
+})();
+
+/** The canvas side that holds `n` texels: the smallest ladder rung ≥ n, never above `cap` (the GPU's limit) unless n is. */
+export function textureSide(n: number, cap = MAX_SCREEN_TEXTURE): number {
+  const need = Math.ceil(n);
+  for (const v of LADDER) if (v >= need) return Math.max(need, Math.min(v, cap));
+  return need;
+}
 
 export interface ScreenLayout {
   /** The area of the texture canvas used this frame, texels (from its top-left). */
@@ -83,6 +103,17 @@ export function screenUvMatrix(dst: Rect, texW: number, texH: number, landscape:
   return place.multiply(rot);
 }
 
+/**
+ * The texture size a project's screen needs at most, in normal use: the flat
+ * screen × supersample × the largest pose size anywhere in the project (base
+ * pose, every keyframe, float) × 1.12 (perspective: a near edge projects
+ * larger). Frames that need more still get it (their own rung).
+ */
+export function screenRoom(flat: Rect, ss: number, sizes: readonly number[]): { w: number; h: number } {
+  const k = ss * Math.max(1, ...sizes) * 1.12;
+  return { w: Math.ceil(flat.w * k), h: Math.ceil(flat.h * k) };
+}
+
 /** The offscreen canvas and its texture. One per engine. */
 export class ScreenTexture {
   canvas: HTMLCanvasElement | null = null;
@@ -95,12 +126,18 @@ export class ScreenTexture {
   constructor(private readonly anisotropy: number) {}
 
   /**
-   * Makes the canvas hold at least w × h (re-created only past the 8%
-   * hysteresis), clears the used area (plus a 2-texel border) to black, and
-   * returns the 2D context to draw into, with an identity transform.
+   * Makes the canvas textureSide(w) × textureSide(h) (re-created only when
+   * that changes), clears it to black, and returns the 2D context to draw
+   * into, with an identity transform. `room` is a size the canvas should hold
+   * anyway (screenRoom: the project's largest screen), so a turning phone
+   * does not re-create the canvas as its projected size crosses rungs; it is a
+   * pure function of the project, so the size stays a pure function of the
+   * frame.
    */
-  begin(w: number, h: number): CanvasRenderingContext2D {
-    if (needsRealloc(this.size, w, h) || !this.canvas || !this.ctx) {
+  begin(needW: number, needH: number, cap = MAX_SCREEN_TEXTURE, room?: { w: number; h: number }): CanvasRenderingContext2D {
+    const w = textureSide(Math.max(needW, room?.w ?? 0), cap);
+    const h = textureSide(Math.max(needH, room?.h ?? 0), cap);
+    if (!this.size || this.size.w !== w || this.size.h !== h || !this.canvas || !this.ctx) {
       this.texture?.dispose();
       const canvas = document.createElement('canvas');
       canvas.width = w;
@@ -124,7 +161,7 @@ export class ScreenTexture {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, Math.min(w + 2, this.canvas!.width), Math.min(h + 2, this.canvas!.height));
+    ctx.fillRect(0, 0, w, h);
     ctx.restore();
     return ctx;
   }

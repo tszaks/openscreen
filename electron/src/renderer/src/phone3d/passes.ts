@@ -290,7 +290,9 @@ void main() {
  * downsample of both attachments (linear premultiplied), the lit layer tone
  * mapped with three's NeutralToneMapping on its unpremultiplied colour, the
  * screen added untouched, then unpremultiply → sRGB → a fixed ±0.5 LSB dither
- * on the lit part only → premultiply again into the premultipliedAlpha canvas.
+ * on the lit part only (colour, and alpha where it is a soft gradient: the
+ * shadow is black, so its banding would be in alpha) → premultiply again into
+ * the premultipliedAlpha canvas.
  * Tone mapping the unpremultiplied colour (not the premultiplied one the spec
  * first wrote) keeps a half-covered edge at half the surface's value.
  */
@@ -329,7 +331,14 @@ void main() {
   vec3 u = alpha > 0.0 ? c / alpha : vec3( 0.0 );
   u = sRGBTransferOETF( vec4( clamp( u, 0.0, 1.0 ), 1.0 ) ).rgb;
   #ifdef DITHERING
-  if ( uDither ) u += dithering( vec3( 0.0 ) ) * ( 1.0 - clamp( a1.a, 0.0, 1.0 ) );
+  if ( uDither ) {
+    // The lit part only: never the screen. A soft shadow is premultiplied black, so its gradient lives in alpha;
+    // alpha is dithered too (inside (1/255, 1), so the ROI border stays exactly transparent).
+    float lit = 1.0 - clamp( a1.a, 0.0, 1.0 );
+    vec3 d = dithering( vec3( 0.0 ) );
+    u += d * lit;
+    if ( alpha > 1.0 / 255.0 && alpha < 1.0 ) alpha = clamp( alpha + d.g * lit, 1.0 / 255.0, 1.0 );
+  }
   #endif
   u = clamp( u, 0.0, 1.0 );
   o0 = vec4( u * alpha, alpha );
@@ -357,10 +366,16 @@ function mrtTarget(w: number, h: number, samples: number, depth: boolean): THREE
   return t;
 }
 
-/** Re-create only when the size grows, or shrinks below 92% (§3.6 hysteresis), in either axis. */
+/**
+ * Whether render targets must be re-created for a w × h need: when it grows
+ * past them, or falls below half of them in both axes (a turning phone's ROI
+ * shrinks and grows every frame; re-creating ~200 MB of targets each time is
+ * the slowest thing a frame could do). Rendering uses only the top-left
+ * w × h viewport, so the extra size never changes a pixel.
+ */
 export function needsRealloc(cur: { w: number; h: number } | null, w: number, h: number): boolean {
   if (!cur) return true;
-  return w > cur.w || h > cur.h || w < cur.w * 0.92 || h < cur.h * 0.92;
+  return w > cur.w || h > cur.h || (w < cur.w * 0.5 && h < cur.h * 0.5);
 }
 
 export interface DofParams {
@@ -377,8 +392,17 @@ export interface DofParams {
 
 /** The targets and fullscreen passes, one set per engine. */
 export class Passes {
-  /** Where the scene renders: 2 attachments, 4× MSAA, HalfFloat, with a resolved depth texture for DoF. */
+  /** Where the unjittered sample renders: 2 attachments, 4× MSAA, HalfFloat, with a resolved depth texture for DoF. */
   msaa: THREE.WebGLRenderTarget | null = null;
+  /**
+   * Where the jittered sub-samples render: the same, without MSAA. The jitter
+   * itself anti-aliases them (8 or more Halton offsets), so storing and
+   * resolving 4 MSAA samples of two HalfFloat attachments per sub-sample (the
+   * bulk of the frame's memory traffic) buys nothing. Sample 0 keeps MSAA: it is
+   * the whole frame in the live preview, and it alone carries the screen of a
+   * still phone (the screen exactness rule), whose edge MSAA anti-aliases.
+   */
+  plain: THREE.WebGLRenderTarget | null = null;
   /** The sum of the sub-samples. */
   accum: THREE.WebGLRenderTarget | null = null;
   /** The DoF result. */
@@ -447,12 +471,13 @@ export class Passes {
     );
   }
 
-  /** Makes the targets at least w × h (hysteresis); returns true when they were re-created. */
+  /** Makes the targets at least w × h (needsRealloc); returns true when they were re-created. */
   ensure(w: number, h: number): boolean {
-    if (!needsRealloc(this.size, w, h) && this.msaa && this.accum && this.dofOut) return false;
+    if (!needsRealloc(this.size, w, h) && this.msaa && this.plain && this.accum && this.dofOut) return false;
     this.disposeTargets();
     this.size = { w, h };
     this.msaa = mrtTarget(w, h, 4, true);
+    this.plain = mrtTarget(w, h, 0, true);
     this.accum = mrtTarget(w, h, 0, false);
     this.dofOut = mrtTarget(w, h, 0, false);
     return true;
@@ -462,8 +487,9 @@ export class Passes {
   bytes(): number {
     if (!this.size) return 0;
     const px = this.size.w * this.size.h;
-    // msaa: 4 samples × (2 × 8 B colour + 4 B depth); its resolve: 2 × 8 B + 4 B depth; accum and dof: 2 × 8 B each.
-    return px * (4 * (16 + 4) + 20 + 16 + 16);
+    // msaa: 4 samples × (2 × 8 B colour + 4 B depth); its resolve and the plain target: 2 × 8 B + 4 B depth each;
+    // accum and dof: 2 × 8 B each.
+    return px * (4 * (16 + 4) + 20 + 20 + 16 + 16);
   }
 
   /** Points the target's viewport at its top-left w × h (it may be larger: hysteresis). */
@@ -487,11 +513,11 @@ export class Passes {
     r.clear(true, false, false);
   }
 
-  /** accum += msaa (resolved) × (w0, w1). */
-  accumulate(w: number, h: number, w0: number, w1: number): void {
+  /** accum += src (a resolved sample: msaa or plain) × (w0, w1). */
+  accumulate(src: THREE.WebGLRenderTarget, w: number, h: number, w0: number, w1: number): void {
     const m = this.accumMat.uniforms;
-    m.uSrc0.value = this.msaa!.textures[0];
-    m.uSrc1.value = this.msaa!.textures[1];
+    m.uSrc0.value = src.textures[0];
+    m.uSrc1.value = src.textures[1];
     m.uW0.value = w0;
     m.uW1.value = w1;
     Passes.view(this.accum!, w, h);
@@ -499,12 +525,12 @@ export class Passes {
     this.draw(this.accumMat);
   }
 
-  /** DoF from `src` (the accumulation or the resolved MSAA) and the resolved depth into dofOut; returns dofOut. */
-  dof(src: THREE.WebGLRenderTarget, w: number, h: number, p: DofParams): THREE.WebGLRenderTarget {
+  /** DoF from `src` (the accumulation or a resolved sample) with `depth` (the last sample's) into dofOut. */
+  dof(src: THREE.WebGLRenderTarget, depth: THREE.Texture, w: number, h: number, p: DofParams): THREE.WebGLRenderTarget {
     const u = this.dofMat.uniforms;
     u.uSrc0.value = src.textures[0];
     u.uSrc1.value = src.textures[1];
-    u.uDepth.value = this.msaa!.depthTexture;
+    u.uDepth.value = depth;
     u.uNear.value = p.near;
     u.uFar.value = p.far;
     u.uFocusZ.value = p.focusZ;
@@ -550,11 +576,11 @@ export class Passes {
   }
 
   private disposeTargets(): void {
-    for (const t of [this.msaa, this.accum, this.dofOut]) {
+    for (const t of [this.msaa, this.plain, this.accum, this.dofOut]) {
       t?.depthTexture?.dispose();
       t?.dispose();
     }
-    this.msaa = this.accum = this.dofOut = null;
+    this.msaa = this.plain = this.accum = this.dofOut = null;
     this.size = null;
   }
 

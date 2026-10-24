@@ -19,12 +19,14 @@ describe('3D renderer source rules', () => {
     for (const f of ['loader.ts', 'engine.ts', 'screenTexture.ts', 'shadow.ts', 'passes.ts', 'view.ts']) expect(files).toContain(f);
   });
 
-  it('no Date.now / Math.random anywhere; performance.now only behind the stats guard', () => {
+  it('no Date.now / Math.random anywhere; performance.now only on lines marked "stats only"', () => {
     for (const f of files) {
-      const lines = code(read(join(DIR, f))).split('\n');
-      lines.forEach((l, i) => {
-        expect(l, `${f}:${i + 1}`).not.toMatch(/Date\.now|Math\.random|crypto\.getRandomValues/);
-        if (/performance\.now/.test(l)) expect(l, `${f}:${i + 1} uses the clock outside the stats guard`).toMatch(/timing \?|st\.lastMs = performance\.now\(\) - t0/);
+      const raw = read(join(DIR, f)).split('\n');
+      code(read(join(DIR, f)))
+        .split('\n')
+        .forEach((l, i) => expect(l, `${f}:${i + 1}`).not.toMatch(/Date\.now|Math\.random|crypto\.getRandomValues/));
+      raw.forEach((l, i) => {
+        if (/performance\.now\(/.test(l.replace(/\/\/.*$/, ''))) expect(l, `${f}:${i + 1} reads the clock outside the stats guard`).toMatch(/\/\/ stats only$/);
       });
     }
   });
@@ -33,6 +35,8 @@ describe('3D renderer source rules', () => {
     const view = code(read(join(DIR, 'view.ts')));
     expect(view).toMatch(/const t0 = timing \? performance\.now\(\) : 0;/);
     expect(view).toMatch(/if \(timing\) \{[\s\S]*st\.lastMs = performance\.now\(\) - t0;/);
+    expect(view).toMatch(/const prof = timing && /);
+    expect(view).toMatch(/const mark = \(k: string\) => \{\s*if \(!prof\) return;/);
   });
 
   it('three is imported only by the engine chunk; the loader imports the engine only dynamically', () => {

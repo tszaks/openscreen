@@ -54,16 +54,23 @@ uniform float uSigma;   // σ in source texels
 uniform float uStep;    // tap spacing in source texels (≥ 1)
 uniform int uHalf;      // taps each side
 layout(location = 0) out highp vec4 o0;
+float g( float x ) { return exp( -0.5 * x * x / ( uSigma * uSigma ) ); }
 void main() {
   vec2 uv = gl_FragCoord.xy / uOutSize;
-  float sum = 0.0;
-  float wsum = 0.0;
-  for ( int i = -${MAX_HALF_TAPS}; i <= ${MAX_HALF_TAPS}; i++ ) {
-    if ( i < -uHalf || i > uHalf ) continue;
-    float x = float( i ) * uStep;
-    float w = exp( -0.5 * x * x / ( uSigma * uSigma ) );
-    sum += texture( uSrc, uv + uDir * x ).r * w;
-    wsum += w;
+  float sum = texture( uSrc, uv ).r;
+  float wsum = 1.0;
+  // Taps i and i + 1 share one bilinear fetch between them, weighted by their sum: half the fetches.
+  for ( int j = 0; j < ${MAX_HALF_TAPS / 2}; j++ ) {
+    int i = 2 * j + 1;
+    if ( i > uHalf ) break;
+    float xa = float( i ) * uStep;
+    float xb = float( i + 1 ) * uStep;
+    float wa = g( xa );
+    float wb = i + 1 <= uHalf ? g( xb ) : 0.0;
+    float w = wa + wb;
+    float x = ( xa * wa + xb * wb ) / w;
+    sum += ( texture( uSrc, uv + uDir * x ).r + texture( uSrc, uv - uDir * x ).r ) * w;
+    wsum += 2.0 * w;
   }
   o0 = vec4( sum / wsum, 0.0, 0.0, 1.0 );
 }`;
@@ -284,13 +291,23 @@ export class ShadowPass {
     this.catcher.matrixAutoUpdate = false;
   }
 
+  /** What the masks were last rendered for; equal inputs give equal masks, so they are reused. */
+  private lastKey = '';
+
   /**
    * Renders the masks for `frame` from the phone (`phone` is moved into the
    * silhouette scene for the pass and put back), then places the catcher
-   * quad. `opacity` is phone3d.shadow.opacity.
+   * quad. `opacity` is phone3d.shadow.opacity. `modelKey` names the phone
+   * model; with the same model, catcher, light and pose (the phone's world
+   * matrix) as last time the masks are reused as they are (a still phone, the
+   * paused preview, playback without moves).
    */
-  render(phone: THREE.Object3D, frame: CatcherFrame, opacity: number): void {
+  render(phone: THREE.Object3D, frame: CatcherFrame, opacity: number, modelKey: string): void {
     const r = this.renderer;
+    const key = [modelKey, phone.matrixWorld.elements.join(','), frame.shadowMatrix.elements.join(','), frame.u0, frame.u1, frame.v0, frame.v1, frame.sigma.ambient, frame.sigma.contact].join('|');
+    this.placeCatcher(frame, opacity);
+    if (key === this.lastKey) return;
+    this.lastKey = key;
     const parent = phone.parent;
     // Silhouette: an orthographic camera looking straight at the catcher area.
     const P = frame.normal.clone().multiplyScalar(frame.plane + 10);
@@ -339,7 +356,15 @@ export class ShadowPass {
     blur(this.sil.texture, S, this.ta, 'u', frame.sigma.ambient);
     blur(this.ta.texture, AMBIENT_SIZE, this.ambient, 'v', frame.sigma.ambient);
 
-    // The catcher quad, in world space.
+  }
+
+  /** Forget the cached masks (their targets were re-created, or the context was lost). */
+  invalidate(): void {
+    this.lastKey = '';
+  }
+
+  /** The catcher quad in world space, its mask mapping and its opacity. */
+  private placeCatcher(frame: CatcherFrame, opacity: number): void {
     const pos = this.catcher.geometry.getAttribute('position') as THREE.BufferAttribute;
     frame.corners.forEach((c, i) => pos.setXYZ(i, c.x, c.y, c.z));
     pos.needsUpdate = true;
