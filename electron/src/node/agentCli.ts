@@ -26,9 +26,9 @@ import { phoneDevice, phoneLayerOn } from '../shared/phoneLayer';
 import { layerOrder } from '../shared/canvasLayers';
 import { importVideoFile } from './importVideo';
 import { readCursorSamples } from './bundleFiles';
-import { appCommand, bool, CliError, flag, out, progress, r2, runHeadless, seconds } from './cliKit';
+import { appCommand, bool, CliError, flag, out, progress, r2, runHeadless, seconds, warnProgress } from './cliKit';
 import { framesCmd } from './framesCmd';
-import { DIRECT_STYLES, needsScenes, planDirect, projectWarnings, shotRecipes, type ApplyContext3d, type DirectStyle, type Phone3DWarning } from './phone3dPlan';
+import { DIRECT_STYLES, needsScenes, planDirect, projectWarnings, shotRecipes, type ApplyContext3d, type DirectStyle } from './phone3dPlan';
 import { sceneTimes } from './scenes';
 import { analyzeTapsInFile, bundleAudioPath, detectSilences, ffmpegPath, probeAudioDuration, ffmpegRun, ffmpegStderr, parseWhisperJson, probeMedia, transcribeBundle, whisperCli } from './media';
 
@@ -392,9 +392,6 @@ async function review(args: string[]) {
 
 /** Sound files addAudio will copy into the bundle: bundle-relative target → source path. */
 const audioCopies = new Map<string, string>();
-
-/** Warnings as stderr progress lines (`export` keeps stdout for its one result). */
-const warnProgress = (warnings: Phone3DWarning[]) => warnings.forEach((w) => progress({ warning: w.code, message: w.message, ...(w.at !== undefined ? { at: r2(w.at) } : {}) }));
 
 async function buildContext(dir: string, p: Project, ops: EditOp[], editsDir: string, cursor = readCursorSamples(dir), dryRun = false): Promise<ApplyContext3d> {
   // The bundle's cursor samples (D5): `direct` plans with the same zooms the editor shows.

@@ -20,7 +20,10 @@ import { screenQuad } from '../shared/phone3d/projection';
 import type { Pose } from '../shared/phone3d/model';
 import { Timeline } from '../shared/timeline';
 import type { Project } from '../shared/types';
-import { appCommand, bool, CliError, flag, r2, runHeadless, seconds } from './cliKit';
+import { validateProject } from '../shared/agentOps';
+import { readCursorSamples } from './bundleFiles';
+import { appCommand, bool, CliError, flag, r2, runHeadless, seconds, warnProgress } from './cliKit';
+import { projectWarnings } from './phone3dPlan';
 
 export type FrameSelection = { kind: 'at'; times: number[] } | { kind: 'every'; step: number } | { kind: 'moves' };
 
@@ -124,6 +127,10 @@ export interface FramesDeps {
 export async function framesCmd(argv: string[], deps: FramesDeps) {
   const a = parseFramesArgs(argv);
   const { dir, project: p } = deps.resolveBundle(a.bundle);
+  // Like export: an invalid project is refused; warnings go to stderr and never block.
+  const errs = validateProject(p);
+  if (errs.length) throw new CliError(`project is invalid, fix it before rendering frames: ${errs.join('; ')}`);
+  warnProgress(projectWarnings(p, { cursor: readCursorSamples(dir) }));
   const { times, past } = planFrameTimes(p, a.select);
   const outDir = resolve(a.out ?? defaultFramesDir(dir));
   if (existsSync(outDir) && !statSync(outDir).isDirectory()) throw new CliError(`--out must be a folder: ${outDir} is a file`);

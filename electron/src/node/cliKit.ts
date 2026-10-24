@@ -17,6 +17,9 @@ export class CliError extends Error {
 
 export const out = (o: unknown) => process.stdout.write(JSON.stringify(o, null, 2) + '\n');
 export const progress = (o: Record<string, unknown>) => process.stderr.write(JSON.stringify(o) + '\n');
+/** Warnings as stderr progress lines (for commands whose stdout is one result, e.g. export and frames). */
+export const warnProgress = (warnings: { code: string; message: string; at?: number }[]) =>
+  warnings.forEach((w) => progress({ warning: w.code, message: w.message, ...(w.at !== undefined ? { at: Math.round(w.at * 100) / 100 } : {}) }));
 
 /** Take `--name value` / `--name=value` out of `args`; undefined when absent. */
 export function flag(args: string[], name: string): string | undefined {
