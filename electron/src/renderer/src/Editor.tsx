@@ -29,6 +29,7 @@ import type { TapSuggestion } from '../../shared/taps';
 import { SaveTracker, isTextEntry } from '../../shared/editorSession';
 import { exportCanvasSize, ipcErrorMessage, presetCanvasSize } from '../../shared/exportArgs';
 import { focusSegmentsFor } from '../../shared/focusSegments';
+import { phone3dActive } from '../../shared/phone3d/placement';
 import { getPreset, PRESETS, type ExportPreset, type PresetId } from '../../shared/exportPresets';
 import {
   ENCODE_WEIGHT,
@@ -692,10 +693,16 @@ export function Editor({
   };
 
   // True for the whole of an export or a frames run. They seek the video and
-  // draw on the same compositor as the preview, so the preview must not draw
-  // in between (its 'seeked' redraw would double the work per frame and, in
-  // 3D, flip the engine between preview and export quality) (§5.5).
+  // draw on the same compositor as the preview. In 3D the preview must not
+  // draw in between: its 'seeked' redraw would double the GPU work per frame
+  // and flip the engine between preview and export quality (§5.5).
   const exportingRef = useRef(false);
+  /** The preview stays still: during an export or frames run, and always in a
+   *  headless run, when the phone draws in 3D. Flat projects keep today's
+   *  redraws exactly: skipping them changes the exported pixels of a blurred
+   *  backdrop (measured: the ios-social golden fixture stops matching main's
+   *  export), and flat exports must stay byte-identical (D11). */
+  const previewHeld = () => (headless || exportingRef.current) && phone3dActive(projRef.current).active;
 
   /** The compositor's inputs at output time `outT`, with the videos on source
    *  time `srcT`: one place for the preview, exports and frames. Cursor and
@@ -720,11 +727,11 @@ export function Editor({
   };
 
   // Draw the composited frame at output time `outT` onto the preview canvas.
-  // The video is already on the matching source frame. Never during an
-  // export or frames run, and never in a headless run (nothing is shown).
+  // The video is already on the matching source frame. Not while the preview
+  // is held (a 3D export, frames or headless run).
   const renderAt = useCallback(
     (outT: number) => {
-      if (headless || exportingRef.current) return;
+      if (previewHeld()) return;
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2) return;
@@ -971,9 +978,9 @@ export function Editor({
       if (tick.kind === 'end') video.pause();
       else raf = requestAnimationFrame(loop);
     };
-    // An export or frames run seeks this video for every frame: no preview redraw then.
+    // An export or frames run seeks this video for every frame: a 3D preview does not redraw then.
     const onSeeked = () => {
-      if (headless || exportingRef.current) return;
+      if (previewHeld()) return;
       renderAt(playheadRef.current);
     };
     const onPlay = () => {
