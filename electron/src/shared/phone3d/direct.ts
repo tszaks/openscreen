@@ -214,12 +214,40 @@ export function edgeOnOffset(base: Readonly<Pose>, direction: 1 | -1, duration =
   return key.frac[0] * duration + ((a + c) / 2) * len;
 }
 
-/** The plan's shots for `excluded` keys (self-check rounds re-plan without them). */
-function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: ReadonlySet<string>, forced: ReadonlyMap<string, 1 | -1>): Draft[] {
+/** `x` seconds, with as many decimals (1 to 3) as it takes to read as under `limit`, so a stated shortfall never
+ *  rounds up to the limit it misses (1.95 s under 2.0 s, not "2.0 s"). */
+function below(x: number, limit: number): string {
+  const v = Math.max(0, x);
+  for (const d of [1, 2]) {
+    const s = v.toFixed(d);
+    if (Number(s) < limit) return `${s} s`;
+  }
+  return `${(Math.floor(v * 1000) / 1000).toFixed(3)} s`;
+}
+
+/**
+ * Why draftShots planned no shot of a kind: one clause from the gate that
+ * refused it, for DirectPlan.note. Absent when one was planned, or when the
+ * only candidates were excluded (the note reports those as dropped shots).
+ */
+export interface Misses {
+  /** No spin-in (hero and bold). */
+  spinIn?: string;
+  /** No intro at all. */
+  intro?: string;
+  /** No middle shot (hero and bold). */
+  middle?: string;
+  /** No closing move (hero and bold). */
+  outro?: string;
+}
+
+/** The plan's shots for `excluded` keys (self-check rounds re-plan without them), and why the missing kinds are missing. */
+function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: ReadonlySet<string>, forced: ReadonlyMap<string, 1 | -1>): { drafts: Draft[]; misses: Misses } {
   const { D, windows } = inp;
   const style = opts.style;
   const budget = MOVING_CAP[style] * D;
   const shots: Draft[] = [];
+  const misses: Misses = {};
   let used = 0;
   const reserved: Span[] = [];
   const reserve = (d: Draft) => {
@@ -227,28 +255,63 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
     used += d.duration;
     reserved.push({ start: d.start - SHOT_GAP, end: d.start + d.duration + SHOT_GAP });
   };
+  /** The moving-time cap refused a `what` of `duration` seconds: the cap itself is too small, or the other planned
+   *  shots use it up. */
+  const overCap = (what: string, duration: number) => {
+    const cap = `${Math.round(MOVING_CAP[style] * 100)}% of the take`;
+    const left = budget - used;
+    if (budget < duration) return `${what} takes ${duration} s, more than the moving-time cap (${cap}, ${below(budget, duration)})`;
+    if (left <= 1e-9) return `${what} takes ${duration} s, and the other planned shots already use all of the moving-time cap (${cap}, ${s1(budget)})`;
+    return `${what} takes ${duration} s, more than the ${below(left, duration)} left of the moving-time cap (${cap}, ${s1(budget)}) after the other planned shots`;
+  };
   const tapNote = inp.firstTap !== undefined ? `first tap at ${s1(inp.firstTap)}` : 'no taps';
 
   // Intro (always allowed: it opens the video; the moving-time cap applies to the rest).
+  const room = introRoom(inp);
   const w0 = windows.find((w) => w.atZero);
+  if (style !== 'subtle') {
+    // The first free window's shrunk length (what the spin-in gate reads); a window too short to keep has room - inset.
+    const firstLen = w0 ? w0.len : Math.max(0, room - WINDOW_INSET);
+    if (D < INTRO_MIN_OUTPUT) misses.spinIn = `the take is ${below(D, INTRO_MIN_OUTPUT)}, under the ${INTRO_MIN_OUTPUT} s a spin-in needs`;
+    else if (firstLen < SPIN_IN_MIN) misses.spinIn = `the phone must face front from ${s1(room)}, which leaves a spin-in ${below(firstLen, SPIN_IN_MIN)}, under the ${SPIN_IN_MIN.toFixed(1)} s it needs`;
+  }
   if (w0 && style !== 'subtle' && D >= INTRO_MIN_OUTPUT && w0.len >= SPIN_IN_MIN && !excluded.has('spin-in@0')) {
     reserve({ key: 'spin-in@0', recipe: 'spin-in', start: 0, duration: Math.min(SHOTS['spin-in'].duration, w0.len - INTRO_GUARD, w0.end), ret: 'front', direction: 1, reason: `intro; ${tapNote}` });
   } else if (w0 && w0.len >= SETTLE_MIN && !excluded.has('settle@0')) {
     reserve({ key: 'settle@0', recipe: 'settle', start: 0, duration: Math.min(SHOTS.settle.duration, w0.len - INTRO_GUARD, w0.end), ret: 'front', direction: 1, reason: `intro; ${tapNote}` });
-  } else if (introRoom(inp) >= SHORT_INTRO_MIN && !excluded.has('settle@0')) {
+  } else if (room >= SHORT_INTRO_MIN && !excluded.has('settle@0')) {
     // Owner decision 12: a short take dense with taps still opens in 3D. The settle only leans 8° and lands on the
     // base pose when it ends, so it may run up to the first busy start (into the END_GAP), never past it.
-    const duration = Math.min(SHOTS.settle.duration, Math.max(SHORT_INTRO_MIN, introRoom(inp) - END_GAP));
-    reserve({ key: 'settle@0', recipe: 'settle', start: 0, duration, ret: 'front', direction: 1, reason: `intro (short, before busy time at ${s1(introRoom(inp))}); ${tapNote}` });
+    const duration = Math.min(SHOTS.settle.duration, Math.max(SHORT_INTRO_MIN, room - END_GAP));
+    reserve({ key: 'settle@0', recipe: 'settle', start: 0, duration, ret: 'front', direction: 1, reason: `intro (short, before busy time at ${s1(room)}); ${tapNote}` });
+  } else if (room < SHORT_INTRO_MIN) {
+    misses.intro =
+      room <= 0
+        ? 'the phone must face front from 0.0 s (a tap, zoom or kept move starts there), so no intro fits'
+        : `the phone must face front from ${below(room, SHORT_INTRO_MIN)} (the first tap, zoom or kept move), under the ${SHORT_INTRO_MIN} s an intro needs`;
   }
 
   // Outro: a one-way hero-layback that ends just before the video does.
-  const tail = windows[windows.length - 1];
-  if (style !== 'subtle' && tail?.atEnd && tail.len >= OUTRO_MIN && !excluded.has('outro')) {
-    const start = D - OUTRO_END_GAP - OUTRO_DURATION;
-    const clear = start >= tail.start && reserved.every((r) => start >= r.end || start + OUTRO_DURATION <= r.start);
-    if (clear && used + OUTRO_DURATION <= budget + 1e-9) {
-      reserve({ key: 'outro', recipe: 'hero-layback', start, duration: OUTRO_DURATION, ret: 'stay', direction: 1, reason: 'outro; ends on a hero angle' });
+  if (style !== 'subtle') {
+    const tail = windows[windows.length - 1];
+    const lastBusyEnd = inp.busy.length ? inp.busy[inp.busy.length - 1].end : 0;
+    const endLen = tail?.atEnd ? tail.len : Math.max(0, D - lastBusyEnd - WINDOW_INSET);
+    if (!tail?.atEnd || tail.len < OUTRO_MIN) {
+      misses.outro = `the free time at the end is ${below(endLen, OUTRO_MIN)}, under the ${OUTRO_MIN} s the closing move needs`;
+    } else if (!excluded.has('outro')) {
+      const start = D - OUTRO_END_GAP - OUTRO_DURATION;
+      const inTail = start >= tail.start;
+      const clash = shots.find((d) => !(start >= d.start + d.duration + SHOT_GAP || start + OUTRO_DURATION <= d.start - SHOT_GAP));
+      const fits = used + OUTRO_DURATION <= budget + 1e-9;
+      if (inTail && !clash && fits) {
+        reserve({ key: 'outro', recipe: 'hero-layback', start, duration: OUTRO_DURATION, ret: 'stay', direction: 1, reason: 'outro; ends on a hero angle' });
+      } else {
+        const why: string[] = [];
+        if (!inTail) why.push(`the closing move would start at ${s1(start)}, before the free time at the end (from ${s1(tail.start)})`);
+        if (clash) why.push(`the closing move would start ${below(start - (clash.start + clash.duration), SHOT_GAP)} after the intro ends, under the ${SHOT_GAP.toFixed(1)} s rest between shots`);
+        if (!fits) why.push(overCap('the closing move', OUTRO_DURATION));
+        misses.outro = why.join(', and ');
+      }
     }
   }
 
@@ -266,6 +329,10 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
     }
     let middle = 0;
     const maxMiddle = Math.floor(D / MIDDLE_EVERY);
+    /** The longest free gap a middle shot could use (first round: before any middle shot), and the shortest middle
+     *  shot the moving-time cap refused. */
+    const longest = Math.max(0, ...pool.map((x) => x.len));
+    let capped: number | undefined;
     while (pool.length && middle < maxMiddle) {
       pool.sort((a, b) => Number(b.quiet) - Number(a.quiet) || b.len - a.len || a.start - b.start);
       const next: Free[] = [];
@@ -275,7 +342,11 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
         for (const recipe of options) {
           const key = `${recipe}@${r3(x.start)}`;
           const duration = SHOTS[recipe].duration;
-          if (excluded.has(key) || used + duration > budget + 1e-9 || duration > x.len) continue;
+          if (excluded.has(key) || duration > x.len) continue;
+          if (used + duration > budget + 1e-9) {
+            capped = Math.min(capped ?? Infinity, duration);
+            continue;
+          }
           let start = x.start + (x.len - duration) / 2;
           let lo = start;
           let hi = start;
@@ -304,6 +375,17 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
       }
       pool = next;
     }
+    if (!middle) {
+      if (maxMiddle === 0) misses.middle = `a middle move needs a take of ${MIDDLE_EVERY} s or more (this one is ${below(D, MIDDLE_EVERY)})`;
+      else if (capped !== undefined) misses.middle = overCap('a middle move', capped);
+      else if (longest < LAYBACK_MIN) {
+        const beside = shots.length ? ` beside the planned shots (with the ${SHOT_GAP.toFixed(1)} s rest around each)` : '';
+        misses.middle =
+          longest > 0
+            ? `the longest free gap${beside} is ${below(longest, LAYBACK_MIN)}, under the ${LAYBACK_MIN} s a middle move needs`
+            : `no free time is left${beside} for a middle move`;
+      }
+    }
   }
 
   // Directions alternate by shot index after the intro (time order). The self-check may force the other direction
@@ -315,7 +397,7 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
 
   // Scene-change wipe: the turn passes edge-on exactly at the cut.
   for (const d of ordered) if (d.scene !== undefined) d.start = d.scene - edgeOnOffset(base, d.direction, d.duration);
-  return ordered;
+  return { drafts: ordered, misses };
 }
 
 function opsFor(style: DirectStyle, base: Pose, replace: boolean, drafts: readonly Draft[]): EditOp[] {
@@ -358,6 +440,8 @@ const toShot = (d: Draft): PlannedShot => ({ recipe: d.recipe, start: r3(d.start
 interface Checked {
   ops: EditOp[];
   drafts: Draft[];
+  /** Why the missing kinds of shot are missing, from the draftShots run that made `drafts`. */
+  misses: Misses;
   rounds: number;
   dropped: PlannedShot[];
   /** The warning codes behind each dropped shot (for the note). */
@@ -388,7 +472,7 @@ function selfChecked(p: Project, opts: DirectOptions, inp: Inputs, base: Pose): 
   const baseline = projectWarnings(baseProject, { cursor: opts.cursor });
   const baseOverflow = offCanvasMeter(baseProject);
   const preExisting = (w: Warning) => baseline.some((b) => b.code === w.code && overlaps(b, w));
-  let drafts = draftShots(opts, inp, base, excluded, forced);
+  let { drafts, misses } = draftShots(opts, inp, base, excluded, forced);
   for (let guard = 0; guard < 64; guard++) {
     const ops = opsFor(opts.style, base, opts.replace, drafts);
     let tried: ReturnType<typeof tryPlan>;
@@ -418,7 +502,7 @@ function selfChecked(p: Project, opts: DirectOptions, inp: Inputs, base: Pose): 
       const d = (r.transitionId && tried.owner.get(r.transitionId)) || drafts.filter((x) => x.start <= r.worst).at(-1) || drafts[0];
       if (d) blame(d, 'off-canvas');
     }
-    if (!bad.size) return { ops, drafts, rounds, dropped, droppedFor, retries, baseProject, baseline, baseOverflow };
+    if (!bad.size) return { ops, drafts, misses, rounds, dropped, droppedFor, retries, baseProject, baseline, baseOverflow };
     for (const [d, codes] of bad) {
       // Only an off-canvas problem can be one-sided; settle has no turn to mirror.
       if (rounds < MAX_ROUNDS && codes.size === 1 && codes.has('off-canvas') && d.recipe !== 'settle' && !forced.has(d.key)) {
@@ -430,7 +514,8 @@ function selfChecked(p: Project, opts: DirectOptions, inp: Inputs, base: Pose): 
       for (const c of codes) droppedFor.add(c);
     }
     rounds++;
-    drafts = rounds <= MAX_ROUNDS ? draftShots(opts, inp, base, excluded, forced) : drafts.filter((d) => !bad.has(d));
+    if (rounds <= MAX_ROUNDS) ({ drafts, misses } = draftShots(opts, inp, base, excluded, forced));
+    else drafts = drafts.filter((d) => !bad.has(d));
   }
   throw new Error('Auto 3D: the self-check did not settle');
 }
@@ -471,21 +556,21 @@ function posedRestRefusal(p: Project, opts: DirectOptions, inp: Inputs, styled: 
   return added.length ? `add a ${added[0].code} warning` : null;
 }
 
-/** Why the style's own moves do not fit (one clause per cause), for DirectPlan.note. `turning`: only turning shots are missing. */
+/**
+ * Why the style's own moves do not fit (one clause per cause), for
+ * DirectPlan.note. Each clause comes from the draftShots gate that refused the
+ * shot (Misses), or from the self-check that dropped it. `turning`: only
+ * turning shots are missing (hero has a settle), so the intro clause is about
+ * the spin-in.
+ */
 function missingCauses(opts: DirectOptions, inp: Inputs, checked: Checked, turning: boolean): string[] {
+  const { misses } = checked;
   const out: string[] = [];
-  const room = introRoom(inp);
-  if (!turning && room < SHORT_INTRO_MIN) {
-    out.push(room <= 0 ? 'the phone must face front from 0.0 s (a tap, zoom or kept move starts there), so no intro fits' : `the phone must face front from ${s1(room)} (the first tap, zoom or kept move), under the ${SHORT_INTRO_MIN} s an intro needs`);
-  } else if (turning && !checked.drafts.some((d) => d.recipe === 'spin-in') && !checked.dropped.some((d) => d.recipe === 'spin-in')) {
-    out.push(inp.D < INTRO_MIN_OUTPUT ? `the take is ${s1(inp.D)}, under the ${INTRO_MIN_OUTPUT} s a spin-in needs` : `the phone must face front from ${s1(room)}, too soon for a spin-in (it needs ${SPIN_IN_MIN.toFixed(1)} s free)`);
-  }
+  const intro = turning ? misses.spinIn : misses.intro;
+  if (intro) out.push(intro);
   if (opts.style === 'subtle') out.push('subtle plans no moves after the intro');
-  else {
-    const free = inp.windows.filter((w) => !w.atZero || room >= SHORT_INTRO_MIN);
-    const longest = Math.max(0, ...free.map((w) => w.len));
-    out.push(free.length ? `the longest free gap is ${s1(longest)} (a middle move needs ${LAYBACK_MIN} s, the closing move ${OUTRO_MIN} s at the end)` : 'there is no free time between taps, zooms and kept moves');
-  }
+  else if (!inp.windows.length) out.push('there is no free time between taps, zooms and kept moves');
+  else for (const c of [misses.middle, misses.outro]) if (c) out.push(c);
   if (checked.dropped.length) {
     const n = checked.dropped.length;
     out.push(`the self-check dropped ${n} shot${n === 1 ? '' : 's'} that would cause ${[...checked.droppedFor].join(', ')} warnings`);

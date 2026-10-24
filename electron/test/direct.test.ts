@@ -31,6 +31,28 @@ function take(duration: number, taps: TapSuggestion[] = [], waits: { start: numb
   return p;
 }
 
+/**
+ * A plan note never contradicts itself: every stated shortfall is under the
+ * limit it names, the cap it quotes is the style's share of the take, the take
+ * length rules match the take, and a free gap long enough for a middle move is
+ * never given as the reason one is missing.
+ */
+function expectNoteConsistent(note: string, D: number, style: DirectStyle, label: string): void {
+  const at = `${label}: ${note}`;
+  for (const m of note.matchAll(/([\d.]+) s, under the ([\d.]+) s/g)) expect(Number(m[1]), at).toBeLessThan(Number(m[2]));
+  for (const m of note.matchAll(/takes ([\d.]+) s, more than the (?:([\d.]+) s left of the )?moving-time cap \((\d+)% of the take, ([\d.]+) s\)/g)) {
+    expect(Number(m[2] ?? m[4]), at).toBeLessThan(Number(m[1]));
+    expect(Number(m[3]), at).toBe(Math.round(MOVING_CAP[style] * 100));
+    expect(Math.abs(Number(m[4]) - MOVING_CAP[style] * D), at).toBeLessThanOrEqual(0.05 + 1e-9);
+  }
+  const spinTake = note.match(/the take is ([\d.]+) s, under the 4 s a spin-in needs/);
+  if (spinTake) expect(D, at).toBeLessThan(4);
+  const middleTake = note.match(/a middle move needs a take of 6 s or more \(this one is ([\d.]+) s\)/);
+  if (middleTake) expect(D, at).toBeLessThan(MIDDLE_EVERY);
+  const gap = note.match(/longest free gap[^;]* is ([\d.]+) s[^;]*a middle move needs/);
+  if (gap && Number(gap[1]) >= 2.4) expect(note, at).toMatch(/dropped|moving-time cap/);
+}
+
 /** The project after the `direct` op, with its plan inputs. */
 function directed(p: Project, opts: DirectOptions): Project {
   let n = 0;
@@ -490,7 +512,7 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     expect(hero.plan.ops[0]).toMatchObject({ op: 'phone3d', pose: { ...POSED_REST } });
     expect(heldOff(hero.out, VISIBLE_DEG)).toBeGreaterThan(0.9);
     expect(hero.plan.note).toBe(
-      'No turning shot fits: the phone must face front from 0.6 s, too soon for a spin-in (it needs 2.0 s free); the longest free gap is 0.4 s (a middle move needs 2.4 s, the closing move 1.5 s at the end). The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+      'No turning shot fits: the phone must face front from 0.6 s, which leaves a spin-in 0.4 s, under the 2.0 s it needs; no free time is left beside the planned shots (with the 1.0 s rest around each) for a middle move; the free time at the end is 0.0 s, under the 1.5 s the closing move needs. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
     );
     const bold = checkPlan(project, { style: 'bold', replace: true, cursor }, 'ios-social/bold');
     expect(bold.plan.ops[0]).toMatchObject({ pose: { ...BOLD_BASE } });
@@ -522,7 +544,9 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     const p = FIXTURES.find((f) => f.name === 'dense taps')!.p();
     const plan = planDirect(p, { style: 'hero', replace: true });
     expect(moving(plan)).toEqual([]);
-    expect(plan.note).toMatch(/^No moving shot fits: the phone must face front from 0\.4 s \(the first tap, zoom or kept move\), under the 0\.6 s an intro needs; the longest free gap is 0\.6 s \(a middle move needs 2\.4 s, the closing move 1\.5 s at the end\)\. The phone rests at a posed angle/);
+    expect(plan.note).toBe(
+      'No moving shot fits: the phone must face front from 0.4 s (the first tap, zoom or kept move), under the 0.6 s an intro needs; the longest free gap is 0.6 s, under the 2.4 s a middle move needs; the free time at the end is 0.6 s, under the 1.5 s the closing move needs. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
   });
 
   it('kept moves are not touched: the note says so and the base pose stays the style\'s', () => {
@@ -571,9 +595,55 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     expect(planDirect(take(2.5), { style: 'hero', replace: true }).note).toMatch(/^No turning shot fits: the take is 2\.5 s, under the 4 s a spin-in needs; /);
   });
 
+  it('the note names the gate that actually refused each shot (short takes: the take length, the 6 s middle rule, the moving-time cap)', () => {
+    // 3.9 s, no taps: the whole take is free, so free time is never the reason. The spin-in needs a 4 s take, no
+    // middle move is planned under 6 s, and the closing move (1.4 s) is over the 35% cap (1.365 s).
+    expect(0.35 * 3.9).toBeLessThan(1.4);
+    const plan = planDirect(take(3.9), { style: 'hero', replace: true });
+    expect(plan.shots.map((s) => `${s.recipe} ${s.start}-${s.end}`)).toEqual(['settle 0-1']);
+    expect(plan.note).toBe(
+      'No turning shot fits: the take is 3.9 s, under the 4 s a spin-in needs; a middle move needs a take of 6 s or more (this one is 3.9 s); the closing move takes 1.4 s, more than the moving-time cap (35% of the take, 1.36 s). The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+    // 3 s: the closing move would also start too soon after the intro (settle 0-1 then a 1 s rest; it starts at 1.5 s).
+    expect(planDirect(take(3), { style: 'hero', replace: true }).note).toBe(
+      'No turning shot fits: the take is 3.0 s, under the 4 s a spin-in needs; a middle move needs a take of 6 s or more (this one is 3.0 s); the closing move would start 0.5 s after the intro ends, under the 1.0 s rest between shots, and the closing move takes 1.4 s, more than the moving-time cap (35% of the take, 1.0 s). The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+  });
+
+  it('the note reports the spin-in\'s own window (busy start minus the inset), shown precisely enough to read as short', () => {
+    // First tap at 2.7 s: busy from 2.1 s, so the first window is 2.1 - 0.15 = 1.95 s, under the 2.0 s a spin-in
+    // needs (at one decimal 1.95 would round to "2.0 s" and contradict itself). Dense taps after it, to the end.
+    const taps = [2.7];
+    for (let t = 3.5; t < 10; t += 0.8) taps.push(Math.round(t * 100) / 100);
+    const plan = planDirect(take(10, taps.map((t, i) => tap(t, {}, i))), { style: 'hero', replace: true });
+    expect(plan.shots.map((s) => s.recipe)).toEqual(['settle']);
+    expect(plan.note).toBe(
+      'No turning shot fits: the phone must face front from 2.1 s, which leaves a spin-in 1.95 s, under the 2.0 s it needs; no free time is left beside the planned shots (with the 1.0 s rest around each) for a middle move; the free time at the end is 0.0 s, under the 1.5 s the closing move needs. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+    // A first tap 0.05 s later leaves the spin-in its 2.0 s, so it is planned and there is no note.
+    taps[0] = 2.75;
+    const later = planDirect(take(10, taps.map((t, i) => tap(t, {}, i))), { style: 'hero', replace: true });
+    expect(later.shots.map((s) => s.recipe)).toEqual(['spin-in']);
+    expect(later.note).toBeUndefined();
+  });
+
+  it('a middle move refused by the moving-time cap says so, not the free gap it would fit in', () => {
+    // 6.5 s, one tap at 2 s (busy, with its tap zoom, from 1.4 s to 3.5 s): a settle opens it (1.25 s is too short
+    // for a spin-in), then 3.65 s to the end is free, more than both the 2.4 s a middle move needs and the 1.5 s the
+    // closing move needs. The 35% cap is 2.275 s and the settle uses 1.0 s, so neither 1.4 s move fits the 1.275 s left.
+    const p = take(6.5, [tap(2)]);
+    expect(focusSegmentsFor(p, []).map((z) => [z.inStart, z.outEnd])).toEqual([[1.75, 3.5]]);
+    const plan = planDirect(p, { style: 'hero', replace: true });
+    expect(plan.shots.map((s) => s.recipe)).toEqual(['settle']);
+    expect(plan.note).toBe(
+      'No turning shot fits: the phone must face front from 1.4 s, which leaves a spin-in 1.3 s, under the 2.0 s it needs; a middle move takes 1.4 s, more than the 1.3 s left of the moving-time cap (35% of the take, 2.3 s) after the other planned shots; the closing move takes 1.4 s, more than the 1.3 s left of the moving-time cap (35% of the take, 2.3 s) after the other planned shots. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+  });
+
   it('sweep: 400 iPhone takes of 3-30 s, dense taps from the first moment, every style: visible 3D, clean, and a note whenever the style\'s own moves do not fit', () => {
     const presets = ['social-9x16', 'feed-4x5', 'square', 'landscape-16x9', 'none'];
     const tally = { short: 0, posed: 0, full: 0 };
+    let notes = 0;
     for (let seed = 1; seed <= 400; seed++) {
       const rnd = lcg(seed * 6151);
       const D = 3 + rnd() * 27;
@@ -599,7 +669,11 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
         const moves = moving(plan);
         const ownMovesFit = moves.length > 0 && (style !== 'hero' || turning(plan).length > 0);
         expect(plan.note === undefined, `${label}: note iff the style's own moves do not fit (${plan.note})`).toBe(ownMovesFit);
-        if (plan.note) expect(plan.note, label).toMatch(/^No (moving|turning) shot fits: .+\. The phone rests at (a posed angle instead|the bold angle)/);
+        if (plan.note) {
+          expect(plan.note, label).toMatch(/^No (moving|turning) shot fits: .+\. The phone rests at (a posed angle instead|the bold angle)/);
+          expectNoteConsistent(plan.note, outD, style, label);
+          notes++;
+        }
         // Hero and bold read as 3D for most of the take, unless a turning shot carries it.
         if (style !== 'subtle' && !turning(plan).length) expect(heldOff(out, VISIBLE_DEG), `${label}: holds a 3D angle`).toBeGreaterThan(0.75);
         if (plan.ops[0].op === 'phone3d' && JSON.stringify(plan.ops[0].pose) === JSON.stringify(POSED_REST) && style !== 'bold') tally.posed++;
@@ -612,6 +686,7 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     expect(tally.short).toBeGreaterThan(150);
     expect(tally.posed).toBeGreaterThan(300);
     expect(tally.full).toBeGreaterThan(50);
+    expect(notes).toBeGreaterThan(300);
   }, 240_000);
 });
 
