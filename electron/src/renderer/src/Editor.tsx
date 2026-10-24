@@ -11,7 +11,8 @@ import { History } from '../../shared/history';
 import { ToastQueue } from '../../shared/toasts';
 import { UndoableEdits } from '../../shared/undoableEdits';
 import { Toasts } from './components/Toasts';
-import { CanvasCompositor, backgroundReady } from './compositor';
+import { CanvasCompositor, backgroundReady, exportRender3d, type Render3DSettings } from './compositor';
+import { ensurePhone3d, onEngineReady } from './phone3d/loader';
 import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
 import {
@@ -135,6 +136,9 @@ import {
 type InspectorTab = 'background' | 'device' | 'zoom' | 'cursor' | 'camera' | 'phone' | 'audio' | 'text';
 
 /** The export shown in the progress overlay: one file, or a batch of formats. */
+/** A paused 3D frame redraws at export quality this long after the last edit or seek. */
+const IDLE_3D_MS = 150;
+
 /** How an export ended, for headless runs. */
 interface ExportOutcome {
   ok: boolean;
@@ -245,6 +249,8 @@ export function Editor({
   // Output time, always. The video element only knows source time.
   const [playhead, setPlayhead] = useState(0);
   const playheadRef = useRef(0);
+  /** The pending paused-frame 3D redraw at export quality. */
+  const idle3d = useRef<number | null>(null);
   // Index of the clip being played (a source moment can sit in two clips).
   const playIndex = useRef(0);
   const movePlayhead = (t: number) => {
@@ -706,7 +712,7 @@ export function Editor({
   // The video is already on the matching source frame; cursor and keys are
   // recorded in source time, so they follow the video.
   const renderAt = useCallback(
-    (outT: number) => {
+    (outT: number, render3d?: Render3DSettings) => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2) return;
@@ -727,9 +733,20 @@ export function Editor({
         ripples: ripplesAt(outT, clickEv),
         cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
         phoneFrame: phone && phone.readyState >= 2 ? phone : undefined,
+        render3d,
       });
       ctx.drawImage(compositor.canvas, 0, 0);
       drawEditorGuides(ctx);
+      // A paused 3D frame redraws at export quality once edits and seeks settle (§3.8).
+      if (idle3d.current !== null) window.clearTimeout(idle3d.current);
+      idle3d.current = null;
+      if (!render3d && !headless && compositor.has3d && video.paused) {
+        idle3d.current = window.setTimeout(() => {
+          idle3d.current = null;
+          const settings = exportRender3d(proj, layoutPresetOf(proj)?.fps ?? proj.outputFPS);
+          if (settings && videoRef.current?.paused) renderAtRef.current(playheadRef.current, { ...settings, strict: false });
+        }, IDLE_3D_MS);
+      }
       // In crop mode, dim outside the current crop rect (in source space).
       if (cropMode) {
         const src = proj.recording.sourceSize;
@@ -765,6 +782,24 @@ export function Editor({
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compositor, canvasSize, smoothed, keys, clickEv, cropMode, proj, selectedTap, titleFocus, selectedLayer, hoveredLayer, guides],
+  );
+
+  const renderAtRef = useRef(renderAt);
+  useEffect(() => {
+    renderAtRef.current = renderAt;
+  }, [renderAt]);
+  // The 3D engine loads lazily (only for a project with phone3d); the preview
+  // draws flat until it is ready, then redraws.
+  const has3dKey = !!proj.phone3d;
+  useEffect(() => {
+    if (has3dKey) ensurePhone3d().catch(() => {});
+  }, [has3dKey]);
+  useEffect(() => onEngineReady(() => renderAtRef.current(playheadRef.current)), []);
+  useEffect(
+    () => () => {
+      if (idle3d.current !== null) window.clearTimeout(idle3d.current);
+    },
+    [],
   );
 
   /** Preview-only marks, never exported: the selected tap and, while the
@@ -1096,6 +1131,9 @@ export function Editor({
       );
       encoding = true;
       video.pause();
+      // A 3D phone never exports flat: the engine is loaded before frame 0 and a lost GPU aborts (D9, D17).
+      await comp.prepare3d();
+      const render3d = exportRender3d(proj, fps);
       for (let i = 0; i < total; i++) {
         if (cancelExport.current) break;
         const outT = i / fps;
@@ -1106,7 +1144,7 @@ export function Editor({
         if (cam) await seekVideo(cam, camTime(srcT));
         const phone = phoneOn ? phoneRef.current : null;
         if (phone) await seekVideo(phone, phoneTime(srcT));
-        comp.render(outT, {
+        const inputs = {
           cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, srcT) : undefined,
           frame: video,
           cursor: cursorAt(smoothed, srcT),
@@ -1114,7 +1152,12 @@ export function Editor({
           ripples: ripplesAt(outT, clickEv),
           cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
           phoneFrame: phone && phone.readyState >= 2 ? phone : undefined,
-        });
+          render3d,
+        };
+        comp.render(outT, inputs);
+        // A lost GPU gets one chance to come back (3 s), then the same frame is drawn again; else the export stops.
+        if (comp.error3d && (await comp.recover3d(3000))) comp.render(outT, inputs);
+        if (comp.error3d) throw new Error(comp.error3d);
         const ctx = comp.canvas.getContext('2d')!;
         const rgba = ctx.getImageData(0, 0, W, H);
         await api.exportFrame(rgba.data.buffer); // rejects once ffmpeg has stopped
