@@ -526,6 +526,9 @@ const offFront = (pose: Pose) => Math.acos(Math.min(1, facingOf(pose, 0))) / DEG
 /** Shots that turn the phone to a hero angle (what makes hero read as 3D; settle only leans 8° for a moment). */
 const TURNING: readonly ShotRecipe[] = ['spin-in', 'hero-layback', 'turn-to-back'];
 
+/** Whether the style's own moves are in `drafts`: a turning shot for hero, any shot for subtle and bold. */
+const ownMovesFit = (style: DirectStyle, drafts: Draft[]) => (style === 'hero' ? drafts.some((d) => TURNING.includes(d.recipe)) : drafts.length > 0);
+
 /**
  * The style could not use its own moves, so the posed rest stands in: hero
  * (base straight on) with no turning shot, or subtle with no shot at all.
@@ -534,7 +537,7 @@ const TURNING: readonly ShotRecipe[] = ['spin-in', 'hero-layback', 'turn-to-back
  */
 function needsPosedRest(opts: DirectOptions, styleBase: Pose, checked: Checked): boolean {
   if ((checked.baseProject.phone3d?.transitions.length ?? 0) > 0 || offFront(styleBase) >= VISIBLE_DEG) return false;
-  return opts.style === 'subtle' ? !checked.drafts.length : !checked.drafts.some((d) => TURNING.includes(d.recipe));
+  return !ownMovesFit(opts.style, checked.drafts);
 }
 
 /**
@@ -599,8 +602,10 @@ function missingCauses(opts: DirectOptions, inp: Inputs, checked: Checked, turni
  * lean (its spring lands in about 0.2 s), so when hero fits no turning shot,
  * or subtle fits no shot at all, and there are no kept moves, the phone rests
  * at POSED_REST (inside the 12° rule) instead of straight on, after a check
- * that this adds no warning and no edge overflow. Every such plan, and every
- * plan with no moving shot, says why in `note`.
+ * that this adds no warning and no edge overflow. Every plan whose own moves
+ * still do not fit (and so every plan with no moving shot) says why in `note`,
+ * from the self-check run whose shots it returns. When the shots planned on
+ * POSED_REST do include the style's own moves, the plan has no note.
  */
 export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
   if (!isPhoneProject(p)) throw new Error(NOT_IPHONE);
@@ -609,21 +614,24 @@ export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
   const styled = selfChecked(p, opts, inp, styleBase);
   let checked = styled;
   let rest: string | undefined;
-  const someMove = styled.drafts.length > 0;
   if (needsPosedRest(opts, styleBase, styled)) {
     const posed = selfChecked(p, opts, inp, POSED_REST);
     const refusal = posedRestRefusal(p, opts, inp, styled, posed);
     if (refusal) rest = `The phone stays straight on: a posed angle would ${refusal}.`;
     else {
       checked = posed;
-      rest = `The phone rests at a posed angle instead (${offFront(POSED_REST).toFixed(1)}° off front, inside the ${BUSY_FACING_DEG}° rule for taps).`;
+      // The posed base can fit moves the straight-on base could not (a shot that pushed the phone off the canvas from
+      // straight on may not from the posed angle). Then the style's own moves fit and there is nothing to explain.
+      if (!ownMovesFit(opts.style, posed.drafts)) rest = `The phone rests at a posed angle instead (${offFront(POSED_REST).toFixed(1)}° off front, inside the ${BUSY_FACING_DEG}° rule for taps).`;
     }
   } else if (!styled.drafts.length) {
     const kept = (styled.baseProject.phone3d?.transitions.length ?? 0) > 0;
     rest = kept ? 'Your own moves stay as they are.' : `The phone rests at the ${opts.style} angle (${offFront(styleBase).toFixed(1)}° off front).`;
   }
-  // A note whenever the style's own moves did not fit: no moving shot at all, or (hero) no turning shot.
-  const note = rest ? `${someMove ? 'No turning shot fits' : 'No moving shot fits'}: ${missingCauses(opts, inp, styled, someMove).join('; ')}. ${rest}` : undefined;
+  // A note whenever the style's own moves did not fit: no moving shot at all, or (hero) no turning shot. It is built
+  // from the run whose shots the plan returns, so its reasons and its dropped count describe this plan.
+  const someMove = checked.drafts.length > 0;
+  const note = rest ? `${someMove ? 'No turning shot fits' : 'No moving shot fits'}: ${missingCauses(opts, inp, checked, someMove).join('; ')}. ${rest}` : undefined;
   const shots = [...checked.drafts.map(toShot), ...(opts.style === 'subtle' ? [{ recipe: 'float' as const, start: 0, end: r3(inp.D), reason: 'subtle; idle float' }] : [])];
   return { ops: checked.ops, shots, check: { rounds: checked.rounds, dropped: checked.dropped, retries: checked.retries }, ...(note ? { note } : {}) };
 }

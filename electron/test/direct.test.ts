@@ -669,6 +669,7 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
         const moves = moving(plan);
         const ownMovesFit = moves.length > 0 && (style !== 'hero' || turning(plan).length > 0);
         expect(plan.note === undefined, `${label}: note iff the style's own moves do not fit (${plan.note})`).toBe(ownMovesFit);
+        expectNoteMatchesPlan(plan, style, label);
         if (plan.note) {
           expect(plan.note, label).toMatch(/^No (moving|turning) shot fits: .+\. The phone rests at (a posed angle instead|the bold angle)/);
           expectNoteConsistent(plan.note, outD, style, label);
@@ -687,6 +688,74 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     expect(tally.posed).toBeGreaterThan(300);
     expect(tally.full).toBeGreaterThan(50);
     expect(notes).toBeGreaterThan(300);
+  }, 240_000);
+
+  /** The note describes the plan it is attached to: its kind of shortfall and its dropped count match the shots. */
+  function expectNoteMatchesPlan(plan: ReturnType<typeof planDirect>, style: DirectStyle, label: string): void {
+    const ownMovesFit = moving(plan).length > 0 && (style !== 'hero' || turning(plan).length > 0);
+    expect(plan.note === undefined, `${label}: note iff the style's own moves do not fit (${plan.note})`).toBe(ownMovesFit);
+    if (!plan.note) return;
+    expect(plan.note.startsWith('No moving shot fits'), `${label}: "No moving" iff no moving shot (${plan.note})`).toBe(moving(plan).length === 0);
+    const dropped = plan.note.match(/the self-check dropped (\d+) shots? /);
+    expect(dropped ? Number(dropped[1]) : 0, `${label}: the note's dropped count is the plan's (${plan.note})`).toBe(plan.check.dropped.length);
+  }
+
+  it('moved layouts, where straight on and the posed angle drop different shots: the note comes from the run whose shots the plan returns', () => {
+    // Two takes found by a review sweep. Straight on, every shot pushes the moved phone off the canvas and is dropped;
+    // from the posed angle the same shots fit. The note used to come from the straight-on run ("No moving shot fits
+    // ... the self-check dropped 2 shots") while the plan carried three turning shots and one dropped shot.
+    const hero = take(23.514, [tap(2.206, {}, 0), tap(20.395, {}, 1)], [], 'feed-4x5');
+    hero.style = { ...hero.style, contentTransform: { scale: 0.9707804731559009, x: 0.6391470730304718, y: 0.37616323521360756 } };
+    const h = checkPlan(hero, { style: 'hero', replace: true }, 'moved hero').plan;
+    expect(h.ops[0]).toMatchObject({ op: 'phone3d', pose: POSED_REST });
+    expect(h.shots.map((s) => `${s.recipe} ${s.start}`)).toEqual(['hero-layback 4.428', 'hero-layback 11', 'hero-layback 17.573']);
+    expect(h.check.dropped.map((s) => s.recipe)).toEqual(['settle']);
+    expect(h.note).toBeUndefined();
+    const subtle = take(28.755, [tap(3.36, {}, 0), tap(23.223, {}, 1)], [], 'square');
+    subtle.style = { ...subtle.style, contentTransform: { scale: 0.9217379806097598, x: 0.6025434959679843, y: 0.4070532980374992 } };
+    const s = checkPlan(subtle, { style: 'subtle', replace: true }, 'moved subtle').plan;
+    expect(s.ops[0]).toMatchObject({ op: 'phone3d', pose: POSED_REST });
+    expect(moving(s).map((x) => `${x.recipe} ${x.start}-${x.end}`)).toEqual(['settle 0-1']);
+    expect(s.check.dropped).toEqual([]);
+    expect(s.note).toBeUndefined();
+    // The other way round: straight on keeps the short settle, from the posed angle it pokes the moved phone off the
+    // canvas and is dropped. The plan has no shot, so the note must give the posed run's reasons and its dropped shot.
+    const busy = take(9.5, [1.86, 4.38, 4.85, 7.47, 8.65].map((t, i) => tap(t, {}, i)), [], 'social-9x16');
+    busy.style = { ...busy.style, contentTransform: { scale: 0.9, x: 0.68, y: 0.47 } };
+    const b = checkPlan(busy, { style: 'hero', replace: true }, 'moved busy hero').plan;
+    expect(b.ops[0]).toMatchObject({ op: 'phone3d', pose: POSED_REST });
+    expect(b.shots).toEqual([]);
+    expect(b.check.dropped.map((x) => `${x.recipe} ${x.start}-${x.end}`)).toEqual(['settle 0-0.91']);
+    expect(b.note).toBe(
+      'No moving shot fits: the longest free gap is 1.0 s, under the 2.4 s a middle move needs; the free time at the end is 0.0 s, under the 1.5 s the closing move needs; the self-check dropped 1 shot that would cause off-canvas warnings. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+  });
+
+  it('sweep: 400 takes with a moved or scaled phone, every style: a note exactly when the style\'s own moves do not fit, and its dropped count is the plan\'s', () => {
+    const presets = ['social-9x16', 'feed-4x5', 'square', 'landscape-16x9', 'none'];
+    let posedWithOwnMoves = 0;
+    let droppedNotes = 0;
+    for (let seed = 1; seed <= 400; seed++) {
+      const rnd = lcg(seed * 4447 + 7);
+      const D = 3 + rnd() * 37;
+      const rate = 0.05 + rnd() * 1.2;
+      const taps: TapSuggestion[] = [];
+      for (let t = rnd() * 4, i = 0; t < D; t += (0.4 + rnd() * 3) / rate, i++) taps.push(tap(t, {}, i));
+      const p = take(D, taps, [], presets[Math.floor(rnd() * presets.length)]);
+      p.style = { ...p.style, contentTransform: { scale: 0.8 + rnd() * 0.6, x: 0.3 + rnd() * 0.4, y: 0.3 + rnd() * 0.4 } };
+      for (const style of STYLES) {
+        const label = `seed ${seed} (${style}, D ${D.toFixed(2)}, ${JSON.stringify(p.style.contentTransform)})`;
+        const plan = planDirect(p, { style, replace: true });
+        expectNoteMatchesPlan(plan, style, label);
+        if (plan.note && /dropped/.test(plan.note)) droppedNotes++;
+        const posed = plan.ops[0].op === 'phone3d' && JSON.stringify(plan.ops[0].pose) === JSON.stringify(POSED_REST);
+        if (style !== 'bold' && posed && plan.note === undefined) posedWithOwnMoves++;
+      }
+    }
+    // The case under test is reached (a posed rest whose shots include the style's own moves), and many notes carry a
+    // dropped count. (Measured: 2 and 494.)
+    expect(posedWithOwnMoves).toBeGreaterThan(0);
+    expect(droppedNotes).toBeGreaterThan(300);
   }, 240_000);
 });
 
