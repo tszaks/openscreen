@@ -319,6 +319,7 @@ Options: `{ style: 'subtle'|'hero'|'bold'; scenes?: number[] /*SOURCE s; absent 
 4. **Intro.** If D ≥ 4 and the first window starts at 0:
    - length ≥ 2.0: spin-in (hero or bold) over `[0, min(1.6, len−0.2)]`
    - length ≥ 1.0: settle
+   - else, when the first busy start is ≥ 0.6 s (owner decision 12): a short settle over `[0, min(1.0, max(0.6, busyStart − 0.25))]`. It leans only 8° and lands on the base pose by the first busy start, never after it.
 5. **Middle.** Windows are taken quiet first, then longer:
    - bold, window ≥ 4.5 s: turn-to-back
    - hero or bold, window ≥ 2.4 s: hero-layback with a return
@@ -335,6 +336,9 @@ Options: `{ style: 'subtle'|'hero'|'bold'; scenes?: number[] /*SOURCE s; absent 
    2. `{op:'clearTransitions'}` when `replace`
    3. one `{op:'shot', recipe, at, duration, direction, intensity}` per shot
 9. **Self-check.** Apply the ops to a copy (`applyOps`, which validates) and run `projectWarnings(copy, { cursor })`. Remove any shot that causes `tap-angle`, `off-canvas`, `overlap` or `over-zoom`, then repeat (at most 4 rounds). A planned project has zero warnings. If `applyOps` throws (it must not; see D21), the planner drops the last shot and retries, and a test fails on any such retry.
+   - Off-canvas is judged per moment and per edge (left, top, right, bottom) against the same project without the shots: a shot is blamed when any edge goes past the 2% margin and more than 0.5 px further past that edge than without the shots. A big overflow at one edge never excuses a new one at another. Inside moves the check reads every 60 fps frame.
+   - A shot blamed only for off-canvas gets one more try in the other direction (the lean mirrored) before it is dropped.
+10. **Always visible (owner decision 12).** When no moving shot fits and there are no kept moves, the base pose becomes `POSED_REST` `{turn:-8, tilt:5}` (9.4°, inside the 12° rule), after a check that it stays inside 12° at every moment and adds no warning or edge overflow. The plan then carries `note`: one line that says why no moving shot fits and what the phone does instead. The `direct` op's note and the CLI's `direct` output (`note`) show it. A plan with a moving shot has no `note`.
 
 There is no randomness and no clock.
 
