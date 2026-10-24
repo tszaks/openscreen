@@ -1,0 +1,437 @@
+# fixture display canvas 1728x1080
+canvas#0 = createElement(canvas)
+canvas#0.width = 1728
+canvas#0.height = 1080
+# render t=0.25
+canvas#0.createLinearGradient(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)
+gradient#0<linear(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)>.addColorStop(0,"#3a1c71")
+gradient#0.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#0
+canvas#0.fillRect(0,0,1728,1080)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.35)"
+canvas#0.shadowBlur = 60
+canvas#0.beginPath()
+canvas#0.moveTo(162.23999999999992,86.4)
+canvas#0.arcTo(1589.7600000000002,86.4,1589.7600000000002,993.6,24)
+canvas#0.arcTo(1589.7600000000002,993.6,138.23999999999992,993.6,24)
+canvas#0.arcTo(138.23999999999992,993.6,138.23999999999992,86.4,24)
+canvas#0.arcTo(138.23999999999992,86.4,1589.7600000000002,86.4,24)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,0,0,1280,800,138.23999999999992,86.4,1451.5200000000002,907.2)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffd60a1a"
+canvas#0.beginPath()
+canvas#0.ellipse(433.9871999999999,369.9,4.752000000000001,4.752000000000001,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a33"
+canvas#0.beginPath()
+canvas#0.ellipse(439.43039999999996,381.24,6.048,6.048,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a4d"
+canvas#0.beginPath()
+canvas#0.ellipse(444.8736,392.44392000000005,7.344,7.344,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a66"
+canvas#0.beginPath()
+canvas#0.ellipse(450.31679999999994,403.6478400000001,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60ad9"
+canvas#0.beginPath()
+canvas#0.ellipse(455.76,414.62496,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+# state {contentRect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},contentBase:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},screenMap:{source:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},screen:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}},cameraRect:null,cameraBasis:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},base:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}}]}
+# render t=1.3
+canvas#0.createLinearGradient(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)
+gradient#1<linear(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)>.addColorStop(0,"#3a1c71")
+gradient#1.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#1
+canvas#0.fillRect(0,0,1728,1080)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.35)"
+canvas#0.shadowBlur = 60
+canvas#0.beginPath()
+canvas#0.moveTo(162.23999999999992,86.4)
+canvas#0.arcTo(1589.7600000000002,86.4,1589.7600000000002,993.6,24)
+canvas#0.arcTo(1589.7600000000002,993.6,138.23999999999992,993.6,24)
+canvas#0.arcTo(138.23999999999992,993.6,138.23999999999992,86.4,24)
+canvas#0.arcTo(138.23999999999992,86.4,1589.7600000000002,86.4,24)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,3.377502911081251,3.733230519425774,1269.1361941778375,793.2101213611485,138.23999999999992,86.4,1451.5200000000002,907.2)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffd60a1a"
+canvas#0.beginPath()
+canvas#0.ellipse(547.9415918069759,560.47431038259,4.752000000000001,4.752000000000001,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a33"
+canvas#0.beginPath()
+canvas#0.ellipse(553.4313855989759,565.14063510579,6.048,6.048,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a4d"
+canvas#0.beginPath()
+canvas#0.ellipse(558.9211793909759,569.80695982899,7.344,7.344,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a66"
+canvas#0.beginPath()
+canvas#0.ellipse(564.4109731829758,573.42107407539,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60ad9"
+canvas#0.beginPath()
+canvas#0.ellipse(569.9007669749758,577.03518832179,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "600 34.56px -apple-system, sans-serif"
+canvas#0.measureText("Golden fixture:")
+canvas#0.measureText("Golden fixture: a")
+canvas#0.measureText("Golden fixture: a display")
+canvas#0.measureText("Golden fixture: a display recording")
+canvas#0.measureText("Golden fixture: a display recording with")
+canvas#0.measureText("Golden fixture: a display recording with a")
+canvas#0.measureText("Golden fixture: a display recording with a cut")
+canvas#0.measureText("Golden fixture: a display recording with a cut and")
+canvas#0.measureText("Golden fixture: a display recording with a cut and a")
+canvas#0.measureText("Golden fixture: a display recording with a cut and a speed-up")
+canvas#0.measureText("Golden fixture: a display recording with a cut and a speed-up")
+canvas#0.fillStyle = "rgba(0,0,0,0.65)"
+canvas#0.beginPath()
+canvas#0.moveTo(335.75039999999996,896.9184)
+canvas#0.arcTo(1408.3200000000002,896.9184,1408.3200000000002,961.2,16.070400000000003)
+canvas#0.arcTo(1408.3200000000002,961.2,319.67999999999995,961.2,16.070400000000003)
+canvas#0.arcTo(319.67999999999995,961.2,319.67999999999995,896.9184,16.070400000000003)
+canvas#0.arcTo(319.67999999999995,896.9184,1408.3200000000002,896.9184,16.070400000000003)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.fillStyle = "#fff"
+canvas#0.textBaseline = "middle"
+canvas#0.textAlign = "center"
+canvas#0.fillText("Golden fixture: a display recording with a cut and a speed-up",864,929.0592)
+canvas#0.textAlign = "start"
+# state {contentRect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},contentBase:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},screenMap:{source:{x:134.3771261429758,y:82.13027797298989,w:1463.9450112000004,h:914.9656320000001},screen:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}},cameraRect:null,cameraBasis:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},base:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}}]}
+# render t=1.75
+canvas#0.createLinearGradient(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)
+gradient#2<linear(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)>.addColorStop(0,"#3a1c71")
+gradient#2.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#2
+canvas#0.fillRect(0,0,1728,1080)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.35)"
+canvas#0.shadowBlur = 60
+canvas#0.beginPath()
+canvas#0.moveTo(162.23999999999992,86.4)
+canvas#0.arcTo(1589.7600000000002,86.4,1589.7600000000002,993.6,24)
+canvas#0.arcTo(1589.7600000000002,993.6,138.23999999999992,993.6,24)
+canvas#0.arcTo(138.23999999999992,993.6,138.23999999999992,86.4,24)
+canvas#0.arcTo(138.23999999999992,86.4,1589.7600000000002,86.4,24)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,80,239.51999999999998,640,400,138.23999999999992,86.4,1451.5200000000002,907.2)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffd60a1a"
+canvas#0.beginPath()
+canvas#0.ellipse(874.8864000000001,540.4535999999999,4.752000000000001,4.752000000000001,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a33"
+canvas#0.beginPath()
+canvas#0.ellipse(885.7728000000001,540.9072000000002,6.048,6.048,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a4d"
+canvas#0.beginPath()
+canvas#0.ellipse(896.6591999999999,539.0928000000002,7.344,7.344,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a66"
+canvas#0.beginPath()
+canvas#0.ellipse(907.5456,537.2784000000001,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60ad9"
+canvas#0.beginPath()
+canvas#0.ellipse(918.4320000000001,533.2867200000002,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.strokeStyle = "rgba(255,255,255,0.4821428571428571)"
+canvas#0.lineWidth = 2.16
+canvas#0.beginPath()
+canvas#0.ellipse(864,540,30.760714285714283,30.760714285714283,0,0,6.283185307179586)
+canvas#0.stroke()
+canvas#0.fillStyle = "rgba(255,255,255,0.16874999999999998)"
+canvas#0.beginPath()
+canvas#0.ellipse(864,540,13.842321428571427,13.842321428571427,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "600 34.56px -apple-system, sans-serif"
+canvas#0.measureText("Golden fixture:")
+canvas#0.measureText("Golden fixture: a")
+canvas#0.measureText("Golden fixture: a display")
+canvas#0.measureText("Golden fixture: a display recording")
+canvas#0.measureText("Golden fixture: a display recording with")
+canvas#0.measureText("Golden fixture: a display recording with a")
+canvas#0.measureText("Golden fixture: a display recording with a cut")
+canvas#0.measureText("Golden fixture: a display recording with a cut and")
+canvas#0.measureText("Golden fixture: a display recording with a cut and a")
+canvas#0.measureText("Golden fixture: a display recording with a cut and a speed-up")
+canvas#0.measureText("Golden fixture: a display recording with a cut and a speed-up")
+canvas#0.fillStyle = "rgba(0,0,0,0.65)"
+canvas#0.beginPath()
+canvas#0.moveTo(335.75039999999996,896.9184)
+canvas#0.arcTo(1408.3200000000002,896.9184,1408.3200000000002,961.2,16.070400000000003)
+canvas#0.arcTo(1408.3200000000002,961.2,319.67999999999995,961.2,16.070400000000003)
+canvas#0.arcTo(319.67999999999995,961.2,319.67999999999995,896.9184,16.070400000000003)
+canvas#0.arcTo(319.67999999999995,896.9184,1408.3200000000002,896.9184,16.070400000000003)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.fillStyle = "#fff"
+canvas#0.textBaseline = "middle"
+canvas#0.textAlign = "center"
+canvas#0.fillText("Golden fixture: a display recording with a cut and a speed-up",864,929.0592)
+canvas#0.textAlign = "start"
+# state {contentRect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},contentBase:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},screenMap:{source:{x:-43.2000000000001,y:-456.83136,w:2903.0400000000004,h:1814.4},screen:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}},cameraRect:null,cameraBasis:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},base:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}}]}
+# render t=2.4
+canvas#0.createLinearGradient(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)
+gradient#3<linear(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)>.addColorStop(0,"#3a1c71")
+gradient#3.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#3
+canvas#0.fillRect(0,0,1728,1080)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.35)"
+canvas#0.shadowBlur = 60
+canvas#0.beginPath()
+canvas#0.moveTo(162.23999999999992,86.4)
+canvas#0.arcTo(1589.7600000000002,86.4,1589.7600000000002,993.6,24)
+canvas#0.arcTo(1589.7600000000002,993.6,138.23999999999992,993.6,24)
+canvas#0.arcTo(138.23999999999992,993.6,138.23999999999992,86.4,24)
+canvas#0.arcTo(138.23999999999992,86.4,1589.7600000000002,86.4,24)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,80,239.51999999999998,640,400,138.23999999999992,86.4,1451.5200000000002,907.2)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffd60a1a"
+canvas#0.beginPath()
+canvas#0.ellipse(1016.4095999999998,454.17888000000016,4.752000000000001,4.752000000000001,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a33"
+canvas#0.beginPath()
+canvas#0.ellipse(1027.296,439.93584,6.048,6.048,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a4d"
+canvas#0.beginPath()
+canvas#0.ellipse(1038.1824000000001,425.69280000000003,7.344,7.344,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a66"
+canvas#0.beginPath()
+canvas#0.ellipse(1049.0688000000002,409.81679999999994,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60ad9"
+canvas#0.beginPath()
+canvas#0.ellipse(1059.9552,393.9408000000001,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "600 34.56px -apple-system, sans-serif"
+canvas#0.measureText("Golden fixture:")
+canvas#0.measureText("Golden fixture: a")
+canvas#0.measureText("Golden fixture: a display")
+canvas#0.measureText("Golden fixture: a display recording")
+canvas#0.measureText("Golden fixture: a display recording with")
+canvas#0.measureText("Golden fixture: a display recording with a")
+canvas#0.measureText("Golden fixture: a display recording with a cut")
+canvas#0.measureText("Golden fixture: a display recording with a cut and")
+canvas#0.measureText("Golden fixture: a display recording with a cut and a")
+canvas#0.measureText("Golden fixture: a display recording with a cut and a speed-up")
+canvas#0.measureText("Golden fixture: a display recording with a cut and a speed-up")
+canvas#0.fillStyle = "rgba(0,0,0,0.65)"
+canvas#0.beginPath()
+canvas#0.moveTo(335.75039999999996,896.9184)
+canvas#0.arcTo(1408.3200000000002,896.9184,1408.3200000000002,961.2,16.070400000000003)
+canvas#0.arcTo(1408.3200000000002,961.2,319.67999999999995,961.2,16.070400000000003)
+canvas#0.arcTo(319.67999999999995,961.2,319.67999999999995,896.9184,16.070400000000003)
+canvas#0.arcTo(319.67999999999995,896.9184,1408.3200000000002,896.9184,16.070400000000003)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.fillStyle = "#fff"
+canvas#0.textBaseline = "middle"
+canvas#0.textAlign = "center"
+canvas#0.fillText("Golden fixture: a display recording with a cut and a speed-up",864,929.0592)
+canvas#0.textAlign = "start"
+# state {contentRect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},contentBase:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},screenMap:{source:{x:-43.2000000000001,y:-456.83136,w:2903.0400000000004,h:1814.4},screen:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}},cameraRect:null,cameraBasis:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},base:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}}]}
+# render t=3.1
+canvas#0.createLinearGradient(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)
+gradient#4<linear(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)>.addColorStop(0,"#3a1c71")
+gradient#4.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#4
+canvas#0.fillRect(0,0,1728,1080)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.35)"
+canvas#0.shadowBlur = 60
+canvas#0.beginPath()
+canvas#0.moveTo(162.23999999999992,86.4)
+canvas#0.arcTo(1589.7600000000002,86.4,1589.7600000000002,993.6,24)
+canvas#0.arcTo(1589.7600000000002,993.6,138.23999999999992,993.6,24)
+canvas#0.arcTo(138.23999999999992,993.6,138.23999999999992,86.4,24)
+canvas#0.arcTo(138.23999999999992,86.4,1589.7600000000002,86.4,24)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,438.0444444444445,97.77777777777777,711.1111111111111,444.44444444444446,138.23999999999992,86.4,1451.5200000000002,907.2)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffd60a1a"
+canvas#0.beginPath()
+canvas#0.ellipse(334.9209599999998,474.3550080000001,4.752000000000001,4.752000000000001,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a33"
+canvas#0.beginPath()
+canvas#0.ellipse(344.71871999999996,454.35124799999994,6.048,6.048,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a4d"
+canvas#0.beginPath()
+canvas#0.ellipse(354.5164799999999,434.3474880000001,7.344,7.344,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a66"
+canvas#0.beginPath()
+canvas#0.ellipse(364.31424000000004,414.01713599999994,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60ad9"
+canvas#0.beginPath()
+canvas#0.ellipse(374.11199999999997,393.686784,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "600 30.240000000000002px -apple-system, sans-serif"
+canvas#0.textBaseline = "middle"
+canvas#0.measureText("⌘")
+canvas#0.fillStyle = "rgba(0,0,0,0.65)"
+canvas#0.beginPath()
+canvas#0.moveTo(184.24799999999993,906.768)
+canvas#0.arcTo(225.07199999999995,906.768,225.07199999999995,961.2,13.608)
+canvas#0.arcTo(225.07199999999995,961.2,170.63999999999993,961.2,13.608)
+canvas#0.arcTo(170.63999999999993,961.2,170.63999999999993,906.768,13.608)
+canvas#0.arcTo(170.63999999999993,906.768,225.07199999999995,906.768,13.608)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.strokeStyle = "rgba(255,255,255,0.25)"
+canvas#0.lineWidth = 1
+canvas#0.stroke()
+canvas#0.fillStyle = "#fff"
+canvas#0.measureText("⌘")
+canvas#0.fillText("⌘",190.29599999999994,933.984)
+canvas#0.measureText("K")
+canvas#0.fillStyle = "rgba(0,0,0,0.65)"
+canvas#0.beginPath()
+canvas#0.moveTo(247.75199999999995,906.768)
+canvas#0.arcTo(288.57599999999996,906.768,288.57599999999996,961.2,13.608)
+canvas#0.arcTo(288.57599999999996,961.2,234.14399999999995,961.2,13.608)
+canvas#0.arcTo(234.14399999999995,961.2,234.14399999999995,906.768,13.608)
+canvas#0.arcTo(234.14399999999995,906.768,288.57599999999996,906.768,13.608)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.strokeStyle = "rgba(255,255,255,0.25)"
+canvas#0.lineWidth = 1
+canvas#0.stroke()
+canvas#0.fillStyle = "#fff"
+canvas#0.measureText("K")
+canvas#0.fillText("K",253.79999999999995,933.984)
+# state {contentRect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},contentBase:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},screenMap:{source:{x:-755.8963200000003,y:-113.18399999999997,w:2612.7360000000003,h:1632.96},screen:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}},cameraRect:null,cameraBasis:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},base:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}}]}
+# render t=4.25
+canvas#0.createLinearGradient(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)
+gradient#5<linear(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)>.addColorStop(0,"#3a1c71")
+gradient#5.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#5
+canvas#0.fillRect(0,0,1728,1080)
+canvas#0.font = "800 59.4px -apple-system, sans-serif"
+canvas#0.measureText("Look here")
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.35)"
+canvas#0.shadowBlur = 60
+canvas#0.beginPath()
+canvas#0.moveTo(162.23999999999992,86.4)
+canvas#0.arcTo(1589.7600000000002,86.4,1589.7600000000002,993.6,24)
+canvas#0.arcTo(1589.7600000000002,993.6,138.23999999999992,993.6,24)
+canvas#0.arcTo(138.23999999999992,993.6,138.23999999999992,86.4,24)
+canvas#0.arcTo(138.23999999999992,86.4,1589.7600000000002,86.4,24)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,435.8278517860668,0,646.6942964278666,404.18393526741664,138.23999999999992,86.4,1451.5200000000002,907.2)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffd60a1a"
+canvas#0.beginPath()
+canvas#0.ellipse(903.559711816406,285.71361187499986,4.752000000000001,4.752000000000001,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a33"
+canvas#0.beginPath()
+canvas#0.ellipse(914.333420566406,300.7968041249999,6.048,6.048,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a4d"
+canvas#0.beginPath()
+canvas#0.ellipse(925.1071293164063,316.68802453125016,7.344,7.344,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a66"
+canvas#0.beginPath()
+canvas#0.ellipse(935.8808380664061,333.3872730937502,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60ad9"
+canvas#0.beginPath()
+canvas#0.ellipse(946.6545468164062,350.7598784531251,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.strokeStyle = "rgba(255,255,255,0.4464285714285715)"
+canvas#0.lineWidth = 2.16
+canvas#0.beginPath()
+canvas#0.ellipse(855.0780224414059,228.4333936875,32.882142857142846,32.882142857142846,0,0,6.283185307179586)
+canvas#0.stroke()
+canvas#0.fillStyle = "rgba(255,255,255,0.15625000000000003)"
+canvas#0.beginPath()
+canvas#0.ellipse(855.0780224414059,228.4333936875,14.796964285714282,14.796964285714282,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "800 59.4px -apple-system, sans-serif"
+canvas#0.textBaseline = "middle"
+canvas#0.lineWidth = 7.127999999999999
+canvas#0.strokeStyle = "rgba(0,0,0,0.55)"
+canvas#0.strokeText("Look here",730.35,195.264)
+canvas#0.fillStyle = "#ffffff"
+canvas#0.fillText("Look here",730.35,195.264)
+# state {contentRect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},contentBase:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},screenMap:{source:{x:-839.9854875585943,y:86.4,w:2872.9890000000005,h:1795.618125},screen:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}},cameraRect:null,cameraBasis:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},base:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}},{id:"text:ann-1",rect:{x:730.35,y:159.62400000000002,w:267.3,h:71.28},base:{x:730.35,y:159.62400000000002,w:267.3,h:71.28}}]}
+# render t=5.7
+canvas#0.createLinearGradient(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)
+gradient#6<linear(1295.9999999999998,72.34628195640312,432.00000000000017,1007.6537180435969)>.addColorStop(0,"#3a1c71")
+gradient#6.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#6
+canvas#0.fillRect(0,0,1728,1080)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.35)"
+canvas#0.shadowBlur = 60
+canvas#0.beginPath()
+canvas#0.moveTo(162.23999999999992,86.4)
+canvas#0.arcTo(1589.7600000000002,86.4,1589.7600000000002,993.6,24)
+canvas#0.arcTo(1589.7600000000002,993.6,138.23999999999992,993.6,24)
+canvas#0.arcTo(138.23999999999992,993.6,138.23999999999992,86.4,24)
+canvas#0.arcTo(138.23999999999992,86.4,1589.7600000000002,86.4,24)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,0,0,1280,800,138.23999999999992,86.4,1451.5200000000002,907.2)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffd60a1a"
+canvas#0.beginPath()
+canvas#0.ellipse(1255.9104000000004,578.1024000000001,4.752000000000001,4.752000000000001,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a33"
+canvas#0.beginPath()
+canvas#0.ellipse(1261.3536000000001,580.3704000000001,6.048,6.048,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a4d"
+canvas#0.beginPath()
+canvas#0.ellipse(1266.7968000000003,582.6384,7.344,7.344,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60a66"
+canvas#0.beginPath()
+canvas#0.ellipse(1272.2400000000002,583.81776,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.fillStyle = "#ffd60ad9"
+canvas#0.beginPath()
+canvas#0.ellipse(1277.6832000000004,584.99712,8.64,8.64,0,0,6.283185307179586)
+canvas#0.fill()
+# state {contentRect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},contentBase:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},screenMap:{source:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},screen:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}},cameraRect:null,cameraBasis:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2},base:{x:138.23999999999992,y:86.4,w:1451.5200000000002,h:907.2}}]}

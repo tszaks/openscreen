@@ -1,0 +1,6220 @@
+{
+  "early-display.json": {
+    "normalized": {
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "cameraVideoFile": "camera.webm",
+        "sourceKind": "display",
+        "sourceSize": {
+          "width": 2880,
+          "height": 1800
+        },
+        "duration": 42.5,
+        "cursorOffset": 0.12,
+        "cameraOffset": 0.3
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 42.5,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [
+        {
+          "time": 3,
+          "center": {
+            "x": 0.4,
+            "y": 0.5
+          },
+          "scale": 1.5
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": false,
+        "depth": 2,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#3a1c71",
+          "endHex": "#d76d77",
+          "angle": 120
+        },
+        "cursorSize": 0.012,
+        "cursorTrail": true,
+        "cursorHex": "#ffffff",
+        "deviceFrame": "none",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": true,
+        "corner": "topLeft",
+        "sizeFraction": 0.2,
+        "circular": true
+      },
+      "captions": [
+        {
+          "id": "k1",
+          "start": 1,
+          "end": 3.5,
+          "text": "Hello"
+        }
+      ],
+      "exportPreset": "uhd4k",
+      "outputFPS": 60,
+      "annotations": [],
+      "chapters": [],
+      "manualZooms": [],
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "none",
+        "background": "style"
+      },
+      "tracks": [],
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      }
+    },
+    "renormalized": {
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "cameraVideoFile": "camera.webm",
+        "sourceKind": "display",
+        "sourceSize": {
+          "width": 2880,
+          "height": 1800
+        },
+        "duration": 42.5,
+        "cursorOffset": 0.12,
+        "cameraOffset": 0.3
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 42.5,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [
+        {
+          "time": 3,
+          "center": {
+            "x": 0.4,
+            "y": 0.5
+          },
+          "scale": 1.5
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": false,
+        "depth": 2,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#3a1c71",
+          "endHex": "#d76d77",
+          "angle": 120
+        },
+        "cursorSize": 0.012,
+        "cursorTrail": true,
+        "cursorHex": "#ffffff",
+        "deviceFrame": "none",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": true,
+        "corner": "topLeft",
+        "sizeFraction": 0.2,
+        "circular": true
+      },
+      "captions": [
+        {
+          "id": "k1",
+          "start": 1,
+          "end": 3.5,
+          "text": "Hello"
+        }
+      ],
+      "exportPreset": "uhd4k",
+      "outputFPS": 60,
+      "annotations": [],
+      "chapters": [],
+      "manualZooms": [],
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "none",
+        "background": "style"
+      },
+      "tracks": [],
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      }
+    },
+    "applyEmpty": {
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "cameraVideoFile": "camera.webm",
+        "sourceKind": "display",
+        "sourceSize": {
+          "width": 2880,
+          "height": 1800
+        },
+        "duration": 42.5,
+        "cursorOffset": 0.12,
+        "cameraOffset": 0.3
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 42.5,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [
+        {
+          "time": 3,
+          "center": {
+            "x": 0.4,
+            "y": 0.5
+          },
+          "scale": 1.5
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": false,
+        "depth": 2,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#3a1c71",
+          "endHex": "#d76d77",
+          "angle": 120
+        },
+        "cursorSize": 0.012,
+        "cursorTrail": true,
+        "cursorHex": "#ffffff",
+        "deviceFrame": "none",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": true,
+        "corner": "topLeft",
+        "sizeFraction": 0.2,
+        "circular": true
+      },
+      "captions": [
+        {
+          "id": "k1",
+          "start": 1,
+          "end": 3.5,
+          "text": "Hello"
+        }
+      ],
+      "exportPreset": "uhd4k",
+      "outputFPS": 60,
+      "annotations": [],
+      "chapters": [],
+      "manualZooms": [],
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "none",
+        "background": "style"
+      },
+      "tracks": [],
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      }
+    },
+    "cut": {
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "cameraVideoFile": "camera.webm",
+        "sourceKind": "display",
+        "sourceSize": {
+          "width": 2880,
+          "height": 1800
+        },
+        "duration": 42.5,
+        "cursorOffset": 0.12,
+        "cameraOffset": 0.3
+      },
+      "clips": [
+        {
+          "id": "fixed-id-1",
+          "sourceStart": 0,
+          "sourceEnd": 10.625,
+          "speed": 1
+        },
+        {
+          "id": "fixed-id-2",
+          "sourceStart": 14.874999999999998,
+          "sourceEnd": 42.5,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [
+        {
+          "time": 3,
+          "center": {
+            "x": 0.4,
+            "y": 0.5
+          },
+          "scale": 1.5
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": false,
+        "depth": 2,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#3a1c71",
+          "endHex": "#d76d77",
+          "angle": 120
+        },
+        "cursorSize": 0.012,
+        "cursorTrail": true,
+        "cursorHex": "#ffffff",
+        "deviceFrame": "none",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": true,
+        "corner": "topLeft",
+        "sizeFraction": 0.2,
+        "circular": true
+      },
+      "captions": [
+        {
+          "id": "k1",
+          "start": 1,
+          "end": 3.5,
+          "text": "Hello"
+        }
+      ],
+      "exportPreset": "uhd4k",
+      "outputFPS": 60,
+      "annotations": [],
+      "chapters": [],
+      "manualZooms": [],
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "none",
+        "background": "style"
+      },
+      "tracks": [],
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      }
+    },
+    "remap": {
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "cameraVideoFile": "camera.webm",
+        "sourceKind": "display",
+        "sourceSize": {
+          "width": 2880,
+          "height": 1800
+        },
+        "duration": 42.5,
+        "cursorOffset": 0.12,
+        "cameraOffset": 0.3
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 34,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [
+        {
+          "time": 3,
+          "center": {
+            "x": 0.4,
+            "y": 0.5
+          },
+          "scale": 1.5
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": false,
+        "depth": 2,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#3a1c71",
+          "endHex": "#d76d77",
+          "angle": 120
+        },
+        "cursorSize": 0.012,
+        "cursorTrail": true,
+        "cursorHex": "#ffffff",
+        "deviceFrame": "none",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": true,
+        "corner": "topLeft",
+        "sizeFraction": 0.2,
+        "circular": true
+      },
+      "captions": [
+        {
+          "id": "k1",
+          "start": 1,
+          "end": 3.5,
+          "text": "Hello"
+        }
+      ],
+      "exportPreset": "uhd4k",
+      "outputFPS": 60,
+      "annotations": [],
+      "chapters": [],
+      "manualZooms": [],
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "none",
+        "background": "style"
+      },
+      "tracks": [],
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      }
+    }
+  },
+  "early-iphone-styleframe.json": {
+    "normalized": {
+      "recording": {
+        "screenVideoFile": "screen.mov",
+        "audioFile": "audio.wav",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1179,
+          "height": 2556
+        },
+        "duration": 19.2
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0.5,
+          "sourceEnd": 12,
+          "speed": 1
+        },
+        {
+          "id": "c2",
+          "sourceStart": 14,
+          "sourceEnd": 19.2,
+          "speed": 2
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [
+        {
+          "holdStart": 4,
+          "holdEnd": 5,
+          "inStart": 3.4,
+          "outEnd": 5.6,
+          "center": {
+            "x": 0.5,
+            "y": 0.3
+          },
+          "scale": 1.6
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 1.6,
+        "motionEvents": [
+          {
+            "time": 2.2,
+            "x": 0.4,
+            "y": 0.6,
+            "kind": "clickDown"
+          }
+        ],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": true
+      },
+      "style": {
+        "paddingFraction": 0.06,
+        "cornerRadius": 0,
+        "shadowRadius": 40,
+        "shadowOpacity": 0.3,
+        "cropRect": null,
+        "background": {
+          "kind": "solid",
+          "hex": "#000000"
+        },
+        "deviceFrame": "phone",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "captions": [],
+      "chapters": [
+        {
+          "id": "h1",
+          "start": 0,
+          "title": "Start"
+        }
+      ],
+      "annotations": [
+        {
+          "id": "a1",
+          "start": 2,
+          "end": 4,
+          "text": "Tap",
+          "band": 2,
+          "hex": "#ffffff"
+        }
+      ],
+      "exportPreset": "p1080",
+      "outputFPS": 30,
+      "device": {
+        "frame": true
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "social-9x16",
+        "background": "blurred"
+      },
+      "tracks": [],
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      }
+    },
+    "renormalized": {
+      "recording": {
+        "screenVideoFile": "screen.mov",
+        "audioFile": "audio.wav",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1179,
+          "height": 2556
+        },
+        "duration": 19.2
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0.5,
+          "sourceEnd": 12,
+          "speed": 1
+        },
+        {
+          "id": "c2",
+          "sourceStart": 14,
+          "sourceEnd": 19.2,
+          "speed": 2
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [
+        {
+          "holdStart": 4,
+          "holdEnd": 5,
+          "inStart": 3.4,
+          "outEnd": 5.6,
+          "center": {
+            "x": 0.5,
+            "y": 0.3
+          },
+          "scale": 1.6
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 1.6,
+        "motionEvents": [
+          {
+            "time": 2.2,
+            "x": 0.4,
+            "y": 0.6,
+            "kind": "clickDown"
+          }
+        ],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": true
+      },
+      "style": {
+        "paddingFraction": 0.06,
+        "cornerRadius": 0,
+        "shadowRadius": 40,
+        "shadowOpacity": 0.3,
+        "cropRect": null,
+        "background": {
+          "kind": "solid",
+          "hex": "#000000"
+        },
+        "deviceFrame": "phone",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "captions": [],
+      "chapters": [
+        {
+          "id": "h1",
+          "start": 0,
+          "title": "Start"
+        }
+      ],
+      "annotations": [
+        {
+          "id": "a1",
+          "start": 2,
+          "end": 4,
+          "text": "Tap",
+          "band": 2,
+          "hex": "#ffffff"
+        }
+      ],
+      "exportPreset": "p1080",
+      "outputFPS": 30,
+      "device": {
+        "frame": true
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "social-9x16",
+        "background": "blurred"
+      },
+      "tracks": [],
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      }
+    },
+    "applyEmpty": {
+      "recording": {
+        "screenVideoFile": "screen.mov",
+        "audioFile": "audio.wav",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1179,
+          "height": 2556
+        },
+        "duration": 19.2
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0.5,
+          "sourceEnd": 12,
+          "speed": 1
+        },
+        {
+          "id": "c2",
+          "sourceStart": 14,
+          "sourceEnd": 19.2,
+          "speed": 2
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [
+        {
+          "holdStart": 4,
+          "holdEnd": 5,
+          "inStart": 3.4,
+          "outEnd": 5.6,
+          "center": {
+            "x": 0.5,
+            "y": 0.3
+          },
+          "scale": 1.6
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 1.6,
+        "motionEvents": [
+          {
+            "time": 2.2,
+            "x": 0.4,
+            "y": 0.6,
+            "kind": "clickDown"
+          }
+        ],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": true
+      },
+      "style": {
+        "paddingFraction": 0.06,
+        "cornerRadius": 0,
+        "shadowRadius": 40,
+        "shadowOpacity": 0.3,
+        "cropRect": null,
+        "background": {
+          "kind": "solid",
+          "hex": "#000000"
+        },
+        "deviceFrame": "phone",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "captions": [],
+      "chapters": [
+        {
+          "id": "h1",
+          "start": 0,
+          "title": "Start"
+        }
+      ],
+      "annotations": [
+        {
+          "id": "a1",
+          "start": 2,
+          "end": 4,
+          "text": "Tap",
+          "band": 2,
+          "hex": "#ffffff"
+        }
+      ],
+      "exportPreset": "p1080",
+      "outputFPS": 30,
+      "device": {
+        "frame": true
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "social-9x16",
+        "background": "blurred"
+      },
+      "tracks": [],
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      }
+    },
+    "cut": {
+      "recording": {
+        "screenVideoFile": "screen.mov",
+        "audioFile": "audio.wav",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1179,
+          "height": 2556
+        },
+        "duration": 19.2
+      },
+      "clips": [
+        {
+          "id": "fixed-id-1",
+          "sourceStart": 0.5,
+          "sourceEnd": 4.8,
+          "speed": 1
+        },
+        {
+          "id": "fixed-id-2",
+          "sourceStart": 6.72,
+          "sourceEnd": 12,
+          "speed": 1
+        },
+        {
+          "id": "fixed-id-3",
+          "sourceStart": 14,
+          "sourceEnd": 19.2,
+          "speed": 2
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [
+        {
+          "holdStart": 4,
+          "holdEnd": 5,
+          "inStart": 3.4,
+          "outEnd": 5.6,
+          "center": {
+            "x": 0.5,
+            "y": 0.3
+          },
+          "scale": 1.6
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 1.6,
+        "motionEvents": [
+          {
+            "time": 2.2,
+            "x": 0.4,
+            "y": 0.6,
+            "kind": "clickDown"
+          }
+        ],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": true
+      },
+      "style": {
+        "paddingFraction": 0.06,
+        "cornerRadius": 0,
+        "shadowRadius": 40,
+        "shadowOpacity": 0.3,
+        "cropRect": null,
+        "background": {
+          "kind": "solid",
+          "hex": "#000000"
+        },
+        "deviceFrame": "phone",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "captions": [],
+      "chapters": [
+        {
+          "id": "h1",
+          "start": 0,
+          "title": "Start"
+        }
+      ],
+      "annotations": [
+        {
+          "id": "a1",
+          "start": 2,
+          "end": 4,
+          "text": "Tap",
+          "band": 2,
+          "hex": "#ffffff"
+        }
+      ],
+      "exportPreset": "p1080",
+      "outputFPS": 30,
+      "device": {
+        "frame": true
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "social-9x16",
+        "background": "blurred"
+      },
+      "tracks": [],
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      }
+    },
+    "remap": {
+      "recording": {
+        "screenVideoFile": "screen.mov",
+        "audioFile": "audio.wav",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1179,
+          "height": 2556
+        },
+        "duration": 19.2
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0.5,
+          "sourceEnd": 12,
+          "speed": 1
+        },
+        {
+          "id": "c2",
+          "sourceStart": 14,
+          "sourceEnd": 18.16,
+          "speed": 2
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [
+        {
+          "holdStart": 4,
+          "holdEnd": 5,
+          "inStart": 3.4,
+          "outEnd": 5.6,
+          "center": {
+            "x": 0.5,
+            "y": 0.3
+          },
+          "scale": 1.6
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 1.6,
+        "motionEvents": [
+          {
+            "time": 2.2,
+            "x": 0.4,
+            "y": 0.6,
+            "kind": "clickDown"
+          }
+        ],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": true
+      },
+      "style": {
+        "paddingFraction": 0.06,
+        "cornerRadius": 0,
+        "shadowRadius": 40,
+        "shadowOpacity": 0.3,
+        "cropRect": null,
+        "background": {
+          "kind": "solid",
+          "hex": "#000000"
+        },
+        "deviceFrame": "phone",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "captions": [],
+      "chapters": [
+        {
+          "id": "h1",
+          "start": 0,
+          "title": "Start"
+        }
+      ],
+      "annotations": [
+        {
+          "id": "a1",
+          "start": 2,
+          "end": 4,
+          "text": "Tap",
+          "band": 2,
+          "hex": "#ffffff"
+        }
+      ],
+      "exportPreset": "p1080",
+      "outputFPS": 30,
+      "device": {
+        "frame": true
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "social-9x16",
+        "background": "blurred"
+      },
+      "tracks": [],
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      }
+    }
+  },
+  "hostile.json": {
+    "normalized": {
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "sourceKind": "display",
+        "sourceSize": {
+          "width": 1920,
+          "height": 1080
+        },
+        "duration": 10,
+        "phoneVideoFile": "../../etc/passwd"
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 10,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "zoom": {
+        "autofocus": "yes",
+        "dwell": true,
+        "depth": 99,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#000000",
+          "endHex": "#ffffff",
+          "angle": 0
+        },
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "deviceFrame": "none",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": true,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "exportPreset": "p1080",
+      "outputFPS": 60,
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 80
+      },
+      "layout": {
+        "presetId": "no-such-preset",
+        "background": "style"
+      },
+      "tracks": [
+        {
+          "id": "track-1",
+          "kind": "audio",
+          "name": "Music",
+          "muted": false,
+          "volume": 1,
+          "duck": false,
+          "items": [
+            {
+              "id": "item-1-1",
+              "file": "audio/ok.mp3",
+              "name": "ok.mp3",
+              "fileDuration": 1,
+              "start": 0,
+              "sourceIn": 3,
+              "sourceOut": 3,
+              "gain": 1,
+              "fadeIn": 0,
+              "fadeOut": 0,
+              "loop": false
+            }
+          ]
+        }
+      ],
+      "layerOrder": [
+        "content",
+        "bogus"
+      ],
+      "annotations": [],
+      "chapters": [],
+      "manualZooms": [],
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "waits": [],
+      "tapsAnalyzed": false
+    },
+    "renormalized": {
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "sourceKind": "display",
+        "sourceSize": {
+          "width": 1920,
+          "height": 1080
+        },
+        "duration": 10,
+        "phoneVideoFile": "../../etc/passwd"
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 10,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "zoom": {
+        "autofocus": "yes",
+        "dwell": true,
+        "depth": 99,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#000000",
+          "endHex": "#ffffff",
+          "angle": 0
+        },
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "deviceFrame": "none",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": true,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "exportPreset": "p1080",
+      "outputFPS": 60,
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 80
+      },
+      "layout": {
+        "presetId": "no-such-preset",
+        "background": "style"
+      },
+      "tracks": [
+        {
+          "id": "track-1",
+          "kind": "audio",
+          "name": "Music",
+          "muted": false,
+          "volume": 1,
+          "duck": false,
+          "items": [
+            {
+              "id": "item-1-1",
+              "file": "audio/ok.mp3",
+              "name": "ok.mp3",
+              "fileDuration": 1,
+              "start": 0,
+              "sourceIn": 3,
+              "sourceOut": 3,
+              "gain": 1,
+              "fadeIn": 0,
+              "fadeOut": 0,
+              "loop": false
+            }
+          ]
+        }
+      ],
+      "layerOrder": [
+        "content",
+        "bogus"
+      ],
+      "annotations": [],
+      "chapters": [],
+      "manualZooms": [],
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "waits": [],
+      "tapsAnalyzed": false
+    },
+    "applyEmpty": {
+      "error": "the edited project is invalid: layout.presetId \"no-such-preset\" is unknown; layerOrder must list layer ids: content, camera, phone, title, text:<annotation id>; tracks[0].items[0] needs 0 <= sourceIn < sourceOut; tracks[0].items[0].sourceOut is past the end of the file (1s)"
+    },
+    "cut": {
+      "error": "the edited project is invalid: layout.presetId \"no-such-preset\" is unknown; layerOrder must list layer ids: content, camera, phone, title, text:<annotation id>; tracks[0].items[0] needs 0 <= sourceIn < sourceOut; tracks[0].items[0].sourceOut is past the end of the file (1s)"
+    },
+    "remap": {
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "sourceKind": "display",
+        "sourceSize": {
+          "width": 1920,
+          "height": 1080
+        },
+        "duration": 10,
+        "phoneVideoFile": "../../etc/passwd"
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 8,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "zoom": {
+        "autofocus": "yes",
+        "dwell": true,
+        "depth": 99,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#000000",
+          "endHex": "#ffffff",
+          "angle": 0
+        },
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "deviceFrame": "none",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": true,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "exportPreset": "p1080",
+      "outputFPS": 60,
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 80
+      },
+      "layout": {
+        "presetId": "no-such-preset",
+        "background": "style"
+      },
+      "tracks": [
+        {
+          "id": "track-1",
+          "kind": "audio",
+          "name": "Music",
+          "muted": false,
+          "volume": 1,
+          "duck": false,
+          "items": [
+            {
+              "id": "item-1-1",
+              "file": "audio/ok.mp3",
+              "name": "ok.mp3",
+              "fileDuration": 1,
+              "start": 0,
+              "sourceIn": 3,
+              "sourceOut": 3,
+              "gain": 1,
+              "fadeIn": 0,
+              "fadeOut": 0,
+              "loop": false
+            }
+          ]
+        }
+      ],
+      "layerOrder": [
+        "content",
+        "bogus"
+      ],
+      "annotations": [],
+      "chapters": [],
+      "manualZooms": [],
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "waits": [],
+      "tapsAnalyzed": false
+    }
+  },
+  "v151-imported-phone-preset.json": {
+    "normalized": {
+      "name": "demo",
+      "recording": {
+        "screenVideoFile": "demo.mp4",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "duration": 31.4,
+        "imported": true
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 31.4,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [],
+      "zoom": {
+        "autofocus": false,
+        "dwell": false,
+        "depth": 1.6,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "imageFile",
+          "path": "/Users/someone/Pictures/bg.heic",
+          "blur": 12
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "chapters": [],
+      "annotations": [],
+      "exportPreset": "p1080",
+      "outputFPS": 30,
+      "device": {
+        "frame": true,
+        "modelId": "iphone-17-pro-max",
+        "finishId": "deep-blue"
+      },
+      "taps": [
+        {
+          "id": "t1",
+          "t": 2.5,
+          "x": 0.5,
+          "y": 0.5,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 3
+        }
+      ],
+      "tapStyle": {
+        "show": false,
+        "style": "pulse",
+        "color": "accent",
+        "sizePt": 60
+      },
+      "waits": [
+        {
+          "start": 10,
+          "end": 14
+        }
+      ],
+      "tapsAnalyzed": true,
+      "layout": {
+        "presetId": "feed-4x5",
+        "background": "style",
+        "titleCard": {
+          "title": "Title",
+          "subtitle": ""
+        }
+      },
+      "tracks": []
+    },
+    "renormalized": {
+      "name": "demo",
+      "recording": {
+        "screenVideoFile": "demo.mp4",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "duration": 31.4,
+        "imported": true
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 31.4,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [],
+      "zoom": {
+        "autofocus": false,
+        "dwell": false,
+        "depth": 1.6,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "imageFile",
+          "path": "/Users/someone/Pictures/bg.heic",
+          "blur": 12
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "chapters": [],
+      "annotations": [],
+      "exportPreset": "p1080",
+      "outputFPS": 30,
+      "device": {
+        "frame": true,
+        "modelId": "iphone-17-pro-max",
+        "finishId": "deep-blue"
+      },
+      "taps": [
+        {
+          "id": "t1",
+          "t": 2.5,
+          "x": 0.5,
+          "y": 0.5,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 3
+        }
+      ],
+      "tapStyle": {
+        "show": false,
+        "style": "pulse",
+        "color": "accent",
+        "sizePt": 60
+      },
+      "waits": [
+        {
+          "start": 10,
+          "end": 14
+        }
+      ],
+      "tapsAnalyzed": true,
+      "layout": {
+        "presetId": "feed-4x5",
+        "background": "style",
+        "titleCard": {
+          "title": "Title",
+          "subtitle": ""
+        }
+      },
+      "tracks": []
+    },
+    "applyEmpty": {
+      "name": "demo",
+      "recording": {
+        "screenVideoFile": "demo.mp4",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "duration": 31.4,
+        "imported": true
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 31.4,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [],
+      "zoom": {
+        "autofocus": false,
+        "dwell": false,
+        "depth": 1.6,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "imageFile",
+          "path": "/Users/someone/Pictures/bg.heic",
+          "blur": 12
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "chapters": [],
+      "annotations": [],
+      "exportPreset": "p1080",
+      "outputFPS": 30,
+      "device": {
+        "frame": true,
+        "modelId": "iphone-17-pro-max",
+        "finishId": "deep-blue"
+      },
+      "taps": [
+        {
+          "id": "t1",
+          "t": 2.5,
+          "x": 0.5,
+          "y": 0.5,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 3
+        }
+      ],
+      "tapStyle": {
+        "show": false,
+        "style": "pulse",
+        "color": "accent",
+        "sizePt": 60
+      },
+      "waits": [
+        {
+          "start": 10,
+          "end": 14
+        }
+      ],
+      "tapsAnalyzed": true,
+      "layout": {
+        "presetId": "feed-4x5",
+        "background": "style",
+        "titleCard": {
+          "title": "Title",
+          "subtitle": ""
+        }
+      },
+      "tracks": []
+    },
+    "cut": {
+      "name": "demo",
+      "recording": {
+        "screenVideoFile": "demo.mp4",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "duration": 31.4,
+        "imported": true
+      },
+      "clips": [
+        {
+          "id": "fixed-id-1",
+          "sourceStart": 0,
+          "sourceEnd": 7.85,
+          "speed": 1
+        },
+        {
+          "id": "fixed-id-2",
+          "sourceStart": 10.989999999999998,
+          "sourceEnd": 31.4,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [],
+      "zoom": {
+        "autofocus": false,
+        "dwell": false,
+        "depth": 1.6,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "imageFile",
+          "path": "/Users/someone/Pictures/bg.heic",
+          "blur": 12
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "chapters": [],
+      "annotations": [],
+      "exportPreset": "p1080",
+      "outputFPS": 30,
+      "device": {
+        "frame": true,
+        "modelId": "iphone-17-pro-max",
+        "finishId": "deep-blue"
+      },
+      "taps": [
+        {
+          "id": "t1",
+          "t": 2.5,
+          "x": 0.5,
+          "y": 0.5,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 3
+        }
+      ],
+      "tapStyle": {
+        "show": false,
+        "style": "pulse",
+        "color": "accent",
+        "sizePt": 60
+      },
+      "waits": [
+        {
+          "start": 10,
+          "end": 14
+        }
+      ],
+      "tapsAnalyzed": true,
+      "layout": {
+        "presetId": "feed-4x5",
+        "background": "style",
+        "titleCard": {
+          "title": "Title",
+          "subtitle": ""
+        }
+      },
+      "tracks": []
+    },
+    "remap": {
+      "name": "demo",
+      "recording": {
+        "screenVideoFile": "demo.mp4",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "duration": 31.4,
+        "imported": true
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 25.119999999999997,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [],
+      "zoom": {
+        "autofocus": false,
+        "dwell": false,
+        "depth": 1.6,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "imageFile",
+          "path": "/Users/someone/Pictures/bg.heic",
+          "blur": 12
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "chapters": [],
+      "annotations": [],
+      "exportPreset": "p1080",
+      "outputFPS": 30,
+      "device": {
+        "frame": true,
+        "modelId": "iphone-17-pro-max",
+        "finishId": "deep-blue"
+      },
+      "taps": [
+        {
+          "id": "t1",
+          "t": 2.5,
+          "x": 0.5,
+          "y": 0.5,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 3
+        }
+      ],
+      "tapStyle": {
+        "show": false,
+        "style": "pulse",
+        "color": "accent",
+        "sizePt": 60
+      },
+      "waits": [
+        {
+          "start": 10,
+          "end": 14
+        }
+      ],
+      "tapsAnalyzed": true,
+      "layout": {
+        "presetId": "feed-4x5",
+        "background": "style",
+        "titleCard": {
+          "title": "Title",
+          "subtitle": ""
+        }
+      },
+      "tracks": []
+    }
+  },
+  "v151-iphone-take.json": {
+    "normalized": {
+      "recording": {
+        "screenVideoFile": "screen.mov",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "duration": 637.07
+      },
+      "clips": [
+        {
+          "id": "e3e56e5b-0953-47d1-b789-7d5a8caa340e",
+          "sourceStart": 0,
+          "sourceEnd": 637.07,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 1.6,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#3a1c71",
+          "endHex": "#d76d77",
+          "angle": 120
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "chapters": [],
+      "annotations": [],
+      "exportPreset": "p1080",
+      "outputFPS": 60,
+      "device": {
+        "frame": true
+      },
+      "taps": [
+        {
+          "id": "7c859383-48ea-4b7b-a491-322e4bcc242e",
+          "t": 5.525,
+          "x": 0.619,
+          "y": 0.714,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 8.2
+        },
+        {
+          "id": "a880a52c-0b08-4703-919c-6abbadabca68",
+          "t": 8.925,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.7,
+          "settleT": 9.333
+        },
+        {
+          "id": "c5aede24-50cf-41d4-92de-ef73ceacce8c",
+          "t": 10.525,
+          "x": 0.266,
+          "y": 0.926,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 10.6
+        },
+        {
+          "id": "a771dee9-1991-477c-84d9-bfde30bb6196",
+          "t": 11.125,
+          "x": 0.161,
+          "y": 0.971,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 11.667
+        },
+        {
+          "id": "c001baec-b5d4-4bdc-a1b7-71349bedee92",
+          "t": 11.992,
+          "x": 0.353,
+          "y": 0.132,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 12.067
+        },
+        {
+          "id": "93134b45-a883-41ce-8a93-9c256a61c270",
+          "t": 12.792,
+          "x": 0.131,
+          "y": 0.941,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 12.867
+        },
+        {
+          "id": "f8cf8902-31fd-46f4-86b6-b0ac5d85e845",
+          "t": 13.525,
+          "x": 0.5,
+          "y": 0.679,
+          "endX": 0.5,
+          "endY": 0.321,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.8,
+          "settleT": 14.467
+        },
+        {
+          "id": "bd9fe503-a208-4872-8a06-2b652b66e9ce",
+          "t": 14.925,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 18.133
+        },
+        {
+          "id": "a65f6f8b-d2a3-42f7-bd04-31ac1f1dd8b0",
+          "t": 16.058,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 18.133
+        },
+        {
+          "id": "78a7e929-7de5-43c7-bf35-6dfba4ce73bf",
+          "t": 19.192,
+          "x": 0.983,
+          "y": 0.483,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 19.333
+        },
+        {
+          "id": "86509e4d-98a7-4de9-8bba-1ae4dffbb2a5",
+          "t": 19.725,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 22.133
+        },
+        {
+          "id": "0980f288-f184-47c1-8816-d035a469b1a5",
+          "t": 20.592,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 22.133
+        },
+        {
+          "id": "b1f38c29-07af-4957-9ffc-46586db6e7f9",
+          "t": 22.658,
+          "x": 0.517,
+          "y": 0.57,
+          "endX": 0.517,
+          "endY": 0.43,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 24.533
+        },
+        {
+          "id": "af233dff-3826-4df6-a0cb-310331fe8a07",
+          "t": 24.792,
+          "x": 0.815,
+          "y": 0.054,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 27
+        },
+        {
+          "id": "88af3ef6-4ba5-4f5d-9b89-e98b82c4daac",
+          "t": 27.658,
+          "x": 0.533,
+          "y": 0.594,
+          "endX": 0.533,
+          "endY": 0.406,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 28.333
+        },
+        {
+          "id": "7435f8e2-17cb-47b6-a542-b7dcd27b880e",
+          "t": 28.792,
+          "x": 0.708,
+          "y": 0.528,
+          "endX": 0.292,
+          "endY": 0.528,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.8,
+          "settleT": 29.4
+        },
+        {
+          "id": "ed502f42-3968-49e3-b539-180df40a2005",
+          "t": 29.658,
+          "x": 0.303,
+          "y": 0.523,
+          "endX": 0.697,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.75,
+          "settleT": 30.333
+        },
+        {
+          "id": "489f1fec-65a3-42e5-8575-d8e0013f90c4",
+          "t": 30.858,
+          "x": 0.983,
+          "y": 0.476,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 31
+        },
+        {
+          "id": "8169e9c6-3c3b-457c-89d1-b1367ec22685",
+          "t": 31.792,
+          "x": 0.681,
+          "y": 0.538,
+          "endX": 0.319,
+          "endY": 0.538,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 32.4
+        },
+        {
+          "id": "7118690d-bab3-4bc6-8127-38517d7550c4",
+          "t": 32.992,
+          "x": 0.533,
+          "y": 0.626,
+          "endX": 0.533,
+          "endY": 0.374,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 35.067
+        },
+        {
+          "id": "1251cd83-a165-4db4-b7a4-350618648914",
+          "t": 35.458,
+          "x": 0.083,
+          "y": 1,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 36
+        },
+        {
+          "id": "b2b29852-14bf-451f-8773-07e642bb9aa5",
+          "t": 36.258,
+          "x": 0.459,
+          "y": 0.665,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 38.067
+        },
+        {
+          "id": "a434b1d6-558f-405d-83c7-c350ca9e958d",
+          "t": 38.392,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.7,
+          "settleT": 44.267
+        },
+        {
+          "id": "cebe1678-9861-4db5-968e-a2999e3046b3",
+          "t": 39.325,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "d54d7f6e-f114-427b-a922-0dfcd17ad852",
+          "t": 40.458,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.8,
+          "settleT": 44.267
+        },
+        {
+          "id": "7b31b43c-5b85-4b46-b31f-1e77742fa6c4",
+          "t": 40.992,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "7b3c18ac-002b-4896-a323-8a73d4d4768c",
+          "t": 43.458,
+          "x": 0.517,
+          "y": 0.582,
+          "endX": 0.517,
+          "endY": 0.418,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "665763a1-cb44-4603-8e8a-86c5e8273044",
+          "t": 44.592,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.12,
+          "confidence": 0.7,
+          "settleT": 48.533
+        },
+        {
+          "id": "17da1b27-24ac-4b2d-8a02-37c2536ce4ca",
+          "t": 45.192,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 48.533
+        },
+        {
+          "id": "e53bb786-ec34-46b3-b015-3009e626b2d7",
+          "t": 47.992,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 48.533
+        },
+        {
+          "id": "f59e0e1b-5c26-4194-a140-d6ff89f01bf9",
+          "t": 49.592,
+          "x": 0.983,
+          "y": 0.423,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 49.733
+        },
+        {
+          "id": "f99e03b3-39ac-45a2-8af8-d240a628f9a4",
+          "t": 55.925,
+          "x": 0.983,
+          "y": 0.065,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 63.067
+        },
+        {
+          "id": "12dbf9d0-fd37-4926-b456-e57becb00218",
+          "t": 57.192,
+          "x": 0.25,
+          "y": 0.523,
+          "endX": 0.75,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 63.067
+        },
+        {
+          "id": "0910ca1a-024d-4ac0-b4fe-e4557cad0d8c",
+          "t": 62.458,
+          "x": 0.045,
+          "y": 0.981,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 63.067
+        },
+        {
+          "id": "f807dcbf-eb8e-47c2-b922-0bce9bcdc78a",
+          "t": 63.325,
+          "x": 0.237,
+          "y": 0.666,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 63.533
+        },
+        {
+          "id": "f6e27da4-32f2-48f8-915d-54b2388994c8",
+          "t": 64.258,
+          "x": 0.5,
+          "y": 0.987,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 64.6
+        },
+        {
+          "id": "96096c00-ed5c-4fd3-add2-19b09ef091fd",
+          "t": 65.792,
+          "x": 0.25,
+          "y": 0.523,
+          "endX": 0.75,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 66.8
+        },
+        {
+          "id": "1160fb03-ad27-4c69-8b4f-8fdadca867d7",
+          "t": 67.058,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 69.867
+        },
+        {
+          "id": "14b33536-fccc-49b1-b83c-6c4aff0ac797",
+          "t": 69.325,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 69.867
+        },
+        {
+          "id": "4d54e8eb-70d1-4305-8b2e-67b1d4f5fe0a",
+          "t": 70.258,
+          "x": 0.5,
+          "y": 0.987,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 70.6
+        }
+      ],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [
+        {
+          "start": 49.733,
+          "end": 55.933
+        },
+        {
+          "start": 85.933,
+          "end": 219.6
+        },
+        {
+          "start": 231.133,
+          "end": 232.8
+        },
+        {
+          "start": 234.267,
+          "end": 260.6
+        },
+        {
+          "start": 260.667,
+          "end": 262.6
+        },
+        {
+          "start": 263.667,
+          "end": 273.6
+        },
+        {
+          "start": 273.667,
+          "end": 276.6
+        },
+        {
+          "start": 276.667,
+          "end": 278.6
+        },
+        {
+          "start": 279.733,
+          "end": 282.667
+        },
+        {
+          "start": 282.733,
+          "end": 285.667
+        },
+        {
+          "start": 285.733,
+          "end": 288.667
+        },
+        {
+          "start": 288.733,
+          "end": 292.667
+        }
+      ],
+      "tapsAnalyzed": true,
+      "layout": {
+        "presetId": "social-9x16",
+        "background": "blurred"
+      },
+      "tracks": []
+    },
+    "renormalized": {
+      "recording": {
+        "screenVideoFile": "screen.mov",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "duration": 637.07
+      },
+      "clips": [
+        {
+          "id": "e3e56e5b-0953-47d1-b789-7d5a8caa340e",
+          "sourceStart": 0,
+          "sourceEnd": 637.07,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 1.6,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#3a1c71",
+          "endHex": "#d76d77",
+          "angle": 120
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "chapters": [],
+      "annotations": [],
+      "exportPreset": "p1080",
+      "outputFPS": 60,
+      "device": {
+        "frame": true
+      },
+      "taps": [
+        {
+          "id": "7c859383-48ea-4b7b-a491-322e4bcc242e",
+          "t": 5.525,
+          "x": 0.619,
+          "y": 0.714,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 8.2
+        },
+        {
+          "id": "a880a52c-0b08-4703-919c-6abbadabca68",
+          "t": 8.925,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.7,
+          "settleT": 9.333
+        },
+        {
+          "id": "c5aede24-50cf-41d4-92de-ef73ceacce8c",
+          "t": 10.525,
+          "x": 0.266,
+          "y": 0.926,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 10.6
+        },
+        {
+          "id": "a771dee9-1991-477c-84d9-bfde30bb6196",
+          "t": 11.125,
+          "x": 0.161,
+          "y": 0.971,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 11.667
+        },
+        {
+          "id": "c001baec-b5d4-4bdc-a1b7-71349bedee92",
+          "t": 11.992,
+          "x": 0.353,
+          "y": 0.132,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 12.067
+        },
+        {
+          "id": "93134b45-a883-41ce-8a93-9c256a61c270",
+          "t": 12.792,
+          "x": 0.131,
+          "y": 0.941,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 12.867
+        },
+        {
+          "id": "f8cf8902-31fd-46f4-86b6-b0ac5d85e845",
+          "t": 13.525,
+          "x": 0.5,
+          "y": 0.679,
+          "endX": 0.5,
+          "endY": 0.321,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.8,
+          "settleT": 14.467
+        },
+        {
+          "id": "bd9fe503-a208-4872-8a06-2b652b66e9ce",
+          "t": 14.925,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 18.133
+        },
+        {
+          "id": "a65f6f8b-d2a3-42f7-bd04-31ac1f1dd8b0",
+          "t": 16.058,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 18.133
+        },
+        {
+          "id": "78a7e929-7de5-43c7-bf35-6dfba4ce73bf",
+          "t": 19.192,
+          "x": 0.983,
+          "y": 0.483,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 19.333
+        },
+        {
+          "id": "86509e4d-98a7-4de9-8bba-1ae4dffbb2a5",
+          "t": 19.725,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 22.133
+        },
+        {
+          "id": "0980f288-f184-47c1-8816-d035a469b1a5",
+          "t": 20.592,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 22.133
+        },
+        {
+          "id": "b1f38c29-07af-4957-9ffc-46586db6e7f9",
+          "t": 22.658,
+          "x": 0.517,
+          "y": 0.57,
+          "endX": 0.517,
+          "endY": 0.43,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 24.533
+        },
+        {
+          "id": "af233dff-3826-4df6-a0cb-310331fe8a07",
+          "t": 24.792,
+          "x": 0.815,
+          "y": 0.054,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 27
+        },
+        {
+          "id": "88af3ef6-4ba5-4f5d-9b89-e98b82c4daac",
+          "t": 27.658,
+          "x": 0.533,
+          "y": 0.594,
+          "endX": 0.533,
+          "endY": 0.406,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 28.333
+        },
+        {
+          "id": "7435f8e2-17cb-47b6-a542-b7dcd27b880e",
+          "t": 28.792,
+          "x": 0.708,
+          "y": 0.528,
+          "endX": 0.292,
+          "endY": 0.528,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.8,
+          "settleT": 29.4
+        },
+        {
+          "id": "ed502f42-3968-49e3-b539-180df40a2005",
+          "t": 29.658,
+          "x": 0.303,
+          "y": 0.523,
+          "endX": 0.697,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.75,
+          "settleT": 30.333
+        },
+        {
+          "id": "489f1fec-65a3-42e5-8575-d8e0013f90c4",
+          "t": 30.858,
+          "x": 0.983,
+          "y": 0.476,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 31
+        },
+        {
+          "id": "8169e9c6-3c3b-457c-89d1-b1367ec22685",
+          "t": 31.792,
+          "x": 0.681,
+          "y": 0.538,
+          "endX": 0.319,
+          "endY": 0.538,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 32.4
+        },
+        {
+          "id": "7118690d-bab3-4bc6-8127-38517d7550c4",
+          "t": 32.992,
+          "x": 0.533,
+          "y": 0.626,
+          "endX": 0.533,
+          "endY": 0.374,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 35.067
+        },
+        {
+          "id": "1251cd83-a165-4db4-b7a4-350618648914",
+          "t": 35.458,
+          "x": 0.083,
+          "y": 1,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 36
+        },
+        {
+          "id": "b2b29852-14bf-451f-8773-07e642bb9aa5",
+          "t": 36.258,
+          "x": 0.459,
+          "y": 0.665,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 38.067
+        },
+        {
+          "id": "a434b1d6-558f-405d-83c7-c350ca9e958d",
+          "t": 38.392,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.7,
+          "settleT": 44.267
+        },
+        {
+          "id": "cebe1678-9861-4db5-968e-a2999e3046b3",
+          "t": 39.325,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "d54d7f6e-f114-427b-a922-0dfcd17ad852",
+          "t": 40.458,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.8,
+          "settleT": 44.267
+        },
+        {
+          "id": "7b31b43c-5b85-4b46-b31f-1e77742fa6c4",
+          "t": 40.992,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "7b3c18ac-002b-4896-a323-8a73d4d4768c",
+          "t": 43.458,
+          "x": 0.517,
+          "y": 0.582,
+          "endX": 0.517,
+          "endY": 0.418,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "665763a1-cb44-4603-8e8a-86c5e8273044",
+          "t": 44.592,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.12,
+          "confidence": 0.7,
+          "settleT": 48.533
+        },
+        {
+          "id": "17da1b27-24ac-4b2d-8a02-37c2536ce4ca",
+          "t": 45.192,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 48.533
+        },
+        {
+          "id": "e53bb786-ec34-46b3-b015-3009e626b2d7",
+          "t": 47.992,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 48.533
+        },
+        {
+          "id": "f59e0e1b-5c26-4194-a140-d6ff89f01bf9",
+          "t": 49.592,
+          "x": 0.983,
+          "y": 0.423,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 49.733
+        },
+        {
+          "id": "f99e03b3-39ac-45a2-8af8-d240a628f9a4",
+          "t": 55.925,
+          "x": 0.983,
+          "y": 0.065,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 63.067
+        },
+        {
+          "id": "12dbf9d0-fd37-4926-b456-e57becb00218",
+          "t": 57.192,
+          "x": 0.25,
+          "y": 0.523,
+          "endX": 0.75,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 63.067
+        },
+        {
+          "id": "0910ca1a-024d-4ac0-b4fe-e4557cad0d8c",
+          "t": 62.458,
+          "x": 0.045,
+          "y": 0.981,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 63.067
+        },
+        {
+          "id": "f807dcbf-eb8e-47c2-b922-0bce9bcdc78a",
+          "t": 63.325,
+          "x": 0.237,
+          "y": 0.666,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 63.533
+        },
+        {
+          "id": "f6e27da4-32f2-48f8-915d-54b2388994c8",
+          "t": 64.258,
+          "x": 0.5,
+          "y": 0.987,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 64.6
+        },
+        {
+          "id": "96096c00-ed5c-4fd3-add2-19b09ef091fd",
+          "t": 65.792,
+          "x": 0.25,
+          "y": 0.523,
+          "endX": 0.75,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 66.8
+        },
+        {
+          "id": "1160fb03-ad27-4c69-8b4f-8fdadca867d7",
+          "t": 67.058,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 69.867
+        },
+        {
+          "id": "14b33536-fccc-49b1-b83c-6c4aff0ac797",
+          "t": 69.325,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 69.867
+        },
+        {
+          "id": "4d54e8eb-70d1-4305-8b2e-67b1d4f5fe0a",
+          "t": 70.258,
+          "x": 0.5,
+          "y": 0.987,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 70.6
+        }
+      ],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [
+        {
+          "start": 49.733,
+          "end": 55.933
+        },
+        {
+          "start": 85.933,
+          "end": 219.6
+        },
+        {
+          "start": 231.133,
+          "end": 232.8
+        },
+        {
+          "start": 234.267,
+          "end": 260.6
+        },
+        {
+          "start": 260.667,
+          "end": 262.6
+        },
+        {
+          "start": 263.667,
+          "end": 273.6
+        },
+        {
+          "start": 273.667,
+          "end": 276.6
+        },
+        {
+          "start": 276.667,
+          "end": 278.6
+        },
+        {
+          "start": 279.733,
+          "end": 282.667
+        },
+        {
+          "start": 282.733,
+          "end": 285.667
+        },
+        {
+          "start": 285.733,
+          "end": 288.667
+        },
+        {
+          "start": 288.733,
+          "end": 292.667
+        }
+      ],
+      "tapsAnalyzed": true,
+      "layout": {
+        "presetId": "social-9x16",
+        "background": "blurred"
+      },
+      "tracks": []
+    },
+    "applyEmpty": {
+      "recording": {
+        "screenVideoFile": "screen.mov",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "duration": 637.07
+      },
+      "clips": [
+        {
+          "id": "e3e56e5b-0953-47d1-b789-7d5a8caa340e",
+          "sourceStart": 0,
+          "sourceEnd": 637.07,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 1.6,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#3a1c71",
+          "endHex": "#d76d77",
+          "angle": 120
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "chapters": [],
+      "annotations": [],
+      "exportPreset": "p1080",
+      "outputFPS": 60,
+      "device": {
+        "frame": true
+      },
+      "taps": [
+        {
+          "id": "7c859383-48ea-4b7b-a491-322e4bcc242e",
+          "t": 5.525,
+          "x": 0.619,
+          "y": 0.714,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 8.2
+        },
+        {
+          "id": "a880a52c-0b08-4703-919c-6abbadabca68",
+          "t": 8.925,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.7,
+          "settleT": 9.333
+        },
+        {
+          "id": "c5aede24-50cf-41d4-92de-ef73ceacce8c",
+          "t": 10.525,
+          "x": 0.266,
+          "y": 0.926,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 10.6
+        },
+        {
+          "id": "a771dee9-1991-477c-84d9-bfde30bb6196",
+          "t": 11.125,
+          "x": 0.161,
+          "y": 0.971,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 11.667
+        },
+        {
+          "id": "c001baec-b5d4-4bdc-a1b7-71349bedee92",
+          "t": 11.992,
+          "x": 0.353,
+          "y": 0.132,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 12.067
+        },
+        {
+          "id": "93134b45-a883-41ce-8a93-9c256a61c270",
+          "t": 12.792,
+          "x": 0.131,
+          "y": 0.941,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 12.867
+        },
+        {
+          "id": "f8cf8902-31fd-46f4-86b6-b0ac5d85e845",
+          "t": 13.525,
+          "x": 0.5,
+          "y": 0.679,
+          "endX": 0.5,
+          "endY": 0.321,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.8,
+          "settleT": 14.467
+        },
+        {
+          "id": "bd9fe503-a208-4872-8a06-2b652b66e9ce",
+          "t": 14.925,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 18.133
+        },
+        {
+          "id": "a65f6f8b-d2a3-42f7-bd04-31ac1f1dd8b0",
+          "t": 16.058,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 18.133
+        },
+        {
+          "id": "78a7e929-7de5-43c7-bf35-6dfba4ce73bf",
+          "t": 19.192,
+          "x": 0.983,
+          "y": 0.483,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 19.333
+        },
+        {
+          "id": "86509e4d-98a7-4de9-8bba-1ae4dffbb2a5",
+          "t": 19.725,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 22.133
+        },
+        {
+          "id": "0980f288-f184-47c1-8816-d035a469b1a5",
+          "t": 20.592,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 22.133
+        },
+        {
+          "id": "b1f38c29-07af-4957-9ffc-46586db6e7f9",
+          "t": 22.658,
+          "x": 0.517,
+          "y": 0.57,
+          "endX": 0.517,
+          "endY": 0.43,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 24.533
+        },
+        {
+          "id": "af233dff-3826-4df6-a0cb-310331fe8a07",
+          "t": 24.792,
+          "x": 0.815,
+          "y": 0.054,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 27
+        },
+        {
+          "id": "88af3ef6-4ba5-4f5d-9b89-e98b82c4daac",
+          "t": 27.658,
+          "x": 0.533,
+          "y": 0.594,
+          "endX": 0.533,
+          "endY": 0.406,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 28.333
+        },
+        {
+          "id": "7435f8e2-17cb-47b6-a542-b7dcd27b880e",
+          "t": 28.792,
+          "x": 0.708,
+          "y": 0.528,
+          "endX": 0.292,
+          "endY": 0.528,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.8,
+          "settleT": 29.4
+        },
+        {
+          "id": "ed502f42-3968-49e3-b539-180df40a2005",
+          "t": 29.658,
+          "x": 0.303,
+          "y": 0.523,
+          "endX": 0.697,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.75,
+          "settleT": 30.333
+        },
+        {
+          "id": "489f1fec-65a3-42e5-8575-d8e0013f90c4",
+          "t": 30.858,
+          "x": 0.983,
+          "y": 0.476,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 31
+        },
+        {
+          "id": "8169e9c6-3c3b-457c-89d1-b1367ec22685",
+          "t": 31.792,
+          "x": 0.681,
+          "y": 0.538,
+          "endX": 0.319,
+          "endY": 0.538,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 32.4
+        },
+        {
+          "id": "7118690d-bab3-4bc6-8127-38517d7550c4",
+          "t": 32.992,
+          "x": 0.533,
+          "y": 0.626,
+          "endX": 0.533,
+          "endY": 0.374,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 35.067
+        },
+        {
+          "id": "1251cd83-a165-4db4-b7a4-350618648914",
+          "t": 35.458,
+          "x": 0.083,
+          "y": 1,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 36
+        },
+        {
+          "id": "b2b29852-14bf-451f-8773-07e642bb9aa5",
+          "t": 36.258,
+          "x": 0.459,
+          "y": 0.665,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 38.067
+        },
+        {
+          "id": "a434b1d6-558f-405d-83c7-c350ca9e958d",
+          "t": 38.392,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.7,
+          "settleT": 44.267
+        },
+        {
+          "id": "cebe1678-9861-4db5-968e-a2999e3046b3",
+          "t": 39.325,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "d54d7f6e-f114-427b-a922-0dfcd17ad852",
+          "t": 40.458,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.8,
+          "settleT": 44.267
+        },
+        {
+          "id": "7b31b43c-5b85-4b46-b31f-1e77742fa6c4",
+          "t": 40.992,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "7b3c18ac-002b-4896-a323-8a73d4d4768c",
+          "t": 43.458,
+          "x": 0.517,
+          "y": 0.582,
+          "endX": 0.517,
+          "endY": 0.418,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "665763a1-cb44-4603-8e8a-86c5e8273044",
+          "t": 44.592,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.12,
+          "confidence": 0.7,
+          "settleT": 48.533
+        },
+        {
+          "id": "17da1b27-24ac-4b2d-8a02-37c2536ce4ca",
+          "t": 45.192,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 48.533
+        },
+        {
+          "id": "e53bb786-ec34-46b3-b015-3009e626b2d7",
+          "t": 47.992,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 48.533
+        },
+        {
+          "id": "f59e0e1b-5c26-4194-a140-d6ff89f01bf9",
+          "t": 49.592,
+          "x": 0.983,
+          "y": 0.423,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 49.733
+        },
+        {
+          "id": "f99e03b3-39ac-45a2-8af8-d240a628f9a4",
+          "t": 55.925,
+          "x": 0.983,
+          "y": 0.065,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 63.067
+        },
+        {
+          "id": "12dbf9d0-fd37-4926-b456-e57becb00218",
+          "t": 57.192,
+          "x": 0.25,
+          "y": 0.523,
+          "endX": 0.75,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 63.067
+        },
+        {
+          "id": "0910ca1a-024d-4ac0-b4fe-e4557cad0d8c",
+          "t": 62.458,
+          "x": 0.045,
+          "y": 0.981,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 63.067
+        },
+        {
+          "id": "f807dcbf-eb8e-47c2-b922-0bce9bcdc78a",
+          "t": 63.325,
+          "x": 0.237,
+          "y": 0.666,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 63.533
+        },
+        {
+          "id": "f6e27da4-32f2-48f8-915d-54b2388994c8",
+          "t": 64.258,
+          "x": 0.5,
+          "y": 0.987,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 64.6
+        },
+        {
+          "id": "96096c00-ed5c-4fd3-add2-19b09ef091fd",
+          "t": 65.792,
+          "x": 0.25,
+          "y": 0.523,
+          "endX": 0.75,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 66.8
+        },
+        {
+          "id": "1160fb03-ad27-4c69-8b4f-8fdadca867d7",
+          "t": 67.058,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 69.867
+        },
+        {
+          "id": "14b33536-fccc-49b1-b83c-6c4aff0ac797",
+          "t": 69.325,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 69.867
+        },
+        {
+          "id": "4d54e8eb-70d1-4305-8b2e-67b1d4f5fe0a",
+          "t": 70.258,
+          "x": 0.5,
+          "y": 0.987,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 70.6
+        }
+      ],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [
+        {
+          "start": 49.733,
+          "end": 55.933
+        },
+        {
+          "start": 85.933,
+          "end": 219.6
+        },
+        {
+          "start": 231.133,
+          "end": 232.8
+        },
+        {
+          "start": 234.267,
+          "end": 260.6
+        },
+        {
+          "start": 260.667,
+          "end": 262.6
+        },
+        {
+          "start": 263.667,
+          "end": 273.6
+        },
+        {
+          "start": 273.667,
+          "end": 276.6
+        },
+        {
+          "start": 276.667,
+          "end": 278.6
+        },
+        {
+          "start": 279.733,
+          "end": 282.667
+        },
+        {
+          "start": 282.733,
+          "end": 285.667
+        },
+        {
+          "start": 285.733,
+          "end": 288.667
+        },
+        {
+          "start": 288.733,
+          "end": 292.667
+        }
+      ],
+      "tapsAnalyzed": true,
+      "layout": {
+        "presetId": "social-9x16",
+        "background": "blurred"
+      },
+      "tracks": []
+    },
+    "cut": {
+      "recording": {
+        "screenVideoFile": "screen.mov",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "duration": 637.07
+      },
+      "clips": [
+        {
+          "id": "fixed-id-1",
+          "sourceStart": 0,
+          "sourceEnd": 159.2675,
+          "speed": 1
+        },
+        {
+          "id": "fixed-id-2",
+          "sourceStart": 222.9745,
+          "sourceEnd": 637.07,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 1.6,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#3a1c71",
+          "endHex": "#d76d77",
+          "angle": 120
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "chapters": [],
+      "annotations": [],
+      "exportPreset": "p1080",
+      "outputFPS": 60,
+      "device": {
+        "frame": true
+      },
+      "taps": [
+        {
+          "id": "7c859383-48ea-4b7b-a491-322e4bcc242e",
+          "t": 5.525,
+          "x": 0.619,
+          "y": 0.714,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 8.2
+        },
+        {
+          "id": "a880a52c-0b08-4703-919c-6abbadabca68",
+          "t": 8.925,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.7,
+          "settleT": 9.333
+        },
+        {
+          "id": "c5aede24-50cf-41d4-92de-ef73ceacce8c",
+          "t": 10.525,
+          "x": 0.266,
+          "y": 0.926,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 10.6
+        },
+        {
+          "id": "a771dee9-1991-477c-84d9-bfde30bb6196",
+          "t": 11.125,
+          "x": 0.161,
+          "y": 0.971,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 11.667
+        },
+        {
+          "id": "c001baec-b5d4-4bdc-a1b7-71349bedee92",
+          "t": 11.992,
+          "x": 0.353,
+          "y": 0.132,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 12.067
+        },
+        {
+          "id": "93134b45-a883-41ce-8a93-9c256a61c270",
+          "t": 12.792,
+          "x": 0.131,
+          "y": 0.941,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 12.867
+        },
+        {
+          "id": "f8cf8902-31fd-46f4-86b6-b0ac5d85e845",
+          "t": 13.525,
+          "x": 0.5,
+          "y": 0.679,
+          "endX": 0.5,
+          "endY": 0.321,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.8,
+          "settleT": 14.467
+        },
+        {
+          "id": "bd9fe503-a208-4872-8a06-2b652b66e9ce",
+          "t": 14.925,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 18.133
+        },
+        {
+          "id": "a65f6f8b-d2a3-42f7-bd04-31ac1f1dd8b0",
+          "t": 16.058,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 18.133
+        },
+        {
+          "id": "78a7e929-7de5-43c7-bf35-6dfba4ce73bf",
+          "t": 19.192,
+          "x": 0.983,
+          "y": 0.483,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 19.333
+        },
+        {
+          "id": "86509e4d-98a7-4de9-8bba-1ae4dffbb2a5",
+          "t": 19.725,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 22.133
+        },
+        {
+          "id": "0980f288-f184-47c1-8816-d035a469b1a5",
+          "t": 20.592,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 22.133
+        },
+        {
+          "id": "b1f38c29-07af-4957-9ffc-46586db6e7f9",
+          "t": 22.658,
+          "x": 0.517,
+          "y": 0.57,
+          "endX": 0.517,
+          "endY": 0.43,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 24.533
+        },
+        {
+          "id": "af233dff-3826-4df6-a0cb-310331fe8a07",
+          "t": 24.792,
+          "x": 0.815,
+          "y": 0.054,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 27
+        },
+        {
+          "id": "88af3ef6-4ba5-4f5d-9b89-e98b82c4daac",
+          "t": 27.658,
+          "x": 0.533,
+          "y": 0.594,
+          "endX": 0.533,
+          "endY": 0.406,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 28.333
+        },
+        {
+          "id": "7435f8e2-17cb-47b6-a542-b7dcd27b880e",
+          "t": 28.792,
+          "x": 0.708,
+          "y": 0.528,
+          "endX": 0.292,
+          "endY": 0.528,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.8,
+          "settleT": 29.4
+        },
+        {
+          "id": "ed502f42-3968-49e3-b539-180df40a2005",
+          "t": 29.658,
+          "x": 0.303,
+          "y": 0.523,
+          "endX": 0.697,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.75,
+          "settleT": 30.333
+        },
+        {
+          "id": "489f1fec-65a3-42e5-8575-d8e0013f90c4",
+          "t": 30.858,
+          "x": 0.983,
+          "y": 0.476,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 31
+        },
+        {
+          "id": "8169e9c6-3c3b-457c-89d1-b1367ec22685",
+          "t": 31.792,
+          "x": 0.681,
+          "y": 0.538,
+          "endX": 0.319,
+          "endY": 0.538,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 32.4
+        },
+        {
+          "id": "7118690d-bab3-4bc6-8127-38517d7550c4",
+          "t": 32.992,
+          "x": 0.533,
+          "y": 0.626,
+          "endX": 0.533,
+          "endY": 0.374,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 35.067
+        },
+        {
+          "id": "1251cd83-a165-4db4-b7a4-350618648914",
+          "t": 35.458,
+          "x": 0.083,
+          "y": 1,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 36
+        },
+        {
+          "id": "b2b29852-14bf-451f-8773-07e642bb9aa5",
+          "t": 36.258,
+          "x": 0.459,
+          "y": 0.665,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 38.067
+        },
+        {
+          "id": "a434b1d6-558f-405d-83c7-c350ca9e958d",
+          "t": 38.392,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.7,
+          "settleT": 44.267
+        },
+        {
+          "id": "cebe1678-9861-4db5-968e-a2999e3046b3",
+          "t": 39.325,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "d54d7f6e-f114-427b-a922-0dfcd17ad852",
+          "t": 40.458,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.8,
+          "settleT": 44.267
+        },
+        {
+          "id": "7b31b43c-5b85-4b46-b31f-1e77742fa6c4",
+          "t": 40.992,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "7b3c18ac-002b-4896-a323-8a73d4d4768c",
+          "t": 43.458,
+          "x": 0.517,
+          "y": 0.582,
+          "endX": 0.517,
+          "endY": 0.418,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "665763a1-cb44-4603-8e8a-86c5e8273044",
+          "t": 44.592,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.12,
+          "confidence": 0.7,
+          "settleT": 48.533
+        },
+        {
+          "id": "17da1b27-24ac-4b2d-8a02-37c2536ce4ca",
+          "t": 45.192,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 48.533
+        },
+        {
+          "id": "e53bb786-ec34-46b3-b015-3009e626b2d7",
+          "t": 47.992,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 48.533
+        },
+        {
+          "id": "f59e0e1b-5c26-4194-a140-d6ff89f01bf9",
+          "t": 49.592,
+          "x": 0.983,
+          "y": 0.423,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 49.733
+        },
+        {
+          "id": "f99e03b3-39ac-45a2-8af8-d240a628f9a4",
+          "t": 55.925,
+          "x": 0.983,
+          "y": 0.065,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 63.067
+        },
+        {
+          "id": "12dbf9d0-fd37-4926-b456-e57becb00218",
+          "t": 57.192,
+          "x": 0.25,
+          "y": 0.523,
+          "endX": 0.75,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 63.067
+        },
+        {
+          "id": "0910ca1a-024d-4ac0-b4fe-e4557cad0d8c",
+          "t": 62.458,
+          "x": 0.045,
+          "y": 0.981,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 63.067
+        },
+        {
+          "id": "f807dcbf-eb8e-47c2-b922-0bce9bcdc78a",
+          "t": 63.325,
+          "x": 0.237,
+          "y": 0.666,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 63.533
+        },
+        {
+          "id": "f6e27da4-32f2-48f8-915d-54b2388994c8",
+          "t": 64.258,
+          "x": 0.5,
+          "y": 0.987,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 64.6
+        },
+        {
+          "id": "96096c00-ed5c-4fd3-add2-19b09ef091fd",
+          "t": 65.792,
+          "x": 0.25,
+          "y": 0.523,
+          "endX": 0.75,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 66.8
+        },
+        {
+          "id": "1160fb03-ad27-4c69-8b4f-8fdadca867d7",
+          "t": 67.058,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 69.867
+        },
+        {
+          "id": "14b33536-fccc-49b1-b83c-6c4aff0ac797",
+          "t": 69.325,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 69.867
+        },
+        {
+          "id": "4d54e8eb-70d1-4305-8b2e-67b1d4f5fe0a",
+          "t": 70.258,
+          "x": 0.5,
+          "y": 0.987,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 70.6
+        }
+      ],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [
+        {
+          "start": 49.733,
+          "end": 55.933
+        },
+        {
+          "start": 85.933,
+          "end": 219.6
+        },
+        {
+          "start": 231.133,
+          "end": 232.8
+        },
+        {
+          "start": 234.267,
+          "end": 260.6
+        },
+        {
+          "start": 260.667,
+          "end": 262.6
+        },
+        {
+          "start": 263.667,
+          "end": 273.6
+        },
+        {
+          "start": 273.667,
+          "end": 276.6
+        },
+        {
+          "start": 276.667,
+          "end": 278.6
+        },
+        {
+          "start": 279.733,
+          "end": 282.667
+        },
+        {
+          "start": 282.733,
+          "end": 285.667
+        },
+        {
+          "start": 285.733,
+          "end": 288.667
+        },
+        {
+          "start": 288.733,
+          "end": 292.667
+        }
+      ],
+      "tapsAnalyzed": true,
+      "layout": {
+        "presetId": "social-9x16",
+        "background": "blurred"
+      },
+      "tracks": []
+    },
+    "remap": {
+      "recording": {
+        "screenVideoFile": "screen.mov",
+        "sourceKind": "iosDevice",
+        "sourceSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "duration": 637.07
+      },
+      "clips": [
+        {
+          "id": "e3e56e5b-0953-47d1-b789-7d5a8caa340e",
+          "sourceStart": 0,
+          "sourceEnd": 509.65600000000006,
+          "speed": 1
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 1.6,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": true,
+        "voiceCleanup": false
+      },
+      "style": {
+        "paddingFraction": 0.08,
+        "cornerRadius": 24,
+        "shadowRadius": 60,
+        "shadowOpacity": 0.35,
+        "cropRect": null,
+        "background": {
+          "kind": "gradient",
+          "startHex": "#3a1c71",
+          "endHex": "#d76d77",
+          "angle": 120
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.012,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.85
+      },
+      "cameraOverlay": {
+        "enabled": false,
+        "corner": "bottomRight",
+        "sizeFraction": 0.325,
+        "circular": true
+      },
+      "phoneOverlay": {
+        "enabled": false,
+        "layout": "side-by-side-right",
+        "corner": "bottomRight",
+        "size": 0.9,
+        "frame": true,
+        "shadow": true,
+        "sound": false
+      },
+      "captions": [],
+      "chapters": [],
+      "annotations": [],
+      "exportPreset": "p1080",
+      "outputFPS": 60,
+      "device": {
+        "frame": true
+      },
+      "taps": [
+        {
+          "id": "7c859383-48ea-4b7b-a491-322e4bcc242e",
+          "t": 5.525,
+          "x": 0.619,
+          "y": 0.714,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 8.2
+        },
+        {
+          "id": "a880a52c-0b08-4703-919c-6abbadabca68",
+          "t": 8.925,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.7,
+          "settleT": 9.333
+        },
+        {
+          "id": "c5aede24-50cf-41d4-92de-ef73ceacce8c",
+          "t": 10.525,
+          "x": 0.266,
+          "y": 0.926,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 10.6
+        },
+        {
+          "id": "a771dee9-1991-477c-84d9-bfde30bb6196",
+          "t": 11.125,
+          "x": 0.161,
+          "y": 0.971,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 11.667
+        },
+        {
+          "id": "c001baec-b5d4-4bdc-a1b7-71349bedee92",
+          "t": 11.992,
+          "x": 0.353,
+          "y": 0.132,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 12.067
+        },
+        {
+          "id": "93134b45-a883-41ce-8a93-9c256a61c270",
+          "t": 12.792,
+          "x": 0.131,
+          "y": 0.941,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 12.867
+        },
+        {
+          "id": "f8cf8902-31fd-46f4-86b6-b0ac5d85e845",
+          "t": 13.525,
+          "x": 0.5,
+          "y": 0.679,
+          "endX": 0.5,
+          "endY": 0.321,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.8,
+          "settleT": 14.467
+        },
+        {
+          "id": "bd9fe503-a208-4872-8a06-2b652b66e9ce",
+          "t": 14.925,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 18.133
+        },
+        {
+          "id": "a65f6f8b-d2a3-42f7-bd04-31ac1f1dd8b0",
+          "t": 16.058,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 18.133
+        },
+        {
+          "id": "78a7e929-7de5-43c7-bf35-6dfba4ce73bf",
+          "t": 19.192,
+          "x": 0.983,
+          "y": 0.483,
+          "kind": "tap",
+          "confidence": 0.9,
+          "settleT": 19.333
+        },
+        {
+          "id": "86509e4d-98a7-4de9-8bba-1ae4dffbb2a5",
+          "t": 19.725,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 22.133
+        },
+        {
+          "id": "0980f288-f184-47c1-8816-d035a469b1a5",
+          "t": 20.592,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 22.133
+        },
+        {
+          "id": "b1f38c29-07af-4957-9ffc-46586db6e7f9",
+          "t": 22.658,
+          "x": 0.517,
+          "y": 0.57,
+          "endX": 0.517,
+          "endY": 0.43,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 24.533
+        },
+        {
+          "id": "af233dff-3826-4df6-a0cb-310331fe8a07",
+          "t": 24.792,
+          "x": 0.815,
+          "y": 0.054,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 27
+        },
+        {
+          "id": "88af3ef6-4ba5-4f5d-9b89-e98b82c4daac",
+          "t": 27.658,
+          "x": 0.533,
+          "y": 0.594,
+          "endX": 0.533,
+          "endY": 0.406,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 28.333
+        },
+        {
+          "id": "7435f8e2-17cb-47b6-a542-b7dcd27b880e",
+          "t": 28.792,
+          "x": 0.708,
+          "y": 0.528,
+          "endX": 0.292,
+          "endY": 0.528,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.8,
+          "settleT": 29.4
+        },
+        {
+          "id": "ed502f42-3968-49e3-b539-180df40a2005",
+          "t": 29.658,
+          "x": 0.303,
+          "y": 0.523,
+          "endX": 0.697,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.75,
+          "settleT": 30.333
+        },
+        {
+          "id": "489f1fec-65a3-42e5-8575-d8e0013f90c4",
+          "t": 30.858,
+          "x": 0.983,
+          "y": 0.476,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 31
+        },
+        {
+          "id": "8169e9c6-3c3b-457c-89d1-b1367ec22685",
+          "t": 31.792,
+          "x": 0.681,
+          "y": 0.538,
+          "endX": 0.319,
+          "endY": 0.538,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 32.4
+        },
+        {
+          "id": "7118690d-bab3-4bc6-8127-38517d7550c4",
+          "t": 32.992,
+          "x": 0.533,
+          "y": 0.626,
+          "endX": 0.533,
+          "endY": 0.374,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 35.067
+        },
+        {
+          "id": "1251cd83-a165-4db4-b7a4-350618648914",
+          "t": 35.458,
+          "x": 0.083,
+          "y": 1,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 36
+        },
+        {
+          "id": "b2b29852-14bf-451f-8773-07e642bb9aa5",
+          "t": 36.258,
+          "x": 0.459,
+          "y": 0.665,
+          "kind": "tap",
+          "confidence": 0.6,
+          "settleT": 38.067
+        },
+        {
+          "id": "a434b1d6-558f-405d-83c7-c350ca9e958d",
+          "t": 38.392,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.7,
+          "settleT": 44.267
+        },
+        {
+          "id": "cebe1678-9861-4db5-968e-a2999e3046b3",
+          "t": 39.325,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "d54d7f6e-f114-427b-a922-0dfcd17ad852",
+          "t": 40.458,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.8,
+          "settleT": 44.267
+        },
+        {
+          "id": "7b31b43c-5b85-4b46-b31f-1e77742fa6c4",
+          "t": 40.992,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "7b3c18ac-002b-4896-a323-8a73d4d4768c",
+          "t": 43.458,
+          "x": 0.517,
+          "y": 0.582,
+          "endX": 0.517,
+          "endY": 0.418,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 44.267
+        },
+        {
+          "id": "665763a1-cb44-4603-8e8a-86c5e8273044",
+          "t": 44.592,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.12,
+          "confidence": 0.7,
+          "settleT": 48.533
+        },
+        {
+          "id": "17da1b27-24ac-4b2d-8a02-37c2536ce4ca",
+          "t": 45.192,
+          "x": 0.5,
+          "y": 0.44,
+          "endX": 0.5,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.233,
+          "confidence": 0.9,
+          "settleT": 48.533
+        },
+        {
+          "id": "e53bb786-ec34-46b3-b015-3009e626b2d7",
+          "t": 47.992,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 48.533
+        },
+        {
+          "id": "f59e0e1b-5c26-4194-a140-d6ff89f01bf9",
+          "t": 49.592,
+          "x": 0.983,
+          "y": 0.423,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 49.733
+        },
+        {
+          "id": "f99e03b3-39ac-45a2-8af8-d240a628f9a4",
+          "t": 55.925,
+          "x": 0.983,
+          "y": 0.065,
+          "kind": "tap",
+          "confidence": 0.4,
+          "settleT": 63.067
+        },
+        {
+          "id": "12dbf9d0-fd37-4926-b456-e57becb00218",
+          "t": 57.192,
+          "x": 0.25,
+          "y": 0.523,
+          "endX": 0.75,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 63.067
+        },
+        {
+          "id": "0910ca1a-024d-4ac0-b4fe-e4557cad0d8c",
+          "t": 62.458,
+          "x": 0.045,
+          "y": 0.981,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 63.067
+        },
+        {
+          "id": "f807dcbf-eb8e-47c2-b922-0bce9bcdc78a",
+          "t": 63.325,
+          "x": 0.237,
+          "y": 0.666,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 63.533
+        },
+        {
+          "id": "f6e27da4-32f2-48f8-915d-54b2388994c8",
+          "t": 64.258,
+          "x": 0.5,
+          "y": 0.987,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 64.6
+        },
+        {
+          "id": "96096c00-ed5c-4fd3-add2-19b09ef091fd",
+          "t": 65.792,
+          "x": 0.25,
+          "y": 0.523,
+          "endX": 0.75,
+          "endY": 0.523,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 66.8
+        },
+        {
+          "id": "1160fb03-ad27-4c69-8b4f-8fdadca867d7",
+          "t": 67.058,
+          "x": 0.517,
+          "y": 0.44,
+          "endX": 0.517,
+          "endY": 0.56,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.9,
+          "settleT": 69.867
+        },
+        {
+          "id": "14b33536-fccc-49b1-b83c-6c4aff0ac797",
+          "t": 69.325,
+          "x": 0.517,
+          "y": 0.56,
+          "endX": 0.517,
+          "endY": 0.44,
+          "kind": "swipe",
+          "duration": 0.3,
+          "confidence": 0.85,
+          "settleT": 69.867
+        },
+        {
+          "id": "4d54e8eb-70d1-4305-8b2e-67b1d4f5fe0a",
+          "t": 70.258,
+          "x": 0.5,
+          "y": 0.987,
+          "kind": "tap",
+          "confidence": 0.55,
+          "settleT": 70.6
+        }
+      ],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [
+        {
+          "start": 49.733,
+          "end": 55.933
+        },
+        {
+          "start": 85.933,
+          "end": 219.6
+        },
+        {
+          "start": 231.133,
+          "end": 232.8
+        },
+        {
+          "start": 234.267,
+          "end": 260.6
+        },
+        {
+          "start": 260.667,
+          "end": 262.6
+        },
+        {
+          "start": 263.667,
+          "end": 273.6
+        },
+        {
+          "start": 273.667,
+          "end": 276.6
+        },
+        {
+          "start": 276.667,
+          "end": 278.6
+        },
+        {
+          "start": 279.733,
+          "end": 282.667
+        },
+        {
+          "start": 282.733,
+          "end": 285.667
+        },
+        {
+          "start": 285.733,
+          "end": 288.667
+        },
+        {
+          "start": 288.733,
+          "end": 292.667
+        }
+      ],
+      "tapsAnalyzed": true,
+      "layout": {
+        "presetId": "social-9x16",
+        "background": "blurred"
+      },
+      "tracks": []
+    }
+  },
+  "v151-mac-iphone-full.json": {
+    "normalized": {
+      "name": "Launch demo",
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "cameraVideoFile": "camera.webm",
+        "audioFile": "audio.webm",
+        "sourceKind": "window",
+        "sourceSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "duration": 64.25,
+        "cameraOffset": -0.2,
+        "phoneVideoFile": "phone.mov",
+        "phoneOffset": 1.75,
+        "phoneSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "phoneDuration": 60.1
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 20,
+          "speed": 1
+        },
+        {
+          "id": "c2",
+          "sourceStart": 24,
+          "sourceEnd": 64.25,
+          "speed": 1.25
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [
+        {
+          "holdStart": 10,
+          "holdEnd": 12,
+          "inStart": 9.4,
+          "outEnd": 12.6,
+          "center": {
+            "x": 0.3,
+            "y": 0.3
+          },
+          "scale": 2
+        },
+        {
+          "holdStart": 30,
+          "holdEnd": 31,
+          "inStart": 29.5,
+          "outEnd": 31.5,
+          "center": {
+            "x": 0.7,
+            "y": 0.6
+          },
+          "scale": 1.5
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 2,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": false,
+        "voiceCleanup": true
+      },
+      "style": {
+        "paddingFraction": 0.1,
+        "cornerRadius": 18,
+        "shadowRadius": 50,
+        "shadowOpacity": 0.4,
+        "cropRect": {
+          "x": 0,
+          "y": 0.05,
+          "w": 1,
+          "h": 0.9
+        },
+        "background": {
+          "kind": "mesh",
+          "baseHex": "#0b1020",
+          "blobs": [
+            {
+              "x": 0.1,
+              "y": 0.2,
+              "r": 0.5,
+              "hex": "#ff6b6b"
+            }
+          ],
+          "grain": 0.05
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.014,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.7,
+        "contentTransform": {
+          "x": 0.45,
+          "y": 0.5,
+          "scale": 0.95
+        }
+      },
+      "cameraOverlay": {
+        "enabled": true,
+        "corner": "bottomLeft",
+        "position": {
+          "x": 0.1,
+          "y": 0.85
+        },
+        "sizeFraction": 0.25,
+        "circular": false
+      },
+      "phoneOverlay": {
+        "enabled": true,
+        "layout": "corner",
+        "corner": "topRight",
+        "size": 0.6,
+        "frame": true,
+        "shadow": true,
+        "sound": true,
+        "modelId": "iphone-16-pro",
+        "finishId": "desert-titanium"
+      },
+      "captions": [
+        {
+          "id": "k1",
+          "start": 0.5,
+          "end": 2,
+          "text": "Welcome",
+          "words": [
+            {
+              "start": 0.5,
+              "end": 1,
+              "text": "Wel"
+            },
+            {
+              "start": 1,
+              "end": 2,
+              "text": "come"
+            }
+          ]
+        },
+        {
+          "id": "k2",
+          "start": 40,
+          "end": 44,
+          "text": "Bye"
+        }
+      ],
+      "chapters": [
+        {
+          "id": "h1",
+          "start": 0,
+          "title": "Intro"
+        },
+        {
+          "id": "h2",
+          "start": 25,
+          "title": "Demo"
+        }
+      ],
+      "annotations": [
+        {
+          "id": "a1",
+          "start": 5,
+          "end": 9,
+          "text": "New!",
+          "band": 0,
+          "hex": "#ffcc00",
+          "transform": {
+            "x": 0.2,
+            "y": 0.1,
+            "scale": 1.5
+          }
+        },
+        {
+          "id": "a2",
+          "start": 12,
+          "end": 14,
+          "text": "Hidden",
+          "band": 1,
+          "hex": "#ffffff",
+          "hidden": true
+        }
+      ],
+      "exportPreset": "original",
+      "outputFPS": 60,
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "none",
+        "background": "style",
+        "titleCard": {
+          "title": "Launch",
+          "subtitle": "v2",
+          "transform": {
+            "x": 0.5,
+            "y": 0.9,
+            "scale": 1
+          },
+          "hidden": true
+        }
+      },
+      "tracks": [
+        {
+          "id": "track-1",
+          "kind": "audio",
+          "name": "Music",
+          "muted": false,
+          "volume": 0.8,
+          "duck": true,
+          "items": [
+            {
+              "id": "m1",
+              "file": "audio/m1.mp3",
+              "name": "theme.mp3",
+              "fileDuration": 120,
+              "start": 0,
+              "sourceIn": 5,
+              "sourceOut": 65,
+              "gain": 0.6,
+              "fadeIn": 1,
+              "fadeOut": 2,
+              "loop": false
+            }
+          ]
+        }
+      ],
+      "layerOrder": [
+        "content",
+        "phone",
+        "camera",
+        "text:a1",
+        "text:a2"
+      ]
+    },
+    "renormalized": {
+      "name": "Launch demo",
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "cameraVideoFile": "camera.webm",
+        "audioFile": "audio.webm",
+        "sourceKind": "window",
+        "sourceSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "duration": 64.25,
+        "cameraOffset": -0.2,
+        "phoneVideoFile": "phone.mov",
+        "phoneOffset": 1.75,
+        "phoneSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "phoneDuration": 60.1
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 20,
+          "speed": 1
+        },
+        {
+          "id": "c2",
+          "sourceStart": 24,
+          "sourceEnd": 64.25,
+          "speed": 1.25
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [
+        {
+          "holdStart": 10,
+          "holdEnd": 12,
+          "inStart": 9.4,
+          "outEnd": 12.6,
+          "center": {
+            "x": 0.3,
+            "y": 0.3
+          },
+          "scale": 2
+        },
+        {
+          "holdStart": 30,
+          "holdEnd": 31,
+          "inStart": 29.5,
+          "outEnd": 31.5,
+          "center": {
+            "x": 0.7,
+            "y": 0.6
+          },
+          "scale": 1.5
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 2,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": false,
+        "voiceCleanup": true
+      },
+      "style": {
+        "paddingFraction": 0.1,
+        "cornerRadius": 18,
+        "shadowRadius": 50,
+        "shadowOpacity": 0.4,
+        "cropRect": {
+          "x": 0,
+          "y": 0.05,
+          "w": 1,
+          "h": 0.9
+        },
+        "background": {
+          "kind": "mesh",
+          "baseHex": "#0b1020",
+          "blobs": [
+            {
+              "x": 0.1,
+              "y": 0.2,
+              "r": 0.5,
+              "hex": "#ff6b6b"
+            }
+          ],
+          "grain": 0.05
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.014,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.7,
+        "contentTransform": {
+          "x": 0.45,
+          "y": 0.5,
+          "scale": 0.95
+        }
+      },
+      "cameraOverlay": {
+        "enabled": true,
+        "corner": "bottomLeft",
+        "position": {
+          "x": 0.1,
+          "y": 0.85
+        },
+        "sizeFraction": 0.25,
+        "circular": false
+      },
+      "phoneOverlay": {
+        "enabled": true,
+        "layout": "corner",
+        "corner": "topRight",
+        "size": 0.6,
+        "frame": true,
+        "shadow": true,
+        "sound": true,
+        "modelId": "iphone-16-pro",
+        "finishId": "desert-titanium"
+      },
+      "captions": [
+        {
+          "id": "k1",
+          "start": 0.5,
+          "end": 2,
+          "text": "Welcome",
+          "words": [
+            {
+              "start": 0.5,
+              "end": 1,
+              "text": "Wel"
+            },
+            {
+              "start": 1,
+              "end": 2,
+              "text": "come"
+            }
+          ]
+        },
+        {
+          "id": "k2",
+          "start": 40,
+          "end": 44,
+          "text": "Bye"
+        }
+      ],
+      "chapters": [
+        {
+          "id": "h1",
+          "start": 0,
+          "title": "Intro"
+        },
+        {
+          "id": "h2",
+          "start": 25,
+          "title": "Demo"
+        }
+      ],
+      "annotations": [
+        {
+          "id": "a1",
+          "start": 5,
+          "end": 9,
+          "text": "New!",
+          "band": 0,
+          "hex": "#ffcc00",
+          "transform": {
+            "x": 0.2,
+            "y": 0.1,
+            "scale": 1.5
+          }
+        },
+        {
+          "id": "a2",
+          "start": 12,
+          "end": 14,
+          "text": "Hidden",
+          "band": 1,
+          "hex": "#ffffff",
+          "hidden": true
+        }
+      ],
+      "exportPreset": "original",
+      "outputFPS": 60,
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "none",
+        "background": "style",
+        "titleCard": {
+          "title": "Launch",
+          "subtitle": "v2",
+          "transform": {
+            "x": 0.5,
+            "y": 0.9,
+            "scale": 1
+          },
+          "hidden": true
+        }
+      },
+      "tracks": [
+        {
+          "id": "track-1",
+          "kind": "audio",
+          "name": "Music",
+          "muted": false,
+          "volume": 0.8,
+          "duck": true,
+          "items": [
+            {
+              "id": "m1",
+              "file": "audio/m1.mp3",
+              "name": "theme.mp3",
+              "fileDuration": 120,
+              "start": 0,
+              "sourceIn": 5,
+              "sourceOut": 65,
+              "gain": 0.6,
+              "fadeIn": 1,
+              "fadeOut": 2,
+              "loop": false
+            }
+          ]
+        }
+      ],
+      "layerOrder": [
+        "content",
+        "phone",
+        "camera",
+        "text:a1",
+        "text:a2"
+      ]
+    },
+    "applyEmpty": {
+      "name": "Launch demo",
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "cameraVideoFile": "camera.webm",
+        "audioFile": "audio.webm",
+        "sourceKind": "window",
+        "sourceSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "duration": 64.25,
+        "cameraOffset": -0.2,
+        "phoneVideoFile": "phone.mov",
+        "phoneOffset": 1.75,
+        "phoneSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "phoneDuration": 60.1
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 20,
+          "speed": 1
+        },
+        {
+          "id": "c2",
+          "sourceStart": 24,
+          "sourceEnd": 64.25,
+          "speed": 1.25
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [
+        {
+          "holdStart": 10,
+          "holdEnd": 12,
+          "inStart": 9.4,
+          "outEnd": 12.6,
+          "center": {
+            "x": 0.3,
+            "y": 0.3
+          },
+          "scale": 2
+        },
+        {
+          "holdStart": 30,
+          "holdEnd": 31,
+          "inStart": 29.5,
+          "outEnd": 31.5,
+          "center": {
+            "x": 0.7,
+            "y": 0.6
+          },
+          "scale": 1.5
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 2,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": false,
+        "voiceCleanup": true
+      },
+      "style": {
+        "paddingFraction": 0.1,
+        "cornerRadius": 18,
+        "shadowRadius": 50,
+        "shadowOpacity": 0.4,
+        "cropRect": {
+          "x": 0,
+          "y": 0.05,
+          "w": 1,
+          "h": 0.9
+        },
+        "background": {
+          "kind": "mesh",
+          "baseHex": "#0b1020",
+          "blobs": [
+            {
+              "x": 0.1,
+              "y": 0.2,
+              "r": 0.5,
+              "hex": "#ff6b6b"
+            }
+          ],
+          "grain": 0.05
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.014,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.7,
+        "contentTransform": {
+          "x": 0.45,
+          "y": 0.5,
+          "scale": 0.95
+        }
+      },
+      "cameraOverlay": {
+        "enabled": true,
+        "corner": "bottomLeft",
+        "position": {
+          "x": 0.1,
+          "y": 0.85
+        },
+        "sizeFraction": 0.25,
+        "circular": false
+      },
+      "phoneOverlay": {
+        "enabled": true,
+        "layout": "corner",
+        "corner": "topRight",
+        "size": 0.6,
+        "frame": true,
+        "shadow": true,
+        "sound": true,
+        "modelId": "iphone-16-pro",
+        "finishId": "desert-titanium"
+      },
+      "captions": [
+        {
+          "id": "k1",
+          "start": 0.5,
+          "end": 2,
+          "text": "Welcome",
+          "words": [
+            {
+              "start": 0.5,
+              "end": 1,
+              "text": "Wel"
+            },
+            {
+              "start": 1,
+              "end": 2,
+              "text": "come"
+            }
+          ]
+        },
+        {
+          "id": "k2",
+          "start": 40,
+          "end": 44,
+          "text": "Bye"
+        }
+      ],
+      "chapters": [
+        {
+          "id": "h1",
+          "start": 0,
+          "title": "Intro"
+        },
+        {
+          "id": "h2",
+          "start": 25,
+          "title": "Demo"
+        }
+      ],
+      "annotations": [
+        {
+          "id": "a1",
+          "start": 5,
+          "end": 9,
+          "text": "New!",
+          "band": 0,
+          "hex": "#ffcc00",
+          "transform": {
+            "x": 0.2,
+            "y": 0.1,
+            "scale": 1.5
+          }
+        },
+        {
+          "id": "a2",
+          "start": 12,
+          "end": 14,
+          "text": "Hidden",
+          "band": 1,
+          "hex": "#ffffff",
+          "hidden": true
+        }
+      ],
+      "exportPreset": "original",
+      "outputFPS": 60,
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "none",
+        "background": "style",
+        "titleCard": {
+          "title": "Launch",
+          "subtitle": "v2",
+          "transform": {
+            "x": 0.5,
+            "y": 0.9,
+            "scale": 1
+          },
+          "hidden": true
+        }
+      },
+      "tracks": [
+        {
+          "id": "track-1",
+          "kind": "audio",
+          "name": "Music",
+          "muted": false,
+          "volume": 0.8,
+          "duck": true,
+          "items": [
+            {
+              "id": "m1",
+              "file": "audio/m1.mp3",
+              "name": "theme.mp3",
+              "fileDuration": 120,
+              "start": 0,
+              "sourceIn": 5,
+              "sourceOut": 65,
+              "gain": 0.6,
+              "fadeIn": 1,
+              "fadeOut": 2,
+              "loop": false
+            }
+          ]
+        }
+      ],
+      "layerOrder": [
+        "content",
+        "phone",
+        "camera",
+        "text:a1",
+        "text:a2"
+      ]
+    },
+    "cut": {
+      "name": "Launch demo",
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "cameraVideoFile": "camera.webm",
+        "audioFile": "audio.webm",
+        "sourceKind": "window",
+        "sourceSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "duration": 64.25,
+        "cameraOffset": -0.2,
+        "phoneVideoFile": "phone.mov",
+        "phoneOffset": 1.75,
+        "phoneSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "phoneDuration": 60.1
+      },
+      "clips": [
+        {
+          "id": "fixed-id-1",
+          "sourceStart": 0,
+          "sourceEnd": 16.0625,
+          "speed": 1
+        },
+        {
+          "id": "fixed-id-2",
+          "sourceStart": 24,
+          "sourceEnd": 64.25,
+          "speed": 1.25
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [
+        {
+          "holdStart": 10,
+          "holdEnd": 12,
+          "inStart": 9.4,
+          "outEnd": 12.6,
+          "center": {
+            "x": 0.3,
+            "y": 0.3
+          },
+          "scale": 2
+        },
+        {
+          "holdStart": 26.0625,
+          "holdEnd": 27.0625,
+          "inStart": 25.5625,
+          "outEnd": 27.5625,
+          "center": {
+            "x": 0.7,
+            "y": 0.6
+          },
+          "scale": 1.5
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 2,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": false,
+        "voiceCleanup": true
+      },
+      "style": {
+        "paddingFraction": 0.1,
+        "cornerRadius": 18,
+        "shadowRadius": 50,
+        "shadowOpacity": 0.4,
+        "cropRect": {
+          "x": 0,
+          "y": 0.05,
+          "w": 1,
+          "h": 0.9
+        },
+        "background": {
+          "kind": "mesh",
+          "baseHex": "#0b1020",
+          "blobs": [
+            {
+              "x": 0.1,
+              "y": 0.2,
+              "r": 0.5,
+              "hex": "#ff6b6b"
+            }
+          ],
+          "grain": 0.05
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.014,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.7,
+        "contentTransform": {
+          "x": 0.45,
+          "y": 0.5,
+          "scale": 0.95
+        }
+      },
+      "cameraOverlay": {
+        "enabled": true,
+        "corner": "bottomLeft",
+        "position": {
+          "x": 0.1,
+          "y": 0.85
+        },
+        "sizeFraction": 0.25,
+        "circular": false
+      },
+      "phoneOverlay": {
+        "enabled": true,
+        "layout": "corner",
+        "corner": "topRight",
+        "size": 0.6,
+        "frame": true,
+        "shadow": true,
+        "sound": true,
+        "modelId": "iphone-16-pro",
+        "finishId": "desert-titanium"
+      },
+      "captions": [
+        {
+          "id": "k1",
+          "start": 0.5,
+          "end": 2,
+          "text": "Wel come",
+          "words": [
+            {
+              "start": 0.5,
+              "end": 1,
+              "text": "Wel"
+            },
+            {
+              "start": 1,
+              "end": 2,
+              "text": "come"
+            }
+          ]
+        },
+        {
+          "id": "k2",
+          "start": 36.0625,
+          "end": 40.0625,
+          "text": "Bye"
+        }
+      ],
+      "chapters": [
+        {
+          "id": "h1",
+          "start": 0,
+          "title": "Intro"
+        },
+        {
+          "id": "h2",
+          "start": 21.0625,
+          "title": "Demo"
+        }
+      ],
+      "annotations": [
+        {
+          "id": "a1",
+          "start": 5,
+          "end": 9,
+          "text": "New!",
+          "band": 0,
+          "hex": "#ffcc00",
+          "transform": {
+            "x": 0.2,
+            "y": 0.1,
+            "scale": 1.5
+          }
+        },
+        {
+          "id": "a2",
+          "start": 12,
+          "end": 14,
+          "text": "Hidden",
+          "band": 1,
+          "hex": "#ffffff",
+          "hidden": true
+        }
+      ],
+      "exportPreset": "original",
+      "outputFPS": 60,
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "none",
+        "background": "style",
+        "titleCard": {
+          "title": "Launch",
+          "subtitle": "v2",
+          "transform": {
+            "x": 0.5,
+            "y": 0.9,
+            "scale": 1
+          },
+          "hidden": true
+        }
+      },
+      "tracks": [
+        {
+          "id": "track-1",
+          "kind": "audio",
+          "name": "Music",
+          "muted": false,
+          "volume": 0.8,
+          "duck": true,
+          "items": [
+            {
+              "id": "m1",
+              "file": "audio/m1.mp3",
+              "name": "theme.mp3",
+              "fileDuration": 120,
+              "start": 0,
+              "sourceIn": 5,
+              "sourceOut": 65,
+              "gain": 0.6,
+              "fadeIn": 1,
+              "fadeOut": 2,
+              "loop": false
+            }
+          ]
+        }
+      ],
+      "layerOrder": [
+        "content",
+        "phone",
+        "camera",
+        "text:a1",
+        "text:a2"
+      ]
+    },
+    "remap": {
+      "name": "Launch demo",
+      "recording": {
+        "screenVideoFile": "screen.webm",
+        "cameraVideoFile": "camera.webm",
+        "audioFile": "audio.webm",
+        "sourceKind": "window",
+        "sourceSize": {
+          "width": 1600,
+          "height": 1000
+        },
+        "duration": 64.25,
+        "cameraOffset": -0.2,
+        "phoneVideoFile": "phone.mov",
+        "phoneOffset": 1.75,
+        "phoneSize": {
+          "width": 1206,
+          "height": 2622
+        },
+        "phoneDuration": 60.1
+      },
+      "clips": [
+        {
+          "id": "c1",
+          "sourceStart": 0,
+          "sourceEnd": 20,
+          "speed": 1
+        },
+        {
+          "id": "c2",
+          "sourceStart": 24,
+          "sourceEnd": 56.2,
+          "speed": 1.25
+        }
+      ],
+      "zoomKeyframes": [],
+      "manualZooms": [
+        {
+          "holdStart": 10,
+          "holdEnd": 12,
+          "inStart": 9.4,
+          "outEnd": 12.6,
+          "center": {
+            "x": 0.3,
+            "y": 0.3
+          },
+          "scale": 2
+        },
+        {
+          "holdStart": 30,
+          "holdEnd": 31,
+          "inStart": 29.5,
+          "outEnd": 31.5,
+          "center": {
+            "x": 0.7,
+            "y": 0.6
+          },
+          "scale": 1.5
+        }
+      ],
+      "zoom": {
+        "autofocus": true,
+        "dwell": true,
+        "depth": 2,
+        "motionEvents": [],
+        "fromTaps": true
+      },
+      "audio": {
+        "clickSounds": false,
+        "voiceCleanup": true
+      },
+      "style": {
+        "paddingFraction": 0.1,
+        "cornerRadius": 18,
+        "shadowRadius": 50,
+        "shadowOpacity": 0.4,
+        "cropRect": {
+          "x": 0,
+          "y": 0.05,
+          "w": 1,
+          "h": 0.9
+        },
+        "background": {
+          "kind": "mesh",
+          "baseHex": "#0b1020",
+          "blobs": [
+            {
+              "x": 0.1,
+              "y": 0.2,
+              "r": 0.5,
+              "hex": "#ff6b6b"
+            }
+          ],
+          "grain": 0.05
+        },
+        "deviceFrame": "none",
+        "cursorSize": 0.014,
+        "cursorTrail": false,
+        "cursorHex": "#ffffff",
+        "cursorShow": true,
+        "cursorOpacity": 0.7,
+        "contentTransform": {
+          "x": 0.45,
+          "y": 0.5,
+          "scale": 0.95
+        }
+      },
+      "cameraOverlay": {
+        "enabled": true,
+        "corner": "bottomLeft",
+        "position": {
+          "x": 0.1,
+          "y": 0.85
+        },
+        "sizeFraction": 0.25,
+        "circular": false
+      },
+      "phoneOverlay": {
+        "enabled": true,
+        "layout": "corner",
+        "corner": "topRight",
+        "size": 0.6,
+        "frame": true,
+        "shadow": true,
+        "sound": true,
+        "modelId": "iphone-16-pro",
+        "finishId": "desert-titanium"
+      },
+      "captions": [
+        {
+          "id": "k1",
+          "start": 0.5,
+          "end": 2,
+          "text": "Wel come",
+          "words": [
+            {
+              "start": 0.5,
+              "end": 1,
+              "text": "Wel"
+            },
+            {
+              "start": 1,
+              "end": 2,
+              "text": "come"
+            }
+          ]
+        },
+        {
+          "id": "k2",
+          "start": 40,
+          "end": 44,
+          "text": "Bye"
+        }
+      ],
+      "chapters": [
+        {
+          "id": "h1",
+          "start": 0,
+          "title": "Intro"
+        },
+        {
+          "id": "h2",
+          "start": 25,
+          "title": "Demo"
+        }
+      ],
+      "annotations": [
+        {
+          "id": "a1",
+          "start": 5,
+          "end": 9,
+          "text": "New!",
+          "band": 0,
+          "hex": "#ffcc00",
+          "transform": {
+            "x": 0.2,
+            "y": 0.1,
+            "scale": 1.5
+          }
+        },
+        {
+          "id": "a2",
+          "start": 12,
+          "end": 14,
+          "text": "Hidden",
+          "band": 1,
+          "hex": "#ffffff",
+          "hidden": true
+        }
+      ],
+      "exportPreset": "original",
+      "outputFPS": 60,
+      "device": {
+        "frame": false
+      },
+      "taps": [],
+      "tapStyle": {
+        "show": true,
+        "style": "ripple",
+        "color": "white",
+        "sizePt": 52
+      },
+      "waits": [],
+      "tapsAnalyzed": false,
+      "layout": {
+        "presetId": "none",
+        "background": "style",
+        "titleCard": {
+          "title": "Launch",
+          "subtitle": "v2",
+          "transform": {
+            "x": 0.5,
+            "y": 0.9,
+            "scale": 1
+          },
+          "hidden": true
+        }
+      },
+      "tracks": [
+        {
+          "id": "track-1",
+          "kind": "audio",
+          "name": "Music",
+          "muted": false,
+          "volume": 0.8,
+          "duck": true,
+          "items": [
+            {
+              "id": "m1",
+              "file": "audio/m1.mp3",
+              "name": "theme.mp3",
+              "fileDuration": 120,
+              "start": 0,
+              "sourceIn": 5,
+              "sourceOut": 65,
+              "gain": 0.6,
+              "fadeIn": 1,
+              "fadeOut": 2,
+              "loop": false
+            }
+          ]
+        }
+      ],
+      "layerOrder": [
+        "content",
+        "phone",
+        "camera",
+        "text:a1",
+        "text:a2"
+      ]
+    }
+  }
+}

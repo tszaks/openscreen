@@ -1,0 +1,264 @@
+# fixture ios-appstore canvas 886x1920
+canvas#0 = createElement(canvas)
+canvas#0.width = 886
+canvas#0.height = 1920
+# render t=0.25
+canvas#0.createLinearGradient(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)
+gradient#0<linear(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)>.addColorStop(0,"#3a1c71")
+gradient#0.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#0
+canvas#0.fillRect(0,0,886,1920)
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.rect(0,0,886,1920)
+canvas#0.clip()
+canvas#0.drawImage(video:screen,0,0,590,1278,-0.07692307692303757,0,886.1538461538461,1920)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+# state {contentRect:null,contentBase:null,screenMap:{source:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screen:{x:0,y:0,w:886,h:1920}},cameraRect:null,cameraBasis:{x:0,y:0,w:886,h:1920},phoneRect:null,phoneBase:null,phoneLayout:{width:886,height:1920,mode:"full-bleed",device:null,screen:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screenRadius:0,title:null,titleAlign:"center",titleTextAlign:"center",shadow:null,safe:{x:0,y:0,w:886,h:1920},pointScale:2.363076923076923},layers:[]}
+# render t=1.3
+canvas#0.createLinearGradient(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)
+gradient#1<linear(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)>.addColorStop(0,"#3a1c71")
+gradient#1.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#1
+canvas#0.fillRect(0,0,886,1920)
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.rect(0,0,886,1920)
+canvas#0.clip()
+canvas#0.drawImage(video:screen,0,0,590,1278,-0.07692307692303757,0,886.1538461538461,1920)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.35)"
+canvas#0.shadowBlur = 27.648
+canvas#0.shadowOffsetY = 4.9152
+canvas#0.createRadialGradient(265.7692307692308,1190.4,6.144,265.7692307692308,1190.4,61.44)
+gradient#2<radial(265.7692307692308,1190.4,6.144,265.7692307692308,1190.4,61.44)>.addColorStop(0,"rgba(255,255,255,0.48)")
+gradient#2.addColorStop(1,"rgba(255,255,255,0.32000000000000006)")
+canvas#0.beginPath()
+canvas#0.arc(265.7692307692308,1190.4,61.44,0,6.283185307179586)
+canvas#0.fillStyle = gradient#2
+canvas#0.fill()
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.shadowOffsetY = 0
+canvas#0.beginPath()
+canvas#0.arc(265.7692307692308,1190.4,63.12153846153846,0,6.283185307179586)
+canvas#0.strokeStyle = "rgba(0,0,0,0.16)"
+canvas#0.lineWidth = 1
+canvas#0.stroke()
+canvas#0.beginPath()
+canvas#0.arc(265.7692307692308,1190.4,61.44,0,6.283185307179586)
+canvas#0.strokeStyle = "rgba(255,255,255,0.95)"
+canvas#0.lineWidth = 2.363076923076923
+canvas#0.stroke()
+canvas#0.restore()
+canvas#0.restore()
+# state {contentRect:null,contentBase:null,screenMap:{source:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screen:{x:0,y:0,w:886,h:1920}},cameraRect:null,cameraBasis:{x:0,y:0,w:886,h:1920},phoneRect:null,phoneBase:null,phoneLayout:{width:886,height:1920,mode:"full-bleed",device:null,screen:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screenRadius:0,title:null,titleAlign:"center",titleTextAlign:"center",shadow:null,safe:{x:0,y:0,w:886,h:1920},pointScale:2.363076923076923},layers:[]}
+# render t=1.75
+canvas#0.createLinearGradient(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)
+gradient#3<linear(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)>.addColorStop(0,"#3a1c71")
+gradient#3.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#3
+canvas#0.fillRect(0,0,886,1920)
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.rect(0,0,886,1920)
+canvas#0.clip()
+canvas#0.drawImage(video:screen,0,0,590,1278,-0.07692307692303757,0,886.1538461538461,1920)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.000007501714677637938)"
+canvas#0.shadowBlur = 18.432
+canvas#0.shadowOffsetY = 4.9152
+canvas#0.beginPath()
+canvas#0.arc(265.7692307692308,1190.4,99.51214308325419,0,6.283185307179586)
+canvas#0.strokeStyle = "rgba(0,0,0,0.0000034293552812059146)"
+canvas#0.lineWidth = 1
+canvas#0.stroke()
+canvas#0.beginPath()
+canvas#0.arc(265.7692307692308,1190.4,98.3032098765432,0,6.283185307179586)
+canvas#0.strokeStyle = "rgba(255,255,255,0.000020361796982160118)"
+canvas#0.lineWidth = 1.4178664134219687
+canvas#0.stroke()
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.shadowOffsetY = 0
+canvas#0.restore()
+canvas#0.restore()
+# state {contentRect:null,contentBase:null,screenMap:{source:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screen:{x:0,y:0,w:886,h:1920}},cameraRect:null,cameraBasis:{x:0,y:0,w:886,h:1920},phoneRect:null,phoneBase:null,phoneLayout:{width:886,height:1920,mode:"full-bleed",device:null,screen:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screenRadius:0,title:null,titleAlign:"center",titleTextAlign:"center",shadow:null,safe:{x:0,y:0,w:886,h:1920},pointScale:2.363076923076923},layers:[]}
+# render t=2.4
+canvas#0.createLinearGradient(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)
+gradient#4<linear(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)>.addColorStop(0,"#3a1c71")
+gradient#4.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#4
+canvas#0.fillRect(0,0,886,1920)
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.rect(0,0,886,1920)
+canvas#0.clip()
+canvas#0.drawImage(video:screen,0,0,590,1278,-0.07692307692303757,0,886.1538461538461,1920)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+# state {contentRect:null,contentBase:null,screenMap:{source:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screen:{x:0,y:0,w:886,h:1920}},cameraRect:null,cameraBasis:{x:0,y:0,w:886,h:1920},phoneRect:null,phoneBase:null,phoneLayout:{width:886,height:1920,mode:"full-bleed",device:null,screen:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screenRadius:0,title:null,titleAlign:"center",titleTextAlign:"center",shadow:null,safe:{x:0,y:0,w:886,h:1920},pointScale:2.363076923076923},layers:[]}
+# render t=3.1
+canvas#0.createLinearGradient(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)
+gradient#5<linear(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)>.addColorStop(0,"#3a1c71")
+gradient#5.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#5
+canvas#0.fillRect(0,0,886,1920)
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.rect(0,0,886,1920)
+canvas#0.clip()
+canvas#0.drawImage(video:screen,0,0,590,1278,-0.07692307692303757,0,886.1538461538461,1920)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+# state {contentRect:null,contentBase:null,screenMap:{source:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screen:{x:0,y:0,w:886,h:1920}},cameraRect:null,cameraBasis:{x:0,y:0,w:886,h:1920},phoneRect:null,phoneBase:null,phoneLayout:{width:886,height:1920,mode:"full-bleed",device:null,screen:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screenRadius:0,title:null,titleAlign:"center",titleTextAlign:"center",shadow:null,safe:{x:0,y:0,w:886,h:1920},pointScale:2.363076923076923},layers:[]}
+# render t=4.25
+canvas#0.createLinearGradient(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)
+gradient#6<linear(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)>.addColorStop(0,"#3a1c71")
+gradient#6.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#6
+canvas#0.fillRect(0,0,886,1920)
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.rect(0,0,886,1920)
+canvas#0.clip()
+canvas#0.drawImage(video:screen,0,0,590,1278,-0.07692307692303757,0,886.1538461538461,1920)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.moveTo(443,1148.8711111111115)
+canvas#0.lineTo(443,1148.8711111111115)
+canvas#0.lineTo(433.4768,1185.5047048611113)
+canvas#0.lineTo(429.5321614028085,1217.2398611111114)
+canvas#0.lineTo(426.5053337493601,1244.4281423611112)
+canvas#0.lineTo(423.9536,1267.4211111111113)
+canvas#0.lineTo(421.705477436674,1286.570329861111)
+canvas#0.lineTo(419.6730192815272,1302.2273611111111)
+canvas#0.lineTo(417.8039811144697,1314.7437673611112)
+canvas#0.lineTo(416.06432280561705,1324.471111111111)
+canvas#0.lineTo(414.4304,1331.760954861111)
+canvas#0.lineTo(412.8849973866845,1336.964861111111)
+canvas#0.lineTo(411.41511879648743,1340.4343923611111)
+canvas#0.lineTo(410.0106674987201,1342.521111111111)
+canvas#0.lineTo(408.66361409350134,1343.576579861111)
+canvas#0.lineTo(407.36744837427443,1343.952361111111)
+canvas#0.lineTo(406.11680499739754,1344)
+canvas#0.lineTo(404.9072,1344)
+canvas#0.arc(443,1344,38.0928,3.141592653589793,0,true)
+canvas#0.lineTo(481.0928,1344)
+canvas#0.lineTo(479.88319500260246,1344)
+canvas#0.lineTo(478.63255162572557,1343.952361111111)
+canvas#0.lineTo(477.33638590649866,1343.576579861111)
+canvas#0.lineTo(475.9893325012799,1342.521111111111)
+canvas#0.lineTo(474.58488120351257,1340.4343923611111)
+canvas#0.lineTo(473.1150026133155,1336.964861111111)
+canvas#0.lineTo(471.5696,1331.760954861111)
+canvas#0.lineTo(469.93567719438295,1324.471111111111)
+canvas#0.lineTo(468.1960188855303,1314.7437673611112)
+canvas#0.lineTo(466.3269807184728,1302.2273611111111)
+canvas#0.lineTo(464.294522563326,1286.570329861111)
+canvas#0.lineTo(462.0464,1267.4211111111113)
+canvas#0.lineTo(459.4946662506399,1244.4281423611112)
+canvas#0.lineTo(456.4678385971915,1217.2398611111114)
+canvas#0.lineTo(452.5232,1185.5047048611113)
+canvas#0.lineTo(443,1148.8711111111115)
+canvas#0.closePath()
+canvas#0.createLinearGradient(443,1148.8711111111115,443,1344)
+gradient#7<linear(443,1148.8711111111115,443,1344)>.addColorStop(0,"rgba(255,255,255,0)")
+gradient#7.addColorStop(1,"rgba(255,255,255,0.44000000000000006)")
+canvas#0.fillStyle = gradient#7
+canvas#0.shadowColor = "rgba(0,0,0,0.21)"
+canvas#0.shadowBlur = 18.432
+canvas#0.fill()
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.shadowColor = "rgba(0,0,0,0.35)"
+canvas#0.shadowBlur = 27.648
+canvas#0.shadowOffsetY = 4.9152
+canvas#0.createRadialGradient(443,1344,6.144,443,1344,61.44)
+gradient#8<radial(443,1344,6.144,443,1344,61.44)>.addColorStop(0,"rgba(255,255,255,0.48)")
+gradient#8.addColorStop(1,"rgba(255,255,255,0.32000000000000006)")
+canvas#0.beginPath()
+canvas#0.arc(443,1344,61.44,0,6.283185307179586)
+canvas#0.fillStyle = gradient#8
+canvas#0.fill()
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.shadowOffsetY = 0
+canvas#0.beginPath()
+canvas#0.arc(443,1344,63.12153846153846,0,6.283185307179586)
+canvas#0.strokeStyle = "rgba(0,0,0,0.16)"
+canvas#0.lineWidth = 1
+canvas#0.stroke()
+canvas#0.beginPath()
+canvas#0.arc(443,1344,61.44,0,6.283185307179586)
+canvas#0.strokeStyle = "rgba(255,255,255,0.95)"
+canvas#0.lineWidth = 2.363076923076923
+canvas#0.stroke()
+canvas#0.restore()
+canvas#0.restore()
+# state {contentRect:null,contentBase:null,screenMap:{source:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screen:{x:0,y:0,w:886,h:1920}},cameraRect:null,cameraBasis:{x:0,y:0,w:886,h:1920},phoneRect:null,phoneBase:null,phoneLayout:{width:886,height:1920,mode:"full-bleed",device:null,screen:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screenRadius:0,title:null,titleAlign:"center",titleTextAlign:"center",shadow:null,safe:{x:0,y:0,w:886,h:1920},pointScale:2.363076923076923},layers:[]}
+# render t=5.7
+canvas#0.createLinearGradient(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)
+gradient#9<linear(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)>.addColorStop(0,"#3a1c71")
+gradient#9.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#9
+canvas#0.fillRect(0,0,886,1920)
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.rect(0,0,886,1920)
+canvas#0.clip()
+canvas#0.drawImage(video:screen,0,0,590,1278,-0.07692307692303757,0,886.1538461538461,1920)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.35)"
+canvas#0.shadowBlur = 27.648
+canvas#0.shadowOffsetY = 4.9152
+canvas#0.createRadialGradient(637.9538461538461,384,6.1915318044444465,637.9538461538461,384,61.91531804444446)
+gradient#10<radial(637.9538461538461,384,6.1915318044444465,637.9538461538461,384,61.91531804444446)>.addColorStop(0,"rgba(255,255,255,0.48)")
+gradient#10.addColorStop(1,"rgba(255,255,255,0.32000000000000006)")
+canvas#0.beginPath()
+canvas#0.arc(637.9538461538461,384,61.91531804444446,0,6.283185307179586)
+canvas#0.fillStyle = gradient#10
+canvas#0.fill()
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.shadowOffsetY = 0
+canvas#0.beginPath()
+canvas#0.arc(637.9538461538461,384,63.59685650598292,0,6.283185307179586)
+canvas#0.strokeStyle = "rgba(0,0,0,0.16)"
+canvas#0.lineWidth = 1
+canvas#0.stroke()
+canvas#0.beginPath()
+canvas#0.arc(637.9538461538461,384,61.91531804444446,0,6.283185307179586)
+canvas#0.strokeStyle = "rgba(255,255,255,0.95)"
+canvas#0.lineWidth = 2.363076923076923
+canvas#0.stroke()
+canvas#0.restore()
+canvas#0.restore()
+# state {contentRect:null,contentBase:null,screenMap:{source:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screen:{x:0,y:0,w:886,h:1920}},cameraRect:null,cameraBasis:{x:0,y:0,w:886,h:1920},phoneRect:null,phoneBase:null,phoneLayout:{width:886,height:1920,mode:"full-bleed",device:null,screen:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screenRadius:0,title:null,titleAlign:"center",titleTextAlign:"center",shadow:null,safe:{x:0,y:0,w:886,h:1920},pointScale:2.363076923076923},layers:[]}
+# render t=6.95
+canvas#0.createLinearGradient(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)
+gradient#11<linear(664.4999999999999,128.61561236693888,221.50000000000009,1791.3843876330611)>.addColorStop(0,"#3a1c71")
+gradient#11.addColorStop(1,"#d76d77")
+canvas#0.fillStyle = gradient#11
+canvas#0.fillRect(0,0,886,1920)
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.rect(0,0,886,1920)
+canvas#0.clip()
+canvas#0.drawImage(video:screen,0,0,590,1278,-0.07692307692303757,0,886.1538461538461,1920)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+# state {contentRect:null,contentBase:null,screenMap:{source:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screen:{x:0,y:0,w:886,h:1920}},cameraRect:null,cameraBasis:{x:0,y:0,w:886,h:1920},phoneRect:null,phoneBase:null,phoneLayout:{width:886,height:1920,mode:"full-bleed",device:null,screen:{x:-0.07692307692303757,y:0,w:886.1538461538461,h:1920},screenRadius:0,title:null,titleAlign:"center",titleTextAlign:"center",shadow:null,safe:{x:0,y:0,w:886,h:1920},pointScale:2.363076923076923},layers:[]}
