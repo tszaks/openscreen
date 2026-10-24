@@ -199,6 +199,22 @@ process.stdout.write(JSON.stringify(c === 'ops' ? { ok: true, ops: ${JSON.string
     });
   });
 
+  it("AGENTS.md's CLI shorthand is a shell function, and it runs under zsh and bash", () => {
+    const agents = readFileSync(join(CHECKOUT, 'AGENTS.md'), 'utf8');
+    expect(agents).not.toMatch(/^\s*[A-Z]+="node /m);
+    const defs = [...agents.matchAll(/^osa\(\) \{ node \/abs\/path\/electron\/scripts\/openscreen-agent\.mjs "\$@"; \}$/gm)];
+    expect(defs.length).toBeGreaterThanOrEqual(4); // the loop and each block of the example
+    // A stub CLI that echoes its arguments, at a path like the doc's (no build needed).
+    const stub = join(home, 'abs', 'path', 'electron', 'scripts', 'openscreen-agent.mjs');
+    mkdirSync(join(stub, '..'), { recursive: true });
+    writeFileSync(stub, 'process.stdout.write(JSON.stringify(process.argv.slice(2)))');
+    const def = defs[0][0].replace('/abs/path', join(home, 'abs', 'path'));
+    for (const shell of ['/bin/zsh', '/bin/bash']) {
+      const out = execFileSync(shell, ['-c', `${def}\nB='/tmp/my take.openscreen'\nosa frames "$B" --moves --sheet`], { cwd: tmpdir(), encoding: 'utf8' });
+      expect(JSON.parse(out), shell).toEqual(['frames', '/tmp/my take.openscreen', '--moves', '--sheet']);
+    }
+  });
+
   it('refuses arguments, and no npm script runs it (a person runs it)', () => {
     expect(run(['--force']).code).toBe(2);
     const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
