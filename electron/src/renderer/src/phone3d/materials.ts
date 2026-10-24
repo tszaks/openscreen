@@ -161,6 +161,18 @@ const srgb = (hex: string) => new Color().setStyle(hex);
 /** Specular of the lens elements under the cover: F0 6.7% × this ≈ 0.5% (multi-coated). Picked by looking: 0.25 still drew the key softbox as a bright block in each lens, 0 loses the glass. */
 export const LENS_ELEMENT_SPECULAR = 0.08;
 
+/**
+ * Roughness of the glare over the screen. The cover glass is mirror smooth,
+ * but at 0.03 the key softbox (the brightest thing in the studio) mirrored
+ * as one flat wash over the whole upper screen in a hero layback: black UI
+ * text went to 50% grey. Product renders keep the screen legible and show
+ * the glass as a soft sheen; at 0.4 the same reflection is a soft gradient
+ * that leaves text dark (0.22 still greyed it; compared by eye on the real
+ * take's hero layback). The bezel keeps the crisp mirror
+ * (frontGlass), so the glass still reads as glass at the edges.
+ */
+export const GLARE_ROUGHNESS = 0.4;
+
 export const BACK_LIFT = { glossy: 0.04, frosted: 0.06, panel: 0.1 };
 /** Mix a swatch toward white by `t` in sRGB (how a designer lightens a colour), returned linear. */
 function towardWhite(hex: string, t: number): Color {
@@ -220,7 +232,7 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   const antenna = physical({ color: srgb(hex).multiplyScalar(0.55), roughness: 0.45, metalness: 0 });
   const seam = physical({ color: srgb('#0a0a0a'), roughness: 0.6, metalness: 0 });
   const frontGlass = physical({ color: srgb('#050506'), roughness: 0.02, ior: 1.5, specularIntensity: 0.7, metalness: 0 });
-  const glare = reflectionOnly(overlay(physical({ color: 0x000000, roughness: 0.03, ior: 1.5, specularIntensity: glass, metalness: 0 }), reversed));
+  const glare = reflectionOnly(overlay(physical({ color: 0x000000, roughness: GLARE_ROUGHNESS, ior: 1.5, specularIntensity: glass, metalness: 0 }), reversed));
   glare.visible = glass > 0;
 
   const glossy = (c: Color) => physical({ color: c, roughness: 0.6, specularIntensity: 0, clearcoat: 1, clearcoatRoughness: 0.02, metalness: 0 });
