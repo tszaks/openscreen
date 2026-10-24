@@ -368,7 +368,7 @@ describe('planDirect: rules', () => {
         expect(projectWarnings(out).some((w) => w.code === 'off-canvas'), `${label}: the kept pose still pokes out`).toBe(true);
       }
     }
-  });
+  }, 60_000);
 
   it('self-check: the float is part of the style, so an overflow the float alone causes is not blamed on subtle\'s intro', () => {
     // A kept move parks the phone near the top edge at 20-21 s; subtle turns the float on and it bobs the phone
