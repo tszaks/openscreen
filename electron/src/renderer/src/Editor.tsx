@@ -13,7 +13,7 @@ import { UndoableEdits } from '../../shared/undoableEdits';
 import { Toasts } from './components/Toasts';
 import { CanvasCompositor, backgroundReady, exportRender3d, type Render3DSettings } from './compositor';
 import { holdPreview, render3dFor, runFrames, type FrameInputs3d, type Render3dInputs } from './headlessFrames';
-import { ensurePhone3d, onEngineReady } from './phone3d/loader';
+import { engineSync, ensurePhone3d, onEngineReady } from './phone3d/loader';
 import type { HeadlessResult } from '../../shared/headless';
 import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
@@ -1434,6 +1434,12 @@ export function Editor({
         inputsAt: (outT, srcT) => frameInputsAt(outT, srcT, render3d),
         writePng: (name, bytes) => api.headlessWritePng(name, bytes),
         progress: (done, total) => api.headlessProgress(done, total, `Frame ${done} of ${total}`),
+        // A 3D phone never renders flat: the engine loads before frame 0, a lost GPU gets one 3 s chance (D9, D17).
+        ready: () => compositor.prepare3d(),
+        renderError: () => compositor.error3d,
+        recover: () => compositor.recover3d(3000),
+        // The engine is loaded only for a 3D project; a flat one reports null rather than loading three.
+        gpu: () => (compositor.has3d ? (engineSync()?.gpuName() ?? null) : null),
       });
     } finally {
       exportingRef.current = false;

@@ -274,6 +274,34 @@ describe('runFrames', () => {
     expect(written).toEqual([]);
   });
 
+  it('after a render error, a GPU that comes back draws the same frame once more and the run goes on', async () => {
+    const { comp, renders } = fakeComp();
+    let lost = true;
+    const recovers: number[] = [];
+    const { run, written } = fakeRun({
+      times: [0],
+      renderError: () => (lost && renders.length === 1 ? '3D renderer lost the GPU' : null),
+      recover: async () => {
+        recovers.push(renders.length);
+        lost = false;
+        return true;
+      },
+    });
+    const r = await runFrames(comp, run);
+    expect(recovers).toEqual([1]);
+    expect(renders.map((x) => x.t)).toEqual([0, 0]);
+    expect(written.map((w) => w.name)).toEqual(['f-0000.000.png']);
+    expect(r.frames).toBe(1);
+  });
+
+  it('a GPU that does not come back stops the run without writing that frame', async () => {
+    const { comp, renders } = fakeComp();
+    const { run, written } = fakeRun({ times: [0, 1], renderError: () => '3D renderer lost the GPU', recover: async () => false });
+    await expect(runFrames(comp, run)).rejects.toThrow('3D renderer lost the GPU');
+    expect(renders).toHaveLength(1);
+    expect(written).toEqual([]);
+  });
+
   it('scales each PNG and builds a labelled sheet of the drawn frames', async () => {
     const made = stubDocument();
     const { comp } = fakeComp(1080, 1920);

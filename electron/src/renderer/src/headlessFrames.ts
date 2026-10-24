@@ -7,24 +7,19 @@
 import { frameFileName, sheetLabel, sheetLayout, snapToExportFrame, type HeadlessFrame, type HeadlessResult } from '../../shared/headless';
 import { phone3dActive } from '../../shared/phone3d/placement';
 import type { Project } from '../../shared/types';
-import type { FrameInputs } from './compositor';
+import type { FrameInputs, Render3DSettings } from './compositor';
 
 /**
  * How the 3D pass renders a frame (SPEC §3.8 `FrameInputs.render3d`):
  * export quality (`full`: 8 jittered samples, adaptive motion blur, the
  * project's supersampling) or one sample (`draft`); `strict` aborts on a
- * lost GPU instead of drawing a flat frame.
+ * lost GPU instead of drawing a flat frame. The compositor's type: one
+ * definition for the preview, exports and frames.
  */
-export interface Render3dInputs {
-  ss: 1 | 2 | 3;
-  quality: 'full' | 'draft';
-  motionBlur: { samples: number; shutter: number } | null;
-  fps: number;
-  strict: boolean;
-}
+export type Render3dInputs = Render3DSettings;
 
-/** The frame inputs plus the 3D quality (read by the compositor's 3D pass; flat frames ignore it). */
-export type FrameInputs3d = FrameInputs & { render3d?: Render3dInputs };
+/** The frame inputs, 3D quality included (the compositor's FrameInputs carries `render3d`). */
+export type FrameInputs3d = FrameInputs;
 
 /** Export-path 3D settings for `p`, or undefined when the phone draws flat. `draft` = one sample at 1×. */
 export function render3dFor(p: Project, opts: { draft: boolean; fps: number; strict: boolean }): Render3dInputs | undefined {
@@ -78,6 +73,8 @@ export interface FramesRun {
   ready?(): Promise<void>;
   /** After each frame: a reason to stop (a lost GPU in strict mode), or null. */
   renderError?(): string | null;
+  /** After a render error: wait for the GPU to come back (true = it did, and the frame is drawn once more). */
+  recover?(): Promise<boolean>;
   /** The GPU 3D frames render on, when known. */
   gpu?(): string | null;
 }
@@ -152,7 +149,10 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
     }
     await run.seek(srcT);
     // The export draws frame i at output time i / fps (Editor.renderFrames).
-    comp.render(at, run.inputsAt(at, srcT));
+    const inputs = run.inputsAt(at, srcT);
+    comp.render(at, inputs);
+    // A lost GPU gets one chance to come back, then the same frame is drawn again (as the export does).
+    if (run.renderError?.() && (await run.recover?.())) comp.render(at, inputs);
     const failed = run.renderError?.();
     if (failed) throw new Error(failed);
     let frame = comp.canvas;
