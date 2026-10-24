@@ -21,10 +21,20 @@
 // - A dark recessed seam separates the band from the glass on both faces.
 //   The glass has a small rounded edge that drops into the seam.
 // - The camera plateau is a swept footprint with a pillow edge; each lens
-//   is a ring, a dark barrel (BackSide), stacked element discs and a cover
+//   is a ring, a dark barrel seen from inside (its normals face the axis:
+//   the same pixels as an outward cylinder drawn BackSide), a retaining
+//   ring, three stacked element domes and a cover
 //   glass, so the lens parallaxes when the phone turns.
 // - Screen, glare and lens cover are overlay layers (depthWrite off, polygon
 //   offset, fixed renderOrder; materials.ts sets those).
+// - Rings of a sweep are the body outline moved inward along its normals
+//   (not re-built as a (w−2i, h−2i, r−i) rect), so every ring has the same
+//   points in the same order; for insets under 1 mm the two differ by far
+//   less than 0.01 mm. The outer ring IS the 2D outline (tested).
+// - The 17 Pro / Pro Max are an aluminium unibody: a metal back and plateau
+//   with an inlaid Ceramic Shield panel (its size is an estimate, below).
+// - The SE's home button, earpiece and camera and an iPad's bezel camera sit
+//   outside the screen texture, so they are meshes here ('frontHardware').
 //
 // Each mesh carries `userData.part`; materials.ts `applyMaterials` maps
 // parts to materials. Geometry is cached per device (LRU 3).
@@ -784,7 +794,10 @@ function build(device: DeviceModel, body: Body3D): PhoneModel {
   cap(front, glassContour, d2, 1);
   add(partMesh('frontGlass', front, RENDER_ORDER.glass));
 
-  // Screen and glare: the 2D screen outline, on the glass plane (overlay layers).
+  // Screen and glare: the 2D screen outline ON the glass plane (z = depth/2,
+  // where projection.ts puts the screen quad, so FRONT is exact). They are
+  // overlay layers (materials.ts: no depth write, polygon offset), so they
+  // need no +0.02 / +0.04 lift to beat the glass.
   const screenLoop = rectLoop(screenW, screenH, screenRadius);
   const screen = new Builder();
   screen.withUv = true;
