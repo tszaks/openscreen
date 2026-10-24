@@ -509,7 +509,9 @@ export async function build(opts) {
     const len = Math.max(3, (recipeDur[r] ?? 0) + 1);
     const win = quietWindow(srcTaps, srcWaits, len, lo, Math.max(lo + len, hi));
     const b = await clone(`recipe-${r}`);
-    const ops = [{ op: 'trim', start: win.start, end: win.start + len }, { op: 'phone3d', enabled: true }, r === 'float' ? { op: 'shot', recipe: 'float' } : { op: 'shot', recipe: r, at: 0.3 }];
+    // Normal speed over the window: a polished take plays its waits faster, and a quiet window often sits in one
+    // (the recipe would then run past the end of a 1 s take).
+    const ops = [{ op: 'trim', start: win.start, end: win.start + len }, { op: 'speed', start: win.start, end: win.start + len, speed: 1 }, { op: 'phone3d', enabled: true }, r === 'float' ? { op: 'shot', recipe: 'float' } : { op: 'shot', recipe: r, at: 0.3 }];
     const ap = await step(`${r}: set up`, ['apply', b, JSON.stringify(ops)]);
     const entry = { recipe: r, ops, len, ok: ap.ok, window: { start: win.start, end: win.start + len, quiet: win.free }, warnings: ap.json?.warnings ?? [], strip: null, files: [], clip: null };
     if (ap.ok) {

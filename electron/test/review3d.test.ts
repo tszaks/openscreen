@@ -287,7 +287,7 @@ describe('review3d: commands (fake agent)', { timeout: 120_000 }, () => {
     expect(calls.filter((c) => c[1] === bundle).map((c) => c[0])).toEqual(['info']);
     // Recipe takes: a tap-free window inside the wait, the shot at 0.3 s, frames at --draft.
     const setup = calls.find((c) => c[0] === 'apply' && c[2].includes('"recipe":"hero-layback"'));
-    expect(JSON.parse(setup[2])[0]).toEqual({ op: 'trim', start: 12, end: 15 });
+    expect(JSON.parse(setup[2]).slice(0, 2)).toEqual([{ op: 'trim', start: 12, end: 15 }, { op: 'speed', start: 12, end: 15, speed: 1 }]);
     // --draft is for the review stills; the blinded pairs are always at export quality (checked below).
     expect(calls.filter((c) => c[0] === 'frames' && !c[1].includes('/pair-')).every((c) => c.includes('--draft'))).toBe(true);
     const html = readFileSync(join(out, 'index.html'), 'utf8');
