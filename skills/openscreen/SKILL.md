@@ -43,11 +43,17 @@ Run these in order. Each step is done when its check holds.
    for other recordings.
 2. `$A review $B` — **open every `review/sheet-*.png`** and say in one line
    what the recording shows and where its best moments are (source seconds).
+   It covers the whole source recording; after a trim, only the ranges in
+   `info.clips` are in the video.
 3. `$A polish $B --style clean` (add `--title` / `--subtitle` when you know
    the product) — cuts dead air and speeds up waits. Times change: re-run
    `info` and work in **output seconds** from here on.
 4. `$A direct $B --style hero` — `bold` for promos, `subtle` for tutorials.
-   Read each `shots[].reason`.
+   Read each `shots[].reason`. If `shots` is empty, place shots yourself:
+   convert the taps to output seconds with `info.clips`, put a
+   `hero-layback` in a gap of 2.4 s or more between taps (an `apply
+   --dry-run` must print `warnings: []`), and consider a base pose a few
+   degrees off front (`setPose {target:"base", turn:-8, tilt:5}`).
 5. `$A frames $B --moves --sheet --draft` — **open `sheet.png`** and judge it
    against the checklist below. Each file's `facing` must be near 1 at every
    tap time.

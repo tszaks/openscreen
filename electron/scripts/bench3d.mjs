@@ -287,7 +287,7 @@ async function instrumented(args, { port, env = {}, sampleGpu = false, until = n
         try {
           const pid = gpuPid(execFileSync('/bin/ps', ['-Ao', 'pid=,ppid=,command='], { encoding: 'utf8', maxBuffer: 1 << 24 }), child.pid);
           if (!pid) return;
-          const b = parseFootprint(execFileSync('/usr/bin/footprint', ['-f', 'bytes', '-p', String(pid)], { encoding: 'utf8' }));
+          const b = parseFootprint(execFileSync('/usr/bin/footprint', ['-f', 'bytes', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
           if (b !== null) got.gpuPeak = Math.max(got.gpuPeak ?? 0, b);
         } catch {
           /* the process is between states */
