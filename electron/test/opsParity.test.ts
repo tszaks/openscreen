@@ -15,7 +15,8 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { OP_NAMES } from '../src/shared/agentOps';
+import { applyOps, OP_NAMES } from '../src/shared/agentOps';
+import { defaultProject } from '../src/shared/types';
 import { PHONE3D_OP_FIELDS, PHONE3D_OP_NAMES } from '../src/shared/phone3d/ops';
 import { defaultShotDuration, SHOTS } from '../src/shared/phone3d/shots';
 import { WARNING_CODES } from '../src/shared/phone3d/warnings';
@@ -117,6 +118,20 @@ describe('ops parity: AGENTS.md names every op and every editor field', () => {
     expect(row).toBeDefined();
     expect(row).toMatch(/uhd4k/);
     expect(row).toMatch(/App Store/);
+  });
+
+  it('exportSettings.fps follows the editor: no frame-rate control on a layout preset, so the op refuses it there', () => {
+    const row = PARITY.split('\n').find((l) => l.includes('exportSettings {preset'))!;
+    expect(row).toMatch(/`fps` applies only with no layout preset/);
+    expect(row).toMatch(/info\.export\.fps/);
+    // The editor: the Frame rate control lives in singleSettings, which ExportPanel shows only without a layout preset.
+    const panel = SRC('src/renderer/src/components/ExportPanel.tsx');
+    expect(panel).toMatch(/\{layoutPreset \? \([\s\S]*?\) : \(\s*singleSettings/);
+    expect(SRC('src/renderer/src/Editor.tsx')).toMatch(/const fps = preset \? preset\.fps : proj\.outputFPS;/);
+    // The op: refused on a layout preset (an iPhone take starts on social-9x16), applied without one.
+    const p = defaultProject({ screenVideoFile: 'screen.mov', sourceKind: 'iosDevice', sourceSize: { width: 1206, height: 2622 }, duration: 20 });
+    expect(() => applyOps(p, [{ op: 'exportSettings', fps: 24 }])).toThrow(/fps applies only with no layout preset/);
+    expect(applyOps(p, [{ op: 'layout', presetId: 'none' }, { op: 'exportSettings', fps: 24 }]).project.outputFPS).toBe(24);
   });
 
   it('Reset 3D Pose is documented as the exact op pair (clearTransitions + base FRONT)', () => {

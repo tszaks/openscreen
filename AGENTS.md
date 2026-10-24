@@ -22,26 +22,32 @@ directory. It needs a build first: `cd electron && npm run build` (creates
 
 ## The loop
 
+`osa` below is a shell function for the CLI. A function works in zsh (the
+macOS shell) and bash; a variable holding `node …` does not work in zsh, which
+runs it as one program name. Each agent tool call is a new shell, so define
+`osa` (and any bundle path) in the same call as the commands, or write
+`node /abs/path/electron/scripts/openscreen-agent.mjs` out in full.
+
 ```sh
-A="node /abs/path/electron/scripts/openscreen-agent.mjs"
+osa() { node /abs/path/electron/scripts/openscreen-agent.mjs "$@"; }
 
-$A devices                          # is a phone plugged in?
-$A record start                     # optional: record the phone yourself…
-$A record status
-$A record stop                      # …writes project.json; bundle path in the output
-$A latest                           # or take the newest recording made in the app
-$A import ~/Desktop/demo.mov        # or start from a video you already have
+osa devices                         # is a phone plugged in?
+osa record start                    # optional: record the phone yourself…
+osa record status
+osa record stop                     # …writes project.json; bundle path in the output
+osa latest                          # or take the newest recording made in the app
+osa import ~/Desktop/demo.mov       # or start from a video you already have
 
-$A review latest                    # contact sheets + review.json — LOOK at the sheet PNGs
-$A info latest                      # clips, captions, taps, style, … (times, ids, indexes)
-$A polish latest --style clean --title "Headline" --subtitle "Sub"
-$A direct latest --style hero       # iPhone takes: 3D phone shots around the taps (see "3D phone")
-$A apply latest edits.json          # precise edits (see below)
-$A frames latest --moves --sheet    # still PNGs from the real renderer — LOOK at sheet.png
-$A validate latest                  # problems (must be 0) and warnings (aim for 0)
-$A export latest --out /abs/out.mp4 # renders with the real app, headless
-$A review /abs/out.mp4              # watch your own output and iterate
-$A undo latest                      # swap project.json <-> project.json.bak
+osa review latest                   # contact sheets + review.json — LOOK at the sheet PNGs
+osa info latest                     # clips, captions, taps, style, … (times, ids, indexes)
+osa polish latest --style clean --title "Headline" --subtitle "Sub"
+osa direct latest --style hero      # iPhone takes: 3D phone shots around the taps (see "3D phone")
+osa apply latest edits.json         # precise edits (see below)
+osa frames latest --moves --sheet   # still PNGs from the real renderer — LOOK at sheet.png
+osa validate latest                 # problems (must be 0) and warnings (aim for 0)
+osa export latest --out /abs/out.mp4 # renders with the real app, headless
+osa review /abs/out.mp4             # watch your own output and iterate
+osa undo latest                     # swap project.json <-> project.json.bak
 ```
 
 ### Commands
@@ -54,7 +60,7 @@ $A undo latest                      # swap project.json <-> project.json.bak
 | `record stop` | Finishes the take (the helper's normal finalize; the movie is fragmented, so even a crash keeps what was recorded), then writes `project.json` with the same defaults the app gives an iPhone take. |
 | `import <file> [--name N]` | Imports a video (mp4, mov, m4v, webm, mkv) as a new bundle `<name>.openscreen` in the recordings folder, named after the file (`Name 2`, `Name 3`… when taken), exactly as **File → Import Video…** and dropping a file on the app do. The original is only read. A file the editor can't play is converted with the bundled ffmpeg (`converted`: `none`, `audio` = the sound re-encoded to AAC, or `full` = H.264 + AAC). An iPhone or iPad screen size (e.g. 1179×2556, 1206×2622) gets `sourceKind: "iosDevice"`, so the device frame, 9:16 canvas and tap analysis apply; anything else is `display`. Prints `bundle`, `name`, `sourceKind`, `size`, `duration`, `video`, `converted`, `hasAudio`; progress (`{"stage":"copy"\|"convert","progress":0..1}`) on stderr. A failed import leaves nothing behind. |
 | `latest` / `list` | Newest bundle / all bundles in `~/Movies/OpenScreen` (or `$OPENSCREEN_RECORDINGS_DIR`). In the app, **File → Copy Path for Agent** copies the open project's path. |
-| `info <bundle>` | Summary JSON: source size/duration, output duration, canvas, device, clips (with ids, source and output ranges), captions, transcript, chapters, annotations, manual zooms, taps, waits, style, layout, camera, `phone` (Mac + iPhone takes: the phone movie, its size, length, `offset`, detected `model`, whether it is `drawn`, and every `phoneOverlay` field; `null` otherwise), audio, `content` (the recording's hand move and resize, `style.contentTransform`, or `null`), `layers` (the canvas layers bottom to top), tracks (music and voiceover items with their output `start`/`end`, file range, volume, fades, loop, and `missing` when the file is gone), `export` (`preset`, `fps`, and `canvas: {w,h}`, the size the export writes), `phone3d` (`null`, or every 3D setting plus `active`, the `reason` when it renders flat, and the `model` and `finish` it draws), `transitions` (the 3D moves: `index`, `id`, output `start`/`end`, `duration`, `linked`, `from` = the resolved Start, `to`, `easing`, `recipe`), `shotRecipes` (name, default `duration`, `summary`, `use`), `problems`, `warnings`. |
+| `info <bundle>` | Summary JSON: source size/duration, output duration, canvas, device, clips (with ids, source and output ranges), captions, transcript, chapters, annotations, manual zooms, taps, waits, style, layout, camera, `phone` (Mac + iPhone takes: the phone movie, its size, length, `offset`, detected `model`, whether it is `drawn`, and every `phoneOverlay` field; `null` otherwise), audio, `content` (the recording's hand move and resize, `style.contentTransform`, or `null`), `layers` (the canvas layers bottom to top), tracks (music and voiceover items with their output `start`/`end`, file range, volume, fades, loop, and `missing` when the file is gone), `export` (`preset`; `fps`, the frame rate the export writes: a layout preset's own, else `outputFPS`; and `canvas: {w,h}`, the size the export writes), `phone3d` (`null`, or every 3D setting plus `active`, the `reason` when it renders flat, and the `model` and `finish` it draws), `transitions` (the 3D moves: `index`, `id`, output `start`/`end`, `duration`, `linked`, `from` = the resolved Start, `to`, `easing`, `recipe`), `shotRecipes` (name, default `duration`, `summary`, `use`), `problems`, `warnings`. |
 | `validate <bundle>` | `{"ok":true,"problems":[],"warnings":[]}`. Exit 1 only when there are `problems` (the project is broken; `apply` and `export` refuse it). `warnings` never fail: they are 3D quality issues, each with a `fix` when one exists (see "3D phone"). |
 | `review <bundle\|video> [--every 2s] [--out dir] [--max-sheets 10] [--transcribe] [--no-taps]` | Writes `review/` in the bundle (or `<video>.review/`): `sheet-NN.png` contact sheets (timestamped tiles, 6×2 for portrait, 4×3 for landscape; interval grows so there are at most ~10 sheets), up to 12 `scene-NNN.jpg` keyframes from scene detection, and `review.json` (duration, orientation, device, stills from freezedetect, silences from silencedetect, taps and waits from the editor's own tap analysis, the transcript, every image path with its timestamps). Works on an exported mp4 too. |
 | `apply <bundle> <edits.json\|-\|'[…]'> [--dry-run]` | Applies edit ops in order. All-or-nothing: if any op fails or the result doesn't validate, nothing is written. Writes `project.json.bak` first. |
@@ -62,7 +68,7 @@ $A undo latest                      # swap project.json <-> project.json.bak
 | `direct <bundle> [--style subtle\|hero\|bold] [--keep] [--no-scenes] [--dry-run]` | iPhone takes: plans 3D phone shots around the taps, waits, zooms and scene changes and applies them (the editor's **Auto 3D**; same plan for the same project). Runs tap analysis first when the take has none, and scene detection unless `--no-scenes` (cached in `analysis/scenes.json`). `--keep` keeps the existing 3D moves and plans around them. Prints `shots` (`recipe`, output `start`/`end`, `reason`), the `ops` it applied, `changes`, `warnings` (0 on a fresh plan), `outputDuration`, `backup`. |
 | `frames <bundle> (--at 0.5,2,4.25 \| --every 0.5 \| --moves) [--out dir] [--scale 0.5] [--sheet] [--draft] [--timeout s] [--app …]` | Still PNGs at **output** seconds, drawn by the real app headless with the export's own code, so each PNG is the export frame `round(t·fps)`. `--moves` = the start, middle and end of every 3D move plus every tap. At most 200 stills. Default quality is the export's (3D anti-aliasing and motion blur); `--draft` is one 3D sample, about 3× faster. `--sheet` adds `sheet.png`, a labelled grid. Default folder: `<tmp>/openscreen-frames/<bundle>-<stamp>/` (never the bundle). Prints `out`, `size`, `fps`, `phone3d`, `files` (`t`, `frame`, `at`, `path`, and with 3D the drawn `pose` and `facing`: 1 = screen straight at the camera, below 0 = its back), `sheet`, `seconds`, `gpu`. A time at or past the end gives `{t, error:"past the end"}`. Refuses an invalid project, like `export`. |
 | `undo <bundle>` | Swaps `project.json` and `project.json.bak` (so a second undo redoes). One level. |
-| `export <bundle> [--out f.mp4\|f.gif\|folder] [--gif] [--preset id[,id…]] [--app /path/OpenScreen.app] [--timeout s]` | Renders through the real app with no window and no dialogs, then `ffprobe`s the file (`probe` in the output). `--preset` writes every listed export preset into a folder. Without `--app` it uses `$OPENSCREEN_APP`, else this checkout's Electron (`electron/`). Refuses an invalid project; 3D warnings go to stderr as `{"warning":…}` lines and never block. A 3D project that loses the GPU mid-export fails with "3D renderer lost the GPU"; it never writes a flat file instead. |
+| `export <bundle> [--out f.mp4\|f.gif\|folder] [--gif] [--preset id[,id…]] [--app /path/OpenScreen.app] [--timeout s]` | Renders through the real app with no window and no dialogs, then probes the file (`probe`: `file`, `duration`, `width`, `height`, `fps`, `codec`, `hasAudio`, `bytes`). `--preset` writes every listed export preset into a folder. Without `--app` it uses `$OPENSCREEN_APP`, else this checkout's Electron (`electron/`). Refuses an invalid project; 3D warnings go to stderr as `{"warning":…}` lines and never block. A 3D project that loses the GPU mid-export fails with "3D renderer lost the GPU"; it never writes a flat file instead. |
 | `open <bundle> [--app …]` | Opens the project in the editor for a human (`OpenScreen --open <bundle>`). Later `apply`s show up live. |
 | `ops` | Every op name. |
 
@@ -204,7 +210,7 @@ same code (`applyOps3d`), so the editor refuses what the CLI refuses:
 | Export quality › Motion blur, Shutter, Samples; Quality 1× / 2× / 3× | `phone3d.motionBlur`, `phone3d.supersample` | `phone3d {motionBlur:{on?, shutter?, samples?}, supersample?}` |
 | Warning row › Fix | whatever the fix changes | the warning's `fix` list, as one `apply` |
 | (looking at the preview canvas) | — | command `frames` |
-| Export menu: resolution, frame rate; for a layout preset: Resolution (preset size / 4K) | `exportPreset`, `outputFPS` | `exportSettings {preset?, fps?}` (`uhd4k` also scales a layout preset to a 2160 px short side, e.g. social-9x16 → 2160×3840; App Store presets keep Apple's exact size; `p1080` and `original` keep the preset's size. `info.export.canvas` shows the size before you export) |
+| Export menu: resolution, frame rate; for a layout preset: Resolution (preset size / 4K) | `exportPreset`, `outputFPS` | `exportSettings {preset?, fps?}` (`uhd4k` also scales a layout preset to a 2160 px short side, e.g. social-9x16 → 2160×3840; App Store presets keep Apple's exact size; `p1080` and `original` keep the preset's size. `info.export.canvas` shows the size before you export. `fps` applies only with no layout preset, as in the editor, which shows no frame rate there: a layout preset exports at its own rate (30 fps for every social preset; an iPhone take starts on `social-9x16`), and `fps` on one is refused. `info.export.fps` is the rate the export writes) |
 | Export MP4 / GIF | — | `export --out x.mp4` / `export --gif` |
 | Export formats (multi-preset) | — | `export --preset square,feed-4x5 --out folder` |
 | Undo | — | `undo` (one level, file-based) |
@@ -334,7 +340,7 @@ edits one keyframe, chosen by the time:
 
 | `at` is… | `setPose` edits |
 |---|---|
-| any time, with `target:"base"` | the base pose, even when moves exist |
+| any time, with `target:"base"` | the base pose, even when moves exist (it shows only with no moves, or before and during a linked first move) |
 | (no moves) | the base pose |
 | before the first move | the first move's Start (made explicit) |
 | inside a move | that move's nearer end (a linked Start is made explicit) |
@@ -342,6 +348,15 @@ edits one keyframe, chosen by the time:
 
 `setPose {id|index, end:"from"|"to", …}` edits one end of one move directly.
 The output note says what was edited (`setPose edited End of m2`).
+
+After `direct`, the base pose shows nowhere: Auto 3D's intro (`spin-in`,
+`settle`) has its own Start, and the phone holds each move's End after it.
+To change the pose the video rests at, edit the End of the move before that
+moment (`setPose {index:0, end:"to", …}` for the rest after the intro, or
+`setPose {at}` in a later hold). A base edit that shows nowhere says so in
+its note (`…which shows nowhere: the first move m1 has its own Start…`).
+With no shots planned, set the base before placing shots by hand: a `shot`
+starts from it.
 
 ### Ops
 
@@ -493,35 +508,52 @@ layout preset: `apply [{"op":"exportSettings","preset":"uhd4k"}]`, check
 
 ### Example: "make this world class" (an iPhone take)
 
-```sh
-A="node /abs/path/electron/scripts/openscreen-agent.mjs"
-B=/abs/path/rec-1792855925414.openscreen
+Run each block in one call (shell state does not carry over between calls):
 
-$A info $B                                   # duration, taps, waits, phone3d (null = flat)
-$A review $B                                 # LOOK at review/sheet-*.png: what is the story?
-$A polish $B --style clean --title "Your money, answered" --subtitle "Ask Vero"
-$A direct $B --style hero                    # shots + reasons; warnings: []
-$A frames $B --moves --sheet --draft         # LOOK at sheet.png
+```sh
+osa() { node /abs/path/electron/scripts/openscreen-agent.mjs "$@"; }
+B=/abs/path/rec-1792855925414.openscreen
+osa info "$B"     # duration, taps, waits, export (preset, fps), phone3d (null = flat)
+osa review "$B"   # LOOK at review/sheet-*.png: what is the story, which source seconds are the best moments?
 ```
 
-Then fix what the sheet shows, in one `apply` (times are output seconds, after
-`polish`'s cuts):
+Keep only the best moments (source seconds; a 637 s take becomes a 15–30 s
+social video), then polish and direct:
+
+```sh
+osa() { node /abs/path/electron/scripts/openscreen-agent.mjs "$@"; }
+B=/abs/path/rec-1792855925414.openscreen
+osa apply "$B" '[{"op":"trim","start":0,"end":62},{"op":"cut","ranges":[{"start":20,"end":44}]}]'
+osa polish "$B" --style clean --title "Your money, answered" --subtitle "Ask Vero"   # outputDuration inside 15–30 s?
+osa direct "$B" --style hero              # shots + reasons; warnings: []
+osa frames "$B" --moves --sheet --draft   # LOOK at sheet.png
+```
+
+Then fix what the sheet shows, in one `apply` (times are output seconds,
+after the cuts):
 
 ```json
 [
   {"op": "editTransition", "index": 0, "end": 1.4},
+  {"op": "setPose", "index": 0, "end": "to", "turn": -8, "tilt": 5, "size": 0.92},
   {"op": "shot", "recipe": "turn-to-back", "at": 9.2, "direction": -1},
-  {"op": "setPose", "target": "base", "size": 0.92},
   {"op": "phone3d", "light": {"preset": "contrast"}, "dof": {"background": 0.3}}
 ]
 ```
 
+The second op makes the phone rest a little off front and smaller: after
+`direct`, the rest pose is the End of the intro (and of each later move), so
+edit that End. A `setPose {target:"base"}` here would show nowhere (see
+"Which keyframe a pose edit changes").
+
 ```sh
-$A apply $B fixes.json                       # read `warnings` in the output
-$A validate $B                               # problems: [] — warnings: [] (or apply each `fix`)
-$A frames $B --moves --sheet                 # full quality: LOOK again
-$A export $B --out /abs/promo.mp4
-$A review /abs/promo.mp4                     # watch what viewers will see; iterate
+osa() { node /abs/path/electron/scripts/openscreen-agent.mjs "$@"; }
+B=/abs/path/rec-1792855925414.openscreen
+osa apply "$B" fixes.json                 # read `changes` and `warnings` in the output
+osa validate "$B"                         # problems: [] — warnings: [] (or apply each `fix`)
+osa frames "$B" --moves --sheet           # full quality: LOOK again
+osa export "$B" --out /abs/promo.mp4      # probe: duration, size, fps
+osa review /abs/promo.mp4                 # watch what viewers will see; iterate
 ```
 
 A world-class result: the screen faces front at every tap; one idea per

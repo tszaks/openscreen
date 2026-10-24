@@ -192,4 +192,18 @@ the screen never passes through the tone map, so it stays exact.
 | `bench3d.mjs <bundle>` | the performance budgets (SPEC §6.5, owner decision 10) through the real app |
 | `install-skill.mjs` | links `skills/openscreen` into `~/.claude/skills` and `~/.codex/skills` (run by a person, never by a build or a test) |
 
+How `review3d.mjs` keeps the A/B pairs blind: ours is rendered again for each
+pair on the 3D layout preset whose shape is nearest the reference's (square,
+4:5, 9:16 or 16:9), at export quality; then both sides are re-encoded by the
+same ffmpeg to one container (PNG for stills, H.264 mp4 for clips, no sound,
+no metadata), one size (1080 px wide) and one shape (centre-cropped when the
+shapes differ by 12% or less, else padded, which `pairShapes[].leak` and a
+stderr warning report). A clip is never paired with a still. File names are
+`pair-NN-L` / `pair-NN-R`. What it cannot equalise is the content: a
+reference must be a clean render of a phone (an export), not a screenshot of
+another app's editor, or judges see the difference at once.
+
+Recipe takes on the review page use a tap-free source window (every tap with
+its length, read from `project.json`), played at normal speed.
+
 The judged half of the equal test is [EQUAL_TEST.md](../EQUAL_TEST.md).

@@ -95,8 +95,12 @@ sees the folder**, and keep it with the operator.
   into `$T/judging/votes/`.
 - **Each model judge** gets only `judge-brief.md`, the two contact-sheet
   folders and `judge-template.json`, and returns the filled template, saved
-  as `$T/judging/votes/<judge>.json`. They see the frames, not the files'
-  names.
+  as `$T/judging/votes/<judge>.json`.
+
+Both clips are re-encoded the same way before judging (one container, size
+and shape, no sound, no metadata; names `pair-01-L.mp4` / `pair-01-R.mp4`),
+so only what is in the frames tells them apart. Export both at the same
+preset (`social-9x16`); `pairShapes` in the output must show `"leak": false`.
 
 Rubric: each axis 1 (poor) to 5 (would ship as is): silhouette, metal,
 glass, screen sharpness at an angle, motion feel, spring, shadow, legibility
