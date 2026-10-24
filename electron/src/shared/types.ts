@@ -3,6 +3,7 @@
 
 import type { FocusSegment } from './autofocus';
 import type { TapSuggestion } from './taps';
+import { normalizePhone3D, type Phone3D } from './phone3d/model';
 
 export interface Point {
   x: number;
@@ -336,6 +337,8 @@ export interface Project {
   /** The canvas layers bottom to top, when reordered by hand (shared/canvasLayers.ts).
    *  Absent: the order they have always drawn in. */
   layerOrder?: string[];
+  /** 3D phone mockup. Absent = flat: the exact pre-3D render. */
+  phone3d?: Phone3D;
 }
 
 export const defaultStyle = (): StyleSettings => ({
@@ -485,6 +488,11 @@ export function normalizeProject(raw: Project): Project {
   p.layout = { ...defaultLayout(p.recording), ...p.layout };
   p.tracks = normalizeTracks(p.tracks);
   if (p.recording) p.phoneOverlay = normalizePhoneOverlay(p.phoneOverlay, p.recording);
+  if (p.phone3d !== undefined) {
+    const n = normalizePhone3D(p.phone3d);
+    if (n) p.phone3d = n;
+    else delete p.phone3d;
+  }
   return p;
 }
 
