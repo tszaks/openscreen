@@ -581,6 +581,8 @@ async function direct(argv: string[]) {
     dryRun: a.dryRun,
     style: a.style,
     shots: plan.shots.map((x) => ({ recipe: x.recipe, start: r2(x.start), end: r2(x.end), reason: x.reason })),
+    // Present when no moving shot fits: why, and what the phone does instead.
+    ...(plan.note ? { note: plan.note } : {}),
     ops,
     changes: result.notes,
     warnings: projectWarnings(result.project, { cursor: ctx.cursor }),

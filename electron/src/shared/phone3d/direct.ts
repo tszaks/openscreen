@@ -14,6 +14,7 @@ import type { CursorSample, Project } from '../types';
 import type { EditOp } from '../agentOps';
 import { ease } from './easing3d';
 import { FRONT, type Pose, type ShotRecipe } from './model';
+import { facing, facingOf } from './pose';
 import { applyPhone3dOp, NOT_IPHONE } from './ops';
 import { SHOTS, shotBase, shotKeys } from './shots';
 import { phone3dProblems } from './validate';
@@ -44,6 +45,8 @@ export interface DirectPlan {
   shots: PlannedShot[];
   /** What the self-check did: re-plan rounds, shots it dropped, and retries after a refused apply (must stay 0). */
   check: { rounds: number; dropped: PlannedShot[]; retries: number };
+  /** Present when the plan has no moving shot: why none fits, and what the phone does instead (one line). */
+  note?: string;
 }
 
 // Busy time (§2.6 step 1)
@@ -64,6 +67,9 @@ export const INTRO_MIN_OUTPUT = 4;
 export const SPIN_IN_MIN = 2.0;
 export const SETTLE_MIN = 1.0;
 export const INTRO_GUARD = 0.2;
+/** Shortest intro (owner decision 12): when the full intro does not fit before the first tap, a settle this long
+ *  or longer still opens the video in 3D. It may use the END_GAP before the first busy start. */
+export const SHORT_INTRO_MIN = 0.6;
 export const TURN_TO_BACK_MIN = 4.5;
 export const LAYBACK_MIN = 2.4;
 export const MIDDLE_EVERY = 6;
@@ -78,6 +84,12 @@ export const OUTRO_END_GAP = 0.1;
 export const OUTRO_DURATION = 1.4;
 /** Bold's resting pose: 9.4° off straight on, inside the 12° rule. */
 export const BOLD_BASE: Pose = { ...FRONT, turn: -8, tilt: 5 };
+/** The resting pose when no move fits at all (owner decision 12): the bold angle, so the phone still reads as 3D
+ *  while staying inside the 12° rule for taps. */
+export const POSED_REST: Pose = { ...BOLD_BASE };
+/** Every plan on a layout that has room for it turns the phone at least this far off straight on at some moment:
+ *  settle's lean (8°), any bigger shot, or the posed rest (9.4°). */
+export const VISIBLE_DEG = 8;
 /** Self-check: re-plan rounds before offenders are just dropped. */
 export const MAX_ROUNDS = 4;
 /** Warnings a planned shot must not cause (every code a move can cause). */
@@ -85,6 +97,8 @@ const SHOT_CODES: readonly WarningCode[] = ['tap-angle', 'tap-back', 'off-canvas
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const s1 = (x: number) => `${x.toFixed(1)} s`;
+const DEG = Math.PI / 180;
+const COS_BUSY = Math.cos(BUSY_FACING_DEG * DEG);
 
 interface Span {
   start: number;
@@ -175,6 +189,9 @@ function readInputs(p: Project, opts: DirectOptions): Inputs {
   return { D, busy, windows, firstTap: taps[0]?.t, scenes, waits };
 }
 
+/** Free time from 0 to the first busy start (the whole take with nothing busy). */
+const introRoom = (inp: Inputs) => (inp.busy.length ? inp.busy[0].start : inp.D);
+
 /** Seconds into a turn-to-back (from its start) where the eased turn passes edge-on, for `base` and `direction`. */
 export function edgeOnOffset(base: Readonly<Pose>, direction: 1 | -1, duration = SHOTS['turn-to-back'].duration): number {
   const key = shotKeys('turn-to-back', 'front').keys[0];
@@ -197,7 +214,7 @@ export function edgeOnOffset(base: Readonly<Pose>, direction: 1 | -1, duration =
 }
 
 /** The plan's shots for `excluded` keys (self-check rounds re-plan without them). */
-function draftShots(p: Project, opts: DirectOptions, inp: Inputs, base: Pose, excluded: ReadonlySet<string>): Draft[] {
+function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: ReadonlySet<string>, forced: ReadonlyMap<string, 1 | -1>): Draft[] {
   const { D, windows } = inp;
   const style = opts.style;
   const budget = MOVING_CAP[style] * D;
@@ -213,12 +230,15 @@ function draftShots(p: Project, opts: DirectOptions, inp: Inputs, base: Pose, ex
 
   // Intro (always allowed: it opens the video; the moving-time cap applies to the rest).
   const w0 = windows.find((w) => w.atZero);
-  if (w0) {
-    if (style !== 'subtle' && D >= INTRO_MIN_OUTPUT && w0.len >= SPIN_IN_MIN && !excluded.has('spin-in@0')) {
-      reserve({ key: 'spin-in@0', recipe: 'spin-in', start: 0, duration: Math.min(SHOTS['spin-in'].duration, w0.len - INTRO_GUARD, w0.end), ret: 'front', direction: 1, reason: `intro; ${tapNote}` });
-    } else if (w0.len >= SETTLE_MIN && !excluded.has('settle@0')) {
-      reserve({ key: 'settle@0', recipe: 'settle', start: 0, duration: Math.min(SHOTS.settle.duration, w0.len - INTRO_GUARD, w0.end), ret: 'front', direction: 1, reason: `intro; ${tapNote}` });
-    }
+  if (w0 && style !== 'subtle' && D >= INTRO_MIN_OUTPUT && w0.len >= SPIN_IN_MIN && !excluded.has('spin-in@0')) {
+    reserve({ key: 'spin-in@0', recipe: 'spin-in', start: 0, duration: Math.min(SHOTS['spin-in'].duration, w0.len - INTRO_GUARD, w0.end), ret: 'front', direction: 1, reason: `intro; ${tapNote}` });
+  } else if (w0 && w0.len >= SETTLE_MIN && !excluded.has('settle@0')) {
+    reserve({ key: 'settle@0', recipe: 'settle', start: 0, duration: Math.min(SHOTS.settle.duration, w0.len - INTRO_GUARD, w0.end), ret: 'front', direction: 1, reason: `intro; ${tapNote}` });
+  } else if (introRoom(inp) >= SHORT_INTRO_MIN && !excluded.has('settle@0')) {
+    // Owner decision 12: a short take dense with taps still opens in 3D. The settle only leans 8° and lands on the
+    // base pose when it ends, so it may run up to the first busy start (into the END_GAP), never past it.
+    const duration = Math.min(SHOTS.settle.duration, Math.max(SHORT_INTRO_MIN, introRoom(inp) - END_GAP));
+    reserve({ key: 'settle@0', recipe: 'settle', start: 0, duration, ret: 'front', direction: 1, reason: `intro (short, before busy time at ${s1(introRoom(inp))}); ${tapNote}` });
   }
 
   // Outro: a one-way hero-layback that ends just before the video does.
@@ -285,10 +305,12 @@ function draftShots(p: Project, opts: DirectOptions, inp: Inputs, base: Pose, ex
     }
   }
 
-  // Directions alternate by shot index after the intro (time order).
+  // Directions alternate by shot index after the intro (time order). The self-check may force the other direction
+  // on a shot that pushed the phone off the canvas (a lean to the left fits where a lean to the right does not).
   const ordered = shots.sort((a, b) => a.start - b.start);
   let k = 0;
   for (const d of ordered) if (d.recipe !== 'spin-in' && d.recipe !== 'settle') d.direction = k++ % 2 === 0 ? 1 : -1;
+  for (const d of ordered) d.direction = forced.get(d.key) ?? d.direction;
 
   // Scene-change wipe: the turn passes edge-on exactly at the cut.
   for (const d of ordered) if (d.scene !== undefined) d.start = d.scene - edgeOnOffset(base, d.direction, d.duration);
@@ -331,27 +353,32 @@ const overlaps = (a: Warning, b: Warning) => (a.at ?? 0) <= (b.end ?? b.at ?? 0)
 
 const toShot = (d: Draft): PlannedShot => ({ recipe: d.recipe, start: r3(d.start), end: r3(d.start + d.duration), reason: d.reason });
 
+/** A self-checked plan for one base pose. */
+interface Checked {
+  ops: EditOp[];
+  drafts: Draft[];
+  rounds: number;
+  dropped: PlannedShot[];
+  /** The warning codes behind each dropped shot (for the note). */
+  droppedFor: Set<WarningCode>;
+  retries: number;
+  /** The project with no planned shot, its warnings and its per-edge overflow (what the shots are judged against). */
+  baseProject: Project;
+  baseline: Warning[];
+  baseOverflow: ReturnType<typeof offCanvasMeter>;
+}
+
 /**
- * The Auto 3D plan for `p` (§2.6): busy time (taps, typing, zooms, and kept
- * moves) → free windows → intro, outro and middle shots within the density
- * caps → a scene-change wipe → ops, in this order: `phone3d` (on, base pose,
- * lighting, motion blur), `clearTransitions` when replacing, one `shot` per
- * shot in time order (float last for subtle). Then a self-check: the ops are
- * applied to a copy and any shot that causes a warning is re-planned without
- * (at most MAX_ROUNDS rounds), then dropped, so a plan adds no warnings. A
- * warning the project already has with no shot planned (for example a phone
- * the user scaled past the canvas edge, or the float bobbing a kept pose past
- * it) is not blamed on the shots. Off-canvas is judged moment by moment, not
- * by warning span (one off-canvas warning may span most of the take): a shot
- * is blamed wherever the phone pokes further out than it does without the
- * shots at the same time.
+ * The plan's shots for `base`, self-checked: the ops are applied to a copy and
+ * any shot that causes a warning is re-planned without (at most MAX_ROUNDS
+ * rounds), then dropped. A shot blamed for off-canvas first gets one more try
+ * in the other direction (the lean mirrored), since an edge is on one side.
  */
-export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
-  if (!isPhoneProject(p)) throw new Error(NOT_IPHONE);
-  const inp = readInputs(p, opts);
-  const base = opts.style === 'bold' ? { ...BOLD_BASE } : { ...FRONT };
+function selfChecked(p: Project, opts: DirectOptions, inp: Inputs, base: Pose): Checked {
   const excluded = new Set<string>();
+  const forced = new Map<string, 1 | -1>();
   const dropped: PlannedShot[] = [];
+  const droppedFor = new Set<WarningCode>();
   let retries = 0;
   let rounds = 0;
   // The project with no planned shot: the user's layout, kept moves and the style (subtle's float included, since
@@ -360,7 +387,7 @@ export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
   const baseline = projectWarnings(baseProject, { cursor: opts.cursor });
   const baseOverflow = offCanvasMeter(baseProject);
   const preExisting = (w: Warning) => baseline.some((b) => b.code === w.code && overlaps(b, w));
-  let drafts = draftShots(p, opts, inp, base, excluded);
+  let drafts = draftShots(opts, inp, base, excluded, forced);
   for (let guard = 0; guard < 64; guard++) {
     const ops = opsFor(opts.style, base, opts.replace, drafts);
     let tried: ReturnType<typeof tryPlan>;
@@ -376,26 +403,122 @@ export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
       drafts = drafts.slice(0, -1);
       continue;
     }
-    const bad = new Set<Draft>();
+    const bad = new Map<Draft, Set<WarningCode>>();
+    const blame = (d: Draft, code: WarningCode) => bad.set(d, (bad.get(d) ?? new Set<WarningCode>()).add(code));
     for (const w of projectWarnings(tried.project, { cursor: opts.cursor })) {
       if (!SHOT_CODES.includes(w.code) || w.code === 'off-canvas' || !w.transitionId || preExisting(w)) continue;
       const d = tried.owner.get(w.transitionId);
-      if (d) bad.add(d);
+      if (d) blame(d, w.code);
     }
-    // Off-canvas, moment by moment. The move behind an added overflow is a shot's (a shot returns to the pose it
-    // started from, so kept moves after it do not change). If it ever is not, the last shot that starts by then
-    // is blamed, so an added overflow can never stay in the plan.
+    // Off-canvas, moment by moment and edge by edge. The move behind an added overflow is a shot's (a shot returns
+    // to the pose it started from, so kept moves after it do not change). If it ever is not, the last shot that
+    // starts by then is blamed, so an added overflow can never stay in the plan.
     for (const r of offCanvasAdded(tried.project, baseOverflow)) {
       const d = (r.transitionId && tried.owner.get(r.transitionId)) || drafts.filter((x) => x.start <= r.worst).at(-1) || drafts[0];
-      if (d) bad.add(d);
+      if (d) blame(d, 'off-canvas');
     }
-    if (!bad.size) return { ops, shots: [...drafts.map(toShot), ...(opts.style === 'subtle' ? [{ recipe: 'float' as const, start: 0, end: r3(inp.D), reason: 'subtle; idle float' }] : [])], check: { rounds, dropped, retries } };
-    for (const d of bad) {
+    if (!bad.size) return { ops, drafts, rounds, dropped, droppedFor, retries, baseProject, baseline, baseOverflow };
+    for (const [d, codes] of bad) {
+      // Only an off-canvas problem can be one-sided; settle has no turn to mirror.
+      if (rounds < MAX_ROUNDS && codes.size === 1 && codes.has('off-canvas') && d.recipe !== 'settle' && !forced.has(d.key)) {
+        forced.set(d.key, d.direction === 1 ? -1 : 1);
+        continue;
+      }
       excluded.add(d.key);
       dropped.push(toShot(d));
+      for (const c of codes) droppedFor.add(c);
     }
     rounds++;
-    drafts = rounds <= MAX_ROUNDS ? draftShots(p, opts, inp, base, excluded) : drafts.filter((d) => !bad.has(d));
+    drafts = rounds <= MAX_ROUNDS ? draftShots(opts, inp, base, excluded, forced) : drafts.filter((d) => !bad.has(d));
   }
   throw new Error('Auto 3D: the self-check did not settle');
+}
+
+/** How far `pose` is off straight on (degrees, camera at eye level). */
+const offFront = (pose: Pose) => Math.acos(Math.min(1, facingOf(pose, 0))) / DEG;
+
+/**
+ * Whether the posed rest can replace the style's base pose when no shot fits:
+ * it must stay inside the 12° busy rule at every moment (float and camera
+ * height included) and add no warning and no overflow past any edge over the
+ * project as it is. Returns the reason it cannot, or null when it can.
+ */
+function posedRestRefusal(p: Project, opts: DirectOptions, inp: Inputs, checked: Checked): string | null {
+  const posed = tryPlan(p, opsFor(opts.style, POSED_REST, opts.replace, []), []).project;
+  const p3 = posed.phone3d!;
+  const n = Math.max(1, Math.ceil(inp.D * 30));
+  for (let k = 0; k <= n; k++) if (facing(p3, (inp.D * k) / n) < COS_BUSY) return `turn the phone more than ${BUSY_FACING_DEG}° off front during taps`;
+  if (offCanvasAdded(posed, checked.baseOverflow).length) return 'push the phone further off the canvas';
+  const known = (w: Warning) => checked.baseline.some((b) => b.code === w.code && overlaps(b, w));
+  const added = projectWarnings(posed, { cursor: opts.cursor }).filter((w) => !known(w));
+  return added.length ? `add a ${added[0].code} warning` : null;
+}
+
+/** Why no moving shot fits (one clause per cause), for DirectPlan.note. */
+function noShotCauses(opts: DirectOptions, inp: Inputs, checked: Checked): string[] {
+  const out: string[] = [];
+  const room = introRoom(inp);
+  if (room < SHORT_INTRO_MIN) {
+    out.push(room <= 0 ? 'the phone must face front from 0.0 s (a tap, zoom or kept move starts there), so no intro fits' : `the phone must face front from ${s1(room)} (the first tap, zoom or kept move), under the ${SHORT_INTRO_MIN} s an intro needs`);
+  }
+  if (opts.style === 'subtle') out.push('subtle plans no moves after the intro');
+  else {
+    const free = inp.windows.filter((w) => !w.atZero || room >= SHORT_INTRO_MIN);
+    const longest = Math.max(0, ...free.map((w) => w.len));
+    out.push(free.length ? `the longest free gap is ${s1(longest)} (a middle move needs ${LAYBACK_MIN} s, the closing move ${OUTRO_MIN} s at the end)` : 'there is no free time between taps, zooms and kept moves');
+  }
+  if (checked.dropped.length) {
+    const n = checked.dropped.length;
+    out.push(`the self-check dropped ${n} shot${n === 1 ? '' : 's'} that would cause ${[...checked.droppedFor].join(', ')} warnings`);
+  }
+  return out;
+}
+
+/**
+ * The Auto 3D plan for `p` (§2.6): busy time (taps, typing, zooms, and kept
+ * moves) → free windows → intro, outro and middle shots within the density
+ * caps → a scene-change wipe → ops, in this order: `phone3d` (on, base pose,
+ * lighting, motion blur), `clearTransitions` when replacing, one `shot` per
+ * shot in time order (float last for subtle). Then a self-check: the ops are
+ * applied to a copy and any shot that causes a warning is re-planned without
+ * (at most MAX_ROUNDS rounds), then dropped, so a plan adds no warnings. A
+ * warning the project already has with no shot planned (for example a phone
+ * the user scaled past the canvas edge, or the float bobbing a kept pose past
+ * it) is not blamed on the shots. Off-canvas is judged moment by moment and
+ * edge by edge, not by warning span (one off-canvas warning may span most of
+ * the take): a shot is blamed wherever the phone pokes further past an edge
+ * than it does without the shots at the same time.
+ *
+ * Owner decision 12: Auto 3D always gives a visible 3D result. A take too
+ * dense with taps for the full intro gets a short settle (≥ SHORT_INTRO_MIN s)
+ * that lands before the first busy start; when no moving shot fits at all and
+ * there are no kept moves, the phone rests at POSED_REST (inside the 12° rule)
+ * instead of straight on. A plan with no moving shot always says why in
+ * `note`.
+ */
+export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
+  if (!isPhoneProject(p)) throw new Error(NOT_IPHONE);
+  const inp = readInputs(p, opts);
+  const styleBase = opts.style === 'bold' ? { ...BOLD_BASE } : { ...FRONT };
+  const checked = selfChecked(p, opts, inp, styleBase);
+  let ops = checked.ops;
+  let note: string | undefined;
+  if (!checked.drafts.length) {
+    const causes = noShotCauses(opts, inp, checked);
+    const kept = (checked.baseProject.phone3d?.transitions.length ?? 0) > 0;
+    let rest: string;
+    if (kept) rest = 'Your own moves stay as they are.';
+    else if (offFront(styleBase) >= VISIBLE_DEG) rest = `The phone rests at the ${opts.style} angle (${offFront(styleBase).toFixed(1)}° off front).`;
+    else {
+      const refusal = posedRestRefusal(p, opts, inp, checked);
+      if (refusal) rest = `The phone stays straight on: a posed angle would ${refusal}.`;
+      else {
+        ops = opsFor(opts.style, POSED_REST, opts.replace, []);
+        rest = `The phone rests at a posed angle instead (${offFront(POSED_REST).toFixed(1)}° off front, inside the ${BUSY_FACING_DEG}° rule for taps).`;
+      }
+    }
+    note = `No moving shot fits: ${causes.join('; ')}. ${rest}`;
+  }
+  const shots = [...checked.drafts.map(toShot), ...(opts.style === 'subtle' ? [{ recipe: 'float' as const, start: 0, end: r3(inp.D), reason: 'subtle; idle float' }] : [])];
+  return { ops, shots, check: { rounds: checked.rounds, dropped: checked.dropped, retries: checked.retries }, ...(note ? { note } : {}) };
 }

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { applyOps, type EditOp } from '../src/shared/agentOps';
 import { focusSegmentsFor } from '../src/shared/focusSegments';
 import { tapsToOutput } from '../src/shared/mobileProject';
-import { BOLD_BASE, BUSY_FACING_DEG, edgeOnOffset, MIDDLE_EVERY, MOVING_CAP, planDirect, type DirectOptions, type DirectStyle } from '../src/shared/phone3d/direct';
+import { BOLD_BASE, BUSY_FACING_DEG, edgeOnOffset, MIDDLE_EVERY, MOVING_CAP, planDirect, POSED_REST, SHORT_INTRO_MIN, VISIBLE_DEG, type DirectOptions, type DirectStyle } from '../src/shared/phone3d/direct';
 import { FRONT, type Phone3D } from '../src/shared/phone3d/model';
 import { facing, poseInRange } from '../src/shared/phone3d/pose';
 import { bodyBounds, scene3d } from '../src/shared/phone3d/projection';
@@ -13,6 +13,7 @@ import { OFF_CANVAS_FRACTION, projectWarnings } from '../src/shared/phone3d/warn
 import { Timeline } from '../src/shared/timeline';
 import type { CursorSample, Project } from '../src/shared/types';
 import type { TapSuggestion } from '../src/shared/taps';
+import { loadGoldenFixture } from './helpers/compositorHarness';
 import { lcg, phoneProject, move, with3d } from './helpers/phone3dFixtures';
 
 const STYLES: DirectStyle[] = ['subtle', 'hero', 'bold'];
@@ -141,6 +142,17 @@ function checkPlan(p: Project, opts: DirectOptions, label: string) {
   return { plan, out };
 }
 
+/** The most the drawn phone turns off straight on over the take (degrees; 60 Hz plus every keyframe). Measured here. */
+function maxOffFront(out: Project): number {
+  const p3 = out.phone3d!;
+  const D = new Timeline(out.recording.duration, out.clips).outputDuration;
+  const ts = Array.from({ length: Math.ceil(D * 60) + 1 }, (_, k) => Math.min(D, k / 60));
+  for (const tr of p3.transitions) ts.push(tr.start, tr.end);
+  return Math.max(...ts.filter((t) => t >= 0 && t <= D).map((t) => (Math.acos(Math.min(1, facing(p3, t))) * 180) / Math.PI));
+}
+
+const moving = (plan: ReturnType<typeof planDirect>) => plan.shots.filter((s) => s.recipe !== 'float');
+
 const FIXTURES: { name: string; p: () => Project; scenes?: number[] }[] = [
   { name: 'no taps', p: () => take(30) },
   { name: 'dense taps', p: () => take(24, Array.from({ length: 14 }, (_, i) => tap(1 + i * 1.6, {}, i))) },
@@ -198,8 +210,11 @@ describe('planDirect: rules', () => {
     expect(planDirect(take(20, [tap(8)]), { style: 'hero', replace: true }).shots[0]).toMatchObject({ recipe: 'spin-in', start: 0, end: 1.6 });
     expect(planDirect(take(20, [tap(8)]), { style: 'bold', replace: true }).shots[0]).toMatchObject({ recipe: 'spin-in', start: 0 });
     expect(planDirect(take(20, [tap(8)]), { style: 'subtle', replace: true }).shots.map((s) => s.recipe)).toEqual(['settle', 'float']);
-    // A tap at 1.5 s leaves no room for an intro.
-    expect(planDirect(take(20, [tap(1.5)]), { style: 'hero', replace: true }).shots.some((s) => s.reason.startsWith('intro'))).toBe(false);
+    // A tap at 1.5 s leaves 0.9 s before its busy time: too little for spin-in or a full settle, so a short settle
+    // (owner decision 12) lands 0.25 s before it.
+    expect(planDirect(take(20, [tap(1.5)]), { style: 'hero', replace: true }).shots[0]).toMatchObject({ recipe: 'settle', start: 0, end: 0.65 });
+    // A tap at 1.1 s leaves 0.5 s, under the 0.6 s shortest intro: none.
+    expect(planDirect(take(20, [tap(1.1)]), { style: 'hero', replace: true }).shots.some((s) => s.reason.startsWith('intro'))).toBe(false);
   });
 
   it('ops come in the fixed order: phone3d, clearTransitions (when replacing), shots by time, float last', () => {
@@ -358,25 +373,37 @@ describe('planDirect: rules', () => {
     expect(projectWarnings(out).map((w) => w.message)).toEqual([expect.stringContaining('(the idle float carries it past the edge)')]);
   });
 
-  it('self-check: a shot that pushes the phone past a NEW edge is dropped, even when another edge is further out', () => {
+  it('self-check: a shot that pushes the phone past a NEW edge is mirrored or dropped, even when another edge is further out', () => {
     // The review repro: a kept move parks the phone up and to the right, so its top pokes about 50 px out all take
-    // (the float bobs it). The outro's hero angle pulls the top back in but pushes the right side about 20 px past
-    // the right edge, which the kept pose never crosses. Comparing only the worst edge (50 px vs 50 px) excused it.
+    // (the float bobs it). The outro's hero angle (leaning right) pulls the top back in but pushes the right side
+    // about 20 px past the right edge, which the kept pose never crosses. Comparing only the worst edge (50 px vs
+    // 50 px) excused it. Now the outro leans the other way, which keeps the right side in.
     const p = with3d(take(52, [tap(9.76)]), { transitions: [move('k', 1, 2, { x: 0.1457, y: -0.1234 })], float: { on: true, amount: 1, period: 2 } });
     const plan = planDirect(p, { style: 'hero', replace: false });
-    expect(plan.check.dropped.map((s) => `${s.recipe}@${s.start}`)).toContain('hero-layback@50.5');
-    expect(plan.shots.some((s) => s.reason.startsWith('outro'))).toBe(false);
-    expect(plan.shots.length).toBeGreaterThan(0);
+    const outro = plan.ops.find((o) => o.op === 'shot' && o.return === 'stay');
+    expect(outro).toMatchObject({ recipe: 'hero-layback', at: 50.5, direction: -1 });
     expect(offCanvasAddedByShots(p, plan)).toEqual([]);
-    // The outro on its own does push the right side out: the oracle is not blind to it.
-    const outro = planDirect(p, { style: 'hero', replace: false }).ops.slice(0, 1).concat([{ op: 'shot', recipe: 'hero-layback', at: 50.5, duration: 1.4, direction: 1, intensity: 1, return: 'stay' }]);
-    const added = offCanvasAddedByShots(p, { ...plan, ops: outro });
+    // The outro leaning right does push the right side out: the oracle is not blind to it.
+    const right = plan.ops.map((o) => (o === outro ? { ...o, direction: 1 } : o));
+    const added = offCanvasAddedByShots(p, { ...plan, ops: right });
     expect(added.length).toBeGreaterThan(0);
     expect(new Set(added.map((x) => x.edge))).toEqual(new Set(['right']));
+    expect(Math.max(...added.map((x) => x.planned))).toBeGreaterThan(15);
     let n = 0;
     const out = applyOps(p, plan.ops, { newId: () => `d${++n}` }).project;
     const planned = new Set(out.phone3d!.transitions.map((t) => t.id).filter((id) => id.startsWith('d')));
     expect(projectWarnings(out).filter((w) => w.transitionId && planned.has(w.transitionId))).toEqual([]);
+  });
+
+  it('self-check: when neither direction fits, the shot is dropped', () => {
+    // A phone scaled to the canvas width: a hero lean pokes past one side or the other, whichever way it leans.
+    const p = take(30, [tap(10)]);
+    p.style = { ...p.style, contentTransform: { scale: 1.3 } };
+    const plan = planDirect(p, { style: 'hero', replace: true });
+    const middle = plan.check.dropped.filter((s) => s.reason.startsWith('middle'));
+    expect(middle.length).toBeGreaterThan(0);
+    expect(plan.shots.some((s) => s.reason.startsWith('middle'))).toBe(false);
+    expect(offCanvasAddedByShots(p, plan)).toEqual([]);
   });
 
   it('self-check sweep: 300 kept poses near every edge, with and without the float; no shot pushes the phone past any edge', () => {
@@ -429,6 +456,118 @@ describe('planDirect: rules', () => {
     expect(shots.some((o) => o.recipe === 'hero-layback')).toBe(true);
     for (const tr of out.phone3d!.transitions) expect(Math.abs(tr.to.turn)).toBeLessThanOrEqual(560);
   });
+});
+
+describe('planDirect: always a visible 3D result (owner decision 12)', () => {
+  it('the 8 s ios-social golden take (dense taps, a cut, tap zooms) opens with a short settle in every style', () => {
+    const { project, cursor } = loadGoldenFixture('ios-social');
+    for (const style of STYLES) {
+      const opts: DirectOptions = { style, replace: true, cursor };
+      const { plan, out } = checkPlan(project, opts, `ios-social/${style}`);
+      const intro = plan.shots[0];
+      expect(intro.recipe, style).toBe('settle');
+      expect(intro.start).toBe(0);
+      expect(intro.end - intro.start).toBeGreaterThanOrEqual(SHORT_INTRO_MIN);
+      // It lands before the first busy start (the tap at 1.2 s is busy from 0.6 s), and before the first zoom.
+      expect(intro.end).toBeLessThanOrEqual(0.6 + 1e-9);
+      expect(intro.end).toBeLessThanOrEqual(Math.min(...focusSegmentsFor(project, cursor).map((z) => z.inStart)));
+      expect(maxOffFront(out), style).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
+      expect(plan.note).toBeUndefined();
+    }
+  });
+
+  it('a take with no room for any move rests at a posed angle and says why', () => {
+    // Taps every 0.8 s from 0.4 s: busy from 0 to the end, so no intro, middle or closing move fits.
+    const p = take(8, Array.from({ length: 10 }, (_, i) => tap(0.4 + i * 0.8, {}, i)));
+    for (const style of STYLES) {
+      const { plan, out } = checkPlan(p, { style, replace: true }, `no room/${style}`);
+      expect(moving(plan), style).toEqual([]);
+      expect(plan.ops[0]).toMatchObject({ op: 'phone3d', pose: style === 'bold' ? { ...BOLD_BASE } : { ...POSED_REST } });
+      expect(maxOffFront(out), style).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
+      expect(plan.note, style).toMatch(/^No moving shot fits: the phone must face front from 0\.0 s \(a tap, zoom or kept move starts there\), so no intro fits; /);
+    }
+    expect(planDirect(p, { style: 'hero', replace: true }).note).toBe(
+      'No moving shot fits: the phone must face front from 0.0 s (a tap, zoom or kept move starts there), so no intro fits; there is no free time between taps, zooms and kept moves. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+    expect(planDirect(p, { style: 'bold', replace: true }).note).toMatch(/\. The phone rests at the bold angle \(9\.4° off front\)\.$/);
+    expect(planDirect(p, { style: 'subtle', replace: true }).note).toMatch(/; subtle plans no moves after the intro\. The phone rests at a posed angle instead/);
+  });
+
+  it('the dense-taps fixture (first tap at 1 s) names the short first gap and the longest free gap', () => {
+    const p = FIXTURES.find((f) => f.name === 'dense taps')!.p();
+    const plan = planDirect(p, { style: 'hero', replace: true });
+    expect(moving(plan)).toEqual([]);
+    expect(plan.note).toMatch(/^No moving shot fits: the phone must face front from 0\.4 s \(the first tap, zoom or kept move\), under the 0\.6 s an intro needs; the longest free gap is 0\.6 s \(a middle move needs 2\.4 s, the closing move 1\.5 s at the end\)\. The phone rests at a posed angle/);
+  });
+
+  it('kept moves are not touched: the note says so and the base pose stays the style\'s', () => {
+    const p = take(8, Array.from({ length: 10 }, (_, i) => tap(0.4 + i * 0.8, {}, i)));
+    const mine = applyOps(p, [{ op: 'phone3d', enabled: true }], { newId: () => 'x' }).project;
+    mine.phone3d!.transitions = [move('mine', 3, 4, { turn: 10 }), move('back', 4, 5, { turn: 0 })];
+    const plan = planDirect(mine, { style: 'hero', replace: false });
+    expect(moving(plan)).toEqual([]);
+    expect(plan.ops[0]).toMatchObject({ pose: { ...FRONT } });
+    expect(plan.note).toMatch(/\. Your own moves stay as they are\.$/);
+  });
+
+  it('a posed angle that would push a phone scaled past the canvas further out is refused, and the note says so', () => {
+    const p = take(8, Array.from({ length: 10 }, (_, i) => tap(0.4 + i * 0.8, {}, i)));
+    p.style = { ...p.style, contentTransform: { scale: 1.3 } };
+    const plan = planDirect(p, { style: 'hero', replace: true });
+    expect(plan.ops[0]).toMatchObject({ pose: { ...FRONT } });
+    expect(plan.note).toMatch(/\. The phone stays straight on: a posed angle would push the phone further off the canvas\.$/);
+  });
+
+  it('a plan with no moving shot always carries a note, and a plan with one never does', () => {
+    for (const [p, style] of [
+      [take(30, [tap(10)]), 'hero'],
+      [take(8, [tap(0.3), tap(1.2), tap(2.1), tap(3), tap(3.9), tap(4.8), tap(5.7), tap(6.6), tap(7.5)]), 'subtle'],
+      [take(2.5), 'bold'],
+    ] as const) {
+      const plan = planDirect(p, { style, replace: true });
+      expect(plan.note === undefined, style).toBe(moving(plan).length > 0);
+    }
+  });
+
+  it('sweep: 400 iPhone takes of 3-30 s, dense taps from the first moment, every style: visible 3D, clean, and a note whenever no move fits', () => {
+    const presets = ['social-9x16', 'feed-4x5', 'square', 'landscape-16x9', 'none'];
+    const tally = { short: 0, posed: 0, full: 0 };
+    for (let seed = 1; seed <= 400; seed++) {
+      const rnd = lcg(seed * 6151);
+      const D = 3 + rnd() * 27;
+      // 0.3 to 2 taps a second; the first one anywhere in the first 2.5 s (often before 1.2 s, where no intro fits).
+      const rate = 0.3 + rnd() * 1.7;
+      const taps: TapSuggestion[] = [];
+      for (let t = rnd() * 2.5, i = 0; t < D; t += (0.4 + rnd() * 1.6) / rate, i++) {
+        const k = rnd();
+        if (k < 0.15) taps.push(tap(t, { kind: 'typing', duration: rnd() * 2 }, i));
+        else if (k < 0.3) taps.push(tap(t, { kind: 'swipe', duration: rnd() * 0.8 }, i));
+        else taps.push(tap(t, rnd() < 0.5 ? { settleT: t + rnd() * 1.2 } : {}, i));
+      }
+      let p = take(D, taps, [], presets[Math.floor(rnd() * presets.length)]);
+      if (rnd() < 0.3 && D > 8) {
+        const s = 1 + rnd() * (D - 6);
+        p = applyOps(p, [{ op: 'cut', ranges: [{ start: s, end: s + 0.5 + rnd() * 2 }] }], { newId: () => 'c' }).project;
+      }
+      const outD = new Timeline(p.recording.duration, p.clips).outputDuration;
+      for (const style of STYLES) {
+        const label = `seed ${seed} (${style}, D ${outD.toFixed(1)}, ${taps.length} taps)`;
+        const { plan, out } = checkPlan(p, { style, replace: true }, label);
+        if (outD >= 3) expect(maxOffFront(out), `${label}: visible 3D`).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
+        const moves = moving(plan);
+        expect(plan.note === undefined, `${label}: note iff no move (${plan.note})`).toBe(moves.length > 0);
+        if (!moves.length) {
+          tally.posed++;
+          expect(plan.note, label).toMatch(/^No moving shot fits: .+\. The phone rests at (a posed angle instead|the bold angle)/);
+        } else if (moves[0].reason.startsWith('intro (short')) tally.short++;
+        else tally.full++;
+      }
+    }
+    // Every branch is exercised many times (the sweep is not passing by planning the same thing everywhere).
+    expect(tally.short).toBeGreaterThan(50);
+    expect(tally.posed).toBeGreaterThan(50);
+    expect(tally.full).toBeGreaterThan(50);
+  }, 240_000);
 });
 
 describe('planDirect: 500 seeded projects', () => {

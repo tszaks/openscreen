@@ -967,7 +967,8 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
       for (const step of plan.ops) project = run3d(project, step, id).project;
       const shots = plan.shots.map((s) => `${s.recipe} ${s.start.toFixed(2)}–${s.end.toFixed(2)} s`).join(', ');
       const scenes = !useScenes ? 'scene changes off' : ctx.scenes ? `${ctx.scenes.length} scene change${ctx.scenes.length === 1 ? '' : 's'}` : 'scene changes not analysed';
-      return { project, note: `Auto 3D (${style}${replace ? '' : ', kept moves'}; ${scenes}): ${shots || 'no shot fits'}` };
+      // A plan with no moving shot says why (plan.note), so the note is never a bare "nothing".
+      return { project, note: `Auto 3D (${style}${replace ? '' : ', kept moves'}; ${scenes}): ${[shots, plan.note].filter(Boolean).join('. ')}` };
     }
 
     case 'set': {
