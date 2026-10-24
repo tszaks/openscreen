@@ -343,6 +343,31 @@ export function poseEditOps(p3: P3, chip: Chip, patch: Partial<Pose>, t: number)
   return { ops: [{ op: 'setPose', id: tg.id, end: tg.kind, ...patch }], ...(chip.mode === 'near' ? { seek: chip.keyTime } : {}) };
 }
 
+/** The keyframe a whole gesture (a field drag, an orbit drag) edits, fixed when it starts. */
+export type PoseLock = { kind: 'base' } | { kind: 'key'; id: string; end: 'from' | 'to' };
+
+/**
+ * Fix the target of a gesture at its start, so every change in it edits the
+ * same keyframe even before React has drawn the previous one. With Auto key
+ * off a keyframe it first adds a move that ends at the playhead (it holds the
+ * same pose, so nothing moves yet) with the id `newId`, then edits its End.
+ * 'near' also asks the playhead to jump to the keyframe it edits.
+ */
+export function lockPose(p3: P3, chip: Chip, t: number, newId: string): { lock: PoseLock; ops: EditOp[]; seek?: number } | { error: string } {
+  if (chip.mode === 'base' || chip.target.kind === 'base' && chip.mode !== 'none') return { lock: { kind: 'base' }, ops: [] };
+  if (chip.mode === 'none') {
+    const r = poseEditOps(p3, chip, {}, t);
+    if ('error' in r) return r;
+    return { lock: { kind: 'key', id: newId, end: 'to' }, ops: r.ops };
+  }
+  const tg = chip.target as Extract<PoseTarget, { id: string }>;
+  return { lock: { kind: 'key', id: tg.id, end: tg.kind }, ops: [], ...(chip.mode === 'near' ? { seek: chip.keyTime } : {}) };
+}
+
+/** A change inside a locked gesture. */
+export const lockedOps = (lock: PoseLock, patch: Partial<Pose>): EditOp[] =>
+  lock.kind === 'base' ? [{ op: 'setPose', target: 'base', ...patch }] : [{ op: 'setPose', id: lock.id, end: lock.end, ...patch }];
+
 /** Option-click on the lane, T, "Add 3D Move Here": a 1.2 s move that turns 25° from where the phone is. */
 export function addMoveOp(p3: P3, t: number): EditOp {
   const held = poseAt(p3, t);

@@ -47,6 +47,8 @@ import {
   springShortfall,
   warningText,
   keyPoses,
+  lockPose,
+  lockedOps,
 } from '../src/renderer/src/phone3d/panelModel';
 
 /** An iPhone take: 1179×2556, 60 s. */
@@ -225,6 +227,32 @@ describe('the target chip', () => {
     const end = s.transitions[2].end;
     const r = poseEditOps(s, chipFor(s, end + 0.05, { ...o, autoKey: true }), { turn: 30 }, end + 0.05);
     expect(r).toHaveProperty('error');
+  });
+
+  it('locks a gesture on one keyframe; with Auto key the gesture first adds a still move, then edits its End', () => {
+    const p = phoneProject({ transitions: plan() });
+    const s = p.phone3d!;
+    const r = lockPose(s, chipFor(s, 7.5, { ...o, autoKey: true }), 7.5, 'new1');
+    expect('lock' in r && r.lock).toEqual({ kind: 'key', id: 'new1', end: 'to' });
+    if (!('lock' in r)) return;
+    // The added move holds the pose (nothing moves until the drag does) …
+    const added = applyOps3d(p, r.ops, { newId: () => 'new1' });
+    expect('project' in added).toBe(true);
+    if (!('project' in added)) return;
+    expect(poseAt(added.project.phone3d!, 7.5)).toEqual(poseAt(s, 7.5));
+    // … and every change of the drag edits that same End, two in a row included.
+    const a = applyOps3d(added.project, lockedOps(r.lock, { turn: 10 }));
+    const b = 'project' in a ? applyOps3d(a.project, lockedOps(r.lock, { turn: 20 })) : a;
+    expect('project' in b && poseAt(b.project.phone3d!, 7.5).turn).toBeCloseTo(20, 9);
+    expect('project' in b && b.project.phone3d!.transitions.length).toBe(s.transitions.length + 1);
+  });
+
+  it('locks Near on the End it edits and asks the playhead to go there', () => {
+    const s = p3();
+    const lay = s.transitions[1];
+    const r = lockPose(s, chipFor(s, lay.end - 0.2, o), lay.end - 0.2, 'unused');
+    expect(r).toEqual({ lock: { kind: 'key', id: lay.id, end: 'to' }, ops: [], seek: lay.end });
+    expect(lockedOps({ kind: 'base' }, { size: 0.9 })).toEqual([{ op: 'setPose', target: 'base', size: 0.9 }]);
   });
 
   it('steps between keyframes for J and K', () => {

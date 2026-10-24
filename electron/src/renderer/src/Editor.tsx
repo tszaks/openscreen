@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, type HeadlessRendererJob } from './api';
 import { autoZoomOn, fileSafeName, normalizeProject, withAutoZoom, projectName, resetProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
 import { cameraAt, type FocusSegment } from '../../shared/autofocus';
@@ -14,6 +14,41 @@ import { Toasts } from './components/Toasts';
 import { CanvasCompositor, backgroundReady, exportRender3d, type Render3DSettings } from './compositor';
 import { holdPreview, render3dFor, runFrames, type FrameInputs3d, type Render3dInputs } from './headlessFrames';
 import { engineSync, ensurePhone3d, onEngineReady } from './phone3d/loader';
+import { Phone3DPanel, RESET_3D_POSE, type Apply3d, type AutoOptions } from './phone3d/Phone3DPanel';
+import { TransitionLane } from './phone3d/TransitionLane';
+import { PopupMenu, type MenuItem, type MenuSpec } from './phone3d/PopupMenu';
+import type { ShotOptions } from './phone3d/ShotGallery';
+import { CurveThumb } from './phone3d/EasingCurve';
+import {
+  addMoveOp,
+  chipFor,
+  duplicateOp,
+  EASE_LABEL,
+  EASE_MENU,
+  EASE_PRESET,
+  easingOps,
+  frameWindow,
+  lockedOps,
+  lockPose,
+  moveName,
+  nextKey,
+  poseEditOps,
+  prevKey,
+  RECIPE_LABEL,
+  samePart,
+  sameRecipe,
+  shotGroups,
+  type Chip,
+  type PoseLock,
+} from './phone3d/panelModel';
+import { applyOps3d, type ApplyContext, type EditOp } from '../../shared/agentOps';
+import { projectWarnings } from '../../shared/phone3d/warnings';
+import { phone3dActive } from '../../shared/phone3d/placement';
+import { orbitDrag } from '../../shared/phone3d/orbit';
+import { defaultPhone3D, type Easing, type Pose, type PoseTransition, type ShotRecipe } from '../../shared/phone3d/model';
+import { resolveStarts } from '../../shared/phone3d/pose';
+import { defaultShotDuration, shotKeys } from '../../shared/phone3d/shots';
+import { getFinish } from '../../shared/devices';
 import type { HeadlessResult } from '../../shared/headless';
 import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
@@ -55,6 +90,8 @@ import { BACKDROPS, BACKDROP_GROUPS, SOLID_SWATCHES, backgroundCss, isCustomSoli
 import {
   INSPECTOR_DEFAULT,
   ZOOM_STEP,
+  maxZoom,
+  timelineRows,
   anchoredScroll,
   clampInspector,
   clampTimeline,
@@ -135,7 +172,7 @@ import {
   updateTrack,
 } from '../../shared/audioTracks';
 
-type InspectorTab = 'background' | 'device' | 'zoom' | 'cursor' | 'camera' | 'phone' | 'audio' | 'text';
+type InspectorTab = 'background' | 'device' | 'three' | 'zoom' | 'cursor' | 'camera' | 'phone' | 'audio' | 'text';
 
 /** A paused 3D frame redraws at export quality this long after the last edit or seek. */
 const IDLE_3D_MS = 150;
@@ -217,6 +254,9 @@ export function Editor({
       historyRef.current.record(projRef.current, performance.now());
     }
     projRef.current = proj;
+    latest3d.current = null;
+    // A later edit (or an undo) makes a gesture's "Start unlinked" Undo stale.
+    if (unlinkToast.current?.sealed) unlinkToast.current.stale = true;
   }, [proj]);
   // Each pointer gesture (a click, a drag) is its own undo step.
   useEffect(() => {
@@ -248,6 +288,50 @@ export function Editor({
   );
   /** Make an edit one undo step and say what happened, with Undo. */
   const announce = (message: string, edit: () => void) => announced.run(message, edit);
+  /** A toast with no action: a refusal, a copy. */
+  const toast = (message: string) => toasts.add({ message }, performance.now());
+
+  // ── the 3D phone: every 3D control sends agent ops through apply3d (SPEC D1, §5.1) ──
+  /** The newest project an apply3d call made, ahead of React's commit, so the
+   *  next op of the same gesture builds on it (a drag that adds a move, then edits it). */
+  const latest3d = useRef<Project | null>(null);
+  /** A "Start unlinked" toast whose Undo undoes its whole gesture, while nothing came after it. */
+  const unlinkToast = useRef<{ sealed: boolean; stale: boolean } | null>(null);
+  /** Dev mode only: each apply3d call as {ops, ctx} for the replay test (§6.6b). */
+  const recorder3d = useRef<Recorder3d | null>(null);
+  if (recorder3d.current === null && !headless && record3dEnabled()) {
+    recorder3d.current = { base: proj, cursor, entries: [] };
+    (window as Window & { __openscreen3dRecorder?: Recorder3d }).__openscreen3dRecorder = recorder3d.current;
+  }
+  /** One op or a list = one state change and one undo step. Validated exactly
+   *  as the CLI's applyOps validates: a refused op is a toast and no change. */
+  const apply3d: Apply3d = (ops, opts) => {
+    const list = Array.isArray(ops) ? ops : [ops];
+    const ids: string[] = [...(opts?.ids ?? [])];
+    const ctxFor = (): ApplyContext => {
+      let i = 0;
+      return { cursor, ...opts?.ctx, newId: () => (ids[i] ??= crypto.randomUUID(), ids[i++]) };
+    };
+    const run = (p: Project) => applyOps3d(p, list, ctxFor());
+    const base = latest3d.current ?? projRef.current;
+    const first = run(base);
+    if ('error' in first) {
+      toast(first.error);
+      return false;
+    }
+    latest3d.current = first.project;
+    recorder3d.current?.entries.push({ ops: list, ctx: { ...(opts?.ctx ?? {}), ids: [...ids] } });
+    const commit = () =>
+      setProj((p) => {
+        if (p === base) return first.project; // the common case
+        const again = run(p); // another update landed first: apply to the real latest state
+        return 'error' in again ? p : again.project;
+      });
+    const message = typeof opts?.announce === 'function' ? opts.announce(first.project) : opts?.announce;
+    if (message) announce(message, commit);
+    else commit();
+    return true;
+  };
 
   // Output time, always. The video element only knows source time.
   const [playhead, setPlayhead] = useState(0);
@@ -305,6 +389,35 @@ export function Editor({
   // "Just me" and the rest: which tabs, zoom switches and lanes apply.
   const features = editorFeatures(proj);
   const [selectedTap, setSelectedTap] = useState<string | null>(null);
+  // The 3D lane's selection (move ids) and the keyframe the move view edits;
+  // the Pose "Editing" choice and Auto key; Auto 3D's and the shot gallery's
+  // options (editor state for this project, not saved in the file).
+  const [selectedMoves, setSelectedMoves] = useState<string[]>([]);
+  const [activeKey, setActiveKey] = useState<'start' | 'end'>('end');
+  const [editing3d, setEditing3d] = useState<'auto' | 'base'>('auto');
+  const [autoKey, setAutoKey] = useState(false);
+  const [autoOptions, setAutoOptions] = useState<AutoOptions>({ style: 'hero', keep: false, scenes: true });
+  const [shotOptions, setShotOptions] = useState<ShotOptions>({ strength: 1, length: null, ret: 'front' });
+  const [autoBusy, setAutoBusy] = useState(false);
+  /** The 3D menus (lane, easing, Editing, timeline on a phone take): drawn in the macOS menu style. */
+  const [menu3d, setMenu3d] = useState<MenuSpec | null>(null);
+  /** A hover preview on the canvas (a shot tile, an Easing menu item): a copy of the project, played over [start, end]. */
+  const [preview3d, setPreview3d] = useState<{ project: Project; start: number; end: number; label: string } | null>(null);
+  const previewing3d = useRef(false);
+  /** The orbit drag readout: what it edits and the pose. */
+  const [orbitView, setOrbitView] = useState<{ label: string; turn: number; tilt: number } | null>(null);
+  const orbit = useRef<{
+    pointer: number;
+    x: number;
+    y: number;
+    drag: ReturnType<typeof orbitDrag>;
+    chip: Chip;
+    lock: PoseLock | null;
+    label: string;
+    moved: boolean;
+  } | null>(null);
+  /** The 3D lane had the last press (⌘A selects every move). */
+  const laneFocus3d = useRef(false);
   // The layers on the preview (shared/canvasLayers): which is selected
   // (accent outline and corner handles) and which hovered (a thin outline),
   // the cursor for what the pointer is over, and while one is dragged, how
@@ -333,7 +446,7 @@ export function Editor({
   const [timelineH, setTimelineH] = useState<number | null>(() => {
     const v = Number(localStorage.getItem('openscreen.timelineHeight'));
     if (!v) return null;
-    const floor = naturalTimelineHeight(laneHeights(isPhoneProject(project), (project.tracks?.find((t) => t.kind === 'audio')?.items?.length ?? 0) > 0));
+    const floor = naturalTimelineHeight(laneHeights(isPhoneProject(project), (project.tracks?.find((t) => t.kind === 'audio')?.items?.length ?? 0) > 0, isPhoneProject(project) && !!project.phone3d));
     const h = clampTimeline(v, floor, window.innerHeight, 52);
     return h <= floor + 2 ? null : h;
   });
@@ -479,6 +592,137 @@ export function Editor({
     [proj, canvasSize, segments],
   );
 
+  // ── 3D phone: what the 3D tab, the 3D lane and the canvas share ──
+  const gate3d = phone3dActive(proj);
+  const moves3d = proj.phone3d?.transitions ?? NO_MOVES;
+  /** The selection, without moves that are gone (an undo, an agent edit). */
+  const liveSel = useMemo(() => selectedMoves.filter((id) => moves3d.some((m) => m.id === id)), [selectedMoves, moves3d]);
+  const fps3d = layoutPresetOf(proj)?.fps ?? proj.outputFPS;
+  // Warnings use the same cursor as the CLI (D5). Deferred, so a drag stays smooth.
+  const deferred3d = useDeferredValue(proj);
+  const warnings3d = useMemo(() => (isPhone && deferred3d.phone3d?.enabled ? projectWarnings(deferred3d, { cursor }) : []), [deferred3d, cursor, isPhone]);
+  const warnIds3d = useMemo(() => new Set(warnings3d.flatMap((w) => (w.transitionId && w.code !== 'inactive' ? [w.transitionId] : []))), [warnings3d]);
+
+  /** Select moves on the 3D lane (none: back to the 3D tab's home). Opens the 3D tab. */
+  const selectMoves = (ids: string[], key?: 'start' | 'end') => {
+    setSelectedMoves(ids);
+    if (key) setActiveKey(key);
+    if (!ids.length) return;
+    setSelectedClip(null);
+    setSelectedTap(null);
+    setSelectedAudio(null);
+    setInspectorTab('three');
+  };
+  const chipNow = () => chipFor(projRef.current.phone3d ?? defaultPhone3D(), playheadRef.current, { editing: editing3d, autoKey, fps: fps3d });
+
+  /** A one-off pose change from a key or a double-click: the selected move's keyframe, else what the chip says. */
+  const nudgePose = (patch: (pose: Pose) => Partial<Pose>) => {
+    const p3 = projRef.current.phone3d;
+    if (!p3) return;
+    const sel = liveSel.length === 1 ? p3.transitions.findIndex((m) => m.id === liveSel[0]) : -1;
+    if (sel >= 0) {
+      const m = p3.transitions[sel];
+      const pose = activeKey === 'start' ? resolveStarts(p3)[sel] : m.to;
+      seekOutput(activeKey === 'start' ? m.start : m.end);
+      apply3d({ op: 'setPose', id: m.id, end: activeKey === 'start' ? 'from' : 'to', ...patch(pose) });
+      return;
+    }
+    const chip = chipNow();
+    const r = poseEditOps(p3, chip, patch(chip.pose), playheadRef.current);
+    if ('error' in r) return toast(r.error);
+    if (r.seek !== undefined) seekOutput(r.seek);
+    apply3d(r.ops);
+  };
+  const faceFront = () => nudgePose(() => ({ turn: 0, tilt: 0, rotate: 0 }));
+
+  /** T, Option-click on the lane, "Add 3D Move Here": a move at `t`, selected. */
+  const addMoveAt = (t: number) => {
+    const id = crypto.randomUUID();
+    if (apply3d(addMoveOp(projRef.current.phone3d ?? defaultPhone3D(), t), { ids: [id] })) selectMoves([id], 'end');
+  };
+
+  /** A shot from the gallery or the timeline menu, at output time `at` (one undo step and a toast). */
+  const insertShot = (recipe: ShotRecipe, at: number, mirrored = false) => {
+    const op: EditOp =
+      recipe === 'float'
+        ? { op: 'shot', recipe }
+        : {
+            op: 'shot',
+            recipe,
+            at,
+            intensity: shotOptions.strength,
+            direction: mirrored ? -1 : 1,
+            return: shotOptions.ret,
+            ...(shotOptions.length !== null ? { duration: shotOptions.length } : {}),
+          };
+    setPreview3d(null);
+    apply3d(op, { announce: `${RECIPE_LABEL[recipe]}${mirrored ? ' (mirrored)' : ''} added` });
+  };
+
+  /** Auto 3D: scene times first when they are used (cached with the CLI's), then the same plan the CLI's direct makes. */
+  const runAuto3d = async () => {
+    if (autoBusy) return;
+    setAutoBusy(true);
+    try {
+      let scenes: number[] | undefined;
+      if (autoOptions.scenes) {
+        scenes = await api.analyzeScenes(bundleDir, proj.recording.screenVideoFile).catch(() => undefined);
+        if (disposed.current) return;
+        if (!scenes) toast("Couldn't read the scene changes. Planned without them.");
+      }
+      const before = new Set((projRef.current.phone3d?.transitions ?? []).map((m) => m.id));
+      apply3d(
+        { op: 'direct', style: autoOptions.style, replace: !autoOptions.keep, scenes: autoOptions.scenes },
+        {
+          ctx: { scenes },
+          announce: (p) => {
+            const added = shotGroups((p.phone3d?.transitions ?? []).filter((m) => !before.has(m.id))).length;
+            return added ? `${added} shot${added === 1 ? '' : 's'} added` : 'No shot fits this take';
+          },
+        },
+      );
+    } finally {
+      if (!disposed.current) setAutoBusy(false);
+    }
+  };
+
+  /** Hover a shot tile: play it at the playhead on the canvas, without changing the project. */
+  const previewShot = (recipe: ShotRecipe | null) => {
+    if (!recipe || !compositor.has3d || !videoRef.current?.paused) return setPreview3d(null);
+    const at = playheadRef.current;
+    const op: EditOp = recipe === 'float' ? { op: 'shot', recipe } : { op: 'shot', recipe, at, intensity: shotOptions.strength, return: shotOptions.ret, ...(shotOptions.length !== null ? { duration: shotOptions.length } : {}) };
+    const r = applyOps3d(projRef.current, [op], { cursor, newId: () => crypto.randomUUID() });
+    if ('error' in r) return setPreview3d(null);
+    const dur = recipe === 'float' ? (r.project.phone3d?.float.period ?? 6) : (shotOptions.length ?? defaultShotDuration(recipe, shotOptions.ret));
+    setPreview3d({ project: r.project, start: at, end: at + dur, label: RECIPE_LABEL[recipe] });
+  };
+  /** Hover an Easing menu item: play the selected move with that easing on the canvas. */
+  const previewEase = (e: Easing | null) => {
+    const m = liveSel.length === 1 ? moves3d.find((x) => x.id === liveSel[0]) : undefined;
+    if (!e || !m || !compositor.has3d || !videoRef.current?.paused) return setPreview3d(null);
+    const r = applyOps3d(projRef.current, [{ op: 'editTransition', id: m.id, easing: e }], { cursor });
+    if ('error' in r) return setPreview3d(null);
+    setPreview3d({ project: r.project, start: m.start, end: m.end, label: EASE_LABEL[e.kind] });
+  };
+
+  /** A linked Start's first edit unlinked it: a toast whose Undo takes back the whole gesture. */
+  const onUnlinked3d = (fromName: string) => {
+    const mark = { sealed: false, stale: false };
+    unlinkToast.current = mark;
+    toasts.add(
+      {
+        message: `Start unlinked from ${fromName}`,
+        action: { label: 'Undo', canRun: () => !mark.stale, run: () => undo() },
+      },
+      performance.now(),
+    );
+  };
+  /** The 3D panel's gesture ended: one undo step. */
+  const seal3d = () => {
+    historyRef.current.seal();
+    if (unlinkToast.current) unlinkToast.current.sealed = true;
+  };
+
   /** Map a point on the preview canvas to normalized full-source coords
    *  (valid in crop mode, where the source is drawn unzoomed). */
   const canvasToSource = (clientX: number, clientY: number) => {
@@ -524,6 +768,7 @@ export function Editor({
       selected: selectedLayer,
       // Handles answer within 9 screen points, whatever the preview's scale.
       handleRadius: shown ? (9 * canvasSize.width) / shown.width : 12,
+      phone3d: compositor.has3d,
     };
   };
 
@@ -542,11 +787,15 @@ export function Editor({
     if (e.button !== 0) return;
     const px = canvasPoint(e.clientX, e.clientY);
     if (!px) return;
-    const target = previewTarget(px, previewState());
+    const target = previewTarget(px, previewState(), { meta: e.metaKey });
     if (target.kind === 'placeTap') {
       // Place the selected tap where the preview was clicked (zoom included).
       const at = compositor.canvasToSource(px.x, px.y);
-      if (!at) return;
+      if (!at) {
+        // A 3D phone turned away has no screen point under the press.
+        if (compositor.has3d) toast('Turn the phone to the front to place taps.');
+        return;
+      }
       const x = Math.min(1, Math.max(0, at.x));
       const y = Math.min(1, Math.max(0, at.y));
       setProj((p) => ({
@@ -570,6 +819,31 @@ export function Editor({
     }
     if (target.kind === 'none') {
       setSelectedLayer(null);
+      return;
+    }
+    if (target.kind === 'orbit') {
+      // Drag the 3D phone to turn and tilt it (Option: move it), one undo step.
+      // A selected move: its keyframe, with the playhead on it first. Else what the chip says.
+      setSelectedLayer('content');
+      const p3 = projRef.current.phone3d ?? defaultPhone3D();
+      const i = liveSel.length === 1 ? p3.transitions.findIndex((m) => m.id === liveSel[0]) : -1;
+      let chip = chipNow();
+      let lock: PoseLock | null = null;
+      let label: string;
+      if (i >= 0) {
+        const m = p3.transitions[i];
+        const start = activeKey === 'start';
+        seekOutput(start ? m.start : m.end);
+        lock = { kind: 'key', id: m.id, end: start ? 'from' : 'to' };
+        chip = { ...chip, pose: start ? resolveStarts(p3)[i] : m.to };
+        label = `${start ? 'Start' : 'End'} of ${moveName(p3.transitions, m.id)}`;
+      } else {
+        label = chip.mode === 'base' ? (p3.transitions.length ? 'Base pose' : 'Base pose · whole video') : chip.mode === 'none' ? 'New move here' : chip.label;
+      }
+      orbit.current = { pointer: e.pointerId, x: e.clientX, y: e.clientY, drag: orbitDrag(chip.pose), chip, lock, label, moved: false };
+      historyRef.current.hold();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setHoverCursor('grabbing');
       return;
     }
     // Select it; a drag moves or resizes it, one undo step however long.
@@ -605,18 +879,52 @@ export function Editor({
     setProj((p) => placeLayer(p, layer, { x: snap.centre.x - w / 2, y: snap.centre.y - h / 2, w, h }, canvasSize));
   };
 
+  /** An orbit drag under way: absolute from the drag-start pose (§5.4), never relative per move. */
+  const orbitMove = (e: React.PointerEvent) => {
+    const o = orbit.current!;
+    const dx = e.clientX - o.x;
+    const dy = e.clientY - o.y;
+    if (!o.moved) {
+      if (Math.hypot(dx, dy) < 3) return;
+      o.moved = true;
+      if (!o.lock) {
+        const id = crypto.randomUUID();
+        const r = lockPose(projRef.current.phone3d ?? defaultPhone3D(), o.chip, playheadRef.current, id);
+        if ('error' in r) {
+          toast(r.error);
+          orbit.current = null;
+          return;
+        }
+        if (r.seek !== undefined) seekOutput(r.seek);
+        if (r.ops.length && !apply3d(r.ops, { ids: [id] })) {
+          orbit.current = null;
+          return;
+        }
+        o.lock = r.lock;
+      }
+    }
+    const shown = canvasRef.current?.getBoundingClientRect();
+    const pose = o.drag.move(dx, dy, { shift: e.shiftKey, alt: e.altKey, view: shown ? { width: shown.width, height: shown.height } : undefined });
+    if (o.lock) apply3d(lockedOps(o.lock, e.altKey ? { x: pose.x, y: pose.y } : { turn: pose.turn, tilt: pose.tilt }));
+    setOrbitView({ label: o.label, turn: pose.turn, tilt: pose.tilt });
+  };
+
   const onCanvasMove = (e: React.PointerEvent) => {
     const px = canvasPoint(e.clientX, e.clientY);
     if (!px) return;
+    if (orbit.current) {
+      if (orbit.current.pointer === e.pointerId) orbitMove(e);
+      return;
+    }
     if (previewDrag.current) {
       dragPreview(e, px);
       return;
     }
     if (!cropDrag.current) {
-      const target = previewTarget(px, previewState());
+      const target = previewTarget(px, previewState(), { meta: e.metaKey });
       const cursor = previewCursor(target);
       if (cursor !== hoverCursor) setHoverCursor(cursor);
-      const over = target.kind === 'move' || target.kind === 'resize' ? target.layer.id : null;
+      const over = target.kind === 'move' || target.kind === 'resize' || target.kind === 'orbit' ? target.layer.id : null;
       if (over !== hoveredLayer) setHoveredLayer(over);
     }
     if (!cropMode || !cropDrag.current) return;
@@ -644,6 +952,13 @@ export function Editor({
   };
 
   const onCanvasUp = () => {
+    if (orbit.current) {
+      orbit.current = null;
+      setOrbitView(null);
+      setHoverCursor(undefined);
+      historyRef.current.seal();
+      return;
+    }
     if (previewDrag.current) {
       previewDrag.current = null;
       setGuides([]);
@@ -662,10 +977,11 @@ export function Editor({
     return hitLayer(compositor.layers, px);
   };
 
-  // Double-click a layer: back to where the layout puts it.
+  // Double-click a layer: back to where the layout puts it. The 3D phone: face front.
   const onCanvasDoubleClick = (e: React.MouseEvent) => {
     const layer = layerAt(e);
-    if (layer) setProj((p) => resetLayer(p, layer.id));
+    if (layer?.id === 'content' && compositor.has3d) faceFront();
+    else if (layer) setProj((p) => resetLayer(p, layer.id));
   };
 
   const restackLayer = (id: LayerId, how: Restack) => setProj((p) => restack(p, id, how));
@@ -683,6 +999,8 @@ export function Editor({
       { id: 'back', label: 'Send to Back', enabled: at > 0, run: () => restackLayer(layer.id, 'back') },
       { type: 'separator' },
       { id: 'reset', label: 'Reset Position & Size', run: () => setProj((p) => resetLayer(p, layer.id)) },
+      // Clears every move and puts the base pose to front: one apply3d list, one undo step (§4.1).
+      ...(layer.id === 'content' && proj.phone3d ? [{ id: 'reset3d', label: 'Reset 3D Pose', run: () => apply3d(RESET_3D_POSE, { announce: '3D pose reset' }) }] : []),
       ...(canHide(layer.id)
         ? [{ id: 'hide', label: `Hide ${layerLabel(proj, layer.id)}`, run: () => hideSelected(layer.id) }]
         : []),
@@ -734,6 +1052,8 @@ export function Editor({
   const renderAt = useCallback(
     (outT: number, render3d?: Render3DSettings) => {
       if (previewHeld()) return;
+      // A hover preview (a shot tile, an easing) owns the canvas until it ends.
+      if (previewing3d.current) return;
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2) return;
@@ -788,7 +1108,7 @@ export function Editor({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [compositor, canvasSize, smoothed, keys, clickEv, cropMode, proj, selectedTap, titleFocus, selectedLayer, hoveredLayer, guides],
+    [compositor, canvasSize, smoothed, keys, clickEv, cropMode, proj, selectedTap, titleFocus, selectedLayer, hoveredLayer, guides, liveSel],
   );
 
   const renderAtRef = useRef(renderAt);
@@ -802,6 +1122,50 @@ export function Editor({
     if (has3dKey) ensurePhone3d().catch(() => {});
   }, [has3dKey]);
   useEffect(() => onEngineReady(() => renderAtRef.current(playheadRef.current)), []);
+
+  // A hover preview ends with any edit, and when playback starts (playback draws every frame).
+  useEffect(() => setPreview3d(null), [proj, playing]);
+
+  // A hover preview: a copy of the project with the shot (or easing) in it,
+  // played over its moves at the paused frame, looping with a short rest.
+  // Reduced motion: one still at a telling moment. The project never changes.
+  useEffect(() => {
+    if (!preview3d) {
+      if (previewing3d.current) {
+        previewing3d.current = false;
+        renderAtRef.current(playheadRef.current);
+      }
+      return;
+    }
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.readyState < 2) return;
+    previewing3d.current = true;
+    const comp = new CanvasCompositor(preview3d.project, canvasSize, segments);
+    const dur = Math.max(0.1, preview3d.end - preview3d.start);
+    const draw = (t: number) => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      canvas.width = canvasSize.width;
+      canvas.height = canvasSize.height;
+      comp.render(t, frameInputsAt(t, video.currentTime));
+      ctx.drawImage(comp.canvas, 0, 0);
+    };
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      draw(preview3d.start + dur * 0.4);
+      return;
+    }
+    let raf = 0;
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const sec = ((now - t0) / 1000) % (dur + 0.6);
+      draw(preview3d.start + Math.min(dur, sec));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview3d]);
   useEffect(
     () => () => {
       if (idle3d.current !== null) window.clearTimeout(idle3d.current);
@@ -830,16 +1194,68 @@ export function Editor({
         ctx.stroke();
       }
     };
-    // A box's outline, just outside it: round for a round bubble.
+    // A box's outline, just outside it: round for a round bubble; a turned 3D phone's drawn hull.
+    const hullPath = (hull: { x: number; y: number }[]) => {
+      ctx.beginPath();
+      hull.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+      ctx.closePath();
+    };
     const outline = (l: LayerBox, width: number) => {
       const r = l.rect;
       const g = 2 * pt;
       ctx.lineWidth = width;
-      ctx.beginPath();
-      if (l.round) ctx.arc(r.x + r.w / 2, r.y + r.h / 2, r.w / 2 + g, 0, Math.PI * 2);
-      else ctx.rect(r.x - g / 2, r.y - g / 2, r.w + g, r.h + g);
+      ctx.lineJoin = 'round';
+      if (l.hull && l.hull.length >= 3) hullPath(l.hull);
+      else {
+        ctx.beginPath();
+        if (l.round) ctx.arc(r.x + r.w / 2, r.y + r.h / 2, r.w / 2 + g, 0, Math.PI * 2);
+        else ctx.rect(r.x - g / 2, r.y - g / 2, r.w + g, r.h + g);
+      }
       ctx.stroke();
     };
+    // The 3D phone (preview only, never exported, §5.4): while orbiting, its hull with a faint
+    // fill and an orbit ring under it; with a move selected, a faint dashed hull.
+    const phone = compositor.has3d ? compositor.layers.find((l) => l.id === 'content' && l.hull && l.hull.length >= 3) : undefined;
+    if (phone?.hull && orbit.current?.moved) {
+      ctx.save();
+      ctx.lineJoin = 'round';
+      hullPath(phone.hull);
+      ctx.fillStyle = 'rgba(255,138,61,0.06)';
+      ctx.fill();
+      ctx.strokeStyle = '#FF8A3D';
+      ctx.lineWidth = 1.5 * pt;
+      ctx.stroke();
+      const xs = phone.hull.map((q) => q.x);
+      const ys = phone.hull.map((q) => q.y);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const rx = (Math.max(...xs) - Math.min(...xs)) / 2 + 14 * pt;
+      const ry = rx * 0.2;
+      // The front arc of the ring (the back half hides behind the phone), with an arrow head.
+      const a0 = Math.PI * 0.08;
+      const a1 = Math.PI * 0.92;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, a0, a1);
+      ctx.stroke();
+      const x1 = cx + rx * Math.cos(a1);
+      const y1 = cy + ry * Math.sin(a1);
+      ctx.beginPath();
+      ctx.moveTo(x1 + 1 * pt, y1 - 7 * pt);
+      ctx.lineTo(x1, y1);
+      ctx.lineTo(x1 + 7 * pt, y1 + 2 * pt);
+      ctx.stroke();
+      ctx.restore();
+    } else if (phone?.hull && liveSel.length && !selectedLayer) {
+      ctx.save();
+      ctx.lineJoin = 'round';
+      hullPath(phone.hull);
+      ctx.strokeStyle = 'rgba(255,138,61,0.55)';
+      ctx.lineWidth = 1.5 * pt;
+      ctx.setLineDash([4 * pt, 4 * pt]);
+      ctx.stroke();
+      ctx.restore();
+    }
     const hovered = hoveredLayer && hoveredLayer !== selectedLayer ? compositor.layers.find((l) => l.id === hoveredLayer) : undefined;
     if (hovered && !previewDrag.current) {
       ctx.save();
@@ -847,7 +1263,7 @@ export function Editor({
       outline(hovered, 1 * pt);
       ctx.restore();
     }
-    const sel = selectedBox();
+    const sel = orbit.current?.moved ? undefined : selectedBox();
     if (sel) {
       ctx.save();
       ctx.strokeStyle = '#FF8A3D';
@@ -1690,6 +2106,21 @@ export function Editor({
         restackLayer(selectedLayer, e.shiftKey ? (up ? 'front' : 'back') : up ? 'forward' : 'backward');
         return;
       }
+      // ⌘A on the 3D lane selects every move; ⌘D duplicates the selected move.
+      if (e.metaKey && !e.shiftKey && !e.altKey && isPhone && proj.phone3d) {
+        if (e.key === 'a' && laneFocus3d.current && moves3d.length) {
+          e.preventDefault();
+          selectMoves(moves3d.map((m) => m.id), activeKey);
+          return;
+        }
+        if (e.key === 'd' && liveSel.length === 1) {
+          e.preventDefault();
+          const m = moves3d.find((x) => x.id === liveSel[0]);
+          const id = crypto.randomUUID();
+          if (m && apply3d(duplicateOp(m), { ids: [id] })) selectMoves([id], activeKey);
+          return;
+        }
+      }
       // ⌘Z / ⇧⌘Z come from the app menu (Edit > Undo/Redo) so one press is one undo.
       // ⌘S, ⌘⌫ and friends belong to the menu, not to split and delete.
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1700,8 +2131,33 @@ export function Editor({
       if (arrow && box && !role) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
+        // The 3D phone turns (←/→) and tilts (↑/↓) by 1° (⇧ 10°) instead of moving.
+        if (box.id === 'content' && compositor.has3d) {
+          nudgePose((pose) => (arrow[0] ? { turn: Math.max(-720, Math.min(720, pose.turn + arrow[0] * step)) } : { tilt: Math.max(-85, Math.min(85, pose.tilt - arrow[1] * step)) }));
+          return;
+        }
         setProj((p) => nudgeLayer(p, box, arrow[0] * step, arrow[1] * step, canvasSize));
         return;
+      }
+      // The 3D lane: T adds a move at the playhead, J / K go to the previous / next keyframe, F frames the selection.
+      if (isPhone && !hasPhoneLayer && !role) {
+        const key = e.key.toLowerCase();
+        if (key === 't' && !e.shiftKey) {
+          e.preventDefault();
+          addMoveAt(playheadRef.current);
+          return;
+        }
+        if ((key === 'j' || key === 'k') && moves3d.length) {
+          e.preventDefault();
+          const t = key === 'j' ? prevKey(moves3d, playheadRef.current) : nextKey(moves3d, playheadRef.current);
+          if (t !== null) seekOutput(t);
+          return;
+        }
+        if (key === 'f' && liveSel.length) {
+          e.preventDefault();
+          frameMoves(liveSel);
+          return;
+        }
       }
       if (e.code === 'Space') {
         e.preventDefault();
@@ -1710,15 +2166,23 @@ export function Editor({
         setSelectedTap(null);
       } else if (e.key === 'Escape' && selectedLayer) {
         setSelectedLayer(null);
+      } else if (e.key === 'Escape' && liveSel.length) {
+        setSelectedMoves([]);
       } else if (e.key === 'Escape' && selectedAudio) {
         setSelectedAudio(null);
       } else if (e.key === 's' || e.key === 'S') {
         splitAtPlayhead();
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
-        if (selectedLayer) {
+        if (selectedLayer && canHide(selectedLayer)) {
           // A selected layer hides (camera, phone, text, title); the recording never does.
           e.preventDefault();
           hideSelected(selectedLayer);
+        } else if (liveSel.length) {
+          // Then the selected 3D moves: one apply3d list, one undo step.
+          e.preventDefault();
+          if (apply3d(liveSel.map((id) => ({ op: 'removeTransition', id })))) setSelectedMoves([]);
+        } else if (selectedLayer) {
+          e.preventDefault();
         } else if (editTranscript && wordSel) {
           e.preventDefault();
           cutSelectedWords();
@@ -1875,6 +2339,7 @@ export function Editor({
     if (!id) return;
     setSelectedClip(null);
     setSelectedTap(null);
+    setSelectedMoves([]);
     setInspectorTab('audio');
   };
 
@@ -2126,7 +2591,11 @@ export function Editor({
   const hasMusic = (proj.tracks.find((t) => t.kind === 'audio')?.items.length ?? 0) > 0;
   const hasMusicRef = useRef(hasMusic);
   hasMusicRef.current = hasMusic;
-  const naturalTimelineH = () => naturalTimelineHeight(laneHeights(isPhone, hasMusicRef.current));
+  // The 3D lane: a phone take with a 3D phone (the key, enabled or not).
+  const lane3d = isPhone && !!proj.phone3d;
+  const lane3dRef = useRef(lane3d);
+  lane3dRef.current = lane3d;
+  const naturalTimelineH = () => naturalTimelineHeight(laneHeights(isPhone, hasMusicRef.current, lane3dRef.current));
   // A dragged height under the new floor (the lane just appeared) is lifted to it.
   useEffect(() => {
     setTimelineH((h) => {
@@ -2136,7 +2605,7 @@ export function Editor({
       return next <= floor + 2 ? null : next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMusic]);
+  }, [hasMusic, lane3d]);
   const topbarH = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) || 52;
 
   /** Pointer-drag a divider; `apply` gets the pixel delta since the press. */
@@ -2184,9 +2653,11 @@ export function Editor({
 
   /** Zoom the timeline, holding still the point `anchorX` px into the viewport
    *  (default: the playhead if it's in view, else the middle). */
+  /** The deepest timeline zoom: a long take may zoom past ZOOM_MAX so Frame Selection can show one short move. */
+  const zoomLimit = () => maxZoom(timelineRef.current.outputDuration || duration);
   const zoomTimeline = (next: number, anchorX?: number) => {
     const sc = tlScrollRef.current;
-    const z = clampZoom(next);
+    const z = clampZoom(next, zoomLimit());
     if (!sc || z === tlZoomRef.current) return;
     let x = anchorX;
     if (x === undefined) {
@@ -2206,9 +2677,30 @@ export function Editor({
     const sc = tlScrollRef.current;
     const a = zoomAnchor.current;
     zoomAnchor.current = null;
-    if (!sc || !a) return;
-    sc.scrollLeft = anchoredScroll(sc.scrollLeft, a.x, a.oldW, sc.scrollWidth, sc.clientWidth);
+    const framed = frameTarget.current;
+    frameTarget.current = null;
+    if (!sc) return;
+    if (framed !== null) sc.scrollLeft = (framed / (timelineRef.current.outputDuration || duration || 1)) * sc.scrollWidth;
+    else if (a) sc.scrollLeft = anchoredScroll(sc.scrollLeft, a.x, a.oldW, sc.scrollWidth, sc.clientWidth);
   }, [tlZoom]);
+
+  /** Frame Selection (F, double-click a block): the timeline zooms to the moves, with a little room. */
+  const frameTarget = useRef<number | null>(null);
+  const frameMoves = (ids: string[]) => {
+    const sc = tlScrollRef.current;
+    const w = frameWindow(moves3d.filter((m) => ids.includes(m.id)));
+    if (!sc || !w) return;
+    const total = timelineRef.current.outputDuration || duration || 1;
+    const z = clampZoom(total / (w.end - w.start), zoomLimit());
+    frameTarget.current = w.start;
+    zoomAnchor.current = null;
+    tlZoomRef.current = z;
+    if (z === tlZoom) {
+      // Same zoom: just scroll there.
+      frameTarget.current = null;
+      sc.scrollLeft = (w.start / total) * sc.scrollWidth;
+    } else setTlZoom(z);
+  };
 
   // Pinch on the trackpad (Chromium reports it as ctrl+wheel) or ⌘-scroll
   // zooms around the pointer. Non-passive so the page itself doesn't zoom.
@@ -2249,7 +2741,7 @@ export function Editor({
     seekOutput(t);
     if (clip) setSelectedClip(clip.id);
     const x = e.clientX - (tlScrollRef.current?.getBoundingClientRect().left ?? 0);
-    void popMenu([
+    const items: (ContextMenuItem & { run?: () => void })[] = [
       { id: 'split', label: 'Split Here', run: () => splitAt(t) },
       { id: 'trimStart', label: 'Trim Clip Start to Here', enabled: !!clip, run: () => trimClipAt('start', clip?.id ?? null, t) },
       { id: 'trimEnd', label: 'Trim Clip End to Here', enabled: !!clip, run: () => trimClipAt('end', clip?.id ?? null, t) },
@@ -2259,17 +2751,78 @@ export function Editor({
       ...(isPhone ? [{ id: 'tap', label: 'Add Tap Here', run: () => addTapAt(t) }] : []),
       { id: 'addMusic', label: 'Add Music or Voiceover…', run: () => void addMusic(t) },
       { type: 'separator' },
-      { id: 'zin', label: 'Zoom In Timeline', enabled: tlZoom < 40, run: () => zoomTimeline(tlZoom * ZOOM_STEP, x) },
+      { id: 'zin', label: 'Zoom In Timeline', enabled: tlZoom < zoomLimit(), run: () => zoomTimeline(tlZoom * ZOOM_STEP, x) },
       { id: 'zout', label: 'Zoom Out Timeline', enabled: tlZoom > 1, run: () => zoomTimeline(tlZoom / ZOOM_STEP, x) },
       { id: 'zfit', label: 'Fit Timeline', enabled: tlZoom > 1, run: () => zoomTimeline(1) },
-    ]);
+    ];
+    if (!isPhone || hasPhoneLayer) return void popMenu(items);
+    // A phone take adds "Add 3D Move Here" and the "Add 3D Shot ›" submenu, which the
+    // native menu cannot show, so this one is drawn in the macOS menu style.
+    const shotItems: MenuItem[] = (['spin-in', 'turn-to-back', 'hero-layback', 'settle', 'float'] as const).map((r) => {
+      const n = r === 'float' ? 0 : shotKeys(r, shotOptions.ret).keys.length;
+      return { id: `shot-${r}`, label: RECIPE_LABEL[r], hint: r === 'float' ? 'drift' : `${n} move${n === 1 ? '' : 's'}`, run: () => insertShot(r, t) };
+    });
+    const html: MenuItem[] = items.map((it) => (it.type === 'separator' ? it : { id: it.id, label: it.label, disabled: it.enabled === false, run: it.run }));
+    const at = html.findIndex((it) => it.type !== 'separator' && it.id === 'addMusic');
+    html.splice(at, 0, { id: 'move3d', label: 'Add 3D Move Here', hint: 'T', run: () => addMoveAt(t) }, { id: 'shot3d', label: 'Add 3D Shot', submenu: shotItems });
+    setMenu3d({ x: e.clientX, y: e.clientY, width: 230, items: html });
+  };
+
+  /** Right-click a move on the 3D lane. */
+  const laneMenu = (id: string, x: number, y: number) => {
+    const m = moves3d.find((q) => q.id === id);
+    if (!m) return;
+    if (!liveSel.includes(id)) selectMoves([id]);
+    const ids = liveSel.includes(id) && liveSel.length > 1 ? liveSel : [id];
+    const easings: MenuItem[] = EASE_MENU.map((k) => ({
+      id: `ease-${k}`,
+      label: EASE_LABEL[k],
+      checked: ids.every((q) => moves3d.find((mm) => mm.id === q)?.easing.kind === k),
+      picture: <CurveThumb e={EASE_PRESET[k]} w={34} h={20} />,
+      run: () => {
+        const e: Easing = k === 'spring' && m.easing.kind === 'spring' ? m.easing : EASE_PRESET[k];
+        apply3d(easingOps(ids, e, k === 'spring'));
+      },
+    }));
+    const recipe = m.recipe ? RECIPE_LABEL[m.recipe] : null;
+    const all = sameRecipe(moves3d, id);
+    const part = samePart(moves3d, id);
+    const name = moveName(moves3d, id);
+    const items: MenuItem[] = [
+      { id: 'easing', label: 'Easing', submenu: easings },
+      { id: 'link', label: 'Link Start', checked: !m.from, run: () => apply3d({ op: 'editTransition', id, from: m.from ? null : resolveStarts(projRef.current.phone3d!)[moves3d.indexOf(m)] }) },
+      { id: 'swap', label: 'Swap Start / End', run: () => apply3d(ids.map((q) => ({ op: 'editTransition', id: q, swap: true }))) },
+      { id: 'resetEnd', label: 'Reset End to Start', run: () => apply3d(ids.map((q) => ({ op: 'editTransition', id: q, resetEnd: true }))) },
+      { type: 'separator' },
+      ...(recipe
+        ? ([
+            { id: 'all', label: `Select All “${recipe}” Moves`, hint: String(all.length), run: () => selectMoves(all, activeKey) },
+            ...(name !== recipe ? [{ id: 'part', label: `Select All “${name}” Moves`, hint: String(part.length), run: () => selectMoves(part, activeKey) }] : []),
+          ] as MenuItem[])
+        : []),
+      { id: 'frame', label: 'Frame Selection', hint: 'F', run: () => frameMoves(ids) },
+      { type: 'separator' },
+      {
+        id: 'dup',
+        label: 'Duplicate',
+        hint: '⌘D',
+        disabled: ids.length > 1,
+        run: () => {
+          const nid = crypto.randomUUID();
+          if (apply3d(duplicateOp(m), { ids: [nid] })) selectMoves([nid], activeKey);
+        },
+      },
+      { id: 'remove', label: ids.length > 1 ? `Remove ${ids.length} Moves` : 'Remove', hint: '⌫', run: () => apply3d(ids.map((q) => ({ op: 'removeTransition', id: q }))) && setSelectedMoves([]) },
+    ];
+    setMenu3d({ x, y, width: 262, items });
   };
 
   // ── presentation only below: derived display values and UI-only state ──
   const outDur = timeline.outputDuration || duration || 1;
   const ruler = rulerTicks(outDur, tlZoom);
-  // With a dragged height the lanes share the extra room in proportion to their base sizes.
-  const laneRows = `22px ${laneHeights(isPhone, hasMusic).map((r) => `minmax(${r}px, ${r}fr)`).join(' ')}`;
+  // The grid rows come from the lane list (no per-combination CSS); with a dragged height
+  // the lanes share the extra room in proportion to their base sizes.
+  const laneRows = timelineRows(laneHeights(isPhone, hasMusic, lane3d), !!timelineH);
   // Clip thumbnails sized to the frames strip under each clip's name.
   // Portrait frames sit inset as small screens (styles.css .clip-frames.portrait: 5px padding, 3px gaps).
   const portraitSource = proj.recording.sourceSize.width < proj.recording.sourceSize.height;
@@ -2304,6 +2857,11 @@ export function Editor({
   // "No sound" only for a track that is really silent (about −54 dBFS or
   // below); quiet speech still draws its waveform.
   const silent = peaks.length > 0 && Math.max(...peaks) < SILENT_PEAK;
+  /** The kind of tap at output time t (a warning says "swipe" or "tap"). */
+  const tapKindAt = (t: number) => outTaps.reduce<{ kind: string | null; d: number }>((best, tap) => (Math.abs(tap.t - t) < best.d ? { kind: tap.kind, d: Math.abs(tap.t - t) } : best), { kind: null, d: 0.35 }).kind;
+  // The shot tiles' mini phones show the recording's frame nearest the playhead.
+  const thumbAt = locate(timeline, Math.min(playhead, timeline.outputDuration)).srcT;
+  const screenThumb = filmstrip.length ? (filmstrip[filmTimes.reduce((bi, ft, i) => (Math.abs(ft - thumbAt) < Math.abs(filmTimes[bi] - thumbAt) ? i : bi), 0)] ?? undefined) : undefined;
   const bundleName = projectName(proj, bundleDir);
   const formatChoices = presetChoices(proj.recording.sourceSize);
   const selectedFormats =
@@ -2330,6 +2888,8 @@ export function Editor({
     // seven tabs fit the inspector.
     { value: 'background' as const, label: 'Style' },
     ...(isPhone ? [{ value: 'device' as const, label: 'Device' }] : []),
+    // Never with the Phone tab, so at most 8 tabs show (§5.2).
+    ...(isPhone && !hasPhoneLayer ? [{ value: 'three' as const, label: '3D' }] : []),
     { value: 'zoom' as const, label: 'Zoom' },
     ...(features.cursorTab ? [{ value: 'cursor' as const, label: 'Cursor' }] : []),
     ...(camUrl ? [{ value: 'camera' as const, label: 'Camera' }] : []),
@@ -3436,6 +3996,9 @@ export function Editor({
           {exportMenuOpen && (
             <ExportPanel
               layoutPreset={exportLayoutPreset}
+              exportPreset={proj.exportPreset}
+              onResolution={(preset) => apply3d({ op: 'exportSettings', preset })}
+              phone3d={!!proj.phone3d?.enabled}
               singleSettings={
                 <>
                   <div className="field-block">
@@ -3584,6 +4147,40 @@ export function Editor({
           onDoubleClick={() => setInspectorW(INSPECTOR_DEFAULT)}
         />
         <Tabs value={activeTab} tabs={inspectorTabs} onChange={setInspectorTab} />
+        {activeTab === 'three' ? (
+          // The 3D tab lays out its own scrolling body (the move view pins its title above it).
+          <Phone3DPanel
+            proj={proj}
+            apply3d={apply3d}
+            playhead={playhead}
+            fps={fps3d}
+            selected={liveSel}
+            activeKey={activeKey}
+            onSelect={selectMoves}
+            onSeek={seekOutput}
+            warnings={warnings3d}
+            kindAt={tapKindAt}
+            hold={() => historyRef.current.hold()}
+            seal={seal3d}
+            editing={editing3d}
+            onEditing={setEditing3d}
+            autoKey={autoKey}
+            onAutoKey={setAutoKey}
+            auto={autoOptions}
+            onAuto={setAutoOptions}
+            onRunAuto={() => void runAuto3d()}
+            autoBusy={autoBusy}
+            shots={shotOptions}
+            onShots={setShotOptions}
+            onShotHover={previewShot}
+            onEaseHover={previewEase}
+            onUnlinked={onUnlinked3d}
+            openMenu={setMenu3d}
+            finish={getFinish(resolvedDevice.device, proj.device.finishId).hex}
+            screen={screenThumb}
+            toast={toast}
+          />
+        ) : (
         <div className="inspector-body" key={activeTab}>
           {activeTab === 'background' && backgroundPanel}
           {activeTab === 'device' && (
@@ -3606,14 +4203,41 @@ export function Editor({
           {activeTab === 'audio' && audioPanel}
           {activeTab === 'text' && textPanel}
         </div>
+        )}
       </aside>
+      <PopupMenu spec={menu3d} onClose={() => setMenu3d(null)} />
+      {orbitView && canvasRef.current && (() => {
+        // The orbit readout: what the drag edits, and the pose (preview only).
+        const r = canvasRef.current.getBoundingClientRect();
+        const hull = compositor.layers.find((l) => l.id === 'content')?.hull;
+        const k = r.width / canvasSize.width;
+        const xs = hull?.map((q) => q.x) ?? [canvasSize.width / 2];
+        const top = hull ? Math.min(...hull.map((q) => q.y)) : canvasSize.height * 0.2;
+        return (
+          <div className="p3-overlay p3-readout" style={{ left: r.left + ((Math.min(...xs) + Math.max(...xs)) / 2) * k, top: Math.max(r.top + 10, r.top + top * k - 48) }}>
+            <b>{orbitView.label}</b>
+            <span>
+              Turn {Math.round(orbitView.turn).toString().replace('-', '\u2212')}° · Tilt {Math.round(orbitView.tilt).toString().replace('-', '\u2212')}°
+            </span>
+          </div>
+        );
+      })()}
+      {preview3d && canvasRef.current && (() => {
+        const r = canvasRef.current.getBoundingClientRect();
+        return (
+          <div className="p3-overlay p3-preview-chip" style={{ left: r.left + r.width / 2, top: r.top + 10 }}>
+            {Icon.play(10)}
+            Preview · {preview3d.label}
+          </div>
+        );
+      })()}
 
       <footer
         ref={footerRef}
-        className={`ed-timeline${isPhone ? ' has-taps' : ''}${hasMusic ? ' has-music' : ''}${timelineH ? ' sized' : ''}`}
+        className={`ed-timeline${timelineH ? ' sized' : ''}`}
         style={
           timelineH
-            ? ({ height: timelineH, '--tl-rows': laneRows, '--tl-scale': Math.min(2.2, timelineH / naturalTimelineH()).toFixed(2) } as React.CSSProperties)
+            ? ({ height: timelineH, '--tl-scale': Math.min(2.2, timelineH / naturalTimelineH()).toFixed(2) } as React.CSSProperties)
             : undefined
         }
       >
@@ -3625,12 +4249,12 @@ export function Editor({
           onPointerDown={startTimelineDrag}
           onDoubleClick={() => setTimelineH(null)}
         />
-        <div className="tl-labels">
+        <div className="tl-labels" style={{ gridTemplateRows: laneRows }}>
           <span className="tl-zoom">
             <button type="button" aria-label="Zoom out timeline" title="Zoom out (pinch or ⌘-scroll)" disabled={tlZoom <= 1} onClick={() => zoomTimeline(tlZoom / ZOOM_STEP)}>
               {Icon.minus(12)}
             </button>
-            <button type="button" aria-label="Zoom in timeline" title="Zoom in (pinch or ⌘-scroll)" disabled={tlZoom >= 40} onClick={() => zoomTimeline(tlZoom * ZOOM_STEP)}>
+            <button type="button" aria-label="Zoom in timeline" title="Zoom in (pinch or ⌘-scroll)" disabled={tlZoom >= zoomLimit()} onClick={() => zoomTimeline(tlZoom * ZOOM_STEP)}>
               {Icon.plus(12)}
             </button>
           </span>
@@ -3653,6 +4277,7 @@ export function Editor({
             />
             )}
           </span>
+          {lane3d && <span>3D</span>}
           {isPhone && <span>Taps</span>}
           <span>Audio</span>
           {hasMusic && (
@@ -3663,7 +4288,14 @@ export function Editor({
         </div>
         {/* The seek target spans exactly the lanes, so click % = time %. */}
         <div className="tl-scroll" ref={tlScrollRef}>
-        <div className="tl-lanes" ref={tlLanesRef} style={{ width: `${tlZoom * 100}%` }} onClick={seekTimeline} onContextMenu={timelineMenu}>
+        <div
+          className="tl-lanes"
+          ref={tlLanesRef}
+          style={{ width: `${tlZoom * 100}%`, gridTemplateRows: laneRows }}
+          onClick={seekTimeline}
+          onContextMenu={timelineMenu}
+          onPointerDownCapture={(e) => (laneFocus3d.current = !!(e.target as HTMLElement).closest?.('.lane-3d'))}
+        >
           <div className="tl-ruler">
             <div
               className="tl-minor"
@@ -3705,6 +4337,7 @@ export function Editor({
                     setSelectedClip(b.id);
                     setSelectedTap(null);
                     setSelectedAudio(null);
+                    setSelectedMoves([]);
                   }}
                   style={{
                     left: `${(b.start / (timeline.outputDuration || duration || 1)) * 100}%`,
@@ -3750,6 +4383,29 @@ export function Editor({
               );
             })}
           </div>
+          {lane3d && (
+            <TransitionLane
+              moves={moves3d}
+              outDur={outDur}
+              laneW={lanesW}
+              view={tlView}
+              selected={liveSel}
+              activeKey={liveSel.length === 1 ? activeKey : null}
+              warnIds={warnIds3d}
+              playhead={playhead}
+              tapTimes={outTaps.map((t) => t.t)}
+              fps={fps3d}
+              dimmed={!!proj.phone3d?.enabled && !gate3d.active}
+              onSelect={selectMoves}
+              onBegin={() => historyRef.current.hold()}
+              onRetime={(id, times) => apply3d({ op: 'editTransition', id, start: times.start, end: times.end })}
+              onEnd={() => historyRef.current.seal()}
+              onAdd={addMoveAt}
+              onMenu={laneMenu}
+              onFrame={frameMoves}
+              onSeek={seekOutput}
+            />
+          )}
           {isPhone && (
             <TapsLane
               taps={outTaps}
@@ -3762,6 +4418,7 @@ export function Editor({
               onSelect={(id) => {
                 setSelectedClip(null);
                 setSelectedAudio(null);
+                setSelectedMoves([]);
                 selectTap(id);
               }}
               onMove={(id, outT) => updateTap(id, { t: tapSourceTime(outT, timeline) })}
@@ -3893,6 +4550,28 @@ export function Editor({
       )}
     </div>
   );
+}
+
+/** No 3D moves (a stable empty list for memo dependencies). */
+const NO_MOVES: PoseTransition[] = [];
+
+/** What the dev-mode recorder keeps for the replay test (§6.6b): the project it
+ *  started from, the cursor every call's context had, and each apply3d call
+ *  with the ids it generated (and the scenes Auto 3D used). */
+interface Recorder3d {
+  base: Project;
+  cursor: CursorSample[];
+  entries: { ops: EditOp[]; ctx: Partial<ApplyContext> & { ids: string[] } }[];
+}
+
+/** The recorder runs under the Vite dev server, or with localStorage openscreen.record3d = "1". */
+function record3dEnabled(): boolean {
+  const env = (import.meta as unknown as { env?: { DEV?: boolean } }).env;
+  try {
+    return env?.DEV === true || localStorage.getItem('openscreen.record3d') === '1';
+  } catch {
+    return false;
+  }
 }
 
 /** Height of the frames strip under a clip's name: the clips lane less the

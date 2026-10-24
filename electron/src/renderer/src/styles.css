@@ -1802,7 +1802,7 @@ input[type='color']::-webkit-color-swatch {
 .tl-labels,
 .tl-lanes {
   display: grid;
-  grid-template-rows: 22px 56px 22px 38px;
+  /* grid-template-rows is set inline from the lane list (shared/timelineView timelineRows). */
   row-gap: 6px;
 }
 
@@ -1832,10 +1832,6 @@ input[type='color']::-webkit-color-swatch {
 }
 
 /* A dragged height: lanes share the room in proportion (rows set inline). */
-.editor .ed-timeline.sized .tl-labels,
-.editor .ed-timeline.sized .tl-lanes {
-  grid-template-rows: var(--tl-rows);
-}
 .editor .ed-timeline.sized .tl-lanes {
   height: 100%;
 }
@@ -2139,10 +2135,6 @@ body.resizing-y * {
 
 /* The music track: one block per added sound, its waveform behind its name.
    Its lane exists only while the project has a sound on it. */
-.ed-timeline.has-music .tl-labels,
-.ed-timeline.has-music .tl-lanes {
-  grid-template-rows: 22px 56px 22px 38px 34px;
-}
 .lane-music {
   overflow: hidden;
 }

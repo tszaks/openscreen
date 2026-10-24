@@ -1,0 +1,1362 @@
+/* The 3D phone's editor UI: the 3D tab, the 3D lane, the curve popover and
+   the canvas readouts. Every colour is a tokens.css name, except the preview
+   guide literal #FF8A3D (spec §5.4: guides are preview only, never exported)
+   and the macOS system yellow for warnings (never the accent, so a warning
+   never looks like a selection). */
+
+/* 3D-only tokens. Lane blocks and keys meet 3:1 against the lane in both
+   schemes (WCAG 1.4.11). */
+:root {
+  --p3-yellow: #ffcc00;
+  --p3-yellow-edge: #c79800;
+  --p3-yellow-hatch: rgba(255, 204, 0, 0.5);
+  --p3-key: rgba(0, 0, 0, 0.58);
+  --p3-block: rgba(0, 0, 0, 0.12);
+  --p3-block-edge: rgba(0, 0, 0, 0.42);
+  --p3-trackfill: rgba(0, 0, 0, 0.13);
+  --p3-handle: rgba(0, 0, 0, 0.55);
+  --p3-guide: #ff8a3d;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --p3-yellow: #ffd60a;
+    --p3-yellow-edge: #ffd60a;
+    --p3-yellow-hatch: rgba(255, 214, 10, 0.32);
+    --p3-key: rgba(255, 255, 255, 0.62);
+    --p3-block: rgba(255, 255, 255, 0.11);
+    --p3-block-edge: rgba(255, 255, 255, 0.38);
+    --p3-trackfill: rgba(255, 255, 255, 0.15);
+    --p3-handle: rgba(255, 255, 255, 0.72);
+  }
+}
+
+/* ── 3D tab: the 3D phone section ── */
+
+.p3-actions {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+}
+.p3-actions .split-btn {
+  flex: 1;
+  display: flex;
+  position: relative;
+}
+.p3-actions .split-btn .btn {
+  height: 30px;
+}
+.p3-actions .split-main {
+  flex: 1;
+  justify-content: center;
+  gap: 6px;
+}
+.p3-actions .split-main svg {
+  flex: none;
+}
+.p3-actions .split-btn .split-toggle.btn-secondary {
+  box-shadow: var(--shadow-control), var(--highlight), inset 1px 0 0 var(--separator);
+}
+.p3-more {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--control);
+  box-shadow: var(--shadow-control), var(--highlight);
+  color: var(--label-2);
+  cursor: pointer;
+}
+.p3-more:hover,
+.p3-more[aria-expanded='true'] {
+  color: var(--label);
+  background: var(--control-pressed);
+}
+.btn.is-busy {
+  opacity: 0.9;
+  cursor: progress;
+}
+.p3-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.6px solid currentColor;
+  border-right-color: transparent;
+  animation: p3-spin 0.8s linear infinite;
+}
+@keyframes p3-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.p3-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.p3-empty .hint {
+  margin: 0;
+}
+
+/* Inactive: a quiet strip, not an alarm. */
+.p3-inactive {
+  display: flex;
+  gap: var(--s2);
+  align-items: flex-start;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-sm);
+  background: var(--fill-1);
+  color: var(--label-2);
+  font-size: var(--text-callout);
+  line-height: 1.35;
+}
+.p3-inactive svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--label-3);
+}
+.p3-inactive b {
+  color: var(--label);
+  font-weight: 600;
+}
+.p3-inactive .btn {
+  margin-left: auto;
+  flex: none;
+}
+/* Dimmed = grey: controls that truly do nothing here (3D off, App Store layouts). */
+.p3-dimmed {
+  opacity: 0.45;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+
+/* Warnings: every row seeks; the last column is one width in every row (Fix, or a chevron). */
+.p3-warns {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 calc(var(--s2) * -1);
+}
+.p3-warn {
+  display: grid;
+  grid-template-columns: 15px auto 1fr 52px;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 34px;
+  padding: 4px var(--s2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  font: inherit;
+  font-size: var(--text-callout);
+  line-height: 1.3;
+  text-align: left;
+  color: var(--label);
+  cursor: pointer;
+  transition: background-color var(--t2) var(--ease);
+}
+.p3-warn:hover,
+.p3-warn:focus-visible {
+  background: var(--fill-2);
+  outline: none;
+}
+.p3-caution {
+  display: block;
+  filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.35));
+}
+.p3-warn time {
+  color: var(--label-2);
+  font-variant-numeric: tabular-nums;
+}
+.p3-warn-end {
+  display: flex;
+  justify-content: flex-end;
+}
+.p3-warn .btn {
+  height: 24px;
+  padding: 0 12px;
+}
+.p3-warn-go {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  margin-right: 2px;
+  color: var(--label-3);
+}
+.p3-warn:hover .p3-warn-go {
+  color: var(--label);
+}
+
+/* ── Pose: the target chip and the keyframe buttons ── */
+
+.p3-editing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: var(--s2);
+}
+.p3-target {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  height: 26px;
+  padding: 0 7px 0 9px;
+  border: 0;
+  border-radius: var(--r-full);
+  background: var(--fill-2);
+  color: var(--label);
+  font: inherit;
+  font-size: var(--text-callout);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.p3-target-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.p3-target .muted {
+  color: var(--label-2);
+  font-weight: 400;
+}
+.p3-target > svg:last-child {
+  margin-left: auto;
+  flex: none;
+  color: var(--label-3);
+}
+.p3-target .kfd {
+  width: 7px;
+  height: 7px;
+  color: var(--label-2);
+}
+.p3-target .kfd.on {
+  color: var(--accent);
+}
+.kf-nav {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--r-full);
+  background: var(--fill-1);
+}
+.kf-nav button {
+  width: 24px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--label-2);
+  border-radius: var(--r-full);
+  cursor: pointer;
+}
+.kf-nav button:hover:not(:disabled) {
+  background: var(--fill-2);
+  color: var(--label);
+}
+.kf-nav button.on {
+  color: var(--accent);
+}
+.kf-nav button.go,
+.kf-nav button.add {
+  color: var(--label);
+}
+.kf-nav button:disabled {
+  color: var(--label-4);
+  cursor: default;
+}
+.kf-nav .p3-autokey.on {
+  background: var(--accent-tint-strong);
+  color: var(--accent-text);
+}
+.kf-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--separator-strong);
+}
+.kfd {
+  width: 8px;
+  height: 8px;
+  transform: rotate(45deg);
+  border-radius: 1.5px;
+  background: currentColor;
+  flex: none;
+}
+.kfd.hollow {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+.kfd.on {
+  color: var(--accent);
+}
+.p3-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.p3-iconbtn svg {
+  flex: none;
+  color: var(--label-2);
+}
+.p3-under {
+  margin-top: var(--s2);
+}
+.p3-sep {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--separator);
+}
+
+/* ── one control per value: the ScrubField in a track that fills from the
+   default to the value, with a tick at the default and a 2 px handle line ── */
+
+.p3-tracks {
+  display: grid;
+  gap: 4px;
+  margin: 2px 0 4px;
+}
+.p3-track {
+  position: relative;
+  height: 28px;
+  border-radius: var(--r-xs);
+  background: var(--field);
+  box-shadow: inset 0 0 0 0.5px var(--separator);
+  isolation: isolate;
+  overflow: hidden;
+  transition: box-shadow var(--t2) var(--ease);
+}
+.p3-track:hover {
+  box-shadow: inset 0 0 0 0.5px var(--separator-strong);
+}
+.p3-track .scrub {
+  height: 28px;
+  padding: 0 10px;
+  background: transparent;
+  box-shadow: none;
+}
+.p3-track .scrub:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.p3-track .scrub[data-state='scrubbing'],
+.p3-track .scrub[data-state='editing'] {
+  background: transparent;
+}
+.p3-track .scrub-fill {
+  display: none;
+}
+.p3-track .scrub-label {
+  color: var(--label-2);
+}
+.p3-track .scrub-unit.tight {
+  margin-left: -2px;
+}
+.p3-fill,
+.p3-handle,
+.p3-ref {
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+}
+.p3-fill {
+  top: 0;
+  bottom: 0;
+  background: var(--p3-trackfill);
+}
+.p3-handle {
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--p3-handle);
+}
+.p3-ref {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: 0.5px;
+  background: var(--label-4);
+}
+.p3-track:has(.scrub[data-state='scrubbing']) .p3-fill {
+  background: var(--accent-tint-strong);
+}
+.p3-track:has(.scrub[data-state='scrubbing']) .p3-handle {
+  background: var(--accent);
+}
+.p3-track:has(.scrub[data-state='scrubbing']) .scrub-label {
+  color: var(--accent-text);
+}
+.p3-track:has(.scrub[data-state='editing']) .p3-fill,
+.p3-track:has(.scrub[data-state='editing']) .p3-handle,
+.p3-track:has(.scrub[data-state='editing']) .p3-ref {
+  opacity: 0;
+}
+/* Many moves whose values differ: a dash and no fill; still a draggable field. */
+.p3-track.is-mixed .scrub-value {
+  color: var(--label-2);
+  font-weight: 600;
+}
+.p3-track.is-placeholder .scrub-value {
+  color: var(--label-3);
+}
+/* A fitted spring's length: read-only, no fill, no drag cursor, full-contrast value. */
+.p3-track.is-derived {
+  background: transparent;
+  box-shadow: inset 0 0 0 0.5px var(--separator-strong);
+}
+.p3-derived {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.p3-derived .scrub-label {
+  color: var(--label-2);
+  font-weight: 500;
+}
+.p3-derived .scrub-value {
+  flex: 1;
+  text-align: right;
+}
+.p3-track.is-off {
+  opacity: 0.45;
+}
+.p3-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+
+/* ── Shots: tiles in the Canvas tiles' shape, with a CSS 3D mini phone ── */
+
+.shot-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.shot-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 2px 4px 6px;
+  line-height: 1.25;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+  color: var(--label);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--t2) var(--ease),
+    transform var(--t1) var(--ease);
+}
+.shot-tile:hover,
+.shot-tile:focus-visible {
+  background: var(--fill-3);
+  outline: none;
+}
+.shot-tile:active {
+  transform: scale(0.97);
+}
+.shot-stage {
+  width: 100%;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  perspective: 260px;
+}
+.shot-name {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* Pose math from shared/phone3d drives this; no WebGL (one context per process, D17). */
+.mini-phone {
+  position: relative;
+  width: 18px;
+  height: 38px;
+  transform-style: preserve-3d;
+}
+.mini-phone .face {
+  position: absolute;
+  inset: 0;
+  border-radius: 4.5px;
+  backface-visibility: hidden;
+}
+.mini-phone .front {
+  background: #111 center / cover no-repeat;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.4);
+}
+.mini-phone .back {
+  transform: rotateY(180deg);
+  background: var(--finish, #e8732f);
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+}
+.mini-phone .back::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--finish, #e8732f) 80%, #000);
+}
+
+/* ── Look: segmented controls beside 28 px fields are 28 px too ── */
+
+.p3-seg28-wrap .segment {
+  height: 24px;
+  padding: 0 11px;
+  font-size: var(--text-callout);
+}
+.light-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: var(--s2);
+}
+.light-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0 5px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--fill-1);
+  color: var(--label-2);
+  font: inherit;
+  font-size: var(--text-caption);
+  font-weight: 500;
+  cursor: pointer;
+}
+.light-tile:hover {
+  color: var(--label);
+  background: var(--fill-2);
+}
+.light-tile.on {
+  background: var(--control-thumb);
+  color: var(--label);
+  box-shadow: var(--shadow-thumb);
+}
+.light-tile svg {
+  display: block;
+}
+
+/* ── the move view ── */
+
+.mv-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px var(--s3) 6px var(--s2);
+  box-shadow: inset 0 -1px 0 var(--separator);
+}
+.mv-back,
+.mv-trash {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-full);
+  background: none;
+  color: var(--label-2);
+  cursor: pointer;
+}
+.mv-back {
+  width: 26px;
+  height: 26px;
+}
+.mv-trash {
+  width: 28px;
+  height: 28px;
+}
+.mv-back:hover {
+  background: var(--fill-1);
+  color: var(--label);
+}
+.mv-trash:hover {
+  background: var(--fill-1);
+  color: var(--red);
+}
+.mv-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.25;
+}
+.mv-title b {
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+.mv-title span {
+  font-size: var(--text-caption);
+  color: var(--label-2);
+  font-variant-numeric: tabular-nums;
+}
+/* A text button in label colour (Swap Start / End, Reset End to Start): not accent, it is not a selection. */
+.p3-textbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 6px;
+  margin-right: -6px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--label);
+  font: inherit;
+  font-size: var(--text-callout);
+  font-weight: 500;
+  cursor: pointer;
+}
+.p3-textbtn:hover {
+  background: var(--fill-2);
+}
+.p3-textbtn svg {
+  color: var(--label-2);
+}
+.p3-under .p3-textbtn {
+  margin: 0 0 0 -6px;
+}
+/* The Keyframe block stays pinned while Pose scrolls under it (AwesomePost f13). */
+.inspector-body .section.p3-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding-top: 10px;
+  padding-bottom: 12px;
+  /* The inspector's own tint, frosted, so rows scrolling under it blur away. */
+  background: var(--sidebar-tint);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  backdrop-filter: blur(24px) saturate(1.6);
+  box-shadow: 0 1px 0 var(--separator);
+}
+.p3-sticky .section-body {
+  gap: 6px;
+}
+.p3-sticky + .section {
+  padding-top: 10px;
+}
+.kf-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--r-md);
+  background: var(--fill-2);
+}
+.kf-toggle button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  height: 40px;
+  border: 0;
+  border-radius: calc(var(--r-md) - 3px);
+  background: none;
+  color: var(--label-2);
+  font: inherit;
+  cursor: pointer;
+}
+.kf-toggle button:hover:not(.on) {
+  color: var(--label);
+}
+.kf-toggle button.on {
+  background: var(--control-thumb);
+  color: var(--label);
+  box-shadow: var(--shadow-thumb);
+}
+.kf-top {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.kf-time {
+  font-size: var(--text-callout);
+  font-weight: 500;
+  color: var(--label-2);
+}
+.kf-toggle button.on .kf-time {
+  color: var(--label);
+}
+.kf-toggle button.on .kfd {
+  color: var(--accent);
+}
+.kf-input {
+  width: 74px;
+  height: 18px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--field-focus);
+  box-shadow: 0 0 0 2px var(--accent-ring);
+  color: var(--label);
+  font: inherit;
+  font-size: var(--text-callout);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  outline: none;
+}
+.kf-help {
+  margin: 0;
+}
+/* Move timing: Duration | Easing | small curve, under the toggle. */
+.mt-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) 44px;
+  gap: 6px;
+  margin-top: 2px;
+}
+.mt-curve {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: var(--field);
+  box-shadow: inset 0 0 0 0.5px var(--separator);
+  color: var(--label-2);
+  cursor: pointer;
+}
+.mt-curve:hover:not(:disabled) {
+  color: var(--label);
+  box-shadow: inset 0 0 0 0.5px var(--separator-strong);
+}
+.mt-curve.on {
+  background: var(--control-pressed);
+  color: var(--label);
+}
+.mt-curve:disabled {
+  cursor: default;
+  color: var(--label-3);
+}
+/* Easing: a Mac pop-up button with a picture of the curve (Keynote's Acceleration pop-up). */
+.p3-popup {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: 28px;
+  padding: 0 7px 0 8px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: var(--control);
+  box-shadow: var(--shadow-control), var(--highlight);
+  color: var(--label);
+  font: inherit;
+  font-size: var(--text-body);
+  cursor: pointer;
+}
+.p3-popup .cglyph {
+  color: var(--label-2);
+  flex: none;
+}
+.p3-popup-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.p3-popup > svg:last-child {
+  color: var(--label-2);
+  margin-left: 4px;
+  flex: none;
+}
+.p3-popup.open {
+  background: var(--control-pressed);
+}
+/* The linked tag: one row, right above the linked values. */
+.p3-linkrow .row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.p3-linkrow .row-label svg {
+  color: var(--label-2);
+}
+.p3-anim {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 8px;
+  box-shadow: inset 0 1px 0 var(--separator);
+}
+
+/* ── popovers (Auto 3D options, the easing curve) ── */
+
+.p3-pop {
+  position: fixed;
+  z-index: 70;
+  width: 300px;
+  padding: var(--s4);
+  border-radius: var(--r-lg);
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-sheet);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.p3-pop h4 {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+.p3-pop .hint {
+  margin: 0;
+}
+.p3-pop .segmented {
+  width: 100%;
+}
+.p3-pop .segmented .segment {
+  flex: 1;
+}
+.p3-pop > .btn {
+  width: 100%;
+  justify-content: center;
+}
+.p3-pop::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: var(--arrow-x, 40px);
+  width: 12px;
+  height: 12px;
+  transform: rotate(45deg);
+  background: var(--glass-strong);
+  border-radius: 2px;
+}
+.p3-pop.tpop {
+  width: 340px;
+  padding: var(--s3);
+  gap: var(--s2);
+}
+.p3-pop.tpop::before {
+  top: var(--arrow-y, 40px);
+  left: auto;
+  right: -6px;
+}
+.tbox {
+  padding: 10px 10px 8px;
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+.tcap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px var(--s2);
+  margin-top: 6px;
+}
+.tcap .hint {
+  flex: 1 1 100%;
+  margin: 0;
+}
+.tcap .btn {
+  flex: none;
+  width: auto;
+}
+.bez-css {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--r-xs);
+  background: var(--field);
+  box-shadow: inset 0 0 0 0.5px var(--separator);
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.bez-css input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--label);
+  font: inherit;
+  outline: none;
+}
+.bez-css input.bad {
+  color: var(--red);
+}
+.bez-hint {
+  margin: 0;
+}
+.p3-disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--label-2);
+  font: inherit;
+  font-size: var(--text-callout);
+  cursor: pointer;
+}
+.p3-disclosure:hover {
+  color: var(--label);
+}
+.p3-disclosure svg {
+  transition: transform var(--t2) var(--ease);
+}
+.p3-disclosure[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
+/* ── the curve ── */
+
+.curve {
+  position: relative;
+  border-radius: var(--r-sm);
+}
+.curve svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  touch-action: none;
+}
+.curve .band,
+.curve .room {
+  fill: var(--fill-1);
+}
+.curve .base {
+  stroke: var(--label-4);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+.curve .path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.curve .ghost {
+  fill: none;
+  stroke: var(--label-2);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.curve .hatch {
+  stroke: var(--label-4);
+  stroke-width: 2;
+}
+.curve .cut {
+  stroke: var(--label-2);
+  stroke-width: 1;
+}
+.curve .lbl {
+  font: 500 10px var(--font);
+  fill: var(--label-2);
+  font-variant-numeric: tabular-nums;
+}
+/* Handles: a larger neutral ring. The playhead: a thin accent line and a small dot. They never look alike. */
+.curve .handle {
+  fill: var(--control-thumb);
+  stroke: var(--label);
+  stroke-width: 1.5;
+  cursor: grab;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.25));
+}
+.curve .handle:active {
+  cursor: grabbing;
+}
+.curve .handle-line {
+  stroke: var(--label-3);
+  stroke-width: 1.25;
+}
+.curve .anchor {
+  fill: var(--label-3);
+}
+.curve .ph-line {
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+.curve .ph-dot {
+  fill: var(--accent);
+}
+/* Curve pictures: in the pop-up button, the timing row and the menu. */
+.cthumb {
+  vertical-align: middle;
+  color: var(--label);
+  flex: none;
+}
+.cthumb .fr {
+  fill: var(--fill-1);
+  stroke: var(--separator);
+}
+.cthumb .gl {
+  stroke: var(--label-4);
+  stroke-width: 0.75;
+  stroke-dasharray: 1.5 2;
+}
+
+/* ── menus drawn in the macOS menu style (lane, easing, Editing, …) ── */
+
+.p3-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 200px;
+  padding: 5px;
+  border-radius: 10px;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-float);
+  font-size: 13px;
+  color: var(--label);
+  outline: none;
+}
+.p3-menu .it {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+}
+.p3-menu.big .it {
+  height: 36px;
+}
+.p3-menu .it .lab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+.p3-menu .it .lab .cthumb {
+  margin-right: 10px;
+}
+.p3-menu .it.hl {
+  background: #0a84ff;
+  color: #fff;
+}
+.p3-menu .it:disabled,
+.p3-menu .it.off {
+  color: var(--label-3);
+}
+.p3-menu .it.head {
+  height: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--label-3);
+}
+.p3-menu .it .k {
+  color: var(--label-3);
+}
+.p3-menu .it.hl .k {
+  color: rgba(255, 255, 255, 0.75);
+}
+.p3-menu .it .chk {
+  width: 14px;
+  flex: none;
+  display: inline-block;
+}
+.p3-menu .it.hl .cthumb {
+  color: #fff;
+}
+.p3-menu .it.hl .cthumb .fr {
+  fill: rgba(255, 255, 255, 0.14);
+  stroke: rgba(255, 255, 255, 0.3);
+}
+.p3-menu .it.hl .cthumb .gl {
+  stroke: rgba(255, 255, 255, 0.45);
+}
+.p3-menu .sep {
+  height: 1px;
+  margin: 5px 10px;
+  background: var(--separator-strong);
+}
+
+/* ── the 3D lane ── */
+
+.lane-3d {
+  position: relative;
+  touch-action: none;
+}
+.lane-3d .lane-note {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--text-caption);
+  color: var(--label-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.lane-3d.is-dimmed {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+.moveblock {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  overflow: visible;
+  border-radius: var(--r-xs);
+  background: var(--p3-block);
+  box-shadow: inset 0 0 0 1px var(--p3-block-edge);
+  cursor: grab;
+  transition: background-color var(--t2) var(--ease);
+}
+.moveblock:hover {
+  background: var(--fill-4);
+}
+.moveblock.sel {
+  background: var(--accent-tint-strong);
+  box-shadow: 0 0 0 1.5px var(--accent);
+  z-index: 2;
+}
+.moveblock.warn {
+  background: repeating-linear-gradient(-45deg, var(--p3-yellow-hatch) 0 3px, transparent 3px 7px), var(--p3-block);
+  box-shadow: inset 0 0 0 1px var(--p3-yellow-edge);
+}
+.moveblock.sel.warn {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.moveblock.dragging {
+  box-shadow: 0 0 0 1.5px var(--accent), var(--shadow-float);
+  cursor: grabbing;
+}
+.moveblock .mlabel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--label);
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+}
+.moveblock.sel .mlabel {
+  color: var(--accent-text);
+}
+.bcurve {
+  position: absolute;
+  inset: 3px 2px;
+  width: calc(100% - 4px);
+  height: calc(100% - 6px);
+  overflow: visible;
+  pointer-events: none;
+}
+.bcurve polyline {
+  fill: none;
+  stroke: var(--label-3);
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+}
+.moveblock.sel .bcurve polyline {
+  stroke: var(--accent);
+  opacity: 0.6;
+}
+.squeeze-tail {
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
+  background: repeating-linear-gradient(-45deg, var(--label-4) 0 1.5px, transparent 1.5px 5px);
+  box-shadow: inset 0 0 0 1px var(--label-4);
+  pointer-events: none;
+}
+.shot-link {
+  position: absolute;
+  top: 50%;
+  height: 1px;
+  background: var(--p3-key);
+  pointer-events: none;
+}
+.dense-mark {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--p3-key);
+  pointer-events: none;
+}
+/* Keyframes draw above the playhead (z 4), so the key you picked stays visible under it. */
+.kdia {
+  position: absolute;
+  top: 50%;
+  margin: -12px 0 0 -24px;
+  z-index: 4;
+  overflow: visible;
+  pointer-events: none;
+}
+.kdia rect {
+  pointer-events: all;
+  cursor: ew-resize;
+}
+.p3-marquee {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  z-index: 5;
+  border-radius: 3px;
+  background: rgba(10, 132, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.7);
+  pointer-events: none;
+}
+.p3-snap {
+  position: absolute;
+  top: -400px;
+  bottom: -400px;
+  width: 1px;
+  background: var(--accent);
+  z-index: 5;
+  pointer-events: none;
+}
+.p3-tip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  z-index: 6;
+  transform: translate(-50%, 0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: var(--label);
+  color: var(--window);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.p3-tip .mods {
+  font-weight: 400;
+  opacity: 0.72;
+}
+.p3-tip .mods b {
+  font-weight: 600;
+  opacity: 1;
+}
+
+/* ── canvas overlays (preview only, never exported) ── */
+
+.p3-overlay {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+}
+.p3-readout {
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 11px 5px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  color: #fff;
+  font-size: var(--text-caption);
+  line-height: 1.3;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.p3-readout b {
+  font-weight: 600;
+}
+.p3-readout span {
+  color: rgba(255, 255, 255, 0.75);
+}
+.p3-preview-chip {
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-full);
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  color: #fff;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.p3-preview-chip svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* ── Export menu: Resolution for preset layouts (D18) ── */
+
+.xpanel .res-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.xpanel .res-row .row-label {
+  font-size: var(--text-body);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .p3-spinner {
+    animation: none;
+  }
+  .shot-tile,
+  .moveblock,
+  .p3-warn,
+  .p3-track,
+  .p3-disclosure svg {
+    transition: none;
+  }
+  .shot-tile:active {
+    transform: none;
+  }
+}

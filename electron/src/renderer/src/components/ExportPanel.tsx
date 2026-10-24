@@ -8,8 +8,10 @@
 import React from 'react';
 import type { ExportPreset, ExportWarning, PresetId } from '../../../shared/exportPresets';
 import { shortName } from '../../../shared/exportJobs';
+import { presetCanvasSize } from '../../../shared/exportArgs';
+import type { Project } from '../../../shared/types';
 import { ExportProgress, type ExportProgressProps } from './ExportProgress';
-import { Button } from '../ui';
+import { Button, Segmented } from '../ui';
 import './ExportPanel.css';
 
 // ───────────────────────── the Export menu ─────────────────────────
@@ -31,6 +33,13 @@ function Notes({ notes }: { notes: ExportWarning[] }) {
 export interface ExportPanelProps {
   /** The project's layout preset, when one is set; the single export uses it. */
   layoutPreset: ExportPreset | null;
+  /** The Resolution choice: a preset layout renders at its own size, or at a
+   *  2160 short side with 4K (App Store presets never scale, D18). */
+  exportPreset: Project['exportPreset'];
+  /** Picks the Resolution for a preset layout (through apply3d, the agent's exportSettings op). */
+  onResolution: (v: 'p1080' | 'uhd4k') => void;
+  /** The 3D phone is on: App Store rows say it is flat there. */
+  phone3d?: boolean;
   /** Shown when there is no layout preset: today's resolution and fps pickers. */
   singleSettings: React.ReactNode;
   choices: ExportPreset[];
@@ -44,6 +53,9 @@ export interface ExportPanelProps {
 
 export function ExportPanel({
   layoutPreset,
+  exportPreset,
+  onResolution,
+  phone3d,
   singleSettings,
   choices,
   selected,
@@ -61,8 +73,23 @@ export function ExportPanel({
         {layoutPreset ? (
           <>
             <p className="hint">
-              Uses the {layoutPreset.label} layout: {layoutPreset.width}x{layoutPreset.height}, {layoutPreset.fps} fps.
+              Uses the {layoutPreset.label} layout: {sizeText(layoutPreset, exportPreset)}, {layoutPreset.fps} fps.
             </p>
+            {layoutPreset.group !== 'App Store' && (
+              <div className="res-row">
+                <span className="row-label">Resolution</span>
+                <Segmented
+                  size="sm"
+                  label="Resolution"
+                  value={exportPreset === 'uhd4k' ? 'uhd4k' : 'p1080'}
+                  options={[
+                    { value: 'p1080', label: `${Math.min(layoutPreset.width, layoutPreset.height)}p`, title: `${layoutPreset.width}x${layoutPreset.height}` },
+                    { value: 'uhd4k', label: '4K', title: sizeText(layoutPreset, 'uhd4k') },
+                  ]}
+                  onChange={onResolution}
+                />
+              </div>
+            )}
             <div className="xpanel-flush">
               <Notes notes={warnings[layoutPreset.id] ?? []} />
             </div>
@@ -87,7 +114,8 @@ export function ExportPanel({
         <ul className="xpanel-list">
           {choices.map((p) => {
             const on = selected.includes(p.id);
-            const notes = on ? (warnings[p.id] ?? []) : [];
+            const flat: ExportWarning[] = phone3d && p.group === 'App Store' ? [{ code: 'phone3d-flat', level: 'info', message: 'The 3D phone is flat in App Store previews.' }] : [];
+            const notes = on ? [...(warnings[p.id] ?? []), ...flat] : [];
             return (
               <li key={p.id} className="xpanel-item">
                 <label className="xpanel-row">
@@ -100,7 +128,7 @@ export function ExportPanel({
                   />
                   <span className="xpanel-name">{p.label}</span>
                   <span className="xpanel-size tnum">
-                    {p.width}x{p.height}
+                    {sizeText(p, exportPreset)}
                     {p.containers.length > 1 ? ` · ${p.containers.join(' + ').toUpperCase()}` : ''}
                   </span>
                 </label>
@@ -116,6 +144,12 @@ export function ExportPanel({
       </div>
     </div>
   );
+}
+
+/** "1080x1920", or the 4K size a preset renders at with uhd4k (presetCanvasSize). */
+function sizeText(p: ExportPreset, exportPreset: Project['exportPreset'] | undefined) {
+  const s = presetCanvasSize(p, exportPreset);
+  return `${s.width}x${s.height}`;
 }
 
 // ───────────────────────── task rows ─────────────────────────
