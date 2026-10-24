@@ -12,7 +12,7 @@ import { Timeline } from './timeline';
 import { clipSpans } from './playback';
 import { detectDevice, genericDevice, getDevice, type DeviceModel, type Orientation } from './devices';
 import { appStorePresetFor, getPreset, PRESETS, type ExportPreset, type PresetId } from './exportPresets';
-import { exportCanvasSize } from './exportArgs';
+import { exportCanvasSize, presetCanvasSize, sizedPreset } from './exportArgs';
 
 export const isPhoneProject = (p: Pick<Project, 'recording'>) => p.recording.sourceKind === 'iosDevice';
 
@@ -66,22 +66,28 @@ export const LAYOUT_CHOICES: LayoutChoice[] = [
 /**
  * The export preset a project renders on, or null for the classic padded
  * frame. 'appstore' picks the App Store size for the device family and the
- * recording's orientation.
+ * recording's orientation. The preset comes back at the size it renders at
+ * (sizedPreset, D18): with `exportPreset: 'uhd4k'` a social or web preset is
+ * scaled to a 2160 short side, so the compositor, phoneHome and the canvas
+ * all lay out on the same pixels. Without `exportPreset` (or at p1080 /
+ * original) it is the preset's own size.
  */
-export function layoutPreset(p: Pick<Project, 'recording' | 'layout' | 'device'>): ExportPreset | null {
+export function layoutPreset(
+  p: Pick<Project, 'recording' | 'layout' | 'device'> & { exportPreset?: Project['exportPreset'] },
+): ExportPreset | null {
   const id = p.layout.presetId;
   if (!id || id === 'none') return null;
   if (id === 'appstore' || id.startsWith('appstore-')) {
     const { device, orientation } = resolveDevice(p);
     return appStorePresetFor(device.family, orientation === 'landscape');
   }
-  return PRESETS.some((x) => x.id === id) ? getPreset(id as PresetId) : null;
+  return PRESETS.some((x) => x.id === id) ? sizedPreset(getPreset(id as PresetId), p.exportPreset) : null;
 }
 
-/** Output canvas size: the preset's exact pixels, else the classic export size. */
+/** Output canvas size: the layout preset at the export resolution (D18), else the classic export size. */
 export function projectCanvasSize(p: Project): Size {
   const preset = layoutPreset(p);
-  return preset ? { width: preset.width, height: preset.height } : exportCanvasSize(p.recording.sourceSize, p.exportPreset);
+  return preset ? presetCanvasSize(preset, p.exportPreset) : exportCanvasSize(p.recording.sourceSize, p.exportPreset);
 }
 
 /** App Store previews stay on the native UI: no frame, no zoom, no title. */

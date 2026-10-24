@@ -3,10 +3,14 @@ import type { TapSuggestion } from '../../shared/taps';
 import type { IosDevice, IosFinished, IosPreview, IosWarning } from '../../shared/iosCapture';
 import type { ContextMenuItem, MenuAction, MenuPhase } from '../../shared/menu';
 import type { PresetId } from '../../shared/exportPresets';
+import type { HeadlessJob, HeadlessResult } from '../../shared/headless';
 import type { MusicInput } from '../../shared/audioTracks';
 import type { MonitorPlacement, Rect } from '../../shared/recordingMonitor';
 
 export type { IosDevice, IosPreview };
+
+/** The headless job as the renderer sees it (main keeps the timeout). */
+export type HeadlessRendererJob = Omit<HeadlessJob, 'timeoutSec'>;
 
 /** What bundle:open and bundle:openDir resolve with. */
 export interface OpenedBundle {
@@ -98,6 +102,9 @@ declare global {
       detectSilences(dir: string, videoFile: string, thresholdDb?: number, minDur?: number): Promise<{ start: number; end: number }[]>;
       /** Tap/swipe suggestions and still stretches (source seconds) for a phone recording. */
       analyzeTaps(dir: string, videoFile: string): Promise<{ taps: TapSuggestion[]; deadTime: WaitRange[] }>;
+      /** Scene changes in SOURCE seconds (ffmpeg scene score > 0.25), cached in the bundle's
+       *  analysis/scenes.json and shared with the CLI's `direct` (Auto 3D). */
+      analyzeScenes(dir: string, videoFile: string): Promise<number[]>;
       audioPeaks(dir: string, videoFile: string, buckets?: number): Promise<number[]>;
       /** Pick a music or voiceover file (or use `path`, a dropped one) and copy it into the bundle's audio/ folder; null when cancelled. */
       importAudio(dir: string, path?: string): Promise<{ id: string; file: string; name: string; duration: number } | null>;
@@ -144,21 +151,27 @@ declare global {
       /** Deletes a master made by exportMasterPath. */
       exportDiscardMaster(path: string): Promise<boolean>;
       exportHasAudio(path: string): Promise<boolean>;
-      /** Transcodes a master into one preset's files; resolves with their paths.
-       *  Rejects with ffmpeg's reason, or 'cancelled' after exportAbort. */
-      exportTranscode(presetId: PresetId, input: string, outBase: string, duration: number): Promise<string[]>;
+      /** Transcodes a master into one preset's files at the project's export
+       *  resolution (`exportPreset`: uhd4k scales social/web presets, D18);
+       *  resolves with their paths. Rejects with ffmpeg's reason, or
+       *  'cancelled' after exportAbort. */
+      exportTranscode(presetId: PresetId, input: string, outBase: string, duration: number, exportPreset?: Project['exportPreset']): Promise<string[]>;
       /** Subscribe to transcode progress (0..1); returns the unsubscribe. */
       onTranscodeProgress(cb: (e: { presetId: PresetId; fraction: number }) => void): () => void;
       /** project.json changed on disk (not by our own save); returns the unsubscribe. */
       watchProject(dir: string, cb: (text: string) => void): () => void;
       /** The bundle given as `--open <bundle>` on the command line, or null. */
       openOnLaunch(): Promise<string | null>;
-      /** The headless export job (`OpenScreen --export`), or null for a normal launch. */
-      headlessJob(): Promise<{ bundleDir: string; out: string; gif: boolean; presets?: string[] } | null>;
+      /** The headless job (`OpenScreen --export`), or null for a normal launch. With
+       *  `frames`, `out` is a folder for PNGs at those output seconds (the CLI's `frames`). */
+      headlessJob(): Promise<HeadlessRendererJob | null>;
       /** Open the headless job's bundle (it may be outside the recordings folder). */
       headlessOpen(): Promise<OpenedBundle>;
       headlessProgress(done: number, total: number, detail: string): void;
-      headlessDone(result: { ok: boolean; out?: string; files?: string[]; frames?: number; seconds?: number; error?: string }): void;
+      headlessDone(result: HeadlessResult): void;
+      /** Frames mode: write a PNG named `name` (a plain file name) into the job's
+       *  --out folder; resolves its path. main refuses any other name. */
+      headlessWritePng(name: string, bytes: ArrayBuffer): Promise<string>;
       /** Pop a native right-click menu; resolves with the picked item's id, or null. */
       showContextMenu(items: ContextMenuItem[]): Promise<string | null>;
       /** Tell main what is on screen, so the menu enables what applies. */

@@ -4,6 +4,7 @@
 // exporting. No Electron or DOM here, so all of it is unit-tested.
 
 import { detectDevice } from './devices';
+import { presetCanvasSize } from './exportArgs';
 import { PRESETS, appStorePresetFor, getPreset, validateExport, type ExportPreset, type ExportWarning, type PresetId } from './exportPresets';
 import type { Project, Size } from './types';
 
@@ -124,18 +125,25 @@ export function renderKey(p: ExportPreset): string {
   return [aspect, p.layout, p.phoneHeight, p.titleCard ? 'title' : 'notitle', presetUsesZoom(p) ? 'zoom' : 'nozoom', p.fps].join('|');
 }
 
-export function planRenders(presets: ExportPreset[]): RenderPass[] {
+/**
+ * Group the presets into passes. Each pass is sized for the project's export
+ * resolution (presetCanvasSize, D18): with `exportPreset: 'uhd4k'` a social
+ * or web preset draws (and later encodes) at a 2160 short side; App Store
+ * presets always keep Apple's exact size.
+ */
+export function planRenders(presets: ExportPreset[], exportPreset?: Project['exportPreset']): RenderPass[] {
   const passes = new Map<string, RenderPass>();
   for (const p of presets) {
     const key = renderKey(p);
     const pass = passes.get(key);
+    const size = presetCanvasSize(p, exportPreset);
     if (!pass) {
       passes.set(key, {
-        key, width: p.width, height: p.height, fps: p.fps, layoutPreset: p.id, zoom: presetUsesZoom(p), presetIds: [p.id],
+        key, ...size, fps: p.fps, layoutPreset: p.id, zoom: presetUsesZoom(p), presetIds: [p.id],
       });
     } else if (!pass.presetIds.includes(p.id)) {
       pass.presetIds.push(p.id);
-      if (p.width > pass.width) Object.assign(pass, { width: p.width, height: p.height, layoutPreset: p.id });
+      if (size.width > pass.width) Object.assign(pass, { ...size, layoutPreset: p.id });
     }
   }
   return [...passes.values()];

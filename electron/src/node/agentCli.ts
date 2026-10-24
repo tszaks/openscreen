@@ -13,7 +13,10 @@ import { applyOps, audioImports, captionsFromSegments, needsSilences, needsTapAn
 import { planPolish, type PolishStyle } from '../shared/polish';
 import { defaultProject, fileSafeName, normalizeProject, projectName, unsafeAudioFiles, type Project } from '../shared/types';
 import { Timeline } from '../shared/timeline';
-import { resolveDevice, projectCanvasSize, layoutPreset } from '../shared/mobileProject';
+import { isPhoneProject, resolveDevice, projectCanvasSize, layoutPreset } from '../shared/mobileProject';
+import { getFinish } from '../shared/devices';
+import { phone3dActive } from '../shared/phone3d/placement';
+import { resolveStarts } from '../shared/phone3d/pose';
 import { parseFreezes, parseSilences, silenceDetectArgs } from '../shared/silence';
 import { IosHelperClient, createLineSplitter, parseDeviceList } from '../shared/iosCapture';
 import { withProbedDuration } from '../shared/recording';
@@ -22,46 +25,12 @@ import { itemSpan } from '../shared/audioTracks';
 import { phoneDevice, phoneLayerOn } from '../shared/phoneLayer';
 import { layerOrder } from '../shared/canvasLayers';
 import { importVideoFile } from './importVideo';
+import { readCursorSamples } from './bundleFiles';
+import { appCommand, bool, CliError, flag, out, progress, r2, runHeadless, seconds } from './cliKit';
+import { framesCmd } from './framesCmd';
+import { DIRECT_STYLES, needsScenes, planDirect, projectWarnings, shotRecipes, type ApplyContext3d, type DirectStyle, type Phone3DWarning } from './phone3dPlan';
+import { sceneTimes } from './scenes';
 import { analyzeTapsInFile, bundleAudioPath, detectSilences, ffmpegPath, probeAudioDuration, ffmpegRun, ffmpegStderr, parseWhisperJson, probeMedia, transcribeBundle, whisperCli } from './media';
-
-// ---------------------------------------------------------------------------
-// Output + errors
-
-class CliError extends Error {
-  constructor(message: string, readonly code = 1) {
-    super(message);
-  }
-}
-const out = (o: unknown) => process.stdout.write(JSON.stringify(o, null, 2) + '\n');
-const progress = (o: Record<string, unknown>) => process.stderr.write(JSON.stringify(o) + '\n');
-
-function flag(args: string[], name: string): string | undefined {
-  const i = args.indexOf(name);
-  if (i >= 0) {
-    const v = args[i + 1];
-    if (v === undefined || v.startsWith('--')) throw new CliError(`${name} needs a value`, 2);
-    args.splice(i, 2);
-    return v;
-  }
-  const eq = args.findIndex((a) => a.startsWith(`${name}=`));
-  if (eq >= 0) {
-    const v = args[eq].slice(name.length + 1);
-    args.splice(eq, 1);
-    return v;
-  }
-  return undefined;
-}
-function bool(args: string[], name: string): boolean {
-  const i = args.indexOf(name);
-  if (i < 0) return false;
-  args.splice(i, 1);
-  return true;
-}
-const seconds = (v: string) => {
-  const n = parseFloat(v.replace(/s$/, ''));
-  if (!(n > 0)) throw new CliError(`not a duration: ${v}`, 2);
-  return n;
-};
 
 // ---------------------------------------------------------------------------
 // Bundles
@@ -118,8 +87,6 @@ function readTranscript(dir: string): TranscriptSegment[] | null {
   }
 }
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
-
 /** The phone layer of a Mac + iPhone take, or null for every other recording. */
 function phoneSummary(dir: string, p: Project) {
   const r = p.recording;
@@ -140,7 +107,53 @@ function phoneSummary(dir: string, p: Project) {
   };
 }
 
+/** The 3D phone settings and whether they draw (the one gate, phone3dActive), or null when the project has no 3D. */
+function phone3dSummary(p: Project) {
+  const p3 = p.phone3d;
+  if (!p3) return null;
+  const gate = phone3dActive(p);
+  const phone = isPhoneProject(p) ? resolveDevice(p).device : null;
+  const finish = phone ? getFinish(phone, p.device.finishId) : null;
+  return {
+    active: gate.active,
+    ...(gate.reason ? { reason: gate.reason } : {}),
+    enabled: p3.enabled,
+    model: phone?.id ?? null,
+    finish: finish ? { id: finish.id, name: finish.name, hex: finish.hex } : null,
+    pose: p3.pose,
+    camera: p3.camera,
+    light: p3.light,
+    glass: p3.glass,
+    back: p3.back,
+    shadow: p3.shadow,
+    dof: p3.dof,
+    float: p3.float,
+    motionBlur: p3.motionBlur,
+    supersample: p3.supersample,
+  };
+}
+
+/** The 3D moves in OUTPUT seconds, each with its resolved Start (a linked Start continues from the pose before it). */
+function transitionsSummary(p: Project) {
+  const p3 = p.phone3d;
+  if (!p3) return [];
+  const starts = resolveStarts(p3);
+  return p3.transitions.map((m, i) => ({
+    index: i,
+    id: m.id,
+    start: r2(m.start),
+    end: r2(m.end),
+    duration: r2(m.end - m.start),
+    linked: !m.from,
+    from: starts[i],
+    to: m.to,
+    easing: m.easing,
+    ...(m.recipe ? { recipe: m.recipe } : {}),
+  }));
+}
+
 function summarize(dir: string, p: Project) {
+  const cursor = readCursorSamples(dir);
   const tl = new Timeline(p.recording.duration, p.clips);
   const transcript = readTranscript(dir);
   const isPhone = p.recording.sourceKind === 'iosDevice';
@@ -210,8 +223,13 @@ function summarize(dir: string, p: Project) {
         };
       }),
     })),
-    export: { preset: p.exportPreset, fps: p.outputFPS },
+    // The canvas the export renders at: a layout preset at the export resolution (D18), else the classic size.
+    export: { preset: p.exportPreset, fps: p.outputFPS, canvas: { w: canvas.width, h: canvas.height } },
+    phone3d: phone3dSummary(p),
+    transitions: transitionsSummary(p),
+    shotRecipes: shotRecipes(),
     problems: [...validateProject(p), ...droppedNote(droppedAudio(dir))],
+    warnings: projectWarnings(p, { cursor }),
   };
 }
 
@@ -295,9 +313,10 @@ async function review(args: string[]) {
 
   // Scene keyframes: frames where the picture changes a lot.
   progress({ step: 'scene keyframes' });
-  const sceneRaw = await ffmpegStderr(['-hide_banner', '-i', video, '-an', '-vf', `select='gt(scene,0.25)',scale=-2:${portrait ? 640 : 360},showinfo`, '-vsync', 'vfr', '-q:v', '4', join(outDir, 'scene-%03d.jpg')], bin);
-  const sceneTimes = [...sceneRaw.matchAll(/pts_time:\s*([\d.]+)/g)].map((m) => parseFloat(m[1]));
-  let scenes = readdirSync(outDir).filter((f) => /^scene-\d+\.jpg$/.test(f)).sort().map((f, i) => ({ path: join(outDir, f), time: r2(sceneTimes[i] ?? NaN) }));
+  // The same detection `direct` and the editor's Auto 3D use (scenes.ts); a
+  // bundle's times are cached in analysis/scenes.json for them.
+  const changes = await sceneTimes(video, { bundle: dir, bin, keyframes: { dir: outDir, height: portrait ? 640 : 360 } });
+  let scenes = readdirSync(outDir).filter((f) => /^scene-\d+\.jpg$/.test(f)).sort().map((f, i) => ({ path: join(outDir, f), time: r2(changes[i] ?? NaN) }));
   // Keep ~12 spread evenly; delete the rest.
   if (scenes.length > 12) {
     const keep = new Set(Array.from({ length: 12 }, (_, i) => Math.round((i * (scenes.length - 1)) / 11)));
@@ -374,9 +393,17 @@ async function review(args: string[]) {
 /** Sound files addAudio will copy into the bundle: bundle-relative target → source path. */
 const audioCopies = new Map<string, string>();
 
-async function buildContext(dir: string, p: Project, ops: EditOp[], editsDir: string): Promise<ApplyContext> {
-  const ctx: ApplyContext = { files: {}, audioFiles: {} };
+/** Warnings as stderr progress lines (`export` keeps stdout for its one result). */
+const warnProgress = (warnings: Phone3DWarning[]) => warnings.forEach((w) => progress({ warning: w.code, message: w.message, ...(w.at !== undefined ? { at: r2(w.at) } : {}) }));
+
+async function buildContext(dir: string, p: Project, ops: EditOp[], editsDir: string, cursor = readCursorSamples(dir), dryRun = false): Promise<ApplyContext3d> {
+  // The bundle's cursor samples (D5): `direct` plans with the same zooms the editor shows.
+  const ctx: ApplyContext3d = { files: {}, audioFiles: {}, cursor };
   const bin = ffmpegPath();
+  if (needsScenes(ops)) {
+    progress({ step: 'scene changes' });
+    ctx.scenes = await sceneTimes(join(dir, p.recording.screenVideoFile), { bundle: dir, bin, writeCache: !dryRun });
+  }
   if (needsSilences(ops)) {
     const o = ops.find((x) => x.op === 'cutSilences' || x.op === 'smartCut')!;
     progress({ step: 'silencedetect' });
@@ -442,7 +469,8 @@ async function apply(args: string[]) {
   const dir = bundlePath(args.shift());
   const { ops, baseDir } = readEdits(args.shift());
   const p = readProject(dir);
-  const ctx = await buildContext(dir, p, ops, baseDir);
+  const cursor = readCursorSamples(dir);
+  const ctx = await buildContext(dir, p, ops, baseDir, cursor, dry);
   let result;
   try {
     result = applyOps(p, ops, ctx);
@@ -461,7 +489,7 @@ async function apply(args: string[]) {
     writeProject(dir, result.project);
   }
   const tl = new Timeline(result.project.recording.duration, result.project.clips);
-  return { ok: true, bundle: dir, dryRun: dry, applied: result.notes.length, changes: result.notes, outputDuration: r2(tl.outputDuration), backup: dry ? null : join(dir, 'project.json.bak') };
+  return { ok: true, bundle: dir, dryRun: dry, applied: result.notes.length, changes: result.notes, warnings: projectWarnings(result.project, { cursor }), outputDuration: r2(tl.outputDuration), backup: dry ? null : join(dir, 'project.json.bak') };
 }
 
 async function polish(args: string[]) {
@@ -491,7 +519,77 @@ async function polish(args: string[]) {
   if (!dry) writeProject(dir, result.project);
   const before = new Timeline(p.recording.duration, p.clips).outputDuration;
   const after = new Timeline(result.project.recording.duration, result.project.clips).outputDuration;
-  return { ok: true, bundle: dir, style, dryRun: dry, ops, changes: result.notes, outputDuration: { before: r2(before), after: r2(after) }, backup: dry ? null : join(dir, 'project.json.bak') };
+  return { ok: true, bundle: dir, style, dryRun: dry, ops, changes: result.notes, warnings: projectWarnings(result.project, { cursor: readCursorSamples(dir) }), outputDuration: { before: r2(before), after: r2(after) }, backup: dry ? null : join(dir, 'project.json.bak') };
+}
+
+/** `direct`'s flags, 1:1 with the `direct` op and the editor's Auto 3D options. */
+export function parseDirectArgs(argv: string[]): { bundle: string | undefined; style: DirectStyle; replace: boolean; scenes: boolean; dryRun: boolean } {
+  const args = [...argv];
+  const style = (flag(args, '--style') ?? 'hero') as DirectStyle;
+  if (!DIRECT_STYLES.includes(style)) throw new CliError(`--style must be ${DIRECT_STYLES.join(', ')}`, 2);
+  const keep = bool(args, '--keep');
+  const noScenes = bool(args, '--no-scenes');
+  const dryRun = bool(args, '--dry-run');
+  const bundle = args.shift();
+  const extra = args.find((a) => a.startsWith('--')) ?? args[0];
+  if (extra !== undefined) throw new CliError(`direct: unexpected "${extra}". usage: direct <bundle> [--style subtle|hero|bold] [--keep] [--no-scenes] [--dry-run]`, 2);
+  return { bundle, style, replace: !keep, scenes: !noScenes, dryRun };
+}
+
+/**
+ * `direct`: plan 3D shots around the taps, waits, zooms and scene changes
+ * (planDirect, the same plan the editor's Auto 3D makes) and apply them.
+ * Like polish: reads the project, runs tap analysis the first time, then
+ * scene changes (unless --no-scenes) and cursor.json, plans, applies, writes.
+ */
+async function direct(argv: string[]) {
+  const a = parseDirectArgs(argv);
+  const dir = bundlePath(a.bundle);
+  let p = readProject(dir);
+  if (!isPhoneProject(p)) throw new CliError('3D phone needs an iPhone recording');
+  const ctx: ApplyContext3d = { cursor: readCursorSamples(dir) };
+  const run = (proj: Project, list: EditOp[]) => {
+    try {
+      return applyOps(proj, list, ctx);
+    } catch (e) {
+      if (e instanceof OpError) throw new CliError(e.message);
+      throw e;
+    }
+  };
+  const ops: EditOp[] = [];
+  const notes: string[] = [];
+  if (!p.tapsAnalyzed) {
+    // The planner keeps the phone facing front at every tap, so it needs them.
+    progress({ step: 'tap analysis' });
+    ctx.tapAnalysis = await analyzeTapsInFile(join(dir, p.recording.screenVideoFile));
+    ops.push({ op: 'analyzeTaps' });
+    const analyzed = run(p, ops);
+    p = analyzed.project;
+    notes.push(...analyzed.notes);
+  }
+  if (a.scenes) {
+    progress({ step: 'scene changes' });
+    ctx.scenes = await sceneTimes(join(dir, p.recording.screenVideoFile), { bundle: dir, writeCache: !a.dryRun });
+  }
+  const plan = planDirect(p, { style: a.style, replace: a.replace, cursor: ctx.cursor, ...(a.scenes ? { scenes: ctx.scenes } : {}) });
+  ops.push(...plan.ops);
+  const planned = run(p, plan.ops);
+  notes.push(...planned.notes);
+  const result = { project: planned.project, notes };
+  if (!a.dryRun) writeProject(dir, result.project);
+  const tl = new Timeline(result.project.recording.duration, result.project.clips);
+  return {
+    ok: true,
+    bundle: dir,
+    dryRun: a.dryRun,
+    style: a.style,
+    shots: plan.shots.map((x) => ({ recipe: x.recipe, start: r2(x.start), end: r2(x.end), reason: x.reason })),
+    ops,
+    changes: result.notes,
+    warnings: projectWarnings(result.project, { cursor: ctx.cursor }),
+    outputDuration: r2(tl.outputDuration),
+    backup: a.dryRun ? null : join(dir, 'project.json.bak'),
+  };
 }
 
 function undo(args: string[]) {
@@ -510,22 +608,6 @@ function undo(args: string[]) {
 // ---------------------------------------------------------------------------
 // export (spawns the app headless)
 
-function appCommand(appFlag?: string): { cmd: string; pre: string[]; kind: string } {
-  const appArg = appFlag ?? process.env.OPENSCREEN_APP;
-  if (appArg) {
-    const p = resolve(appArg);
-    const bin = p.endsWith('.app') ? join(p, 'Contents', 'MacOS', 'OpenScreen') : p;
-    if (!existsSync(bin)) throw new CliError(`app binary not found: ${bin}`);
-    return { cmd: bin, pre: [], kind: 'app' };
-  }
-  // Dev: this repo's Electron with the electron/ folder as the app.
-  const electronDir = resolve(__dirname, '..', '..');
-  const electronBin = join(electronDir, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron');
-  if (!existsSync(electronBin)) throw new CliError('no app to export with: pass --app /path/OpenScreen.app or set OPENSCREEN_APP');
-  if (!existsSync(join(electronDir, 'dist', 'main', 'index.js'))) throw new CliError('the app is not built: run `npm run build` in electron/');
-  return { cmd: electronBin, pre: [electronDir], kind: 'dev' };
-}
-
 async function exportCmd(args: string[]) {
   const outArg = flag(args, '--out');
   const presets = flag(args, '--preset');
@@ -540,30 +622,15 @@ async function exportCmd(args: string[]) {
   }
   if (gif && extname(outPath).toLowerCase() !== '.gif') outPath = outPath.replace(/\.[^./]*$/, '') + '.gif';
   if (presets) mkdirSync(outPath, { recursive: true });
-  const errs = validateProject(readProject(dir));
+  const project = readProject(dir);
+  const errs = validateProject(project);
   if (errs.length) throw new CliError(`project is invalid, fix it before exporting: ${errs.join('; ')}`);
+  // Warnings never block an export; they go to stderr with the progress lines.
+  warnProgress(projectWarnings(project, { cursor: readCursorSamples(dir) }));
   const app = appCommand(appFlag);
-  const argv = [...app.pre, '--export', dir, '--out', outPath, ...(gif ? ['--gif'] : []), ...(presets ? ['--preset', presets] : []), ...(timeout ? ['--timeout', timeout] : [])];
+  const argv = ['--export', dir, '--out', outPath, ...(gif ? ['--gif'] : []), ...(presets ? ['--preset', presets] : []), ...(timeout ? ['--timeout', timeout] : [])];
   const started = Date.now();
-  const result = await new Promise<Record<string, unknown>>((resolveP) => {
-    const child = spawn(app.cmd, argv, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ELECTRON_ENABLE_LOGGING: undefined } as NodeJS.ProcessEnv });
-    let final: Record<string, unknown> | null = null;
-    let errTail = '';
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', createLineSplitter((line) => {
-      const t = line.trim();
-      if (!t.startsWith('{')) return;
-      try {
-        const o = JSON.parse(t);
-        if ('progress' in o) progress(o);
-        else if ('ok' in o) final = o;
-      } catch {}
-    }));
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (d: string) => (errTail = (errTail + d).slice(-4000)));
-    child.on('error', (e) => resolveP({ ok: false, error: `could not start the app: ${e.message}` }));
-    child.on('close', (code) => resolveP(final ?? { ok: false, error: `the app exited (${code}) without a result`, stderr: errTail.trim().split('\n').slice(-5) }));
-  });
+  const result = await runHeadless(app, argv);
   if (!result.ok) throw Object.assign(new CliError(String(result.error ?? 'export failed')), { extra: result });
   const primary = String(result.out ?? outPath);
   let probe: unknown = null;
@@ -804,10 +871,12 @@ const HELP = {
     latest: 'latest  newest bundle in the recordings folder',
     list: 'list  all bundles, newest first',
     info: 'info <bundle>  project summary: clips, captions, transcript, style, taps…',
-    validate: 'validate <bundle>',
+    validate: 'validate <bundle>  problems (exit 1) and warnings (never fail)',
     review: 'review <bundle|video.mp4> [--every 2s] [--out dir] [--transcribe] [--max-sheets 10]  contact sheets + review.json',
     apply: 'apply <bundle> <edits.json|-|inline-json> [--dry-run]',
     polish: 'polish <bundle> [--style clean|bold] [--title T] [--subtitle S] [--reanalyze] [--dry-run]',
+    direct: 'direct <bundle> [--style subtle|hero|bold] [--keep] [--no-scenes] [--dry-run]  plan and apply 3D phone shots around taps, waits and scene changes (the editor\'s Auto 3D)',
+    frames: 'frames <bundle> (--at 0.5,2 | --every 0.5 | --moves) [--out dir] [--scale 0.5] [--sheet] [--draft] [--timeout s]  render still PNGs at output seconds with the real app (default: <tmp>/openscreen-frames/…)',
     undo: 'undo <bundle>  swap project.json with project.json.bak',
     export: 'export <bundle> [--out file.mp4|.gif|folder] [--gif] [--preset id,id] [--app OpenScreen.app] [--timeout s]',
     open: 'open <bundle> [--app OpenScreen.app]  open it in the editor for a human (a new app process)',
@@ -851,7 +920,8 @@ export async function main(argv: string[]): Promise<number> {
         const problems = [...validateProject(p), ...droppedNote(droppedAudio(dir))];
         const video = join(dir, p.recording.screenVideoFile);
         if (!existsSync(video)) problems.push(`missing video file ${video}`);
-        result = { ok: problems.length === 0, bundle: dir, problems };
+        // Warnings (3D) never fail validation: exit 1 is for problems only.
+        result = { ok: problems.length === 0, bundle: dir, problems, warnings: projectWarnings(p, { cursor: readCursorSamples(dir) }) };
         out(result);
         return problems.length ? 1 : 0;
       }
@@ -863,6 +933,12 @@ export async function main(argv: string[]): Promise<number> {
         break;
       case 'polish':
         result = await polish(args);
+        break;
+      case 'direct':
+        result = await direct(args);
+        break;
+      case 'frames':
+        result = await framesCmd(args, { resolveBundle: (arg) => { const dir = bundlePath(arg); return { dir, project: readProject(dir) }; } });
         break;
       case 'undo':
         result = undo(args);

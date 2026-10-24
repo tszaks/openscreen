@@ -57,6 +57,7 @@ const api = {
   detectSilences: (dir: string, videoFile: string, thresholdDb?: number, minDur?: number) =>
     ipcRenderer.invoke('audio:detectSilences', { dir, videoFile, thresholdDb, minDur }),
   analyzeTaps: (dir: string, videoFile: string) => ipcRenderer.invoke('taps:analyze', { dir, videoFile }),
+  analyzeScenes: (dir: string, videoFile: string) => ipcRenderer.invoke('analyze:scenes', { dir, videoFile }),
   audioPeaks: (dir: string, videoFile: string, buckets?: number) =>
     ipcRenderer.invoke('audio:peaks', { dir, videoFile, buckets }),
   importAudio: (dir: string, path?: string) => ipcRenderer.invoke('audio:import', dir, path),
@@ -90,8 +91,8 @@ const api = {
   exportMasterPath: (key: string) => ipcRenderer.invoke('export:masterPath', key),
   exportDiscardMaster: (path: string) => ipcRenderer.invoke('export:discardMaster', path),
   exportHasAudio: (path: string) => ipcRenderer.invoke('export:hasAudio', path),
-  exportTranscode: (presetId: string, input: string, outBase: string, duration: number) =>
-    ipcRenderer.invoke('export:transcode', { presetId, input, outBase, duration }),
+  exportTranscode: (presetId: string, input: string, outBase: string, duration: number, exportPreset?: string) =>
+    ipcRenderer.invoke('export:transcode', { presetId, input, outBase, duration, exportPreset }),
   onTranscodeProgress: (cb: (e: { presetId: string; fraction: number }) => void) => {
     const listener = (_e: IpcRendererEvent, p: { presetId: string; fraction: number }) => cb(p);
     ipcRenderer.on('export:transcodeProgress', listener);
@@ -118,6 +119,7 @@ const api = {
   headlessOpen: () => ipcRenderer.invoke('headless:open'),
   headlessProgress: (done: number, total: number, detail: string) => ipcRenderer.send('headless:progress', { done, total, detail }),
   headlessDone: (result: unknown) => ipcRenderer.send('headless:done', result),
+  headlessWritePng: (name: string, bytes: ArrayBuffer) => ipcRenderer.invoke('headless:writePng', name, bytes),
   showContextMenu: (items: unknown[]) => ipcRenderer.invoke('contextMenu:show', items),
   setMenuPhase: (phase: string, bundleDir?: string) => ipcRenderer.send('menu:phase', { phase, bundleDir }),
   onMenu: (cb: (action: string) => void) => {

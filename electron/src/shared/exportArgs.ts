@@ -2,6 +2,7 @@
 // argv for the frame pipe, and turning an ffmpeg exit into a readable error.
 
 import { DUCK_GAIN, insideDir, type MusicInput } from './audioTracks';
+import type { ExportPreset } from './exportPresets';
 import type { Project } from './types';
 
 /** libx264 + yuv420p needs even width and height. */
@@ -16,6 +17,46 @@ export function exportCanvasSize(
   return {
     width: evenDimension((h * sourceSize.width) / sourceSize.height),
     height: evenDimension(h),
+  };
+}
+
+/** The short side of a 4K export (D18). */
+export const UHD_SHORT_SIDE = 2160;
+
+/**
+ * The canvas a layout preset renders at for an export resolution (D18).
+ * `uhd4k` scales the preset so its short side is 2160 (9:16 → 2160×3840,
+ * 16:9 → 3840×2160), both sides even; `p1080` and `original` keep the
+ * preset's own size. App Store presets never scale: Apple needs exact sizes.
+ */
+export function presetCanvasSize(
+  preset: ExportPreset,
+  exportPreset: Project['exportPreset'] | undefined,
+): { width: number; height: number } {
+  if (exportPreset !== 'uhd4k' || preset.group === 'App Store') return { width: preset.width, height: preset.height };
+  const k = UHD_SHORT_SIDE / Math.min(preset.width, preset.height);
+  return { width: evenDimension(preset.width * k), height: evenDimension(preset.height * k) };
+}
+
+/**
+ * The preset as it renders and encodes at `exportPreset`: the same object
+ * when the size does not change, else a copy at presetCanvasSize with its
+ * safe zone scaled with it (the layout is resolution-independent) and its
+ * bitrate scaled by the pixel count, so a 4K file gets a 4K bitrate rather
+ * than a 1080p one stretched over four times the pixels.
+ */
+export function sizedPreset(preset: ExportPreset, exportPreset: Project['exportPreset'] | undefined): ExportPreset {
+  const size = presetCanvasSize(preset, exportPreset);
+  if (size.width === preset.width && size.height === preset.height) return preset;
+  const k = size.height / preset.height;
+  const area = (size.width * size.height) / (preset.width * preset.height);
+  const s = preset.safeZone;
+  const b = preset.video.bitrateKbps;
+  return {
+    ...preset,
+    ...size,
+    ...(s ? { safeZone: { top: Math.round(s.top * k), right: Math.round(s.right * k), bottom: Math.round(s.bottom * k), left: Math.round(s.left * k) } } : {}),
+    video: b ? { ...preset.video, bitrateKbps: { target: Math.round(b.target * area), max: Math.round(b.max * area) } } : preset.video,
   };
 }
 
