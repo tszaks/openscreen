@@ -62,7 +62,7 @@ describe('textMask', () => {
     // A box past the edge is clipped, not wrapped onto the next row.
     const edge = textMask([box('keycap', 35, 0, 20, 4)], w, h, { padPx: 0, padFrac: 0 });
     expect(Array.from({ length: h }, (_, y) => edge[y * w]).every((v) => v === 0)).toBe(true);
-    expect(edge.reduce((s, v) => s + v, 0)).toBe(5 * 4);
+    expect((edge as Uint8Array).reduce((s: number, v: number) => s + v, 0)).toBe(5 * 4);
     expect(textMask([], w, h).every((v: number) => v === 0)).toBe(true);
   });
 });

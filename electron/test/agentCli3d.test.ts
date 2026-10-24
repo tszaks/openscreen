@@ -152,7 +152,7 @@ const argv = process.argv.slice(2);
 fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify(argv));
 const out = argv[argv.indexOf('--out') + 1];
 const times = argv[argv.indexOf('--frames') + 1].split(',').map(Number);
-const stills = times.map((t) => { const frame = Math.round(t * 30); return { t, frame, at: frame / 30, path: out + '/f-' + frame + '.png' }; });
+const stills = times.map((t) => { const frame = Math.round(t * 30); return { t, frame, at: frame / 30, path: out + '/f-' + frame + '.png', ...(frame === 128 ? { textBoxes: [{ kind: 'caption', rect: { x: 10.12345, y: 20, w: 300.5, h: 64.00049 } }] } : {}) }; });
 console.log(JSON.stringify({ ok: true, out, stills, size: { w: 1080, h: 1920 }, gpu: null }));
 `,
   );
@@ -169,7 +169,8 @@ console.log(JSON.stringify({ ok: true, out, stills, size: { w: 1080, h: 1920 }, 
     expect(r.fps).toBe(30);
     expect(r.files).toEqual([
       { t: 1, frame: 30, at: 1, path: join(scratch, 'fc-out', 'f-30.png'), pose: null, facing: null },
-      { t: 4.25, frame: 128, at: 4.266667, path: join(scratch, 'fc-out', 'f-128.png'), pose: null, facing: null },
+      // The still's text boxes, as the app reported them (rounded to 0.001 px); none reported, none printed.
+      { t: 4.25, frame: 128, at: 4.266667, path: join(scratch, 'fc-out', 'f-128.png'), pose: null, facing: null, textBoxes: [{ kind: 'caption', rect: { x: 10.123, y: 20, w: 300.5, h: 64 } }] },
       { t: 4.75, frame: 143, at: 4.766667, path: join(scratch, 'fc-out', 'f-143.png'), pose: null, facing: null },
       { t: 99, error: 'past the end' },
     ]);
