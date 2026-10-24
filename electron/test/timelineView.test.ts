@@ -7,9 +7,13 @@ import {
   clampZoom,
   fmtTick,
   laneHeights,
+  LANE_3D,
+  maxZoom,
   naturalTimelineHeight,
   rulerTicks,
+  timelineRows,
   ZOOM_MAX,
+  ZOOM_SPAN_MIN,
 } from '../src/shared/timelineView';
 
 describe('pane sizes', () => {
@@ -32,6 +36,15 @@ describe('pane sizes', () => {
   it('clamps zoom', () => {
     expect(clampZoom(0.2)).toBe(1);
     expect(clampZoom(999)).toBe(ZOOM_MAX);
+    expect(clampZoom(999, 300)).toBe(300);
+    expect(clampZoom(0.2, 300)).toBe(1);
+  });
+
+  it('lets a long take zoom deep enough to frame a short 3D move, and a short take keep today\'s limit', () => {
+    expect(maxZoom(0)).toBe(ZOOM_MAX);
+    expect(maxZoom(30)).toBe(ZOOM_MAX); // 30 s / 40 = 0.75 s already
+    // A 10:37 take: the narrowest view is ZOOM_SPAN_MIN seconds, not 637 / 40 = 16 s.
+    expect(637.07 / maxZoom(637.07)).toBeCloseTo(ZOOM_SPAN_MIN, 6);
   });
 });
 
@@ -84,6 +97,24 @@ describe('lane heights and the natural timeline height', () => {
     // With music: one 34px lane and one 6px gap more.
     expect(naturalTimelineHeight(laneHeights(false, true))).toBe(6 + 14 + 22 + 150 + 24);
     expect(naturalTimelineHeight(laneHeights(true, true))).toBe(6 + 14 + 22 + 176 + 30);
+  });
+  it('adds the 3D lane under Zoom and above Taps, 36 px tall', () => {
+    expect(LANE_3D).toBe(36);
+    expect(laneHeights(true, false, true)).toEqual([56, 22, 36, 26, 38]);
+    expect(laneHeights(true, true, true)).toEqual([56, 22, 36, 26, 38, 34]);
+    // Without a 3D phone the lanes are exactly today's.
+    expect(laneHeights(true, true, false)).toEqual(laneHeights(true, true));
+    expect(naturalTimelineHeight(laneHeights(true, false, true))).toBe(naturalTimelineHeight(laneHeights(true)) + 36 + 6);
+  });
+  it('builds the grid rows the CSS per-combination rules used to hard-code', () => {
+    // The old rules (styles.css, mobile.css), one per combination:
+    expect(timelineRows(laneHeights(false))).toBe('22px 56px 22px 38px');
+    expect(timelineRows(laneHeights(false, true))).toBe('22px 56px 22px 38px 34px');
+    expect(timelineRows(laneHeights(true))).toBe('22px 56px 22px 26px 38px');
+    expect(timelineRows(laneHeights(true, true))).toBe('22px 56px 22px 26px 38px 34px');
+    expect(timelineRows(laneHeights(true, false, true))).toBe('22px 56px 22px 36px 26px 38px');
+    // A dragged height: the ruler stays put, the lanes share the room by their base sizes.
+    expect(timelineRows([56, 22], true)).toBe('22px minmax(56px, 56fr) minmax(22px, 22fr)');
   });
   it('lifts a height saved under shorter lanes up to the new floor', () => {
     const floor = naturalTimelineHeight(laneHeights(false));

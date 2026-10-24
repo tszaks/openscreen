@@ -28,8 +28,17 @@ export function clampTimeline(h: number, natural: number, windowH: number, topba
   return Math.round(clamp(h, natural, Math.max(natural, windowH - topbar - stageMin)));
 }
 
-export function clampZoom(z: number) {
-  return clamp(z, ZOOM_MIN, ZOOM_MAX);
+/** The narrowest stretch of time the timeline can show, seconds (Frame Selection on a short move). */
+export const ZOOM_SPAN_MIN = 1.5;
+
+/** The deepest zoom for a take `total` seconds long: ZOOM_MAX, or more on a
+ *  long take so Frame Selection can still show about ZOOM_SPAN_MIN seconds. */
+export function maxZoom(total = 0) {
+  return Math.max(ZOOM_MAX, total / ZOOM_SPAN_MIN);
+}
+
+export function clampZoom(z: number, max = ZOOM_MAX) {
+  return clamp(z, ZOOM_MIN, Math.max(ZOOM_MIN, max));
 }
 
 /**
@@ -66,14 +75,28 @@ export function fmtTick(t: number, step: number) {
 /** Base height of an added audio track's lane (music, voiceover). */
 export const MUSIC_LANE = 34;
 
-/** Base heights of the lanes under the ruler: clips, zoom, (taps), audio, and
- *  the music lane only once the project has a sound on it. */
-export function laneHeights(phone: boolean, music = false): number[] {
-  return [56, 22, ...(phone ? [26] : []), 38, ...(music ? [MUSIC_LANE] : [])];
+/** Base height of the 3D lane: tall enough for 12 px keys with 20 px hit areas. */
+export const LANE_3D = 36;
+
+/** Height of the ruler row above the lanes. */
+export const RULER_ROW = 22;
+
+/** Base heights of the lanes under the ruler: clips, zoom, the 3D lane (a
+ *  project with a 3D phone), taps (phone takes), audio, and the music lane
+ *  only once the project has a sound on it. */
+export function laneHeights(phone: boolean, music = false, three = false): number[] {
+  return [56, 22, ...(three ? [LANE_3D] : []), ...(phone ? [26] : []), 38, ...(music ? [MUSIC_LANE] : [])];
+}
+
+/** The timeline grid's rows (ruler, then lanes) as CSS grid-template-rows.
+ *  With a dragged height (`sized`) the lanes share the extra room in
+ *  proportion to their base sizes. */
+export function timelineRows(lanes: number[], sized = false): string {
+  return [`${RULER_ROW}px`, ...lanes.map((r) => (sized ? `minmax(${r}px, ${r}fr)` : `${r}px`))].join(' ');
 }
 
 /** The timeline's height with no override: padding, ruler and lanes with
  *  their gaps. It's also the floor a dragged or saved height clamps to. */
 export function naturalTimelineHeight(lanes: number[]): number {
-  return 6 + 14 + 22 + lanes.reduce((a, b) => a + b, 0) + lanes.length * 6;
+  return 6 + 14 + RULER_ROW + lanes.reduce((a, b) => a + b, 0) + lanes.length * 6;
 }
