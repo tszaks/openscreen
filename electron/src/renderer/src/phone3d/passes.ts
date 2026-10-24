@@ -153,7 +153,7 @@ export function planTiles(w: number, h: number, ss: number, overlap: number): Ti
 // ---------------------------------------------------------------------------
 // Material patches (§3.5, §3.6)
 
-export type MrtRole = 'lit' | 'screen';
+export type MrtRole = 'lit' | 'screen' | 'glare';
 
 /** A named shader edit; a material's patches run in the order they were added, once each. */
 interface ShaderPatch {
@@ -201,6 +201,12 @@ export const MRT_DECL = 'layout(location = 1) out highp vec4 pc_fragScreen;';
  *   alpha = coverage); attachment 1 = 0.
  * - 'screen': attachment 1 = the screen colour, linear premultiplied, alpha =
  *   coverage; attachment 0 = (0, 0, 0, a), so the lit layer knows it is covered.
+ * - 'glare': the cover glass's sheen over the screen (an additive layer, its
+ *   alpha kept by its blending): its colour goes to attachment 1 with the
+ *   screen, attachment 0 gets nothing. So it follows the screen exactness
+ *   rule (a still phone's screen layer comes from the unjittered sample
+ *   only): with the sheen in the lit layer, the 8 jittered AA samples moved
+ *   2239 screen pixels of a still FRONT frame by one level against --draft.
  * Every material drawn into the target must have one, so no attachment is ever
  * left undefined. Idempotent.
  */
@@ -211,7 +217,9 @@ export function mrtOutput<M extends THREE.Material>(mat: M, role: MrtRole): M {
       const tail =
         role === 'lit'
           ? '\tpc_fragScreen = vec4( 0.0 );'
-          : '\tpc_fragScreen = vec4( gl_FragColor.rgb * gl_FragColor.a, gl_FragColor.a );\n\tgl_FragColor = vec4( 0.0, 0.0, 0.0, gl_FragColor.a );';
+          : role === 'glare'
+            ? '\tpc_fragScreen = vec4( gl_FragColor.rgb, 0.0 );\n\tgl_FragColor = vec4( 0.0 );'
+            : '\tpc_fragScreen = vec4( gl_FragColor.rgb * gl_FragColor.a, gl_FragColor.a );\n\tgl_FragColor = vec4( 0.0, 0.0, 0.0, gl_FragColor.a );';
       shader.fragmentShader = closeMain(`${MRT_DECL}\n${shader.fragmentShader}`, tail);
     },
   });
@@ -332,19 +340,29 @@ void main() {
  * the premultipliedAlpha canvas.
  * Tone mapping the unpremultiplied colour (not the premultiplied one the spec
  * first wrote) keeps a half-covered edge at half the surface's value.
+ * The dither is three's dithering() (same hash, same ±0.5 LSB shifts) keyed
+ * on the pixel's place on the OUTPUT canvas (uOrigin + its place in the
+ * core), not gl_FragCoord: the engine canvas is resized with hysteresis, so
+ * gl_FragCoord of the same output pixel changed with what was rendered
+ * before, and a frame came out ±2 levels different after a seek.
  */
 const OUTPUT_FRAG = /* glsl */ `
 precision highp float;
 #include <common>
 #include <tonemapping_pars_fragment>
-#include <dithering_pars_fragment>
 uniform highp sampler2D uSrc0;
 uniform highp sampler2D uSrc1;
 uniform int uSs;
 uniform int uCanvasH;
 uniform ivec4 uWindow; // the tile's rendered window in render px (top-down): x, y, w, h
 uniform bool uDither;
+uniform ivec2 uOrigin; // the core's top-left on the output canvas, px
 layout(location = 0) out highp vec4 o0;
+vec3 ditherAt( vec2 p ) {
+  float grid_position = rand( p );
+  vec3 dither_shift_RGB = vec3( 0.25 / 255.0, -0.25 / 255.0, 0.25 / 255.0 );
+  return mix( 2.0 * dither_shift_RGB, -2.0 * dither_shift_RGB, grid_position );
+}
 void main() {
   int X = int( gl_FragCoord.x );
   int Y = uCanvasH - 1 - int( gl_FragCoord.y );
@@ -372,7 +390,8 @@ void main() {
     // The lit part only: never the screen. A soft shadow is premultiplied black, so its gradient lives in alpha;
     // alpha is dithered too (inside (1/255, 1), so the ROI border stays exactly transparent).
     float lit = 1.0 - clamp( a1.a, 0.0, 1.0 );
-    vec3 d = dithering( vec3( 0.0 ) );
+    // Output canvas px, y down, at the pixel centre.
+    vec3 d = ditherAt( vec2( uOrigin + ivec2( X, Y ) ) + 0.5 );
     u += d * lit;
     if ( alpha > 1.0 / 255.0 && alpha < 1.0 ) alpha = clamp( alpha + d.g * lit, 1.0 / 255.0, 1.0 );
   }
@@ -515,6 +534,7 @@ export class Passes {
         uCanvasH: { value: 1 },
         uWindow: { value: new THREE.Vector4() },
         uDither: { value: true },
+        uOrigin: { value: new THREE.Vector2() },
       },
       { dithering: true, blending: THREE.NoBlending },
     );
@@ -597,7 +617,8 @@ export class Passes {
    * Writes one tile's core into the engine canvas (the default framebuffer).
    * `core` is the tile core in OUTPUT (canvas) px inside the ROI, `window` the
    * rendered window in render px; the canvas is canvasW × canvasH and the ROI
-   * is drawn into its top-left.
+   * is drawn into its top-left. `origin` is where the core lands on the
+   * output canvas (px): the dither pattern is keyed on it.
    */
   output(
     src: THREE.WebGLRenderTarget,
@@ -605,6 +626,7 @@ export class Passes {
     window: { x: number; y: number; w: number; h: number },
     ss: number,
     canvasH: number,
+    origin: { x: number; y: number },
     dither = true,
   ): void {
     const r = this.renderer;
@@ -615,6 +637,7 @@ export class Passes {
     u.uCanvasH.value = canvasH;
     (u.uWindow.value as THREE.Vector4).set(window.x, window.y, window.w, window.h);
     u.uDither.value = dither;
+    (u.uOrigin.value as THREE.Vector2).set(origin.x, origin.y);
     r.setRenderTarget(null);
     const gy = canvasH - (core.y + core.h);
     r.setViewport(core.x, gy, core.w, core.h);

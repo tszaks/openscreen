@@ -531,10 +531,13 @@ describe('materials (§3.4)', () => {
     // Patches compose once and key the program cache.
     lodBias(set.screen);
     expect(set.screen.customProgramCacheKey()).toBe('mrt-screen|lodbias');
-    // Every lit material in the set is patched; only the screen is the screen role.
+    // Every lit material in the set is patched; the screen and the glare over it go to the screen attachment.
     for (const m of set.all) {
-      expect(m.customProgramCacheKey(), m.type).toMatch(m === set.screen ? /^mrt-screen/ : /^mrt-lit$/);
+      expect(m.customProgramCacheKey(), m.type).toMatch(m === set.screen ? /^mrt-screen/ : m === set.glare ? /^mrt-glare$/ : /^mrt-lit$/);
     }
+    const s3 = frag() as never as { fragmentShader: string };
+    set.glare.onBeforeCompile(s3 as never, undefined as never);
+    expect(s3.fragmentShader.trimEnd().endsWith('pc_fragScreen = vec4( gl_FragColor.rgb, 0.0 );\n\tgl_FragColor = vec4( 0.0 );\n}')).toBe(true);
   });
 
   it('device resolution: unibody, iPad metal back, single-lens turret, polished Air', () => {

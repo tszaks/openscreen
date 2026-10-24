@@ -359,8 +359,9 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
       // The core lands at the canvas's top-left: the window shifts by the core's offset in the ROI (render px).
       const cw = tile.w / ss;
       const ch = tile.h / ss;
-      passes.output(src, { x: 0, y: 0, w: cw, h: ch }, { x: tile.px - tile.x, y: tile.py - tile.y, w: tile.pw, h: tile.ph }, ss, canvas.h);
-      blit(engine.canvas, cw, ch, roi.x + tile.x / ss, roi.y + tile.y / ss);
+      const at = { x: roi.x + tile.x / ss, y: roi.y + tile.y / ss };
+      passes.output(src, { x: 0, y: 0, w: cw, h: ch }, { x: tile.px - tile.x, y: tile.py - tile.y, w: tile.pw, h: tile.ph }, ss, canvas.h, at);
+      blit(engine.canvas, cw, ch, at.x, at.y);
       mark('output');
     }
     r.setRenderTarget(null);

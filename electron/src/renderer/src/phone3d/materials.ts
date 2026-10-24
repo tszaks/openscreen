@@ -235,7 +235,7 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   const antenna = physical({ color: srgb(hex).multiplyScalar(0.55), roughness: 0.45, metalness: 0 });
   const seam = physical({ color: srgb('#0a0a0a'), roughness: 0.6, metalness: 0 });
   const frontGlass = physical({ color: srgb('#050506'), roughness: 0.02, ior: 1.5, specularIntensity: 0.7, metalness: 0 });
-  const glare = reflectionOnly(overlay(physical({ color: 0x000000, roughness: GLARE_ROUGHNESS, ior: 1.5, specularIntensity: glass, metalness: 0 }), reversed));
+  const glare = reflectionOnly(overlay(mrtOutput(new MeshPhysicalMaterial({ color: 0x000000, roughness: GLARE_ROUGHNESS, ior: 1.5, specularIntensity: glass, metalness: 0 }), 'glare'), reversed));
   glare.visible = glass > 0;
 
   const glossy = (c: Color) => physical({ color: c, roughness: 0.6, specularIntensity: 0, clearcoat: 1, clearcoatRoughness: 0.02, metalness: 0 });
