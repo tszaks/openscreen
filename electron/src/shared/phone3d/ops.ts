@@ -22,6 +22,7 @@ import {
   EASING_NAMES,
   LIGHT_PRESET_NAMES,
   MIN_TRANSITION,
+  tooShort,
   PHONE3D_NUMBERS,
   POSE_KEYS,
   POSE_RANGE,
@@ -243,7 +244,7 @@ function locateMove(o: EditOp, list: readonly PoseTransition[]): number {
 
 function checkTimes(op: string, start: number, end: number) {
   if (!(start >= 0)) fail(`${op}: start must be >= 0`);
-  if (!(end - start >= MIN_TRANSITION - 1e-9)) fail(`${op}: a move must last at least ${MIN_TRANSITION} s (end − start)`);
+  if (tooShort(start, end)) fail(`${op}: a move must last at least ${MIN_TRANSITION} s (end − start)`);
 }
 
 const samePose = (a: Readonly<Pose>, b: Readonly<Pose>, eps = 1e-9) => POSE_KEYS.every((k) => Math.abs(a[k] - b[k]) <= eps);

@@ -136,7 +136,12 @@ function applyPose(engine: Engine, s: Scene3D, cam: Cam3D): void {
   g.scale.setScalar(cam.scale);
   engine.inner.rotation.set(0, 0, cam.landscape);
   const az = (s.p3.light.azimuth + p.light) * DEG;
-  if (engine.current.rig) engine.current.rig.rotation.set(0, az, 0);
+  const rig = engine.current.rig;
+  if (rig) {
+    // The softboxes sit around the phone at its size this sample (a long side in world px), turned to the key azimuth.
+    engine.kit.placeLights(rig, cam.pos, Math.max(s.bodyMm.width, s.bodyMm.height) * cam.scale);
+    rig.rotation.set(0, az, 0);
+  }
   engine.scene.environmentRotation.set(0, az, 0);
 }
 
@@ -201,8 +206,8 @@ function prepareScene(engine: Engine, a: Render3DArgs): string {
   const bg = [q(a.bgMean[0]), q(a.bgMean[1]), q(a.bgMean[2])] as const;
   const envKey = `${engine.generation}|${preset}|${bg.join(',')}`;
   const env = engine.envs.get(envKey, () => {
-    const tex = engine.kit.environment(preset, bg, engine.renderer);
-    return { tex, dispose: () => tex?.dispose() };
+    const env = engine.kit.environment(preset, bg, engine.renderer);
+    return { tex: env?.texture ?? null, dispose: () => env?.dispose() };
   });
   engine.scene.environment = env.tex;
   engine.scene.environmentIntensity = p3.light.intensity * engine.kit.envStrength(preset);

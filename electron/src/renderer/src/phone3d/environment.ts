@@ -118,7 +118,28 @@ function softbox(box: SoftBox, unit: number, intensity: number, i: number): Rect
   light.lookAt(0, 0, 0);
   light.name = i === 0 ? 'key' : `box${i}`;
   light.userData.baseIntensity = box.intensity * BOX_RADIANCE;
+  // In long sides, for scaleStudio: a RectAreaLight's size ignores its parent's scale.
+  light.userData.box = { dir: [x, y, z], w: box.w, h: box.h };
   return light;
+}
+
+/**
+ * Re-sizes a light group for a phone whose body long side is `unit` world
+ * units, centred on `center`: each box keeps its direction and its size and
+ * distance in long sides (its aim is unchanged: it looks at the group's
+ * origin). The engine calls it per sample, since a pose's size channel
+ * changes the phone's size in world units.
+ */
+export function scaleStudio(lights: Group, center: readonly [number, number, number], unit: number) {
+  lights.position.set(center[0], center[1], center[2]);
+  for (const l of lights.children) {
+    const box = l.userData.box as { dir: [number, number, number]; w: number; h: number } | undefined;
+    if (!(l instanceof RectAreaLight) || !box) continue;
+    const d = LIGHT_DISTANCE * unit;
+    l.position.set(box.dir[0] * d, box.dir[1] * d, box.dir[2] * d);
+    l.width = box.w * unit;
+    l.height = box.h * unit;
+  }
 }
 
 /** Rescale a light group to a new phone3d.light.intensity without rebuilding it. */
@@ -244,11 +265,7 @@ export function studioEnv(renderer: WebGLRenderer, preset: LightPreset, bgMean: 
     cache.set(key, hit);
     return hit.target.texture;
   }
-  const scene = fillScene(preset, bgMean);
-  const pmrem = new PMREMGenerator(renderer);
-  const target = pmrem.fromScene(scene, 0, 0.1, DOME_RADIUS * 4, { size: PMREM_SIZE });
-  pmrem.dispose();
-  disposeScene(scene);
+  const target = createStudioEnv(renderer, preset, bgMean);
   cache.set(key, { target });
   while (cache.size > ENV_CACHE_SIZE) {
     const oldest = cache.keys().next().value as string;
@@ -256,6 +273,19 @@ export function studioEnv(renderer: WebGLRenderer, preset: LightPreset, bgMean: 
     cache.delete(oldest);
   }
   return target.texture;
+}
+
+/**
+ * The PMREM fill environment, not cached: the caller owns the target and
+ * disposes it (the engine keeps one, LRU 1, for the §3.9 budget).
+ */
+export function createStudioEnv(renderer: WebGLRenderer, preset: LightPreset, bgMean: Rgb): WebGLRenderTarget {
+  const scene = fillScene(preset, bgMean);
+  const pmrem = new PMREMGenerator(renderer);
+  const target = pmrem.fromScene(scene, 0, 0.1, DOME_RADIUS * 4, { size: PMREM_SIZE });
+  pmrem.dispose();
+  disposeScene(scene);
+  return target;
 }
 
 /** Drop a renderer's cached environments (context loss, unload). */

@@ -29,10 +29,10 @@ import {
   type Material,
   type Object3D,
   type Texture,
-  type WebGLProgramParametersWithUniforms,
-} from 'three';
+  } from 'three';
 import type { DeviceModel, FrameMaterial } from '../../../shared/devices';
 import type { Body3D } from '../../../shared/devices3d';
+import { lodBias, mrtOutput } from './passes';
 import { FLASH_GROUP, BAND_GROUP, FRONT_GROUP, isUnibody, type PhonePart } from './geometry';
 
 // ---------------------------------------------------------------------------
@@ -84,66 +84,9 @@ export function bandF0(hex: string, material: FrameMaterial): Color {
 }
 
 // ---------------------------------------------------------------------------
-// Shader patches
+// Shader patches: one implementation, in passes.ts (it owns the MRT layout).
 
-type Patch = { key: string; apply: (shader: WebGLProgramParametersWithUniforms) => void };
-
-function addPatch(mat: Material, patch: Patch) {
-  const list: Patch[] = (mat.userData.phone3dPatches ??= []);
-  if (list.some((p) => p.key === patch.key)) return;
-  list.push(patch);
-  mat.onBeforeCompile = (shader) => {
-    for (const p of list) p.apply(shader);
-  };
-  mat.customProgramCacheKey = () => list.map((p) => p.key).join('|');
-  mat.needsUpdate = true;
-}
-
-/** Insert `code` just before the closing brace of main(). */
-function beforeMainEnd(src: string, code: string): string {
-  const i = src.lastIndexOf('}');
-  if (i < 0) throw new Error('phone3d: fragment shader has no main()');
-  return src.slice(0, i) + code + '\n' + src.slice(i);
-}
-
-export const MRT_DECL = 'layout(location = 1) out highp vec4 pc_fragScreen;';
-
-/**
- * The 2-attachment output (§3.5). Three's program prefix declares
- * `pc_fragColor` at location 0 (WebGLProgram.js:819) before this body, so
- * the location-1 output is declared at the top of the body.
- */
-export function mrtOutput<M extends Material>(mat: M, role: 'lit' | 'screen'): M {
-  addPatch(mat, {
-    key: `mrt-${role}`,
-    apply: (shader) => {
-      const body =
-        role === 'lit'
-          ? '\tpc_fragScreen = vec4( 0.0 );'
-          : '\tpc_fragScreen = vec4( gl_FragColor.rgb * gl_FragColor.a, gl_FragColor.a );\n\tgl_FragColor = vec4( 0.0, 0.0, 0.0, gl_FragColor.a );';
-      shader.fragmentShader = beforeMainEnd(`${MRT_DECL}\n${shader.fragmentShader}`, body);
-    },
-  });
-  return mat;
-}
-
-/** Sample the screen texture with a −0.5 LOD bias (§3.6): up to 8% minification still reads mip 0. */
-export const LOD_BIAS = -0.5;
-export const LOD_MAP_FRAGMENT = `#ifdef USE_MAP
-	vec4 sampledDiffuseColor = texture( map, vMapUv, ${LOD_BIAS.toFixed(1)} );
-	diffuseColor *= sampledDiffuseColor;
-#endif`;
-
-export function lodBias<M extends Material>(mat: M): M {
-  addPatch(mat, {
-    key: 'lodbias',
-    apply: (shader) => {
-      if (!shader.fragmentShader.includes('#include <map_fragment>')) throw new Error('phone3d: no map_fragment to bias');
-      shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', LOD_MAP_FRAGMENT);
-    },
-  });
-  return mat;
-}
+export { LOD_BIAS, LOD_MAP_FRAGMENT, MRT_DECL, lodBias, mrtOutput } from './passes';
 
 /** Overlay layer (screen, glare, lens cover): no depth write, pulled toward the camera. */
 export function overlay<M extends Material>(mat: M, reversedDepth: boolean): M {
@@ -331,6 +274,10 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   const cameraControl = physical({ color: srgb('#0b0b0c'), roughness: 0.05, metalness: 0, specularIntensity: 0.8 });
 
   const screen = lodBias(mrtOutput(overlay(new MeshBasicMaterial({ map: null, toneMapped: false }), reversed), 'screen'));
+  // The screen is the one overlay that writes depth (pulled forward by the same offset): the GPU's hidden-surface
+  // removal then skips shading the glass cap under it, which covers most of a FRONT phone. The glare drawn over it
+  // is at the same offset depth and passes the LESS_EQUAL test.
+  screen.depthWrite = true;
 
   const all: Material[] = [];
   for (const m of [band, antenna, seam, frontGlass, glare, backGlass, backPanel, plateauGlass, lensRing, lensBarrel, ...lensElements, lensRetainer, lensCover, flashRing, flash, sensor, decal, cameraControl, screen]) {
@@ -382,15 +329,19 @@ export function materialsForDevice(
   finishHex: string,
   back: 'auto' | BackFinish,
   glass: number,
-  opts: Pick<MaterialOptions, 'reversedDepth'> = {},
+  opts: Pick<MaterialOptions, 'reversedDepth'> & { cached?: boolean } = {},
 ): PhoneMaterials {
   const unibody = isUnibody(device, body3d);
-  return materialsFor(finishHex, device.material, back === 'auto' ? body3d.back : back, glass, {
+  const resolved: MaterialOptions = {
     reversedDepth: opts.reversedDepth,
     polishedBand: POLISHED_BANDS.has(device.id),
     backMetal: unibody || device.family === 'ipad',
     plateau: unibody ? 'band' : body3d.plateau.kind === 'single' ? 'lensRing' : 'glass',
-  });
+  };
+  const backFinish = back === 'auto' ? body3d.back : back;
+  // Uncached: the caller owns the set and disposes `all` (the engine's phone LRU does).
+  if (opts.cached === false) return create(finishHex, device.material, backFinish, glass, resolved);
+  return materialsFor(finishHex, device.material, backFinish, glass, resolved);
 }
 
 /** The material (or per-group list) each part uses. */

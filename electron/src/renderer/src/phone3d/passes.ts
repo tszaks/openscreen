@@ -155,6 +155,46 @@ export function planTiles(w: number, h: number, ss: number, overlap: number): Ti
 
 export type MrtRole = 'lit' | 'screen';
 
+/** A named shader edit; a material's patches run in the order they were added, once each. */
+interface ShaderPatch {
+  key: string;
+  apply: (shader: THREE.WebGLProgramParametersWithUniforms) => void;
+}
+
+/**
+ * Adds a patch to a material's onBeforeCompile (the one place every phone3d
+ * shader patch goes through): idempotent per key, composes with any patch
+ * added before it and with an onBeforeCompile the material already had, and
+ * keys three's program cache by the patch list.
+ */
+function addPatch(mat: THREE.Material, patch: ShaderPatch): void {
+  const data = mat.userData as { phone3dPatches?: ShaderPatch[] };
+  let list = data.phone3dPatches;
+  if (!list) {
+    list = data.phone3dPatches = [];
+    const prev = mat.onBeforeCompile.bind(mat);
+    // Three's default key is the onBeforeCompile source, which this replaces: only a material's own key is kept.
+    const ownKey = mat.customProgramCacheKey !== THREE.Material.prototype.customProgramCacheKey;
+    const prevKey = ownKey ? mat.customProgramCacheKey.bind(mat) : () => '';
+    const patches = list;
+    mat.onBeforeCompile = (shader, renderer) => {
+      prev(shader, renderer);
+      for (const p of patches) p.apply(shader);
+    };
+    mat.customProgramCacheKey = () => {
+      const base = prevKey();
+      const own = patches.map((p) => p.key).join('|');
+      return base ? `${base}|${own}` : own;
+    };
+  }
+  if (list.some((p) => p.key === patch.key)) return;
+  list.push(patch);
+  mat.needsUpdate = true;
+}
+
+/** The location-1 output (three's program prefix declares pc_fragColor at location 0, WebGLProgram.js:819). */
+export const MRT_DECL = 'layout(location = 1) out highp vec4 pc_fragScreen;';
+
 /**
  * Makes a material write both attachments of the MRT target (§3.5):
  * - 'lit': attachment 0 stays as three computed it (HDR, premultiplied,
@@ -162,23 +202,19 @@ export type MrtRole = 'lit' | 'screen';
  * - 'screen': attachment 1 = the screen colour, linear premultiplied, alpha =
  *   coverage; attachment 0 = (0, 0, 0, a), so the lit layer knows it is covered.
  * Every material drawn into the target must have one, so no attachment is ever
- * left undefined. Idempotent; chains any onBeforeCompile already set.
+ * left undefined. Idempotent.
  */
 export function mrtOutput<M extends THREE.Material>(mat: M, role: MrtRole): M {
-  const tagged = mat as M & { __mrtRole?: MrtRole };
-  if (tagged.__mrtRole === role) return mat;
-  tagged.__mrtRole = role;
-  const prev = mat.onBeforeCompile.bind(mat);
-  mat.onBeforeCompile = (shader, renderer) => {
-    prev(shader, renderer);
-    const tail =
-      role === 'lit'
-        ? '\n\tpc_fragScreen = vec4( 0.0 );\n'
-        : '\n\tpc_fragScreen = vec4( gl_FragColor.rgb * gl_FragColor.a, gl_FragColor.a );\n\tgl_FragColor = vec4( 0.0, 0.0, 0.0, gl_FragColor.a );\n';
-    shader.fragmentShader = 'layout(location = 1) out highp vec4 pc_fragScreen;\n' + closeMain(shader.fragmentShader, tail);
-  };
-  const key = mat.customProgramCacheKey.bind(mat);
-  mat.customProgramCacheKey = () => `${key()}|mrt:${role}`;
+  addPatch(mat, {
+    key: `mrt-${role}`,
+    apply: (shader) => {
+      const tail =
+        role === 'lit'
+          ? '\tpc_fragScreen = vec4( 0.0 );'
+          : '\tpc_fragScreen = vec4( gl_FragColor.rgb * gl_FragColor.a, gl_FragColor.a );\n\tgl_FragColor = vec4( 0.0, 0.0, 0.0, gl_FragColor.a );';
+      shader.fragmentShader = closeMain(`${MRT_DECL}\n${shader.fragmentShader}`, tail);
+    },
+  });
   return mat;
 }
 
@@ -186,24 +222,25 @@ export function mrtOutput<M extends THREE.Material>(mat: M, role: MrtRole): M {
 function closeMain(src: string, code: string): string {
   const i = src.lastIndexOf('}');
   if (i < 0) throw new Error('phone3d: shader has no main()');
-  return src.slice(0, i) + code + src.slice(i);
+  return src.slice(0, i) + code + '\n' + src.slice(i);
 }
 
-/**
- * Samples the colour map with a LOD bias (§3.6): an oblique screen minified by
- * up to the texture's hysteresis slack (8%) still reads mip 0.
- */
-export function lodBias<M extends THREE.Material>(mat: M, bias = -0.5): M {
-  const prev = mat.onBeforeCompile.bind(mat);
-  mat.onBeforeCompile = (shader, renderer) => {
-    prev(shader, renderer);
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <map_fragment>',
-      `#ifdef USE_MAP\n\tvec4 sampledDiffuseColor = texture( map, vMapUv, ${bias.toFixed(3)} );\n\tdiffuseColor *= sampledDiffuseColor;\n#endif`,
-    );
-  };
-  const key = mat.customProgramCacheKey.bind(mat);
-  mat.customProgramCacheKey = () => `${key()}|lod:${bias}`;
+/** The screen's LOD bias (§3.6): an oblique screen minified by up to the texture's hysteresis slack (8%) still reads mip 0. */
+export const LOD_BIAS = -0.5;
+export const LOD_MAP_FRAGMENT = `#ifdef USE_MAP
+\tvec4 sampledDiffuseColor = texture( map, vMapUv, ${LOD_BIAS.toFixed(1)} );
+\tdiffuseColor *= sampledDiffuseColor;
+#endif`;
+
+/** Samples the colour map with LOD_BIAS (§3.6). */
+export function lodBias<M extends THREE.Material>(mat: M): M {
+  addPatch(mat, {
+    key: 'lodbias',
+    apply: (shader) => {
+      if (!shader.fragmentShader.includes('#include <map_fragment>')) throw new Error('phone3d: no map_fragment to bias');
+      shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', LOD_MAP_FRAGMENT);
+    },
+  });
   return mat;
 }
 

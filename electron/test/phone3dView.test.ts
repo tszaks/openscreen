@@ -90,6 +90,7 @@ function fakeEngine(maxSide = 8192) {
     kit: {
       phone: () => ({ root: new THREE.Group(), screen: new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial()), dispose() {} }),
       lights: () => new THREE.Group(),
+      placeLights: () => {},
       environment: () => null,
       envStrength: () => 1,
     },

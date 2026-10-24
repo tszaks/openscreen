@@ -802,7 +802,12 @@ export function isUnibody(device: DeviceModel, body: Body3D): boolean {
   return body.plateau.kind === 'bar' && device.material === 'aluminum' && device.family === 'iphone';
 }
 
-function build(device: DeviceModel, body: Body3D): PhoneModel {
+/**
+ * A new phone for a device, not cached: the caller owns it and disposes it
+ * (disposePhone). The engine's own LRU holds these; phoneModel below is the
+ * cached form for tools.
+ */
+export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
   const { W, H, bodyRadius, screenW, screenH, screenRadius, rim } = phoneDims2d(device);
   const depth = body.depthMm;
   const d2 = depth / 2;
@@ -1132,7 +1137,7 @@ export function phoneModel(device: DeviceModel, body3d: Body3D): PhoneModel {
     cache.set(key, hit);
     return hit;
   }
-  const model = build(device, body3d);
+  const model = createPhone(device, body3d);
   cache.set(key, model);
   while (cache.size > CACHE_SIZE) {
     const oldest = cache.keys().next().value as string;

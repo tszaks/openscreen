@@ -275,9 +275,9 @@ describe('material patches (§3.5, §3.6)', () => {
     const once = compile(m);
     mrtOutput(m, 'screen');
     expect(compile(m)).toBe(once);
-    expect(m.customProgramCacheKey()).toContain('mrt:screen');
+    expect(m.customProgramCacheKey()).toBe('mrt-screen');
     const b = compile(lodBias(new THREE.MeshBasicMaterial()));
-    expect(b).toContain('texture( map, vMapUv, -0.500 )');
+    expect(b).toContain('texture( map, vMapUv, -0.5 )');
     expect(b).not.toContain('#include <map_fragment>');
   });
 });

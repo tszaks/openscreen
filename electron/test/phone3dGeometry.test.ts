@@ -456,13 +456,13 @@ describe('materials (§3.4)', () => {
     for (const m of [ti.band, ti.lensRing, ti.lensBarrel]) expect(m.clearcoat).toBe(0);
   });
 
-  it('overlay layers: no depth write, polygon offset whose units flip under reversed depth', () => {
+  it('overlay layers: polygon offset whose units flip under reversed depth; only the screen writes depth', () => {
     clearMaterialCache();
     const fwd = materialsFor('#C2BCB2', 'titanium', 'frosted', 0.25, { reversedDepth: false });
     const rev = materialsFor('#C2BCB2', 'titanium', 'frosted', 0.25, { reversedDepth: true });
     for (const [set, units] of [[fwd, -4], [rev, 4]] as const) {
       for (const m of [set.screen, set.glare, set.lensCover]) {
-        expect(m.depthWrite).toBe(false);
+        expect(m.depthWrite).toBe(m === set.screen);
         expect(m.polygonOffset).toBe(true);
         expect(m.polygonOffsetFactor).toBe(-1);
         expect(m.polygonOffsetUnits).toBe(units);

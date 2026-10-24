@@ -11,6 +11,7 @@ import {
   EASING_NAMES,
   LIGHT_PRESET_NAMES,
   MIN_TRANSITION,
+  tooShort,
   PHONE3D_NUMBERS,
   POSE_KEYS,
   POSE_RANGE,
@@ -100,7 +101,7 @@ export function phone3dProblems(p: { phone3d?: unknown }): string[] {
     if (!isNum(tr.start) || !isNum(tr.end)) errs.push(`${path}: start and end must be numbers`);
     else {
       if (tr.start < 0) errs.push(`${path}.start must be >= 0`);
-      if (tr.end - tr.start < MIN_TRANSITION - 1e-9) errs.push(`${path}: end must be at least ${MIN_TRANSITION} s after start`);
+      if (tooShort(tr.start, tr.end)) errs.push(`${path}: end must be at least ${MIN_TRANSITION} s after start`);
     }
     if (tr.from !== undefined) poseProblems(tr.from, `${path}.from`, errs);
     poseProblems(tr.to, `${path}.to`, errs);

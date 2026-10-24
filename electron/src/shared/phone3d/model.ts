@@ -58,6 +58,15 @@ export const SPRING_DEFAULT = { stiffness: 180, damping: 18 }; // ζ≈0.67, one
 /** Bezier handle limits: x in 0..1 (time must move forward), y in -1..2. */
 export const BEZIER_RANGE = { x: [0, 1], y: [-1, 2] } as const;
 export const MIN_TRANSITION = 0.1;
+/**
+ * A move from `start` to `end` is too short to keep. Times are typed in
+ * decimals (4.0 → 4.1 is 0.0999999999999996 in floating point), so the test
+ * allows 1e-9: the ops, the validator, normalize and the remap all ask this
+ * one question, so no move an op accepted is dropped later.
+ */
+export function tooShort(start: number, end: number): boolean {
+  return !(end - start >= MIN_TRANSITION - 1e-9);
+}
 
 /** The shot recipes (shots.ts holds their keys). Stored on a move for display only. */
 export type ShotRecipe = 'spin-in' | 'turn-to-back' | 'hero-layback' | 'float' | 'settle';
@@ -201,7 +210,7 @@ function normalizeTransition(raw: unknown): DraftTransition | null {
   // A move that starts before 0 keeps its end (the moment it lands on).
   const start = Math.max(0, raw.start);
   const end = raw.end;
-  if (end - start < MIN_TRANSITION) return null;
+  if (tooShort(start, end)) return null;
   const tr = {
     id: typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : null,
     start,
