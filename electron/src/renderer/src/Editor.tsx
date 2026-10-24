@@ -135,10 +135,10 @@ import {
 
 type InspectorTab = 'background' | 'device' | 'zoom' | 'cursor' | 'camera' | 'phone' | 'audio' | 'text';
 
-/** The export shown in the progress overlay: one file, or a batch of formats. */
 /** A paused 3D frame redraws at export quality this long after the last edit or seek. */
 const IDLE_3D_MS = 150;
 
+/** The export shown in the progress overlay: one file, or a batch of formats. */
 /** How an export ended, for headless runs. */
 interface ExportOutcome {
   ok: boolean;
