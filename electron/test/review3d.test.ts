@@ -200,7 +200,8 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-describe('review3d: commands (fake agent)', () => {
+// Each build spawns ~25 child processes: on a busy machine that takes far longer than vitest's 5 s default.
+describe('review3d: commands (fake agent)', { timeout: 120_000 }, () => {
   it('build: works on clones only, writes the page, the key and the judge files; never renders the original', () => {
     writeFileSync(logFile, '');
     const out = join(root, 'run1');

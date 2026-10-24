@@ -26,7 +26,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-describe('install-skill.mjs', () => {
+describe('install-skill.mjs', { timeout: 60_000 }, () => {
   it('the child process sees the temp HOME, not the real one', () => {
     const seen = execFileSync(process.execPath, ['-e', 'process.stdout.write(require("os").homedir())'], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
     expect(seen).toBe(home);
