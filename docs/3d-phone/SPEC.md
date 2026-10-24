@@ -252,8 +252,8 @@ Tests (`test/pose3d.test.ts`):
 - `canvasToScreenUV(px, py)` returns null when `facing < cos 80°` or the point is outside the continuous-corner screen outline
 - `bodyHull(p, t)` returns the convex hull of 8 body corners plus the plateau top corners (from `body3dFor`, shared/devices3d.ts, which WP1 owns)
 - `bodyBounds(p, t, times?)` is the bbox of the hull, unioned over the motion-blur sub-frame times
-- `shadowHull(p, t, light)` projects the body hull onto the active catcher plane (wall 0.8·bodyW behind, or floor 1 mm under the lowest hull point) along the key-light direction (azimuth `light.azimuth + pose.light`, elevation 55°), then back to the canvas
-- `renderRoi(p, t, times, opts)` = bbox of `bodyHull ∪ shadowHull` unioned over the sub-frame times, dilated by the ambient blur radius (softness·40 px at 1080p, scaled to canvas H) + the max DoF CoC + 2 px, clamped to the canvas, then **snapped outward to whole canvas pixels**. Integer `roi.x`/`roi.y` keep the FRONT screen texel-aligned and stop `drawImage` from resampling the phone.
+- `shadowHull(p, t, light)` projects the body hull onto the active catcher plane (wall `WALL_GAP_MM` = 1 mm behind the rearmost hull point at time t, or floor 1 mm under the lowest hull point; D14, owner decision 6) along the key-light direction (azimuth `light.azimuth + pose.light`, elevation 55°), then back to the canvas
+- `renderRoi(p, t, times, opts)` = bbox of `bodyHull ∪ shadowHull` unioned over the sub-frame times, built from `shadowCatcherCorners` (the full shadow out to 3σ, `shadowSigma`: ambient σ = 0.0425·body long side·softness/0.5, contact σ = 0.22× that) padded by the max DoF CoC + 2 px, with the body box padded by CoC + 2 px only, clamped to the canvas, then **snapped outward to whole canvas pixels**. Integer `roi.x`/`roi.y` keep the FRONT screen texel-aligned and stop `drawImage` from resampling the phone.
 - `depthRange(p, t, cam)` returns `{ near, far }`: with `d` the camera distance to the body centre and `R` the body bounding radius in px plus the catcher distance, `near = max(1, d − R)` and `far = d + R + catcherDepth`. The renderer sets these every frame (§3.7).
 - `hullTravelPx(p, t, shutterSec, renderScale)` returns the largest distance a projected hull corner moves over the shutter, in render pixels. It drives the adaptive motion-blur count (§3.7). Pose only, so it is deterministic.
 
@@ -263,7 +263,7 @@ Tests (`test/projection3d.test.ts`; vitest may import three, shared code may not
 - the homography round trip is within 1e-6
 - turn 180 gives null
 - `renderRoi` contains `shadowHull` for wall and floor at 5 light angles
-- `depthRange` keeps the whole body and catcher between near and far for 200 random poses, and `near ≥ 0.25·d` whenever `size ≤ 1.5`
+- `depthRange` keeps the whole body and catcher between near and far for 200 random poses, and `near ≥ 0.25·d` when `size ≤ 1.5` and `fov ≤ 35`; at any fov, near is set only by what is on the canvas
 
 ### 2.4 `outline.ts`
 `continuousRectPoints(w, h, r, segPerCorner)` samples Apple's 6-segment continuous-corner bezier table. The table moves out of `deviceFrame.ts continuousRectPath`, which then reads it from here. `deviceFrame.test.ts` stays green unchanged, and a new test checks that the path commands are identical.
@@ -526,7 +526,7 @@ One reflection lobe per real surface: real cover glass is one AR-coated surface,
    - `N = max(Nmotion, Naa)` in export, frames and the paused-idle preview render; `N = 1` in the live preview (no blur, no jitter)
    - sample k: time `t_k = t + ((k+0.5)/N − 0.5)·shutter/fps` when `Nmotion > 1`, else `t`; jitter `j_0 = (0,0)`, `j_k = (H2(k) − 0.5, H3(k) − 0.5)` render px for k ≥ 1 (Halton bases 2 and 3, a fixed table)
 5. **Per sample k**:
-   - **Shadow**: an orthographic camera along the key light (azimuth `light.azimuth + pose_k.light`, elevation 55°) renders the white silhouette into a 1024² **R16F** target; two separable Gaussian widths (contact, tight; ambient, softness·40 px), mirroring `DEFAULT_FRAME_SHADOW`, also R16F, so the blur does not band. Catcher: `wall` is a plane parallel to the canvas, 0.8·bodyW behind the phone; `floor` is a horizontal plane 1 mm under the lowest hull point (needs elevation). The catcher writes premultiplied black with α = opacity·mask into attachment 0. When `Nmotion = 1` the shadow is rendered once and reused.
+   - **Shadow**: an orthographic camera along the key light (azimuth `light.azimuth + pose_k.light`, elevation 55°) renders the white silhouette into a 1024² **R16F** target; two separable Gaussian widths from `shadowSigma` (contact 0.22× ambient; ambient = the 2D `DEFAULT_FRAME_SHADOW` blur at default softness), blurred on the catcher surface itself (or a light-view blur scaled by |L·n|), also R16F, so the blur does not band. Catcher: `wall` is a plane parallel to the canvas, 1 mm behind the rearmost hull point, drawn as exactly the `shadowCatcherCorners` quad; `floor` is a horizontal plane 1 mm under the lowest hull point (needs elevation). The catcher writes premultiplied black with α = opacity·mask into attachment 0. When `Nmotion = 1` the shadow is rendered once and reused.
    - **Scene**: `camera.setViewOffset(W·ss, H·ss, roi.x·ss + j_k.x, roi.y·ss + j_k.y, tile.w, tile.h)` (tile origin added, see Tiling), render into the 2-attachment MSAA target, resolve, and add into the 2-attachment accumulation target with weight 1/N.
    - **Screen exactness rule**: when `Nmotion = 1` (phone still), attachment 1 (the screen) is accumulated from sample 0 only (zero jitter) with weight 1; the jittered samples add only attachment 0. Jitter is a sub-pixel box filter and would soften UI text; the screen's edge is already anti-aliased by MSAA. When the phone moves, every sample adds both attachments (the screen blurs with the motion, as it should).
 6. **DoF** (`dof.on` and `pose.focus > 0`): a gather on both attachments plus depth.
@@ -860,7 +860,7 @@ Each control's only write path is `apply3d`. Staff copy is terse.
 ## 6. Quality gates
 
 1. **Flat identity (written first).**
-   - `scripts/golden/makeFixtures.mjs` builds 6 bundles: display, window, iOS social 9:16, iOS 16:9, App Store, Mac+iPhone. They use ffmpeg `testsrc2` (590×1278, 30 fps, 8 s) and a handmade project.json with taps, waits and one zoom. The videos are not committed.
+   - `scripts/golden/makeFixtures.mjs` builds 7 bundles: display, window, iOS social 9:16, iOS 16:9, iOS landscape, App Store, Mac+iPhone (the gate pins x264 to one thread; `--out` is a parent folder). They use ffmpeg `testsrc2` (590×1278, 30 fps, 8 s) and a handmade project.json with taps, waits and one zoom. The videos are not committed.
    - **Compositor harness** (`test/helpers/compositorHarness.ts`, WP0). No test can import compositor.ts as it is: it imports `./api`, which reads `window.openscreen` at load (api.ts:172); vitest runs with `environment: 'node'` (vite.config.ts:14); the constructor calls `document.createElement('canvas')` (compositor.ts:144); `drawBlurredBackground` and the backdrop grain make scratch canvases (`OffscreenCanvas` when defined, else `document.createElement`); `backgroundImage` uses `new Image` (compositor.ts:52). The harness, in this order:
      1. `vi.mock('../src/renderer/src/api', () => ({ api: { prepareBackground: async (p) => p } }))`
      2. stubs a global `document` whose `createElement('canvas')` returns a canvas-like object (`width`, `height`, `getContext('2d')` → a `mockCanvas` context that logs calls), leaves `OffscreenCanvas` undefined, and stubs `Image` (never loads; `complete = false`)
@@ -926,7 +926,7 @@ Each control's only write path is `apply3d`. Staff copy is terse.
 **File ownership is exclusive: every file below has exactly one owner, and no file is unowned.** `Editor.tsx` passes from one package to the next: WP3 makes one scoped change and merges, then WP4b makes one scoped change and merges, then WP5 owns the rest. A package that needs something in a file it does not own sends the change (or the test case) to the owner. Every merge runs `npm run typecheck`, `npm test`, `npm run build`, every suite that reads the changed files (including `scripts/`), and the flat-identity gate.
 
 ### WP0: Baselines (day 1, before anything touches the compositor)
-- **Owns:** `scripts/golden/{makeFixtures,flatIdentity}.mjs`, `test/fixtures/compat/*`, `test/fixtures/3d-golden/*` (project JSONs; videos made by makeFixtures, not committed), `test/helpers/compositorHarness.ts` (§6.1), `test/compositorGolden.test.ts` plus its committed log, `test/phone3dCompat.test.ts` baseline JSON, mockCanvas extensions.
+- **Owns:** `scripts/golden/{makeFixtures,flatIdentity}.mjs`, `test/fixtures/compat/*`, `test/fixtures/3d-golden/*` (project JSONs; videos made by makeFixtures, not committed), `test/helpers/compositorHarness.ts` (§6.1), `test/compositorGolden.test.ts` plus its committed log, `test/phone3dCompat.test.ts` baseline JSON, `test/goldenScripts.test.ts`, mockCanvas extensions.
 - **Acceptance:**
   - [ ] The harness is committed first and builds a `CanvasCompositor` in vitest with no DOM.
   - [ ] Logs and JSON are captured by running the harness on a detached main 3dea11b worktree, then committed.
