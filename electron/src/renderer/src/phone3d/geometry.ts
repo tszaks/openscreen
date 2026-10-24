@@ -29,8 +29,8 @@
 //   offset, fixed renderOrder; materials.ts sets those).
 // - Rings of a sweep are the body outline moved inward along its normals
 //   (not re-built as a (w−2i, h−2i, r−i) rect), so every ring has the same
-//   points in the same order; for insets under 1 mm the two differ by far
-//   less than 0.01 mm. The outer ring IS the 2D outline (tested).
+//   points in the same order; for the insets used here (≤ 1.45 mm) the two
+//   differ by under 0.025 mm. The outer ring IS the 2D outline (both tested).
 // - The 17 Pro / Pro Max are an aluminium unibody: a metal back and plateau
 //   with an inlaid Ceramic Shield panel (its size is an estimate, below).
 // - The SE's home button, earpiece and camera and an iPad's bezel camera sit

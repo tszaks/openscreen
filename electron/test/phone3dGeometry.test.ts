@@ -30,6 +30,7 @@ import {
   clearPhoneCache,
   phoneDims2d,
   phoneModel,
+  insetLoop,
   rectLoop,
   type PhoneModel,
 } from '../src/renderer/src/phone3d/geometry';
@@ -213,6 +214,29 @@ describe('band profile (D14)', () => {
     expect(band.geometry.groups.map((g) => g.materialIndex).sort()).toEqual([0, 1]);
     const ipad = part(build(dev('ipad-pro-11-m4')).group, 'band')[0];
     expect(ipad.geometry.groups.map((g) => g.materialIndex)).toEqual([0]);
+  });
+
+  it('inset rings (moved along the normals) stay within 0.025 mm of the spec\'s (w−2i, h−2i, r−i) outline', () => {
+    const distToPoly = (q: [number, number], poly: [number, number][]) => {
+      let best = Infinity;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const dx = b[0] - a[0], dy = b[1] - a[1];
+        const t = Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+        best = Math.min(best, Math.hypot(q[0] - a[0] - t * dx, q[1] - a[1] - t * dy));
+      }
+      return best;
+    };
+    for (const d of [dev('iphone-17-pro'), dev('iphone-13-mini'), dev('iphone-se-3'), dev('ipad-pro-11-m4')]) {
+      const { W, H, bodyRadius } = phoneDims2d(d);
+      for (const i of [0.35, d.rimMm, d.rimMm + 0.25]) {
+        const moved = insetLoop(rectLoop(W, H, bodyRadius, 36), i);
+        const ref = rectLoop(W - 2 * i, H - 2 * i, bodyRadius - i, 144).p;
+        let worst = 0;
+        for (const q of moved) worst = Math.max(worst, distToPoly(q, ref));
+        expect(worst, `${d.id} inset ${i}`).toBeLessThan(0.025);
+      }
+    }
   });
 
   it('the outline is the 2D frame outline (continuousRectPoints, same radius)', () => {
