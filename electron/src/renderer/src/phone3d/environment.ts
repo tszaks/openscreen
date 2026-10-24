@@ -61,6 +61,22 @@ export const SHEEN_RADIANCE = 2.5;
 const SHEEN = { w: 1.8, h: 0.4, azimuth: 3, elevation: 5, rollDeg: -32 };
 const DEFAULT_KEY_AZIMUTH = defaultPhone3D().light.azimuth;
 const DOME_RADIUS = 10;
+/**
+ * Soft bounce cards in the fill (large, dim, soft-edged), placed as seen from
+ * the phone at the default key azimuth: one each side and one overhead. A
+ * dome of 2–6% alone left every metal band black wherever no softbox was
+ * reflected, so Natural Titanium read as black; real product sets surround
+ * the phone with white boards for exactly this. Radiance scales with the
+ * preset's ambient (studio 0.05 = these values).
+ */
+const CARDS = [
+  { azimuth: -105, elevation: 10, halfW: 45, halfH: 40, radiance: 0.8 },
+  { azimuth: 105, elevation: 10, halfW: 45, halfH: 40, radiance: 0.55 },
+  { azimuth: 0, elevation: 72, halfW: 180, halfH: 22, radiance: 0.25 },
+];
+const CARD_AMBIENT_REF = 0.05;
+/** cos² window: 1 at 0, 0 at |t| ≥ 1. */
+const cos2Window = (t: number) => (Math.abs(t) >= 1 ? 0 : Math.cos((Math.PI / 2) * t) ** 2);
 export const PMREM_SIZE = 512;
 
 let ltcReady = false;
@@ -122,37 +138,56 @@ export type Rgb = readonly [number, number, number];
 export const quantizeBg = (bg: Rgb): [number, number, number] => bg.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 15) / 15) as [number, number, number];
 
 /**
- * The fill scene that goes through PMREM: the gradient dome (with the floor
- * bounce in its lower half) and the sheen strip. No RectAreaLight and no
- * softbox mesh: the hero boxes are lights only.
+ * Radiance of the fill dome in an environment-local direction (unit
+ * vector): the base dome (2–6% of white for studio: horizon → top, the
+ * floor bounce below the horizon tinted by the background) plus, unless
+ * `cards` is false, the soft bounce cards. Pure; fillScene samples it.
+ */
+export function fillRadiance(preset: LightPreset, bgMean: Rgb, dir: readonly [number, number, number], cards = true): [number, number, number] {
+  const amb = LIGHT_PRESETS[preset].ambient;
+  const [x, y, z] = dir;
+  const [br, bgc, bb] = quantizeBg(bgMean);
+  let r: number, g: number, b: number;
+  if (y >= 0) {
+    // Horizon → top: a smooth rise (smoothstep), neutral.
+    const s = y * y * (3 - 2 * y);
+    r = g = b = amb * (DOME_HORIZON + (DOME_TOP - DOME_HORIZON) * s);
+  } else {
+    // Below the horizon: the floor bounce, tinted by the background.
+    const s = Math.min(1, -y * 3);
+    const h = amb * DOME_HORIZON;
+    r = h + (br * amb * FLOOR_BOUNCE - h) * s;
+    g = h + (bgc * amb * FLOOR_BOUNCE - h) * s;
+    b = h + (bb * amb * FLOOR_BOUNCE - h) * s;
+  }
+  if (!cards) return [r, g, b];
+  const az = (Math.atan2(x, z) * 180) / Math.PI;
+  const el = (Math.asin(Math.max(-1, Math.min(1, y))) * 180) / Math.PI;
+  let card = 0;
+  for (const c of CARDS) {
+    const da = Math.abs(((az - (c.azimuth - DEFAULT_KEY_AZIMUTH) + 540) % 360) - 180);
+    const de = Math.abs(el - c.elevation);
+    card += c.radiance * cos2Window(da / c.halfW) * cos2Window(de / c.halfH);
+  }
+  card *= amb / CARD_AMBIENT_REF;
+  return [r + card, g + card, b + card];
+}
+
+/**
+ * The fill scene that goes through PMREM: the dome (fillRadiance as vertex
+ * colours, with the floor bounce and the bounce cards) and the soft sheen
+ * strip. No RectAreaLight and no softbox: the hero boxes are lights only.
  */
 export function fillScene(preset: LightPreset, bgMean: Rgb): Scene {
-  const rig = LIGHT_PRESETS[preset];
-  const amb = rig.ambient;
   const scene = new Scene();
-  const dome = new SphereGeometry(DOME_RADIUS, 64, 32);
+  const dome = new SphereGeometry(DOME_RADIUS, 96, 48);
   const pos = dome.getAttribute('position');
   const colors = new Float32Array(pos.count * 3);
-  const [br, bgc, bb] = quantizeBg(bgMean);
   for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i) / DOME_RADIUS;
-    let r: number, g: number, b: number;
-    if (y >= 0) {
-      // Horizon → top: a smooth rise (smoothstep), neutral.
-      const s = y * y * (3 - 2 * y);
-      const v = amb * (DOME_HORIZON + (DOME_TOP - DOME_HORIZON) * s);
-      r = g = b = v;
-    } else {
-      // Below the horizon: the floor bounce, tinted by the background.
-      const s = Math.min(1, -y * 3);
-      const h = amb * DOME_HORIZON;
-      r = h + (br * amb * FLOOR_BOUNCE - h) * s;
-      g = h + (bgc * amb * FLOOR_BOUNCE - h) * s;
-      b = h + (bb * amb * FLOOR_BOUNCE - h) * s;
-    }
-    colors[i * 3] = r;
-    colors[i * 3 + 1] = g;
-    colors[i * 3 + 2] = b;
+    const v = fillRadiance(preset, bgMean, [pos.getX(i) / DOME_RADIUS, pos.getY(i) / DOME_RADIUS, pos.getZ(i) / DOME_RADIUS]);
+    colors[i * 3] = v[0];
+    colors[i * 3 + 1] = v[1];
+    colors[i * 3 + 2] = v[2];
   }
   dome.setAttribute('color', new BufferAttribute(colors, 3));
   const domeMesh = new Mesh(dome, new MeshBasicMaterial({ vertexColors: true, side: BackSide, toneMapped: false }));

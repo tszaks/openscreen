@@ -46,7 +46,7 @@ import {
   mrtOutput,
   lodBias,
 } from '../src/renderer/src/phone3d/materials';
-import { aimStudio, fillScene, lightDir, quantizeBg, studioLights } from '../src/renderer/src/phone3d/environment';
+import { aimStudio, fillRadiance, fillScene, lightDir, quantizeBg, studioLights } from '../src/renderer/src/phone3d/environment';
 
 const dev = (id: string) => getDevice(id)!;
 const build = (d: DeviceModel): PhoneModel => phoneModel(d, body3dFor(d));
@@ -520,22 +520,31 @@ describe('studio environment (D13)', () => {
       expect(o).not.toBeInstanceOf(RectAreaLight);
     });
     expect(kinds.sort()).toEqual(['fill:dome', 'fill:sheen']);
-    // Dome levels: 2–6% (studio ambient 0.05: horizon 0.02, top 0.05), floor tinted by the background.
+    // Base dome: 2–6% (studio ambient 0.05: horizon 0.02, top 0.05); the floor is tinted by the background.
+    const bg = [0.4, 0.05, 0.9] as const;
+    expect(fillRadiance('studio', bg, [0, 1, 0], false)[0]).toBeCloseTo(0.05, 9);
+    expect(fillRadiance('studio', bg, [0, 0, 1], false)[0]).toBeCloseTo(0.02, 9);
+    const floor = fillRadiance('studio', bg, [0, -1, 0], false);
+    expect(floor[2]).toBeGreaterThan(floor[0]);
+    expect(floor[0]).toBeGreaterThan(floor[1]);
+    // Bounce cards: soft, either side of the phone as seen at the default key azimuth (−35),
+    // dim next to a softbox (22+), and absent straight behind the camera.
+    const side = (az: number) => fillRadiance('studio', bg, lightDir(az + 35, 10))[0];
+    expect(side(-105)).toBeGreaterThan(0.5);
+    expect(side(105)).toBeGreaterThan(0.4);
+    expect(side(0)).toBeLessThan(0.05);
+    expect(fillRadiance('night', bg, lightDir(-105 + 35, 10))[0]).toBeLessThan(side(-105));
+    // The dome mesh carries exactly these values, all finite.
     const dome = s.getObjectByName('fill:dome') as Mesh;
     const pos = attr(dome.geometry, 'position');
     const col = attr(dome.geometry, 'color');
-    let top = 0, horizon = Infinity, floor = new Color();
-    for (let i = 0; i < pos.count; i++) {
-      const y = pos.getY(i) / 10;
-      if (y > 0.999) top = col.getX(i);
-      if (Math.abs(y) < 0.05) horizon = Math.min(horizon, col.getX(i));
-      if (y < -0.999) floor = new Color(col.getX(i), col.getY(i), col.getZ(i));
+    for (let i = 0; i < pos.count; i += 7) {
+      const v = fillRadiance('studio', [0.4, 0.05, 0.9], [pos.getX(i) / 10, pos.getY(i) / 10, pos.getZ(i) / 10]);
+      expect(col.getX(i)).toBeCloseTo(v[0], 5);
     }
-    expect(top).toBeCloseTo(0.05, 6);
-    expect(horizon).toBeGreaterThanOrEqual(0.019);
-    expect(horizon).toBeLessThanOrEqual(0.03);
-    expect(floor.b).toBeGreaterThan(floor.r);
-    expect(floor.r).toBeGreaterThan(floor.g);
+    const strip0 = s.getObjectByName('fill:sheen') as Mesh;
+    const sc = attr(strip0.geometry, 'color');
+    for (let i = 0; i < sc.count; i++) expect(Number.isFinite(sc.getX(i)) && sc.getX(i) >= 0).toBe(true);
     // The sheen strip is in front (camera side), above centre.
     const strip = s.getObjectByName('fill:sheen')!;
     expect(strip.position.z).toBeGreaterThan(0);

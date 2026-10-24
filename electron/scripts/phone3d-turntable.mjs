@@ -13,11 +13,12 @@
 //   node scripts/phone3d-turntable.mjs [--out DIR] [--models id,id] [--finishes all|auto|id,id]
 //        [--angles front,threeq,side,backthreeq,back,hero] [--size 900x1200] [--bg #hex]
 //        [--preset studio] [--azimuth -35] [--glass 0.25] [--screen image.png] [--ref image]
-//        [--samples 8] [--sheet-scale 0.5] [--show]
+//        [--samples 8] [--sheet-scale 0.5] [--probe] [--show]
 //
 // Defaults: 17 Pro, 16, Air and SE; for each, its darkest, lightest and most
 // saturated finish ("black, silver, orange"); six angles. --show keeps the
-// render window visible (debugging). One sheet-<model>.png per model: rows
+// render window visible (debugging); --probe renders a chrome and a grey
+// ball in the same studio instead of the phone (to see the lighting itself). One sheet-<model>.png per model: rows
 // are finishes, columns the angles.
 // Writes only under --out (default: <tmp>/openscreen-turntable). Never
 // touches recordings or the installed app.
@@ -69,6 +70,7 @@ function parseArgs(argv) {
     else if (a === '--screen') o.screen = resolve(v());
     else if (a === '--ref') o.ref = resolve(v());
     else if (a === '--samples') o.samples = Number(v());
+    else if (a === '--probe') o.probe = true;
     else if (a === '--sheet-scale') o.sheetScale = Number(v());
     else if (a === '--show') o.open = true;
     else if (a === '--help' || a === '-h') {
@@ -85,13 +87,14 @@ import {
   Color, GLSL3, Group, HalfFloatType, LinearSRGBColorSpace, Mesh, NoBlending, CustomBlending, OneFactor, AddEquation,
   NoToneMapping, OrthographicCamera, PerspectiveCamera, PlaneGeometry, Scene, ShaderMaterial, SRGBColorSpace,
   CanvasTexture, LinearMipmapLinearFilter, LinearFilter, WebGLRenderer, WebGLRenderTarget, Euler, MathUtils,
+  MeshPhysicalMaterial, SphereGeometry,
 } from 'three';
 import { DEVICES, getDevice } from '@src/shared/devices';
 import { body3dFor } from '@src/shared/devices3d';
 import { frameRectForScreen } from '@src/shared/deviceGeometry';
 import { drawCutouts } from '@src/renderer/src/mobile/deviceFrame';
 import { phoneModel } from '@src/renderer/src/phone3d/geometry';
-import { applyMaterials, materialsForDevice, setEnvIntensity, setScreenMap } from '@src/renderer/src/phone3d/materials';
+import { applyMaterials, materialsForDevice, mrtOutput, setEnvIntensity, setScreenMap } from '@src/renderer/src/phone3d/materials';
 import { aimStudio, studioEnv, studioLights } from '@src/renderer/src/phone3d/environment';
 
 const ANGLES = {
@@ -215,10 +218,21 @@ window.renderStill = async function (job) {
   const t = ensureTargets(W, H);
 
   const scene = new Scene();
+  if (job.probe) {
+    // Light probe: a chrome ball and a grey ball, to see the studio itself.
+    const r = device.bodyMm.height * 0.18;
+    const chrome = mrtOutput(new MeshPhysicalMaterial({ color: 0xffffff, metalness: 1, roughness: 0.04 }), 'lit');
+    const grey = mrtOutput(new MeshPhysicalMaterial({ color: 0x777777, metalness: 0, roughness: 0.6 }), 'lit');
+    const a = new Mesh(new SphereGeometry(r, 96, 48), chrome);
+    const b = new Mesh(new SphereGeometry(r, 96, 48), grey);
+    a.position.set(-r * 1.15, 0, 0);
+    b.position.set(r * 1.15, 0, 0);
+    scene.add(a, b);
+  }
   const pose = Object.assign({ turn: 0, tilt: 0, rotate: 0 }, ANGLES[job.angle] || job.pose || {});
   const holder = new Group();
   holder.rotation.copy(new Euler(MathUtils.degToRad(-pose.tilt), MathUtils.degToRad(pose.turn), MathUtils.degToRad(-pose.rotate), 'ZXY'));
-  holder.add(group);
+  if (!job.probe) holder.add(group);
   scene.add(holder);
   const long = Math.max(device.bodyMm.width, device.bodyMm.height);
   const lights = studioLights(job.preset, long, job.intensity);
@@ -401,7 +415,7 @@ async function main() {
       for (const angle of o.angles) {
         jobs.push({
           model: id, finish: f.id, angle, size: o.size, bg: o.bg, preset: o.preset, azimuth: o.azimuth, glass: o.glass,
-          intensity: o.intensity, samples: o.samples, label: `${d.name} · ${f.name} · ${angle}`,
+          intensity: o.intensity, samples: o.samples, probe: o.probe, label: `${d.name} · ${f.name} · ${angle}`,
           file: `${id}__${f.id}__${angle}.png`,
         });
       }
