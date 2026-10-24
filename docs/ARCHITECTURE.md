@@ -14,7 +14,7 @@ electron/
 │   └── ios-capture/  Swift helper for wired iPhone and iPad capture
 ├── scripts/
 │   ├── openscreen-agent.mjs  Command-line entry point for agents
-│   ├── install-skill.mjs     Links the openscreen agent skill (R/skills/openscreen) into ~/.claude and ~/.codex
+│   ├── install-skill.mjs     Links the openscreen agent skill (skills/openscreen at the repo root) into ~/.claude and ~/.codex
 │   ├── review3d.mjs          3D review page; bench3d.mjs: 3D performance budgets
 │   └── golden/               Flat-identity gate (main vs this branch, frame by frame)
 └── test/           Vitest suites
