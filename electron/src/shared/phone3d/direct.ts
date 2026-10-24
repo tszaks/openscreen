@@ -67,6 +67,11 @@ export const INTRO_GUARD = 0.2;
 export const TURN_TO_BACK_MIN = 4.5;
 export const LAYBACK_MIN = 2.4;
 export const MIDDLE_EVERY = 6;
+/** The phone holds still at least this long between two planned shots. */
+export const SHOT_GAP = 1.0;
+/** Between two middle shots in one window the phone rests this long, so even a long wait gets at most one
+ *  middle shot per MIDDLE_EVERY seconds (start to start, for a hero-layback). */
+export const MIDDLE_REST = MIDDLE_EVERY - SHOTS['hero-layback'].duration;
 export const MOVING_CAP: Record<DirectStyle, number> = { subtle: 0.2, hero: 0.35, bold: 0.35 };
 export const OUTRO_MIN = 1.5;
 export const OUTRO_END_GAP = 0.1;
@@ -106,8 +111,8 @@ interface Draft {
   ret: 'front' | 'stay';
   direction: 1 | -1;
   reason: string;
-  /** Middle turn-to-back: may slide inside [slideMin, slideMax] to hide a scene change. */
-  slide?: { min: number; max: number; window: Span };
+  /** Middle turn-to-back that hides this scene change (OUTPUT s): its start is set once its direction is known. */
+  scene?: number;
 }
 
 /** Busy intervals merged when closer than MERGE_GAP, clipped to [0, D]. */
@@ -202,7 +207,7 @@ function draftShots(p: Project, opts: DirectOptions, inp: Inputs, base: Pose, ex
   const reserve = (d: Draft) => {
     shots.push(d);
     used += d.duration;
-    reserved.push({ start: d.start - END_GAP, end: d.start + d.duration + END_GAP });
+    reserved.push({ start: d.start - SHOT_GAP, end: d.start + d.duration + SHOT_GAP });
   };
   const tapNote = inp.firstTap !== undefined ? `first tap at ${s1(inp.firstTap)}` : 'no taps';
 
@@ -226,30 +231,57 @@ function draftShots(p: Project, opts: DirectOptions, inp: Inputs, base: Pose, ex
     }
   }
 
-  // Middle: quiet windows first, then longer ones; one shot per window.
+  // Middle: quiet windows first, then longer ones, one shot per window per
+  // round; what is left of a window on either side of its shot (MIDDLE_REST
+  // away) goes back into the pool for the next round.
   if (style !== 'subtle') {
-    const free: (Span & { quiet: boolean; len: number })[] = [];
+    type Free = Span & { quiet: boolean; len: number };
+    const free = (a: number, b: number): Free => ({ start: a, end: b, len: b - a, quiet: inp.waits.some((w) => w.start < b && w.end > a) });
+    let pool: Free[] = [];
     for (const w of windows) {
       let parts: Span[] = [{ start: w.start, end: w.end }];
-      for (const r of reserved) parts = parts.flatMap((s) => (r.end <= s.start || r.start >= s.end ? [s] : [{ start: s.start, end: r.start }, { start: r.end, end: s.end }]));
-      for (const s of parts) if (s.end - s.start > 0) free.push({ ...s, quiet: w.quiet, len: s.end - s.start });
+      for (const r of reserved) parts = parts.flatMap((x) => (r.end <= x.start || r.start >= x.end ? [x] : [{ start: x.start, end: r.start }, { start: r.end, end: x.end }]));
+      for (const x of parts) if (x.end - x.start > 0) pool.push(free(x.start, x.end));
     }
-    free.sort((a, b) => Number(b.quiet) - Number(a.quiet) || b.len - a.len || a.start - b.start);
     let middle = 0;
     const maxMiddle = Math.floor(D / MIDDLE_EVERY);
-    for (const s of free) {
-      if (middle >= maxMiddle) break;
-      const options: ShotRecipe[] = style === 'bold' && s.len >= TURN_TO_BACK_MIN ? ['turn-to-back', 'hero-layback'] : s.len >= LAYBACK_MIN ? ['hero-layback'] : [];
-      for (const recipe of options) {
-        const key = `${recipe}@${r3(s.start)}`;
-        const duration = SHOTS[recipe].duration;
-        if (excluded.has(key) || used + duration > budget + 1e-9 || duration > s.len) continue;
-        const start = s.start + (s.len - duration) / 2;
-        const why = s.quiet ? `quiet wait ${s1(s.start)}–${s1(s.end)}` : `free ${s1(s.start)}–${s1(s.end)}`;
-        reserve({ key, recipe, start, duration, ret: 'front', direction: 1, reason: `middle; ${why}`, ...(recipe === 'turn-to-back' ? { slide: { min: s.start, max: s.end - duration, window: s } } : {}) });
-        middle++;
-        break;
+    while (pool.length && middle < maxMiddle) {
+      pool.sort((a, b) => Number(b.quiet) - Number(a.quiet) || b.len - a.len || a.start - b.start);
+      const next: Free[] = [];
+      for (const x of pool) {
+        if (middle >= maxMiddle) break;
+        const options: ShotRecipe[] = style === 'bold' && x.len >= TURN_TO_BACK_MIN ? ['turn-to-back', 'hero-layback'] : x.len >= LAYBACK_MIN ? ['hero-layback'] : [];
+        for (const recipe of options) {
+          const key = `${recipe}@${r3(x.start)}`;
+          const duration = SHOTS[recipe].duration;
+          if (excluded.has(key) || used + duration > budget + 1e-9 || duration > x.len) continue;
+          let start = x.start + (x.len - duration) / 2;
+          let lo = start;
+          let hi = start;
+          const why = x.quiet ? `quiet wait in ${s1(x.start)}–${s1(x.end)}` : `free ${s1(x.start)}–${s1(x.end)}`;
+          let reason = `middle; ${why}`;
+          let scene: number | undefined;
+          if (recipe === 'turn-to-back') {
+            // Scene-change wipe: a cut inside the window that the turn can pass edge-on in either direction
+            // (the direction is set later by time order).
+            const offs = [edgeOnOffset(base, 1, duration), edgeOnOffset(base, -1, duration)];
+            scene = inp.scenes.find((t) => offs.every((o) => t - o >= x.start - 1e-9 && t - o + duration <= x.end + 1e-9));
+            if (scene !== undefined) {
+              const starts = offs.map((o) => scene! - o);
+              lo = Math.min(...starts);
+              hi = Math.max(...starts);
+              start = starts[0];
+              reason = `scene change at ${s1(scene)} hidden edge-on; ${why}`;
+            }
+          }
+          reserve({ key, recipe, start, duration, ret: 'front', direction: 1, reason, ...(scene !== undefined ? { scene } : {}) });
+          middle++;
+          if (lo - MIDDLE_REST - x.start > 0) next.push(free(x.start, lo - MIDDLE_REST));
+          if (x.end - (hi + duration + MIDDLE_REST) > 0) next.push(free(hi + duration + MIDDLE_REST, x.end));
+          break;
+        }
       }
+      pool = next;
     }
   }
 
@@ -258,16 +290,8 @@ function draftShots(p: Project, opts: DirectOptions, inp: Inputs, base: Pose, ex
   let k = 0;
   for (const d of ordered) if (d.recipe !== 'spin-in' && d.recipe !== 'settle') d.direction = k++ % 2 === 0 ? 1 : -1;
 
-  // Scene-change wipe: slide a turn-to-back so the phone is edge-on exactly at the cut.
-  for (const d of ordered) {
-    if (!d.slide) continue;
-    const off = edgeOnOffset(base, d.direction, d.duration);
-    const s = inp.scenes.find((t) => t - off >= d.slide!.min - 1e-9 && t - off <= d.slide!.max + 1e-9);
-    if (s !== undefined) {
-      d.start = s - off;
-      d.reason = `scene change at ${s1(s)} hidden edge-on; ${d.reason.replace(/^middle; /, '')}`;
-    }
-  }
+  // Scene-change wipe: the turn passes edge-on exactly at the cut.
+  for (const d of ordered) if (d.scene !== undefined) d.start = d.scene - edgeOnOffset(base, d.direction, d.duration);
   return ordered;
 }
 

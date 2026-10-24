@@ -170,8 +170,11 @@ function tapFixes(c: Ctx, w: Found): EditOp[][] {
   if (!chk) return [];
   const list = c.p3.transitions;
   const tr = culprit(list, chk.worst);
-  const target = poseTargetAt(c.p3, chk.t).pose;
-  const face: EditOp = { op: 'setPose', at: r3(chk.t), turn: 360 * Math.round(target.turn / 360), tilt: 0 };
+  // Face front at the tap: the keyframe poseTargetAt edits gets turn = the whole turn nearest the move's
+  // other end (so the move does not gain a spin) and tilt 0.
+  const target = poseTargetAt(c.p3, chk.t);
+  const ref = target.kind === 'to' ? resolveStarts(c.p3)[target.index].turn : target.kind === 'from' ? list[target.index].to.turn : target.pose.turn;
+  const face: EditOp = { op: 'setPose', at: r3(chk.t), turn: 360 * Math.round(ref / 360), tilt: 0 };
   const out: EditOp[][] = [];
   const inFlight = tr && tr.end > chk.a && tr.start <= chk.worst;
   if (inFlight && tr.start <= chk.a - MIN_TRANSITION) {
@@ -263,7 +266,7 @@ function offCanvasFixes(c: Ctx, w: Found): EditOp[][] {
   };
   const clampKey = (k: 'x' | 'y' | 'size', v: number) => Math.min(POSE_RANGE[k][1], Math.max(POSE_RANGE[k][0], v));
   for (let iter = 0; iter < 8; iter++) {
-    const fixed = applyFix(c.p, [opFor(pose)]);
+    const fixed = iter === 0 ? c.p : applyFix(c.p, [opFor(pose)]);
     if (!fixed) return [];
     const fc = makeCtx(fixed, c.cursor);
     if (!fc) return [];
@@ -488,6 +491,8 @@ const FIXERS: Partial<Record<WarningCode, (c: Ctx, w: Found) => EditOp[][]>> = {
 
 // ---------------------------------------------------------------------------
 
+const codePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
  * Every warning for `p`'s 3D phone, sorted by time. `cursor` is the
  * bundle's cursor.json samples (zooms from autofocus need them, D5): pass
@@ -531,6 +536,6 @@ export function projectWarnings(p: Project, opts: { cursor?: readonly CursorSamp
   const order = (w: Warning) => WARNING_CODES.indexOf(w.code);
   return out
     .map((w, i) => ({ w, i }))
-    .sort((a, b) => (a.w.at ?? -1) - (b.w.at ?? -1) || order(a.w) - order(b.w) || (a.w.transitionId ?? '').localeCompare(b.w.transitionId ?? '', 'en') || a.i - b.i)
+    .sort((a, b) => (a.w.at ?? -1) - (b.w.at ?? -1) || order(a.w) - order(b.w) || codePoint(a.w.transitionId ?? '', b.w.transitionId ?? '') || a.i - b.i)
     .map(({ w }) => w);
 }
