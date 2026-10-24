@@ -129,6 +129,8 @@ export const PHONE_PARTS: readonly PhonePart[] = [
 export const BAND_GROUP = { metal: 0, antenna: 1 } as const;
 /** Material groups of the front hardware in the bezel (SE, iPads): glass lens, metal ring, dark grille. */
 export const FRONT_GROUP = { lens: 0, ring: 1, grille: 2 } as const;
+/** Material groups inside the lens-elements mesh: three element domes (top to bottom) and the retaining ring. */
+export const LENS_GROUP = { element0: 0, element1: 1, element2: 2, retainer: 3 } as const;
 /** Material groups inside the flash mesh. */
 export const FLASH_GROUP = { ring: 0, lamp: 1 } as const;
 
@@ -704,6 +706,14 @@ function buildLens(L: LensBuild, s: LensSpec) {
       }
     }
   });
+  // Retaining ring just under the cover glass: the first thing the eye
+  // reads inside a real lens (a thin bright-edged annulus around the dark optics).
+  const rr0 = glassR * 0.995;
+  const rr1 = glassR * 0.8;
+  const rz = coverZ - Math.min(0.12, depth * 0.1);
+  const ringOuter = bLoop.p;
+  const ringInner = at(circleLoop(rr1)).p;
+  cap(L.elements, ringOuter.map(([px, py]): V2 => [x + (px - x) * (rr0 / glassR), y + (py - y) * (rr0 / glassR)]), rz, 1, [ringInner.slice().reverse()], undefined, LENS_GROUP.retainer);
   cap(L.cover, bLoop.p, coverZ, 1);
 }
 

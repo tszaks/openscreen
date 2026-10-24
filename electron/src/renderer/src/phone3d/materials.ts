@@ -183,6 +183,7 @@ export interface PhoneMaterials {
   lensRing: MeshPhysicalMaterial;
   lensBarrel: MeshPhysicalMaterial;
   lensElements: [MeshPhysicalMaterial, MeshPhysicalMaterial, MeshPhysicalMaterial];
+  lensRetainer: MeshPhysicalMaterial;
   lensCover: MeshPhysicalMaterial;
   flashRing: MeshPhysicalMaterial;
   flash: MeshPhysicalMaterial;
@@ -295,6 +296,7 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
     [0.17, '#0a0b12'],
     [0.3, '#0c0d16'],
   ].map(([r, c]) => physical({ color: srgb(c as string), roughness: r as number, metalness: 0, specularIntensity: 1, ior: 1.7 })) as PhoneMaterials['lensElements'];
+  const lensRetainer = physical({ color: srgb('#2c2c30'), metalness: 1, roughness: 0.3 });
   const lensCover = reflectionOnly(
     overlay(
       physical({
@@ -326,7 +328,7 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   const screen = lodBias(mrtOutput(overlay(new MeshBasicMaterial({ map: null, toneMapped: false }), reversed), 'screen'));
 
   const all: Material[] = [];
-  for (const m of [band, antenna, seam, frontGlass, glare, backGlass, backPanel, plateauGlass, lensRing, lensBarrel, ...lensElements, lensCover, flashRing, flash, sensor, decal, cameraControl, screen]) {
+  for (const m of [band, antenna, seam, frontGlass, glare, backGlass, backPanel, plateauGlass, lensRing, lensBarrel, ...lensElements, lensRetainer, lensCover, flashRing, flash, sensor, decal, cameraControl, screen]) {
     if (!all.includes(m)) all.push(m);
   }
   return {
@@ -341,6 +343,7 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
     lensRing,
     lensBarrel,
     lensElements,
+    lensRetainer,
     lensCover,
     flashRing,
     flash,
@@ -401,7 +404,7 @@ export function materialForPart(part: PhonePart, m: PhoneMaterials): Material | 
       return list;
     }
     case 'lensElements':
-      return [...m.lensElements];
+      return [...m.lensElements, m.lensRetainer];
     case 'frontHardware': {
       const list: Material[] = [];
       list[FRONT_GROUP.lens] = m.sensor;

@@ -267,14 +267,14 @@ describe('front, screen and back', () => {
     }
   });
 
-  it('lens barrels: inward normals, at least 0.2 mm deep, three element groups', () => {
+  it('lens barrels: at least 0.2 mm deep, three element groups and a retaining ring', () => {
     for (const id of ['iphone-16-pro', 'iphone-13', 'iphone-se-3', 'iphone-16e', 'iphone-17-pro-max']) {
       const { group } = build(dev(id));
       const barrel = part(group, 'lensBarrel')[0];
       const bb = barrel.geometry.boundingBox!;
       expect(bb.max.z - bb.min.z, id).toBeGreaterThanOrEqual(0.2);
       const els = part(group, 'lensElements')[0];
-      expect(new Set(els.geometry.groups.map((g) => g.materialIndex))).toEqual(new Set([0, 1, 2]));
+      expect(new Set(els.geometry.groups.map((g) => g.materialIndex))).toEqual(new Set([0, 1, 2, 3]));
       // Element discs sit at three different depths between the cover and the barrel floor.
       const cz = part(group, 'lensCover')[0].geometry.boundingBox!.min.z;
       const ez = els.geometry.boundingBox!;
