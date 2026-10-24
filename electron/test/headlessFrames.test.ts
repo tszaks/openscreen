@@ -3,7 +3,7 @@
 // (runFrames) driven with a fake compositor.
 import { afterEach, describe, expect, it } from 'vitest';
 import { exportFrameCount, frameFileName, framesOutputPath, MAX_FRAMES, parseHeadlessArgs, sheetLayout, snapToExportFrame } from '../src/shared/headless';
-import { render3dFor, runFrames, type FramesCompositor, type FramesRun } from '../src/renderer/src/headlessFrames';
+import { holdPreview, render3dFor, runFrames, type FramesCompositor, type FramesRun } from '../src/renderer/src/headlessFrames';
 import { mockCanvas } from './helpers/mockCanvas';
 import { phoneProject, with3d } from './helpers/phone3dFixtures';
 
@@ -323,5 +323,31 @@ describe('render3dFor (the frames and export 3D quality)', () => {
     expect(render3dFor(p, { draft: true, fps: 30, strict: true })).toEqual({ ss: 1, quality: 'draft', motionBlur: null, fps: 30, strict: true });
     p.phone3d!.motionBlur.on = false;
     expect(render3dFor(p, { draft: false, fps: 60, strict: true })?.motionBlur).toBeNull();
+  });
+});
+
+describe('holdPreview (no preview redraw during a 3D export, frames or headless run, §5.5)', () => {
+  const threeD = () => {
+    const p = with3d(phoneProject({ presetId: 'social-9x16' }));
+    p.device.frame = true;
+    return p;
+  };
+
+  it('holds a 3D preview while exporting or headless, and never when idle', () => {
+    expect(holdPreview({ headless: false, exporting: true, project: threeD() })).toBe(true);
+    expect(holdPreview({ headless: true, exporting: false, project: threeD() })).toBe(true);
+    expect(holdPreview({ headless: false, exporting: false, project: threeD() })).toBe(false);
+  });
+
+  it('never holds a flat project: its export keeps main redraw sequence, byte for byte (D11)', () => {
+    const flat = phoneProject({ presetId: 'social-9x16' });
+    const off = threeD();
+    off.phone3d!.enabled = false;
+    const appStore = with3d(phoneProject({ presetId: 'appstore' }));
+    for (const project of [flat, off, appStore]) {
+      for (const [headless, exporting] of [[true, true], [true, false], [false, true]]) {
+        expect(holdPreview({ headless, exporting, project })).toBe(false);
+      }
+    }
   });
 });

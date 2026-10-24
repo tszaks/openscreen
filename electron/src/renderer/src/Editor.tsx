@@ -12,7 +12,7 @@ import { ToastQueue } from '../../shared/toasts';
 import { UndoableEdits } from '../../shared/undoableEdits';
 import { Toasts } from './components/Toasts';
 import { CanvasCompositor, backgroundReady } from './compositor';
-import { render3dFor, runFrames, type FrameInputs3d, type Render3dInputs } from './headlessFrames';
+import { holdPreview, render3dFor, runFrames, type FrameInputs3d, type Render3dInputs } from './headlessFrames';
 import type { HeadlessResult } from '../../shared/headless';
 import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
@@ -29,7 +29,6 @@ import type { TapSuggestion } from '../../shared/taps';
 import { SaveTracker, isTextEntry } from '../../shared/editorSession';
 import { exportCanvasSize, ipcErrorMessage, presetCanvasSize } from '../../shared/exportArgs';
 import { focusSegmentsFor } from '../../shared/focusSegments';
-import { phone3dActive } from '../../shared/phone3d/placement';
 import { getPreset, PRESETS, type ExportPreset, type PresetId } from '../../shared/exportPresets';
 import {
   ENCODE_WEIGHT,
@@ -697,12 +696,9 @@ export function Editor({
   // draw in between: its 'seeked' redraw would double the GPU work per frame
   // and flip the engine between preview and export quality (§5.5).
   const exportingRef = useRef(false);
-  /** The preview stays still: during an export or frames run, and always in a
-   *  headless run, when the phone draws in 3D. Flat projects keep today's
-   *  redraws exactly: skipping them changes the exported pixels of a blurred
-   *  backdrop (measured: the ios-social golden fixture stops matching main's
-   *  export), and flat exports must stay byte-identical (D11). */
-  const previewHeld = () => (headless || exportingRef.current) && phone3dActive(projRef.current).active;
+  /** The preview stays still during a 3D export, frames or headless run;
+   *  flat projects keep main's redraws (D11). See holdPreview. */
+  const previewHeld = () => holdPreview({ headless: !!headless, exporting: exportingRef.current, project: projRef.current });
 
   /** The compositor's inputs at output time `outT`, with the videos on source
    *  time `srcT`: one place for the preview, exports and frames. Cursor and

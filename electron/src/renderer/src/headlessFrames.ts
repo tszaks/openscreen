@@ -39,6 +39,20 @@ export function render3dFor(p: Project, opts: { draft: boolean; fps: number; str
   };
 }
 
+/**
+ * Whether the editor's preview must not draw (§5.5 as WP3 built it): during
+ * an export or frames run, and always in a headless run, but only when the
+ * phone draws in 3D. Those runs seek the video for every frame on the
+ * preview's compositor; a 3D preview redraw would double the GPU work and
+ * flip the engine between preview and export quality. A flat project keeps
+ * main's redraws on purpose: skipping them changed the exported pixels of the
+ * ios-social golden fixture (blurred backdrop, PSNR 56.9 dB against main), and
+ * flat exports must stay byte-identical to main (D11).
+ */
+export function holdPreview(s: { headless: boolean; exporting: boolean; project: Project }): boolean {
+  return (s.headless || s.exporting) && phone3dActive(s.project).active;
+}
+
 /** What a frames run draws with; the Editor supplies it from its own export plumbing. */
 export interface FramesRun {
   /** Output seconds, ascending. Each is drawn at its export frame (snapToExportFrame). */
