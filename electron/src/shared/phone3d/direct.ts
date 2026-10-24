@@ -17,7 +17,7 @@ import { FRONT, type Pose, type ShotRecipe } from './model';
 import { applyPhone3dOp, NOT_IPHONE } from './ops';
 import { SHOTS, shotBase, shotKeys } from './shots';
 import { phone3dProblems } from './validate';
-import { projectWarnings, type WarningCode } from './warnings';
+import { projectWarnings, type Warning, type WarningCode } from './warnings';
 
 export type DirectStyle = 'subtle' | 'hero' | 'bold';
 export const DIRECT_STYLES: readonly DirectStyle[] = ['subtle', 'hero', 'bold'];
@@ -326,6 +326,9 @@ function tryPlan(p: Project, ops: EditOp[], drafts: readonly Draft[]): { project
   return { project: cur, owner };
 }
 
+/** Two warnings cover overlapping time (a warning without `end` is the instant `at`). */
+const overlaps = (a: Warning, b: Warning) => (a.at ?? 0) <= (b.end ?? b.at ?? 0) + 1e-9 && (b.at ?? 0) <= (a.end ?? a.at ?? 0) + 1e-9;
+
 const toShot = (d: Draft): PlannedShot => ({ recipe: d.recipe, start: r3(d.start), end: r3(d.start + d.duration), reason: d.reason });
 
 /**
@@ -335,7 +338,9 @@ const toShot = (d: Draft): PlannedShot => ({ recipe: d.recipe, start: r3(d.start
  * lighting, motion blur), `clearTransitions` when replacing, one `shot` per
  * shot in time order (float last for subtle). Then a self-check: the ops are
  * applied to a copy and any shot that causes a warning is re-planned without
- * (at most MAX_ROUNDS rounds), then dropped, so a plan adds no warnings.
+ * (at most MAX_ROUNDS rounds), then dropped, so a plan adds no warnings. A
+ * warning the project already has with no shot planned (for example a phone
+ * the user scaled past the canvas edge) is not blamed on the shots.
  */
 export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
   if (!isPhoneProject(p)) throw new Error(NOT_IPHONE);
@@ -345,6 +350,9 @@ export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
   const dropped: PlannedShot[] = [];
   let retries = 0;
   let rounds = 0;
+  // Warnings the project has with no planned shot (the user's layout or kept moves) are not the shots' fault.
+  const baseline = projectWarnings(tryPlan(p, opsFor(opts.style, base, opts.replace, []).filter((o) => o.op !== 'shot'), []).project, { cursor: opts.cursor });
+  const preExisting = (w: Warning) => baseline.some((b) => b.code === w.code && overlaps(b, w));
   let drafts = draftShots(p, opts, inp, base, excluded);
   for (let guard = 0; guard < 64; guard++) {
     const ops = opsFor(opts.style, base, opts.replace, drafts);
@@ -363,7 +371,7 @@ export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
     }
     const bad = new Set<Draft>();
     for (const w of projectWarnings(tried.project, { cursor: opts.cursor })) {
-      if (!SHOT_CODES.includes(w.code) || !w.transitionId) continue;
+      if (!SHOT_CODES.includes(w.code) || !w.transitionId || preExisting(w)) continue;
       const d = tried.owner.get(w.transitionId);
       if (d) bad.add(d);
     }
