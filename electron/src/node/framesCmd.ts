@@ -191,7 +191,8 @@ export async function framesCmd(argv: string[], deps: FramesDeps) {
       const asked = sent.get(s.t)?.t ?? s.t;
       if (!s.path) return { t: asked, error: s.error ?? 'not rendered' };
       const at = s.at ?? s.t;
-      return { t: asked, frame: s.frame ?? null, at: r6(at), path: s.path, ...poseInfo(p, at) };
+      const textBoxes = (s.textBoxes ?? []).map(({ kind, rect: r }) => ({ kind, rect: { x: round3(r.x), y: round3(r.y), w: round3(r.w), h: round3(r.h) } }));
+      return { t: asked, frame: s.frame ?? null, at: r6(at), path: s.path, ...poseInfo(p, at), textBoxes };
     }),
     ...past.map((t) => ({ t, error: 'past the end' })),
   ].sort((x, y) => x.t - y.t);

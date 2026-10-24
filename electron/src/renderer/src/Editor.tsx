@@ -11,8 +11,9 @@ import { History } from '../../shared/history';
 import { ToastQueue } from '../../shared/toasts';
 import { UndoableEdits } from '../../shared/undoableEdits';
 import { Toasts } from './components/Toasts';
-import { CanvasCompositor, backgroundReady, exportRender3d, type Render3DSettings } from './compositor';
-import { holdPreview, render3dFor, runFrames, type FrameInputs3d, type Render3dInputs } from './headlessFrames';
+import { CanvasCompositor, backgroundReady, type Render3DSettings } from './compositor';
+import { holdPreview, runFrames, type FrameInputs3d, type Render3dInputs } from './headlessFrames';
+import { render3dSettings } from './render3dSettings';
 import { engineSync, ensurePhone3d, onEngineReady } from './phone3d/loader';
 import type { HeadlessResult } from '../../shared/headless';
 import { parseCaptions, toSrt } from '../../shared/captions';
@@ -702,8 +703,9 @@ export function Editor({
   // draw in between: its 'seeked' redraw would double the GPU work per frame
   // and flip the engine between preview and export quality (§5.5).
   const exportingRef = useRef(false);
-  /** The preview stays still during a 3D export, frames or headless run;
-   *  flat projects keep main's redraws (D11). See holdPreview. */
+  /** The preview stays still during a 3D export, frames or headless run
+   *  only; a flat project redraws exactly as it always has (owner decision 9,
+   *  D11). See holdPreview. */
   const previewHeld = () => holdPreview({ headless: !!headless, exporting: exportingRef.current, project: projRef.current });
 
   /** The compositor's inputs at output time `outT`, with the videos on source
@@ -750,8 +752,8 @@ export function Editor({
       if (!render3d && !headless && compositor.has3d && video.paused) {
         idle3d.current = window.setTimeout(() => {
           idle3d.current = null;
-          const settings = exportRender3d(proj, layoutPresetOf(proj)?.fps ?? proj.outputFPS);
-          if (settings && videoRef.current?.paused) renderAtRef.current(playheadRef.current, { ...settings, strict: false });
+          const settings = render3dSettings(proj, { fps: layoutPresetOf(proj)?.fps ?? proj.outputFPS, strict: false });
+          if (settings && videoRef.current?.paused) renderAtRef.current(playheadRef.current, settings);
         }, IDLE_3D_MS);
       }
       // In crop mode, dim outside the current crop rect (in source space).
@@ -1156,7 +1158,7 @@ export function Editor({
       video.pause();
       // A 3D phone never exports flat: the engine is loaded before frame 0 and a lost GPU aborts (D9, D17).
       await comp.prepare3d();
-      const render3d = exportRender3d(proj, fps);
+      const render3d = render3dSettings(proj, { fps });
       for (let i = 0; i < total; i++) {
         if (cancelExport.current) break;
         const outT = i / fps;
@@ -1417,7 +1419,7 @@ export function Editor({
     if (!video || !job.frames) return { ok: false, error: 'the recording is not loaded' };
     const preset = layoutPresetOf(proj);
     const fps = preset ? preset.fps : proj.outputFPS;
-    const render3d = render3dFor(proj, { draft: !!job.draft, fps, strict: true });
+    const render3d = render3dSettings(proj, { fps, draft: !!job.draft });
     video.pause();
     exportingRef.current = true;
     try {

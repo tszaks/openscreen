@@ -5,6 +5,8 @@
 // agent CLI's `frames`). Pure argv parsing and path rules, so they are
 // unit-tested; main owns the window and the process exit.
 
+import type { TextBox } from './textBoxes';
+
 export interface HeadlessJob {
   bundleDir: string;
   /** A .mp4/.gif file, or a folder when `presets` or `frames` is set. */
@@ -35,6 +37,8 @@ export interface HeadlessFrame {
   path?: string;
   /** Why there is no PNG (e.g. "past the end"). */
   error?: string;
+  /** The text boxes drawn in this still (captions, keycaps, text overlays, title), PNG px, in drawing order. */
+  textBoxes?: TextBox[];
 }
 
 export interface HeadlessResult {

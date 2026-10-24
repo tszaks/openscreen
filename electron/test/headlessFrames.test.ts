@@ -1,9 +1,12 @@
 // Headless frames (SPEC §4.2): the `--frames` argv, the PNG names and the
 // write rule main enforces, the contact sheet grid, and the renderer loop
 // (runFrames) driven with a fake compositor.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { exportFrameCount, frameFileName, framesOutputPath, MAX_FRAMES, parseHeadlessArgs, sheetLayout, snapToExportFrame } from '../src/shared/headless';
-import { holdPreview, render3dFor, runFrames, type FramesCompositor, type FramesRun } from '../src/renderer/src/headlessFrames';
+import { holdPreview, runFrames, type FramesCompositor, type FramesRun } from '../src/renderer/src/headlessFrames';
+import type { TextBox } from '../src/shared/textBoxes';
 import { mockCanvas } from './helpers/mockCanvas';
 import { phoneProject, with3d } from './helpers/phone3dFixtures';
 
@@ -152,12 +155,22 @@ function stubDocument() {
   return made;
 }
 
+/** The text boxes the fake compositor reports after drawing output time `t`, canvas px. */
+const boxesAt = (t: number): TextBox[] => [
+  { kind: 'caption', rect: { x: 100 + t, y: 1500, w: 400, h: 80 } },
+  { kind: 'title', rect: { x: 40, y: 60, w: 1000, h: 200 } },
+];
+
 function fakeComp(W = 1080, H = 1920) {
   const renders: { t: number; input: unknown }[] = [];
   const comp: FramesCompositor = {
     canvas: { toBlob: (cb: (b: Blob) => void) => cb(new Blob([`frame@${renders.at(-1)?.t}`])) } as unknown as HTMLCanvasElement,
     canvasSize: { width: W, height: H },
     render: (t, input) => renders.push({ t, input }),
+    get textBoxes() {
+      const last = renders.at(-1);
+      return last ? boxesAt(last.t) : [];
+    },
   };
   return { comp, renders };
 }
@@ -230,8 +243,8 @@ describe('runFrames', () => {
       out: '/out',
       frames: 2,
       stills: [
-        { t: 0, frame: 0, at: 0, path: '/out/f-0000.000.png' },
-        { t: 2, frame: 60, at: 2, path: '/out/f-0002.000.png' },
+        { t: 0, frame: 0, at: 0, path: '/out/f-0000.000.png', textBoxes: boxesAt(0) },
+        { t: 2, frame: 60, at: 2, path: '/out/f-0002.000.png', textBoxes: boxesAt(2) },
         { t: 9, error: 'past the end' },
       ],
       size: { w: 1080, h: 1920 },
@@ -251,9 +264,10 @@ describe('runFrames', () => {
     expect(written.map((w) => w.name)).toEqual(['f-0004.267.png', 'f-0007.967.png']);
     expect(r.frames).toBe(2);
     expect(r.stills).toEqual([
-      { t: 4.25, frame: 128, at: 128 / 30, path: '/out/f-0004.267.png' },
-      { t: 4.26, frame: 128, at: 128 / 30, path: '/out/f-0004.267.png' },
-      { t: 7.99, frame: 239, at: 239 / 30, path: '/out/f-0007.967.png' },
+      // A time on an already drawn frame reports that frame's PNG and text boxes.
+      { t: 4.25, frame: 128, at: 128 / 30, path: '/out/f-0004.267.png', textBoxes: boxesAt(128 / 30) },
+      { t: 4.26, frame: 128, at: 128 / 30, path: '/out/f-0004.267.png', textBoxes: boxesAt(128 / 30) },
+      { t: 7.99, frame: 239, at: 239 / 30, path: '/out/f-0007.967.png', textBoxes: boxesAt(239 / 30) },
       { t: 8, error: 'past the end' },
     ]);
   });
@@ -325,36 +339,15 @@ describe('runFrames', () => {
     expect(written.map((w) => w.name)).toEqual(['f-0000.000.png', 'f-0002.000.png', 'sheet.png']);
     expect(written.map((w) => w.text)).toEqual([`canvas#${scaled.id}`, `canvas#${scaled.id}`, `canvas#${sheet.id}`]);
     expect(r.sheet).toBe('/out/sheet.png');
+    // Text boxes are reported in the scaled PNG's pixels.
+    expect(r.stills?.[1].textBoxes).toEqual([
+      { kind: 'caption', rect: { x: 51, y: 750, w: 200, h: 40 } },
+      { kind: 'title', rect: { x: 20, y: 30, w: 500, h: 100 } },
+    ]);
   });
 });
 
-describe('render3dFor (the frames and export 3D quality)', () => {
-  it('is undefined when the phone draws flat', () => {
-    expect(render3dFor(phoneProject({ presetId: 'social-9x16' }), { draft: false, fps: 30, strict: true })).toBeUndefined();
-    const off = with3d(phoneProject({ presetId: 'social-9x16' }));
-    off.phone3d!.enabled = false;
-    expect(render3dFor(off, { draft: false, fps: 30, strict: true })).toBeUndefined();
-    const appStore = with3d(phoneProject({ presetId: 'appstore' }));
-    expect(render3dFor(appStore, { draft: false, fps: 30, strict: true })).toBeUndefined();
-  });
-
-  it('uses the project supersampling and motion blur at full quality, one sample at 1× in draft', () => {
-    const p = with3d(phoneProject({ presetId: 'social-9x16' }), { supersample: 2 });
-    p.device.frame = true;
-    expect(render3dFor(p, { draft: false, fps: 30, strict: true })).toEqual({
-      ss: 2,
-      quality: 'full',
-      motionBlur: { samples: p.phone3d!.motionBlur.samples, shutter: p.phone3d!.motionBlur.shutter },
-      fps: 30,
-      strict: true,
-    });
-    expect(render3dFor(p, { draft: true, fps: 30, strict: true })).toEqual({ ss: 1, quality: 'draft', motionBlur: null, fps: 30, strict: true });
-    p.phone3d!.motionBlur.on = false;
-    expect(render3dFor(p, { draft: false, fps: 60, strict: true })?.motionBlur).toBeNull();
-  });
-});
-
-describe('holdPreview (no preview redraw during a 3D export, frames or headless run, §5.5)', () => {
+describe('holdPreview (no preview redraw during a 3D export, frames or headless run; flat exactly as today: §5.5, owner decision 9)', () => {
   const threeD = () => {
     const p = with3d(phoneProject({ presetId: 'social-9x16' }));
     p.device.frame = true;
@@ -377,5 +370,21 @@ describe('holdPreview (no preview redraw during a 3D export, frames or headless 
         expect(holdPreview({ headless, exporting, project })).toBe(false);
       }
     }
+  });
+
+  it("is the editor's only preview guard: renderAt and the 'seeked' redraw return early on previewHeld() and nothing else that a flat project could hit", () => {
+    const src = readFileSync(join(__dirname, '../src/renderer/src/Editor.tsx'), 'utf8');
+    expect(src).toMatch(/const previewHeld = \(\) => holdPreview\(\{ headless: !!headless, exporting: exportingRef\.current, project: projRef\.current \}\);/);
+    // renderAt up to its first draw: the hold, then exactly main's early returns (no recording, no canvas, no context).
+    const renderAt = src.slice(src.indexOf('const renderAt = useCallback('), src.indexOf('compositor.render(outT, frameInputsAt('));
+    expect(renderAt.match(/if \([^)]*\)[^;]*return;/g)).toEqual([
+      'if (previewHeld()) return;',
+      'if (!video || !canvas || video.readyState < 2) return;',
+      'if (!ctx) return;',
+    ]);
+    expect(src).toMatch(/const onSeeked = \(\) => \{\s*if \(previewHeld\(\)\) return;\s*renderAt\(playheadRef\.current\);\s*\};/);
+    // No other guard reads the export flag or the headless flag to skip a preview draw.
+    expect(src.match(/if \([^)]*exportingRef\.current[^)]*\)\s*return/g)).toBeNull();
+    expect(src.match(/previewHeld\(\)/g)).toHaveLength(2);
   });
 });
