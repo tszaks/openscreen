@@ -66,6 +66,15 @@ export interface MediaInfo {
   audioCodec: string | null;
   /** Degrees the picture is turned when played (a phone held upright stores it sideways); 0 when none. */
   rotation: number;
+  /** The video stream's frame rate (ffmpeg's "30 fps"), or null when the banner gives none. */
+  fps: number | null;
+}
+
+/** The first video stream's frame rate from an ffmpeg banner ("…, 30 fps, 30 tbr" or "29.97 fps"), else null. */
+export function parseFfmpegFps(banner: string): number | null {
+  const m = banner.match(/Stream #\d+:\d+.*Video:.*?,\s*([\d.]+)\s*fps\b/);
+  const v = m ? Number(m[1]) : NaN;
+  return Number.isFinite(v) && v > 0 ? v : null;
 }
 
 export async function probeMedia(file: string, bin = ffmpegPath()): Promise<MediaInfo> {
@@ -80,6 +89,7 @@ export async function probeMedia(file: string, bin = ffmpegPath()): Promise<Medi
     videoCodec: codec,
     audioCodec: banner.match(/Stream #\d+:\d+.*Audio:\s*([a-z0-9_]+)/)?.[1] ?? null,
     rotation: Number(banner.match(/displaymatrix: rotation of (-?[\d.]+) degrees/)?.[1] ?? 0) || 0,
+    fps: parseFfmpegFps(banner),
   };
 }
 

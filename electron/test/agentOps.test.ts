@@ -115,6 +115,19 @@ describe('agent ops: style, phone, set', () => {
     expect(p.style.cornerRadius).toBe(40);
   });
 
+  it('exportSettings: fps sets the frame rate with no layout preset, and is refused on one (the preset sets it)', () => {
+    expect(applyOp(desktop(), { op: 'exportSettings', preset: 'p1080', fps: 24 }, ctx).project).toMatchObject({ exportPreset: 'p1080', outputFPS: 24 });
+    // An iPhone take starts on the social-9x16 layout preset.
+    const p = phone();
+    expect(p.layout.presetId).toBe('social-9x16');
+    expect(() => applyOp(p, { op: 'exportSettings', fps: 24 }, ctx)).toThrow(/layout preset social-9x16 .* exports at 30 fps; fps applies only with no layout preset/);
+    // The resolution still applies on a layout preset (4K hero file).
+    expect(applyOp(p, { op: 'exportSettings', preset: 'uhd4k' }, ctx).project.exportPreset).toBe('uhd4k');
+    // Leaving the preset in the same list makes fps count again.
+    const back = applyOps(p, [{ op: 'layout', presetId: 'none' }, { op: 'exportSettings', fps: 24 }], ctx).project;
+    expect(back.outputFPS).toBe(24);
+  });
+
   it('taps and waits', () => {
     let p = applyOp(phone(), { op: 'addTap', t: 3, x: 0.2, y: 0.8 }, ctx).project;
     p = applyOp(p, { op: 'moveTap', index: 0, x: 0.5 }, ctx).project;

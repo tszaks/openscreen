@@ -15,6 +15,7 @@ import { parseCaptions } from './captions';
 import { suggestChapters } from './chapters';
 import { isFillerWord, planSmartCuts, type TimeRange } from './editcuts';
 import { PRESETS } from './exportPresets';
+import { layoutPresetOf } from './exportJobs';
 import { BACKDROPS } from './backdrops';
 import { DEVICES } from './devices';
 import { isPhoneProject, pendingWaits, speedUpRanges, waitCore, LAYOUT_CHOICES } from './mobileProject';
@@ -879,7 +880,13 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
     case 'exportSettings': {
       const patch: Partial<Project> = {};
       if (o.preset !== undefined) patch.exportPreset = str(o, 'preset') as Project['exportPreset'];
-      if (o.fps !== undefined) patch.outputFPS = num(o, 'fps');
+      if (o.fps !== undefined) {
+        // On a layout preset the export runs at the preset's frame rate and the editor shows no
+        // frame-rate control, so a frame rate set here would change nothing: refuse it.
+        const lp = layoutPresetOf({ ...p, ...patch });
+        if (lp) throw new OpError(`exportSettings: the layout preset ${lp.id} (${lp.label}) exports at ${lp.fps} fps; fps applies only with no layout preset ({"op":"layout","presetId":"none"})`);
+        patch.outputFPS = num(o, 'fps');
+      }
       return { project: { ...p, ...patch }, note: `export ${JSON.stringify(patch)}` };
     }
 

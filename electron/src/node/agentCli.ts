@@ -27,7 +27,7 @@ import { layerOrder } from '../shared/canvasLayers';
 import { importVideoFile } from './importVideo';
 import { readCursorSamples } from './bundleFiles';
 import { appCommand, bool, CliError, flag, out, progress, r2, runHeadless, seconds, warnProgress } from './cliKit';
-import { framesCmd } from './framesCmd';
+import { exportFps, framesCmd } from './framesCmd';
 import { DIRECT_STYLES, needsScenes, planDirect, projectWarnings, shotRecipes, type ApplyContext3d, type DirectStyle } from './phone3dPlan';
 import { sceneTimes } from './scenes';
 import { analyzeTapsInFile, bundleAudioPath, detectSilences, ffmpegPath, probeAudioDuration, ffmpegRun, ffmpegStderr, parseWhisperJson, probeMedia, transcribeBundle, whisperCli } from './media';
@@ -224,7 +224,8 @@ function summarize(dir: string, p: Project) {
       }),
     })),
     // The canvas the export renders at: a layout preset at the export resolution (D18), else the classic size.
-    export: { preset: p.exportPreset, fps: p.outputFPS, canvas: { w: canvas.width, h: canvas.height } },
+    // fps: the rate the export writes (a layout preset's own, else outputFPS), as Editor.exportVideo and frames use it.
+    export: { preset: p.exportPreset, fps: exportFps(p), canvas: { w: canvas.width, h: canvas.height } },
     phone3d: phone3dSummary(p),
     transitions: transitionsSummary(p),
     shotRecipes: shotRecipes(),
@@ -634,7 +635,7 @@ async function exportCmd(args: string[]) {
   const file = existsSync(primary) && statSync(primary).isFile() ? primary : (result.files as string[] | undefined)?.find((f) => /\.(mp4|mov|gif|webm)$/.test(f));
   if (file && existsSync(file)) {
     const m = await probeMedia(file);
-    probe = { file, duration: m.duration, width: m.width, height: m.height, codec: m.videoCodec, hasAudio: m.hasAudio, bytes: statSync(file).size };
+    probe = { file, duration: m.duration, width: m.width, height: m.height, fps: m.fps, codec: m.videoCodec, hasAudio: m.hasAudio, bytes: statSync(file).size };
   }
   return { ...result, app: app.kind === 'dev' ? 'dev electron (this checkout)' : app.cmd, wallSeconds: r2((Date.now() - started) / 1000), probe };
 }

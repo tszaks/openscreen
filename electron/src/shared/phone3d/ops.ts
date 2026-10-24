@@ -342,7 +342,15 @@ function setPoseOp(p: Project, o: EditOp) {
   }
   if (kind === 'base') {
     p3.pose = fullFrom(p3.pose, patch);
-    return { project: withP3(p, p3), note: 'setPose edited the base pose' };
+    // The base pose shows only when there are no moves, or where a linked first move starts. When the first
+    // move has its own Start (Auto 3D's spin-in does), the phone never shows it: say so, and what to edit.
+    const hidden = list.length > 0 && !!list[0].from;
+    return {
+      project: withP3(p, p3),
+      note: hidden
+        ? `setPose edited the base pose, which shows nowhere: the first move ${list[0].id} has its own Start, and the phone holds each move's End after it. To change the pose the video rests at, edit the End of the move before that moment (setPose {at} in the hold, or {id, end:"to"})`
+        : 'setPose edited the base pose',
+    };
   }
   const tr = { ...list[index] };
   let note: string;
