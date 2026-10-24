@@ -16,7 +16,7 @@ import type { EditOp } from '../agentOps';
 import { MIN_TRANSITION, POSE_KEYS, POSE_RANGE, type Phone3D, type Pose, type PoseKey, type PoseTransition } from './model';
 import { applyPhone3dOp, isPhone3dOp } from './ops';
 import { phone3dActive, type Phone3DInactiveReason } from './placement';
-import { floatSampler, facingOf, lerpPose, moveProgress, poseDelta, poseRotation, poseTargetAt, resolveStarts, rotationAngle, SPEED_STEP } from './pose';
+import { floatSampler, facingOf, lerpPose, moveProgress, poseAt, poseDelta, poseRotation, poseTargetAt, resolveStarts, rotationAngle, SPEED_STEP, type PoseTarget } from './pose';
 import { bodyBounds, scene3d, type Scene3D } from './projection';
 import { phone3dProblems } from './validate';
 
@@ -86,7 +86,7 @@ interface Ctx {
 }
 
 /** A warning plus the identity used to tell whether a fix cleared it. */
-type Found = Warning & { key: string };
+type Found = Warning & { key: string; offCanvas?: OffCanvas };
 
 function makeCtx(p: Project, cursor: readonly CursorSample[]): Ctx | null {
   if (!p.phone3d) return null;
@@ -188,6 +188,12 @@ function tapFixes(c: Ctx, w: Found): EditOp[][] {
 
 // ---------------------------------------------------------------------------
 // Off canvas
+//
+// Cost: one scan of the timeline per projectWarnings call (15 Hz plus every
+// keyframe), then work per warning that only reads the warning's own span.
+// With the idle float on every sample is a new pose, so the bounds cache never
+// hits and a scan of a 10-minute take is ~10k hull projections: the fix and the
+// fix check must never rescan the whole timeline per warning.
 
 interface Run {
   at: number;
@@ -196,12 +202,24 @@ interface Run {
   over: number;
 }
 
-/** Bounds per pose: the phone holds still most of the time, so most samples repeat a pose. */
+/** Off-canvas runs that the same keyframe causes, reported as one warning with one fix. */
+interface OffCanvas {
+  runs: Run[];
+  /** First run's start and last run's end (raw seconds). */
+  at: number;
+  end: number;
+  /** The worst moment over all the runs and its overflow (px). */
+  worst: number;
+  over: number;
+  /** The keyframe a setPose at `worst` edits. */
+  target: PoseTarget;
+}
+
+/** Bounds per pose: with the float off the phone holds still most of the time, so most samples repeat a pose. */
 type BoundsCache = Map<string, number>;
 
 /** How far the body pokes out of the canvas at t (px; ≤ 0 = inside). */
-function overflowAt(s: Scene3D, t: number, cache: BoundsCache = new Map()): number {
-  const pose = s.poseAt(t);
+function overflowAt(s: Scene3D, t: number, cache: BoundsCache = new Map(), pose: Pose = s.poseAt(t)): number {
   const key = `${pose.turn},${pose.tilt},${pose.rotate},${pose.size},${pose.x},${pose.y}`;
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
@@ -213,6 +231,9 @@ function overflowAt(s: Scene3D, t: number, cache: BoundsCache = new Map()): numb
   return over;
 }
 
+/** Allowed overflow (px): OFF_CANVAS_FRACTION of the canvas's short side. */
+const offCanvasMargin = (s: Scene3D) => OFF_CANVAS_FRACTION * Math.min(s.canvas.width, s.canvas.height);
+
 function offCanvasTimes(c: Ctx): number[] {
   const n = Math.max(1, Math.ceil(c.D * OFF_CANVAS_HZ));
   const ts = Array.from({ length: n + 1 }, (_, k) => (c.D * k) / n);
@@ -220,8 +241,26 @@ function offCanvasTimes(c: Ctx): number[] {
   return [...new Set(ts)].sort((a, b) => a - b);
 }
 
-function offCanvasRuns(c: Ctx, times = offCanvasTimes(c)): Run[] {
-  const margin = OFF_CANVAS_FRACTION * Math.min(c.scene.canvas.width, c.scene.canvas.height);
+/** The sample times inside [a, b] (sorted). */
+const timesIn = (times: readonly number[], a: number, b: number) => times.filter((t) => t >= a - 1e-9 && t <= b + 1e-9);
+
+/** The largest overflow over `times` and when (−Infinity with no times). */
+function worstOverflow(s: Scene3D, times: readonly number[], fallback: number): { over: number; at: number } {
+  const cache: BoundsCache = new Map();
+  let over = -Infinity;
+  let at = fallback;
+  for (const t of times) {
+    const o = overflowAt(s, t, cache);
+    if (o > over) {
+      over = o;
+      at = t;
+    }
+  }
+  return { over, at };
+}
+
+function offCanvasRuns(c: Ctx, times: readonly number[]): Run[] {
+  const margin = offCanvasMargin(c.scene);
   const runs: Run[] = [];
   let cur: Run | null = null;
   const cache: BoundsCache = new Map();
@@ -243,54 +282,85 @@ function offCanvasRuns(c: Ctx, times = offCanvasTimes(c)): Run[] {
   return runs;
 }
 
+const targetKey = (t: PoseTarget) => (t.kind === 'base' ? 'base' : `${t.kind}:${t.id}`);
+
+/**
+ * The runs grouped by the keyframe behind each run's worst moment. The float
+ * bobbing a phone that sits near an edge makes one run per float period (100+
+ * on a long take); they share one cause and one fix, so they are one warning.
+ */
+function offCanvasGroups(c: Ctx, times: readonly number[]): OffCanvas[] {
+  const groups = new Map<string, OffCanvas>();
+  for (const r of offCanvasRuns(c, times)) {
+    const target = poseTargetAt(c.p3, r.worst);
+    const key = targetKey(target);
+    const g = groups.get(key);
+    if (!g) groups.set(key, { runs: [r], at: r.at, end: r.end, worst: r.worst, over: r.over, target });
+    else {
+      g.runs.push(r);
+      g.end = Math.max(g.end, r.end);
+      if (r.over > g.over) {
+        g.over = r.over;
+        g.worst = r.worst;
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
 function offCanvasWarnings(c: Ctx): Found[] {
-  return offCanvasRuns(c).map((r) => {
-    const tr = culprit(c.p3.transitions, r.worst);
+  const margin = offCanvasMargin(c.scene);
+  return offCanvasGroups(c, offCanvasTimes(c)).map((g) => {
+    const tr = culprit(c.p3.transitions, g.worst);
+    const n = g.runs.length;
+    const span = g.end > g.at ? `from ${s2(g.at)} to ${s2(g.end)}` : `at ${s2(g.at)}`;
+    // The keyframes alone keep it inside: only the idle float carries it out.
+    const floatOnly = c.p3.float.on && overflowAt(c.scene, g.worst, new Map(), poseAt(c.p3, g.worst)) <= margin;
     return {
       code: 'off-canvas' as const,
-      key: 'off-canvas',
-      message: `The phone goes ${Math.round(r.over)} px off the canvas ${r.end > r.at ? `from ${s2(r.at)} to ${s2(r.end)}` : `at ${s2(r.at)}`}`,
-      at: r3(r.at),
-      end: r3(r.end),
+      key: `off-canvas:${targetKey(g.target)}`,
+      message: `The phone goes ${Math.round(g.over)} px off the canvas ${n > 1 ? `${n} times ` : ''}${span}${floatOnly ? ' (the idle float carries it past the edge)' : ''}`,
+      at: r3(g.at),
+      end: r3(g.end),
       ...(tr ? { transitionId: tr.id } : {}),
+      offCanvas: g,
     };
   });
 }
 
+/** Times a fix for `g` must clear: every sample in its span (keyframe times of `c`'s moves included). */
+const groupTimes = (c: Ctx, g: OffCanvas) => timesIn(offCanvasTimes(c), g.at, g.end);
+
 /** A setPose that pulls the keyframe behind the worst moment back onto the canvas (clamped x/y/size). */
 function offCanvasFixes(c: Ctx, w: Found): EditOp[][] {
-  const run = offCanvasRuns(c).find((r) => r3(r.at) === w.at);
-  if (!run) return [];
+  const g = w.offCanvas;
+  if (!g) return [];
   const W = c.scene.canvas.width;
   const H = c.scene.canvas.height;
-  const margin = OFF_CANVAS_FRACTION * Math.min(W, H);
-  const target = poseTargetAt(c.p3, run.worst);
-  const start: Pose = { ...target.pose };
+  const margin = offCanvasMargin(c.scene);
+  const start: Pose = { ...g.target.pose };
   const pose: Pose = { ...start };
-  const times = offCanvasTimes(c).filter((t) => t >= run.at - 1e-9 && t <= run.end + 1e-9);
+  const times = groupTimes(c, g);
   const opFor = (q: Pose): EditOp => {
-    const op: EditOp = { op: 'setPose', at: r3(run.worst) };
+    const op: EditOp = { op: 'setPose', at: r3(g.worst) };
     for (const k of ['x', 'y', 'size'] as const) if (q[k] !== start[k]) op[k] = Math.round(q[k] * 10000) / 10000;
     return op;
   };
   const clampKey = (k: 'x' | 'y' | 'size', v: number) => Math.min(POSE_RANGE[k][1], Math.max(POSE_RANGE[k][0], v));
+  // Round 0 is the project as it is: the run scan already found its worst moment (g), so it is not rescanned.
+  let scene = c.scene;
+  let wt = g.worst;
   for (let iter = 0; iter < 8; iter++) {
-    const fixed = iter === 0 ? c.p : applyFix(c.p, [opFor(pose)]);
-    if (!fixed) return [];
-    const fc = makeCtx(fixed, c.cursor);
-    if (!fc) return [];
-    let worst = -Infinity;
-    let wt = run.worst;
-    const cache: BoundsCache = new Map();
-    for (const t of times) {
-      const o = overflowAt(fc.scene, t, cache);
-      if (o > worst) {
-        worst = o;
-        wt = t;
-      }
+    if (iter > 0) {
+      const fixed = applyFix(c.p, [opFor(pose)]);
+      const fc = fixed && makeCtx(fixed, c.cursor);
+      if (!fc) return [];
+      const worst = worstOverflow(fc.scene, times, g.worst);
+      if (worst.over <= margin * 0.5) return [[opFor(pose)]];
+      scene = fc.scene;
+      wt = worst.at;
     }
-    if (worst <= margin * 0.5) return [[opFor(pose)]];
-    const b = bodyBounds(fc.scene, wt)!;
+    const b = bodyBounds(scene, wt)!;
     const inset = margin * 0.25;
     if (b.w > W - 2 * inset || b.h > H - 2 * inset) {
       pose.size = clampKey('size', pose.size * Math.min((W - 2 * inset) / b.w, (H - 2 * inset) / b.h) * 0.98);
@@ -302,6 +372,11 @@ function offCanvasFixes(c: Ctx, w: Found): EditOp[][] {
     pose.y = clampKey('y', pose.y + dy / H);
   }
   return [];
+}
+
+/** No sample in the warning's span pokes out of `fc`'s canvas (only the span is rescanned, not the timeline). */
+function offCanvasCleared(g: OffCanvas, fc: Ctx): boolean {
+  return worstOverflow(fc.scene, groupTimes(fc, g), g.worst).over <= offCanvasMargin(fc.scene);
 }
 
 // ---------------------------------------------------------------------------
@@ -464,7 +539,6 @@ type Check = (c: Ctx) => Found[];
 const CHECKS: Partial<Record<WarningCode, Check>> = {
   'tap-angle': tapWarnings,
   'tap-back': tapWarnings,
-  'off-canvas': offCanvasWarnings,
   overlap: overlapWarnings,
   'over-zoom': overZoomWarnings,
   'past-end': pastEndWarnings,
@@ -477,8 +551,8 @@ const CHECKS: Partial<Record<WarningCode, Check>> = {
 function cleared(w: Found, fixed: Project, cursor: readonly CursorSample[]): boolean {
   const c = makeCtx(fixed, cursor);
   if (!c) return false;
+  if (w.offCanvas) return offCanvasCleared(w.offCanvas, c);
   const again = CHECKS[w.code]!(c);
-  if (w.code === 'off-canvas') return !again.some((x) => x.at! <= w.end! + 1e-9 && x.end! >= w.at! - 1e-9);
   return !again.some((x) => x.key === w.key && (x.code === w.code || w.key.startsWith('tap:')));
 }
 
@@ -536,7 +610,7 @@ export function projectWarnings(p: Project, opts: { cursor?: readonly CursorSamp
     ...tooFastWarnings(c),
     ...floorFlatWarnings(c),
   ];
-  const out = found.map(({ key: _key, ...w }) => w as Warning);
+  const out = found.map(({ key: _key, offCanvas: _oc, ...w }) => w as Warning);
   found.forEach((w, i) => {
     const fixer = FIXERS[w.code];
     if (!fixer) return;

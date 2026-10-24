@@ -164,6 +164,55 @@ describe('off-canvas', () => {
   });
 });
 
+describe('off-canvas: one warning per cause, and fast on long takes', () => {
+  /** A strong, fast float near the top edge: the keyframe pose is inside, the float pokes it out once per period. */
+  const BOB: Partial<Phone3D> = { pose: P({ y: 0.1 }), float: { on: true, amount: 1, period: 2 } };
+  function longTake(duration: number, patch: Partial<Phone3D>): Project {
+    const p = with3d(phoneProject({ duration }), patch);
+    p.zoom = { ...p.zoom, fromTaps: false };
+    p.taps = [];
+    p.tapsAnalyzed = true;
+    return p;
+  }
+
+  it('runs the float makes from one keyframe are one warning with one fix, and the message says the float did it', () => {
+    const p = longTake(20, BOB);
+    const ws = only(p, 'off-canvas');
+    expect(ws).toHaveLength(1);
+    const [w] = ws;
+    expect(w.message).toMatch(/ 10 times from 0\.27 s to 18\.53 s \(the idle float carries it past the edge\)$/);
+    expect(w.fix).toEqual([{ op: 'setPose', at: expect.any(Number), y: expect.any(Number) }]);
+    expect((w.fix![0] as EditOp).y as number).toBeLessThan(0.1);
+    expect(only(applyFix(p, w), 'off-canvas')).toEqual([]);
+  });
+
+  it('negative: a pose that is out on its own does not blame the float', () => {
+    const [w] = only(longTake(20, { ...BOB, pose: P({ y: 0.13 }) }), 'off-canvas');
+    expect(w.message).toBe('The phone goes 85 px off the canvas from 0.00 s to 20.00 s');
+  });
+
+  it('two keyframes that each push it out are two warnings, each with a fix that clears it', () => {
+    const p = take({ transitions: [move('a', 4, 5, { x: 0.6 }), move('b', 6, 7, { x: 0 }), move('c', 10, 11, { x: -0.6 }), move('d', 12, 13, { x: 0 })] });
+    const ws = only(p, 'off-canvas');
+    expect(ws.map((w) => w.transitionId)).toEqual(['a', 'c']);
+    for (const w of ws) expectCleared(p, w);
+  });
+
+  it('a 10-minute take with ~300 float runs: one warning with a fix, in well under a second', () => {
+    const p = longTake(600, BOB);
+    projectWarnings(longTake(20, BOB)); // warm up the JIT so the timing is the algorithm's
+    const t0 = performance.now();
+    const ws = projectWarnings(p);
+    const ms = performance.now() - t0;
+    // Rescanning the whole timeline for every run (the old way) took ~30 s here and returned ~300 warnings, each with its own fix.
+    expect(ws.filter((w) => w.code === 'off-canvas')).toHaveLength(1);
+    expect(ws[0].message).toMatch(/ (29\d|30\d) times from /);
+    expect(ws[0].fix).toBeDefined();
+    expect(ms, `projectWarnings took ${Math.round(ms)} ms`).toBeLessThan(1500);
+    expect(only(applyFix(p, ws[0]), 'off-canvas')).toEqual([]);
+  });
+});
+
 describe('overlap', () => {
   it('two overlapping moves: the later one is flagged; the fix starts it when the earlier ends', () => {
     const p = take({ transitions: [move('a', 1, 3, { turn: 20 }), move('b', 2, 4, { turn: -20 })] });
