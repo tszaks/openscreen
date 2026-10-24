@@ -353,7 +353,8 @@ After `direct`, the base pose shows nowhere: Auto 3D's intro (`spin-in`,
 `settle`) has its own Start, and the phone holds each move's End after it.
 To change the pose the video rests at, edit the End of the move before that
 moment (`setPose {index:0, end:"to", …}` for the rest after the intro, or
-`setPose {at}` in a later hold). A base edit that shows nowhere says so in
+`setPose {at}` in a later hold). Do it before adding shots: a `shot` returns
+to the pose it starts from, so a shot added first returns to the old pose. A base edit that shows nowhere says so in
 its note (`…which shows nowhere: the first move m1 has its own Start…`).
 With no shots planned, set the base before placing shots by hand: a `shot`
 starts from it.

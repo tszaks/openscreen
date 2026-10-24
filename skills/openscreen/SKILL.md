@@ -81,7 +81,8 @@ Run these in order. Each step is done when its check holds.
    with `apply --dry-run` (`warnings: []`).
    The rest pose after Auto 3D is the End of its moves: to rest a few
    degrees off front, edit the intro's End
-   (`{"op":"setPose","index":0,"end":"to","turn":-8,"tilt":5}`), or
+   (`{"op":"setPose","index":0,"end":"to","turn":-8,"tilt":5}`) **before**
+   adding shots by hand (a shot returns to the pose it starts from), or
    `setPose {at: <a time in that hold>}` for a later hold. A
    `target:"base"` edit shows nowhere once the first move has its own Start
    (Auto 3D's spin-in does); its output note says so.
