@@ -8,20 +8,8 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  AXES,
-  blindPairs,
-  compareTimes,
-  esc,
-  matchRefs,
-  parseArgs,
-  planSvg,
-  prng,
-  quietWindow,
-  sourceToOutput,
-  tallyEqual,
-  tallyLook,
-} from '../scripts/review3d.mjs';
+// @ts-expect-error plain .mjs script without types
+import { AXES, blindPairs, compareTimes, esc, matchRefs, parseArgs, planSvg, prng, quietWindow, sourceToOutput, tallyEqual, tallyLook } from '../scripts/review3d.mjs';
 
 const SCRIPT = join(__dirname, '..', 'scripts', 'review3d.mjs');
 

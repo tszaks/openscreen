@@ -5,6 +5,7 @@
 // never a pass), the page-side stats hook, the CDP client and the arguments.
 import { describe, expect, it } from 'vitest';
 import { runInNewContext } from 'node:vm';
+// @ts-expect-error plain .mjs script without types
 import { BUDGETS, Cdp, check, checksFrom, gpuPid, INJECT, median, parseArgs, parseFootprint, pct, stats } from '../scripts/bench3d.mjs';
 
 const run = (ms: number[], samples = 12, extra: Record<string, unknown> = {}) => ({
@@ -113,7 +114,7 @@ describe('bench3d: checks', () => {
 
   it('frames: cold, 1080p draft and 4K full per PNG', () => {
     const cs = checksFrom({ frames: { coldS: 5.9, draft1080S: 0.3, full4kS: 1.2 } });
-    expect(cs.map((c) => c.pass)).toEqual([true, false, true]);
+    expect(cs.map((c: { pass: boolean | null }) => c.pass)).toEqual([true, false, true]);
   });
 });
 
