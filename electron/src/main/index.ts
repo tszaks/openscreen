@@ -23,12 +23,14 @@ import { applyAppearance, loadAppearance } from './appearance';
 import type { Appearance } from '../shared/appearance';
 import type { ContextMenuItem, MenuPhase } from '../shared/menu';
 import { fileSafeName, normalizeProject, projectName, type CursorSample, type KeystrokeSample, type Project } from '../shared/types';
-import { parseHeadlessArgs, type HeadlessJob, type HeadlessResult } from '../shared/headless';
+import { framesOutputPath, parseHeadlessArgs, type HeadlessJob, type HeadlessResult } from '../shared/headless';
 import { analyzeTapsInFile, audioFilePeaks, detectSilences, extractWav as extractBundleWav, importAudioFile, transcribeBundle } from '../node/media';
 import { AUDIO_EXTENSIONS, bundleRelative, insideDir, type MusicInput } from '../shared/audioTracks';
 import { isAudioFile, VIDEO_EXTENSIONS } from '../shared/importVideo';
 import { ImportCancelled, importVideoFile } from '../node/importVideo';
-import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
+import { readCursorSamples } from '../node/bundleFiles';
+import { sceneTimes } from '../node/scenes';
+import { buildExportArgs, ffmpegFailure, sizedPreset } from '../shared/exportArgs';
 import { getPreset, type PresetId } from '../shared/exportPresets';
 import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
 import {
@@ -897,10 +899,8 @@ app.whenReady().then(() => {
       throw new Error('This recording\'s project.json is damaged and cannot be opened.');
     }
     project = normalizeProject(project);
-    let cursor: unknown[] = [];
-    try {
-      cursor = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8')).samples ?? [];
-    } catch {}
+    // The same reader as the agent CLI, so both plan zooms from the same samples (D5).
+    const cursor = readCursorSamples(dir);
     let keys: unknown[] = [];
     try {
       keys = JSON.parse(readFileSync(join(dir, 'keystrokes.json'), 'utf8')).keys ?? [];
@@ -1098,6 +1098,15 @@ app.whenReady().then(() => {
     analyzeTapsInFile(join(args.dir, args.videoFile), await ffmpegPath()),
   );
 
+  // Scene changes (source seconds) for the editor's Auto 3D: the same
+  // analysis and analysis/scenes.json cache as the CLI's `direct` and `review`.
+  ipcMain.handle('analyze:scenes', async (_e, args: { dir: string; videoFile: string }) => {
+    if (typeof args?.videoFile !== 'string' || !bundleRelative(args.videoFile)) throw new Error('scene analysis needs the recording inside its bundle');
+    const dir = resolve(args.dir);
+    if (!existsSync(join(dir, 'project.json'))) throw new Error('That folder is not an OpenScreen recording.');
+    return sceneTimes(join(dir, args.videoFile), { bundle: dir, bin: await ffmpegPath() });
+  });
+
   // ffmpeg re-encode: pipe rendered RGBA frames → h264 mp4. The renderer
   // sends raw frame buffers; main streams them into ffmpeg stdin.
   ipcMain.handle('export:begin', async (_e, args: { outPath: string; w: number; h: number; fps: number; audioIn?: string; audioClips?: { start: number; end: number; speed: number }[]; clicks?: number[]; voiceCleanup?: boolean; duration: number; master?: boolean; music?: MusicInput[]; duck?: { start: number; end: number }[]; phone?: { path: string; offset: number } }) => {
@@ -1173,10 +1182,12 @@ app.whenReady().then(() => {
 
   // Transcode a rendered master into one preset's files. Progress arrives as
   // export:transcodeProgress; export:abort cancels it.
-  ipcMain.handle('export:transcode', async (_e, args: { presetId: PresetId; input: string; outBase: string; duration: number }) => {
+  ipcMain.handle('export:transcode', async (_e, args: { presetId: PresetId; input: string; outBase: string; duration: number; exportPreset?: Project['exportPreset'] }) => {
     await transcodeRun?.cancel();
     const bin = await ffmpegPath();
-    const preset = getPreset(args.presetId);
+    // At the project's export resolution (D18): uhd4k encodes a social or web
+    // preset at a 2160 short side, the size its master was rendered at.
+    const preset = sizedPreset(getPreset(args.presetId), args.exportPreset);
     const hasAudio = await probeHasAudio(bin, args.input);
     mkdirSync(dirname(args.outBase), { recursive: true });
     const audible = hasAudio && preset.audio.mode === 'aac-stereo' && preset.audio.loudnessLufs !== undefined
@@ -1266,7 +1277,31 @@ app.whenReady().then(() => {
   );
 
   // Headless export plumbing: the job, its bundle, progress and the result.
-  ipcMain.handle('headless:job', () => (headless ? { bundleDir: headless.bundleDir, out: headless.out, gif: headless.gif, presets: headless.presets } : null));
+  ipcMain.handle('headless:job', () =>
+    headless
+      ? {
+          bundleDir: headless.bundleDir,
+          out: headless.out,
+          gif: headless.gif,
+          presets: headless.presets,
+          ...(headless.frames ? { frames: headless.frames, scale: headless.scale ?? 1, sheet: !!headless.sheet, draft: !!headless.draft } : {}),
+        }
+      : null,
+  );
+  // Frames mode: the renderer hands over each PNG. Only a plain .png name,
+  // written inside the job's --out folder; anything else is refused.
+  ipcMain.handle('headless:writePng', (_e, name: unknown, bytes: ArrayBuffer) => {
+    if (!headless?.frames) throw new Error('not a headless frames run');
+    const root = resolve(headless.out);
+    const target = framesOutputPath(root, name);
+    const rel = target ? relative(root, resolve(target)) : '';
+    if (!target || !rel || rel.startsWith('..') || isAbsolute(rel) || rel !== basename(rel)) {
+      throw new Error(`refused to write ${JSON.stringify(name)}: only a .png file name inside ${root}`);
+    }
+    if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) throw new Error(`no PNG data for ${name}`);
+    writeFileSync(target, Buffer.from(bytes));
+    return target;
+  });
   ipcMain.handle('headless:open', () => {
     if (!headless) throw new Error('not a headless run');
     return loadBundle(resolve(headless.bundleDir));
@@ -1289,6 +1324,14 @@ app.whenReady().then(() => {
     if (!existsSync(join(resolve(headless.bundleDir), 'project.json'))) {
       finishHeadless({ ok: false, error: `${headless.bundleDir} is not an OpenScreen bundle (no project.json)` });
       return;
+    }
+    if (headless.frames) {
+      const outDir = resolve(headless.out);
+      if (existsSync(outDir) && !statSync(outDir).isDirectory()) {
+        finishHeadless({ ok: false, error: `--out must be a folder for --frames: ${outDir} is a file` });
+        return;
+      }
+      mkdirSync(outDir, { recursive: true });
     }
     createWindow();
     return;

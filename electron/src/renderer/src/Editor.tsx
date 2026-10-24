@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { api } from './api';
+import { api, type HeadlessRendererJob } from './api';
 import { autoZoomOn, fileSafeName, normalizeProject, withAutoZoom, projectName, resetProject, type AudioSettings, type Clip, type CursorSample, type KeystrokeSample, type Project, type ZoomSettings } from '../../shared/types';
-import { AutofocusPlanner, cameraAt, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../../shared/autofocus';
+import { cameraAt, type FocusSegment } from '../../shared/autofocus';
 import { CursorSmoother } from '../../shared/cursor';
 import { clickEvents, ripplesAt } from '../../shared/ripples';
-import { Timeline, toOutputTime } from '../../shared/timeline';
+import { Timeline } from '../../shared/timeline';
 import { locate, mediaDuration, playbackTick, type PlaybackTick } from '../../shared/playback';
 import { remapProject, remapTime } from '../../shared/remap';
 import { History } from '../../shared/history';
@@ -12,6 +12,8 @@ import { ToastQueue } from '../../shared/toasts';
 import { UndoableEdits } from '../../shared/undoableEdits';
 import { Toasts } from './components/Toasts';
 import { CanvasCompositor, backgroundReady } from './compositor';
+import { holdPreview, render3dFor, runFrames, type FrameInputs3d, type Render3dInputs } from './headlessFrames';
+import type { HeadlessResult } from '../../shared/headless';
 import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
 import {
@@ -25,7 +27,8 @@ import { suggestChapters, toChapterList } from '../../shared/chapters';
 import type { ContentTransform, TranscriptWord } from '../../shared/types';
 import type { TapSuggestion } from '../../shared/taps';
 import { SaveTracker, isTextEntry } from '../../shared/editorSession';
-import { exportCanvasSize, ipcErrorMessage } from '../../shared/exportArgs';
+import { exportCanvasSize, ipcErrorMessage, presetCanvasSize } from '../../shared/exportArgs';
+import { focusSegmentsFor } from '../../shared/focusSegments';
 import { getPreset, PRESETS, type ExportPreset, type PresetId } from '../../shared/exportPresets';
 import {
   ENCODE_WEIGHT,
@@ -48,7 +51,6 @@ import { ScrubField } from './components/ScrubField';
 import { useFilmstrip } from './useFilmstrip';
 import { filmstripTile, filmstripTimes, slotFrame, tilesForClip, visibleSlots } from '../../shared/filmstrip';
 import { BACKDROPS, BACKDROP_GROUPS, SOLID_SWATCHES, backgroundCss, isCustomSolid, normalizeHex, sameBackground } from '../../shared/backdrops';
-import { planTapZoom } from '../../shared/autozoomTaps';
 import {
   INSPECTOR_DEFAULT,
   ZOOM_STEP,
@@ -189,8 +191,9 @@ export function Editor({
   onOpenProject: () => void;
   /** Import a video as a new project in place of this one (`path`: a dropped file; else a dialog). */
   onImportVideo?: (path?: string) => void;
-  /** Headless export (`OpenScreen --export`): export this, report, never save. */
-  headless?: { out: string; gif: boolean; presets?: string[] };
+  /** Headless run (`OpenScreen --export`): export this (or, with `frames`,
+   *  render PNGs at those output seconds), report, never save. */
+  headless?: Omit<HeadlessRendererJob, 'bundleDir'>;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const camRef = useRef<HTMLVideoElement>(null);
@@ -254,7 +257,7 @@ export function Editor({
   const [duration, setDuration] = useState(project.recording.duration || 0);
   const [status, setStatus] = useState('');
   // Zoom and audio settings live in the project, so they save and undo.
-  const { autofocus: autofocusOn, dwell: dwellOn, depth: zoomDepth, motionEvents: motionEv } = proj.zoom;
+  const { autofocus: autofocusOn, dwell: dwellOn, depth: zoomDepth } = proj.zoom;
   const { clickSounds: clickSfx, voiceCleanup } = proj.audio;
   const manualSegments = proj.manualZooms;
   const setZoom = (patch: Partial<ZoomSettings>) =>
@@ -454,28 +457,14 @@ export function Editor({
   const resolvedDevice = useMemo(() => resolveDevice(proj), [proj.recording, proj.device]);
   // Taps are source time; the lane, the zoom and the preview play in output time.
   const outTaps = useMemo(() => tapsToOutput(proj.taps, timeline), [proj.taps, timeline]);
-  const fromTaps = isPhone && proj.zoom.fromTaps;
 
-  const segments = useMemo<FocusSegment[]>(() => {
-    // App Store previews stay on the native UI.
-    if (!presetAllowsZoom(preset)) return [];
-    const taps = fromTaps ? planTapZoom(outTaps, timeline.outputDuration || duration, { scale: zoomDepth }) : [];
-    const auto = autofocusOn
-      ? new AutofocusPlanner({ ...defaultAutofocus, maxScale: zoomDepth }).planSegments(
-          // Clicks, dwells and touches are source time; zooms play in output time.
-          toOutputTime(
-            [
-              ...cursor.filter((s) => s.kind === 'clickDown'),
-              ...(dwellOn ? dwellFocusEvents(cursor) : []),
-              ...motionEv,
-            ],
-            timeline,
-          ),
-          timeline.outputDuration || duration,
-        )
-      : [];
-    return [...auto, ...taps, ...manualSegments].sort((a, b) => a.inStart - b.inStart);
-  }, [cursor, timeline, autofocusOn, dwellOn, duration, manualSegments, zoomDepth, motionEv, preset, fromTaps, outTaps]);
+  // Every zoom: autofocus, taps, manual (D5). One shared function, so the CLI
+  // (warnings, Auto 3D, frames) plans with exactly the zooms drawn here.
+  const segments = useMemo<FocusSegment[]>(
+    () => focusSegmentsFor(proj, cursor, duration),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [proj.recording, proj.clips, proj.layout, proj.device, proj.zoom, proj.taps, proj.manualZooms, cursor, duration],
+  );
 
   const canvasSize = useMemo(() => projectCanvasSize(proj), [proj]);
 
@@ -702,11 +691,43 @@ export function Editor({
     setHoveredLayer(null);
   };
 
+  // True for the whole of an export or a frames run. They seek the video and
+  // draw on the same compositor as the preview. In 3D the preview must not
+  // draw in between: its 'seeked' redraw would double the GPU work per frame
+  // and flip the engine between preview and export quality (§5.5).
+  const exportingRef = useRef(false);
+  /** The preview stays still during a 3D export, frames or headless run;
+   *  flat projects keep main's redraws (D11). See holdPreview. */
+  const previewHeld = () => holdPreview({ headless: !!headless, exporting: exportingRef.current, project: projRef.current });
+
+  /** The compositor's inputs at output time `outT`, with the videos on source
+   *  time `srcT`: one place for the preview, exports and frames. Cursor and
+   *  keys are recorded in source time, so they follow the video. Callers
+   *  check that the recording is loaded. */
+  const frameInputsAt = (outT: number, srcT: number, render3d?: Render3dInputs): FrameInputs3d => {
+    const video = videoRef.current;
+    if (!video) throw new Error('the recording is not loaded');
+    const cam = camRef.current;
+    // The phone layer's movie is drawn only when the layer is on (the compositor ignores it otherwise).
+    const phone = phoneLayerOn(proj) ? phoneRef.current : null;
+    return {
+      frame: video,
+      cursor: cursorAt(smoothed, srcT),
+      cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, srcT) : undefined,
+      keystrokes: keysAt(srcT, keys),
+      ripples: ripplesAt(outT, clickEv),
+      cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
+      phoneFrame: phone && phone.readyState >= 2 ? phone : undefined,
+      ...(render3d ? { render3d } : {}),
+    };
+  };
+
   // Draw the composited frame at output time `outT` onto the preview canvas.
-  // The video is already on the matching source frame; cursor and keys are
-  // recorded in source time, so they follow the video.
+  // The video is already on the matching source frame. Not while the preview
+  // is held (a 3D export, frames or headless run).
   const renderAt = useCallback(
     (outT: number) => {
+      if (previewHeld()) return;
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2) return;
@@ -714,20 +735,7 @@ export function Editor({
       if (!ctx) return;
       canvas.width = canvasSize.width;
       canvas.height = canvasSize.height;
-      const srcT = video.currentTime;
-      const cursorPos = cursorAt(smoothed, srcT);
-      const keyCaps = keysAt(srcT, keys);
-      const cam = camRef.current;
-      const phone = phoneRef.current;
-      compositor.render(outT, {
-        frame: video,
-        cursor: cursorPos,
-        cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, srcT) : undefined,
-        keystrokes: keyCaps,
-        ripples: ripplesAt(outT, clickEv),
-        cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
-        phoneFrame: phone && phone.readyState >= 2 ? phone : undefined,
-      });
+      compositor.render(outT, frameInputsAt(outT, video.currentTime));
       ctx.drawImage(compositor.canvas, 0, 0);
       drawEditorGuides(ctx);
       // In crop mode, dim outside the current crop rect (in source space).
@@ -966,7 +974,11 @@ export function Editor({
       if (tick.kind === 'end') video.pause();
       else raf = requestAnimationFrame(loop);
     };
-    const onSeeked = () => renderAt(playheadRef.current);
+    // An export or frames run seeks this video for every frame: a 3D preview does not redraw then.
+    const onSeeked = () => {
+      if (previewHeld()) return;
+      renderAt(playheadRef.current);
+    };
     const onPlay = () => {
       // Play from the playhead; from the end, start over.
       const atEnd = playheadRef.current >= timelineRef.current.outputDuration - 0.02;
@@ -1050,6 +1062,18 @@ export function Editor({
     else seekOutput(t);
   };
 
+  /** Put the recording, the camera and (when drawn) the phone layer's movie
+   *  on source time `srcT`, for an export or frames frame. */
+  const seekAllTo = async (srcT: number) => {
+    const video = videoRef.current;
+    if (!video) throw new Error('the recording is not loaded');
+    await seekVideo(video, srcT);
+    const cam = camRef.current;
+    if (cam) await seekVideo(cam, camTime(srcT));
+    const phone = phoneLayerOn(proj) ? phoneRef.current : null;
+    if (phone) await seekVideo(phone, phoneTime(srcT));
+  };
+
   /** Render every output frame through `comp` and pipe it into ffmpeg at
    *  `outPath` (a finished mp4, or a master .mov for preset transcodes).
    *  Resolves false when cancelled; throws with ffmpeg's reason on failure. */
@@ -1101,20 +1125,8 @@ export function Editor({
         const outT = i / fps;
         const srcT = timeline.sourceTime(outT);
         if (srcT === null) continue;
-        await seekVideo(video, srcT);
-        const cam = camRef.current;
-        if (cam) await seekVideo(cam, camTime(srcT));
-        const phone = phoneOn ? phoneRef.current : null;
-        if (phone) await seekVideo(phone, phoneTime(srcT));
-        comp.render(outT, {
-          cursorTrail: proj.style.cursorTrail ? trailAt(smoothed, srcT) : undefined,
-          frame: video,
-          cursor: cursorAt(smoothed, srcT),
-          keystrokes: keysAt(srcT, keys),
-          ripples: ripplesAt(outT, clickEv),
-          cameraFrame: cam && cam.readyState >= 2 ? cam : undefined,
-          phoneFrame: phone && phone.readyState >= 2 ? phone : undefined,
-        });
+        await seekAllTo(srcT);
+        comp.render(outT, frameInputsAt(outT, srcT));
         const ctx = comp.canvas.getContext('2d')!;
         const rgba = ctx.getImageData(0, 0, W, H);
         await api.exportFrame(rgba.data.buffer); // rejects once ffmpeg has stopped
@@ -1147,7 +1159,8 @@ export function Editor({
     const drawn = layoutPresetOf(copy) ?? preset;
     return new CanvasCompositor(
       copy,
-      { width: drawn.width, height: drawn.height },
+      // At the export resolution: uhd4k draws social/web presets at a 2160 short side (D18).
+      presetCanvasSize(drawn, proj.exportPreset),
       presetUsesZoom(preset) ? segments : [],
     );
   };
@@ -1185,6 +1198,7 @@ export function Editor({
     let phase = 'rendering';
     setXp({ kind: 'single', state: 'running', startedAt, done: 0, total, detail: rendering(0), retry: () => void exportVideo(wantGif) });
     setExporting(true);
+    exportingRef.current = true;
     setStatus('');
     cancelExport.current = false;
     let master: string | null = null;
@@ -1205,7 +1219,7 @@ export function Editor({
         setXp((x) => x && { ...x, done: frames, detail: `Encoding for ${preset.label}` });
         transcodeProgress.current = ({ fraction }) =>
           setXp((x) => x && { ...x, done: frames + fraction * frames * ENCODE_WEIGHT });
-        files = await api.exportTranscode(preset.id, master, basePath, frames / fps);
+        files = await api.exportTranscode(preset.id, master, basePath, frames / fps, proj.exportPreset);
         reveal = files[0] ?? outPath;
       }
       await writeSidecars(basePath);
@@ -1228,6 +1242,7 @@ export function Editor({
     } finally {
       transcodeProgress.current = null;
       if (master) void api.exportDiscardMaster(master);
+      exportingRef.current = false;
       setExporting(false);
     }
   };
@@ -1244,7 +1259,7 @@ export function Editor({
     const folder = folderIn ?? (await api.exportPickFolder(bundleDir, proj.name));
     if (!folder) return { ok: false, error: 'cancelled' };
     const presets = ids.map(getPreset);
-    const passes = planRenders(presets);
+    const passes = planRenders(presets, proj.exportPreset);
     const dur = timeline.outputDuration || duration;
     const total = batchUnits(passes, dur);
     const name = fileSafeName(bundleName);
@@ -1267,6 +1282,7 @@ export function Editor({
     const renderShare = 1 / (1 + ENCODE_WEIGHT);
 
     setExporting(true);
+    exportingRef.current = true;
     setStatus('');
     cancelExport.current = false;
     publish();
@@ -1301,7 +1317,7 @@ export function Editor({
               publish();
             };
             try {
-              const files = await api.exportTranscode(id, master, outputBase(folder, name, getPreset(id)), frames / pass.fps);
+              const files = await api.exportTranscode(id, master, outputBase(folder, name, getPreset(id)), frames / pass.fps, proj.exportPreset);
               setRow(id, { status: 'done', progress: 1, files });
             } catch (e) {
               if (cancelExport.current) break;
@@ -1346,22 +1362,58 @@ export function Editor({
         : { ok: true, out: folder, files, frames: Math.floor(dur * 30), seconds: dur };
     } finally {
       transcodeProgress.current = null;
+      exportingRef.current = false;
       setExporting(false);
     }
   };
 
-  // Headless export: once the video (and camera) can be drawn, export to the
-  // requested path with no dialogs and report the outcome to main.
+  /** A headless frames run (the CLI's `frames`): a PNG per output time
+   *  through the export's compositor, inputs and seeking, at the export's
+   *  frame for that time (so each still is that export frame), at export
+   *  quality unless `draft`. */
+  const exportStills = async (job: NonNullable<typeof headless>): Promise<HeadlessResult> => {
+    const video = videoRef.current;
+    if (!video || !job.frames) return { ok: false, error: 'the recording is not loaded' };
+    const preset = layoutPresetOf(proj);
+    const fps = preset ? preset.fps : proj.outputFPS;
+    const render3d = render3dFor(proj, { draft: !!job.draft, fps, strict: true });
+    video.pause();
+    exportingRef.current = true;
+    try {
+      return await runFrames(compositor, {
+        times: [...job.frames].sort((a, b) => a - b),
+        // The grid exportVideo renders on: frame i at i / fps, floor(duration · fps) frames.
+        fps,
+        outputDuration: timeline.outputDuration || duration,
+        scale: job.scale ?? 1,
+        sheet: !!job.sheet,
+        outDir: job.out,
+        sourceTime: (t) => timeline.sourceTime(t),
+        seek: seekAllTo,
+        inputsAt: (outT, srcT) => frameInputsAt(outT, srcT, render3d),
+        writePng: (name, bytes) => api.headlessWritePng(name, bytes),
+        progress: (done, total) => api.headlessProgress(done, total, `Frame ${done} of ${total}`),
+      });
+    } finally {
+      exportingRef.current = false;
+    }
+  };
+
+  // Headless run: once the video (and camera) can be drawn, export to the
+  // requested path (or render the requested frames) with no dialogs and
+  // report the outcome to main.
   const [mediaReady, setMediaReady] = useState(false);
   const headlessStarted = useRef(false);
   useEffect(() => {
     if (!headless || !mediaReady || headlessStarted.current) return;
     headlessStarted.current = true;
     void (async () => {
-      let result: ExportOutcome;
+      let result: HeadlessResult;
       try {
         if (proj.style.background.kind === 'imageFile') await backgroundReady(proj.style.background.path);
-        if (headless.presets?.length) {
+        if (headless.frames) {
+          result = await exportStills(headless);
+        } else if (headless.presets?.length) {
           const bad = headless.presets.filter((id) => !PRESETS.some((x) => x.id === id));
           result = bad.length
             ? { ok: false, error: `unknown preset(s): ${bad.join(', ')}. Known: ${PRESETS.map((x) => x.id).join(', ')}` }
