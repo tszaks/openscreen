@@ -72,6 +72,8 @@ export interface Cam3D {
   pxPerMm: number;
   /** Landscape turn of the portrait model about z, radians (0 in portrait). */
   landscape: number;
+  /** The pose this camera was built for. */
+  pose: Pose;
 }
 
 /**
@@ -105,7 +107,7 @@ export function cameraFor(
   const R = landscape ? mulMat3(Rpose, rotZ(landscape)) : Rpose;
   const scale = g.pxPerMm * pose.size;
   const pos: Vec3 = [hx + pose.x * W, hy - pose.y * H, (-body3d.depthMm / 2) * scale];
-  return { canvas, fov: camera.fov, focal, eye, rot, elevation: camera.elevation, R, Rpose, scale, pos, pxPerMm: g.pxPerMm, landscape };
+  return { canvas, fov: camera.fov, focal, eye, rot, elevation: camera.elevation, R, Rpose, scale, pos, pxPerMm: g.pxPerMm, landscape, pose: { ...pose } };
 }
 
 /** A model point (mm) in world space. */
@@ -414,7 +416,7 @@ const MIN_WALL_LZ = 0.1;
 
 /** The world points of the body's shadow on the active catcher (wall: a plane 0.8·bodyW behind the phone's centre;
  *  floor: 1 mm under the lowest hull point), cast along the key light (azimuth light.azimuth + pose.light, 55° up). */
-export function shadowPointsWorld(s: Scene3D, cam: Cam3D, pose: Pose, light: { azimuth: number } = { azimuth: s.p3.light.azimuth + pose.light }): Vec3[] {
+export function shadowPointsWorld(s: Scene3D, cam: Cam3D, light: { azimuth: number } = { azimuth: s.p3.light.azimuth + cam.pose.light }): Vec3[] {
   const pts = bodyPointsMm(s, true).map((p) => modelToWorld(p, cam));
   const L = keyLightDir(light.azimuth);
   if (s.p3.shadow.kind === 'wall') {
@@ -438,7 +440,7 @@ export function shadowHull(p: SceneSource, t: number, light?: { azimuth: number 
   if (!s) return null;
   const pose = s.poseAt(t);
   const cam = camAt(s, t, pose);
-  return convexHull(shadowPointsWorld(s, cam, pose, light).map((w) => {
+  return convexHull(shadowPointsWorld(s, cam, light).map((w) => {
     const [x, y] = projectWorld(w, cam);
     return { x, y };
   }));
@@ -462,7 +464,7 @@ export function maxCocPx(s: Scene3D, t: number): number {
   if (!s.p3.dof.on || pose.focus <= 0) return 0;
   const cam = camAt(s, t, pose);
   const zf = projectWorld(localToWorld([0, 0, s.body3d.depthMm / 2], cam), cam)[2];
-  const world = [...bodyPointsMm(s, true).map((q) => modelToWorld(q, cam)), ...(s.p3.shadow.on ? shadowPointsWorld(s, cam, pose) : [])];
+  const world = [...bodyPointsMm(s, true).map((q) => modelToWorld(q, cam)), ...(s.p3.shadow.on ? shadowPointsWorld(s, cam) : [])];
   let m = 0;
   for (const w of world) m = Math.max(m, cocPx(s.p3, pose.focus, s.canvas.height, zf, projectWorld(w, cam)[2]));
   return m;
@@ -492,7 +494,7 @@ export function renderRoi(p: SceneSource, t: number, times?: readonly number[], 
     const cam = camAt(s, tt, pose);
     r = unionRect(r, bboxOf(projectedHull(s, cam, true)));
     if (shadow) {
-      r = unionRect(r, bboxOf(shadowPointsWorld(s, cam, pose).map((w) => {
+      r = unionRect(r, bboxOf(shadowPointsWorld(s, cam).map((w) => {
         const [x, y] = projectWorld(w, cam);
         return { x, y };
       })));
@@ -510,11 +512,12 @@ export function renderRoi(p: SceneSource, t: number, times?: readonly number[], 
 }
 
 /**
- * Near/far planes that hold the whole body and its catcher at t: with dist
- * the eye's distance to the body centre and R the body's bounding radius in
- * px (buttons, plateau and lens glass included), near = max(1, dist − R)
- * and far = dist + R + the catcher's farthest shadow point from the body
- * centre (0 with the shadow off).
+ * Near/far planes that hold the whole body and its shadow catcher at t.
+ * With zc the body centre's depth along the camera axis and R the body's
+ * bounding radius in px (buttons, plateau and lens glass included):
+ * near = max(1, min(zc − R, nearest shadow point)) and
+ * far = max(zc + R, farthest shadow point) + 1 px (shadow points only with
+ * the shadow on). Depths are along the view axis, the way the planes clip.
  */
 export function depthRange(p: SceneSource, t: number, cam?: Cam3D, canvas?: Size): { near: number; far: number } | null {
   const s = asScene(p, canvas);
@@ -526,10 +529,17 @@ export function depthRange(p: SceneSource, t: number, cam?: Cam3D, canvas?: Size
   const pl = s.body3d.plateau;
   const bz = s.body3d.depthMm / 2 + pl.heightMm + pl.lensProudMm;
   const R = Math.hypot(bw, bh, bz) * c.scale;
-  const dist = len(sub(c.pos, c.eye));
-  let catcher = 0;
-  if (s.p3.shadow.on) for (const w of shadowPointsWorld(s, c, pose)) catcher = Math.max(catcher, len(sub(w, c.pos)));
-  return { near: Math.max(1, dist - R), far: dist + R + catcher };
+  const zc = projectWorld(c.pos, c)[2];
+  let lo = zc - R;
+  let hi = zc + R;
+  if (s.p3.shadow.on) {
+    for (const w of shadowPointsWorld(s, c)) {
+      const z = projectWorld(w, c)[2];
+      lo = Math.min(lo, z);
+      hi = Math.max(hi, z);
+    }
+  }
+  return { near: Math.max(1, lo), far: hi + 1 };
 }
 
 /** Sub-frame sample times for a frame at t: t_k = t + ((k + 0.5)/n − 0.5)·shutterSec (§3.7 step 4). */
