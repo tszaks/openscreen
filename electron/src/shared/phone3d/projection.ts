@@ -14,7 +14,7 @@
 // screen rect exactly, and turning 3D on does not move the recording.
 
 import { screenMm } from '../devices';
-import { frameGeometry, type Rect } from '../deviceGeometry';
+import { DEFAULT_FRAME_SHADOW, frameGeometry, type Rect } from '../deviceGeometry';
 import { body3dFor, type Body3D } from '../devices3d';
 import { projectCanvasSize } from '../mobileProject';
 import type { Project, Size } from '../types';
@@ -414,13 +414,30 @@ export function keyLightDir(azimuthDeg: number, elevationDeg = KEY_ELEVATION): V
 /** A light from behind still casts onto the wall: L.z is held at least this (keeps the wall shadow finite). */
 const MIN_WALL_LZ = 0.1;
 
-/** The world points of the body's shadow on the active catcher (wall: a plane 0.8·bodyW behind the phone's centre;
- *  floor: 1 mm under the lowest hull point), cast along the key light (azimuth light.azimuth + pose.light, 55° up). */
+/** The wall catcher stands this far behind the phone's rearmost point at each moment (lens glass included, so the
+ *  camera plateau never pokes through), the same rule as the floor's 1 mm under the lowest point. A fixed far wall
+ *  (the spec's first 0.8·bodyW behind the centre) threw the default shadow 56% of the body height below the phone,
+ *  which cannot mirror DEFAULT_FRAME_SHADOW (D14). */
+export const WALL_GAP_MM = 1;
+/** The ambient shadow's Gaussian σ per unit of the body's long side, at the default softness: the 2D frame's
+ *  (canvas shadowBlur is 2σ, so σ = DEFAULT_FRAME_SHADOW.blur / 2 = 0.0425). */
+export const SHADOW_AMBIENT_SIGMA = DEFAULT_FRAME_SHADOW.blur / 2;
+/** The contact layer relative to the ambient one, as deviceFrame.ts draws it (0.22× the blur, 0.7× the opacity). */
+export const SHADOW_CONTACT = { sigma: 0.22, opacity: 0.7 } as const;
+/** How many σ of the ambient blur the catcher area and the ROI keep. Past 3σ outside the silhouette, an edge's
+ *  alpha is 0.5·erfc(3/√2)·opacity < 0.0014 < 1/255 at any opacity ≤ 1 (the ROI-border gate). */
+export const SHADOW_SUPPORT_SIGMAS = 3;
+/** The softness at which the 3D shadow equals the 2D one (phone3d's default). */
+const SOFTNESS_REF = defaultPhone3D().shadow.softness;
+
+/** The world points of the body's shadow on the active catcher, cast along the key light (azimuth
+ *  light.azimuth + pose.light, KEY_ELEVATION up). Wall: a plane parallel to the canvas, WALL_GAP_MM behind the
+ *  rearmost hull point at this pose; floor: a horizontal plane 1 mm under the lowest hull point. */
 export function shadowPointsWorld(s: Scene3D, cam: Cam3D, light: { azimuth: number } = { azimuth: s.p3.light.azimuth + cam.pose.light }): Vec3[] {
   const pts = bodyPointsMm(s, true).map((p) => modelToWorld(p, cam));
   const L = keyLightDir(light.azimuth);
   if (s.p3.shadow.kind === 'wall') {
-    const zw = cam.pos[2] - 0.8 * s.bodyMm.width * cam.scale;
+    const zw = wallZ(pts, cam);
     const lz = Math.max(L[2], MIN_WALL_LZ);
     return pts.map((q) => {
       const k = (q[2] - zw) / lz;
@@ -432,6 +449,41 @@ export function shadowPointsWorld(s: Scene3D, cam: Cam3D, light: { azimuth: numb
     const k = (q[1] - yf) / L[1];
     return [q[0] - k * L[0], yf, q[2] - k * L[2]] as Vec3;
   });
+}
+
+const wallZ = (pts: readonly Vec3[], cam: Cam3D) => Math.min(...pts.map((q) => q[2])) - WALL_GAP_MM * cam.scale;
+
+/**
+ * The shadow's two Gaussian σ at this pose, in world units (canvas px at z = 0) MEASURED ON THE CATCHER PLANE:
+ * ambient = SHADOW_AMBIENT_SIGMA · body long side · softness / 0.5, contact = SHADOW_CONTACT.sigma · ambient. At the
+ * default softness this is the 2D frame shadow's blur for the same body size; it scales with pose.size like the
+ * body. The renderer's blur footprint on the catcher must not be wider than `ambient` in any direction: a blur
+ * done in the light's view stretches by 1/|L·n| when cast onto the catcher, so either render the silhouette in
+ * catcher-plane coordinates (planar projection along the light) or scale the light-space σ by |L·n|.
+ */
+export function shadowSigma(s: Pick<Scene3D, 'p3' | 'bodyMm'>, cam: Pick<Cam3D, 'scale'>): { ambient: number; contact: number } {
+  const long = Math.max(s.bodyMm.width, s.bodyMm.height) * cam.scale;
+  const ambient = SHADOW_AMBIENT_SIGMA * long * (s.p3.shadow.softness / SOFTNESS_REF);
+  return { ambient, contact: SHADOW_CONTACT.sigma * ambient };
+}
+
+/**
+ * The 4 world corners of the catcher area that holds the whole blurred shadow at this pose: the shadow points'
+ * bounding box in the catcher plane (wall: x, y; floor: x, z), grown by SHADOW_SUPPORT_SIGMAS · ambient σ on each
+ * side. The renderer's catcher quad, renderRoi and depthRange all use it, so they agree by construction.
+ */
+export function shadowCatcherCorners(s: Scene3D, cam: Cam3D, light?: { azimuth: number }): Vec3[] {
+  const pts = shadowPointsWorld(s, cam, light);
+  const g = SHADOW_SUPPORT_SIGMAS * shadowSigma(s, cam).ambient;
+  const wall = s.p3.shadow.kind === 'wall';
+  const a = 0; // x on both catchers
+  const b = wall ? 1 : 2; // the catcher's second in-plane axis
+  const lo = (i: number) => Math.min(...pts.map((q) => q[i])) - g;
+  const hi = (i: number) => Math.max(...pts.map((q) => q[i])) + g;
+  const plane = wall ? pts[0][2] : pts[0][1];
+  const [a0, a1, b0, b1] = [lo(a), hi(a), lo(b), hi(b)];
+  const at = (u: number, v: number): Vec3 => (wall ? [u, v, plane] : [u, plane, v]);
+  return [at(a0, b0), at(a1, b0), at(a1, b1), at(a0, b1)];
 }
 
 /** The shadow's outline on the canvas at t: the body hull cast onto the catcher along the key light, then projected. */
@@ -446,10 +498,14 @@ export function shadowHull(p: SceneSource, t: number, light?: { azimuth: number 
   }));
 }
 
-/** The shadow blur's full kernel radius in canvas px: softness·40 px on a 1080-short-side canvas, scaled to the
- *  canvas's short side. The renderer's ambient blur must not reach past it (σ = radius / 3 fits). */
-export function shadowBlurPx(p3: Pick<Phone3D, 'shadow'>, canvas: Size): number {
-  return p3.shadow.softness * 40 * (Math.min(canvas.width, canvas.height) / 1080);
+/** The ambient shadow's full support (SHADOW_SUPPORT_SIGMAS · σ) in canvas px at t, measured where the catcher
+ *  is nearest the camera (the largest it can look on the canvas). 0 with the shadow off. */
+export function shadowBlurPx(p: SceneSource, t: number, canvas?: Size): number {
+  const s = asScene(p, canvas);
+  if (!s || !s.p3.shadow.on) return 0;
+  const cam = camAt(s, t);
+  const nearest = Math.min(...shadowCatcherCorners(s, cam).map((w) => projectWorld(w, cam)[2]));
+  return SHADOW_SUPPORT_SIGMAS * shadowSigma(s, cam).ambient * (cam.focal * cam.canvas.height) / (2 * nearest);
 }
 
 /** Circle of confusion at view depth z with the focus at z_f (spec §3.7 step 6), px. */
@@ -464,7 +520,7 @@ export function maxCocPx(s: Scene3D, t: number): number {
   if (!s.p3.dof.on || pose.focus <= 0) return 0;
   const cam = camAt(s, t, pose);
   const zf = projectWorld(localToWorld([0, 0, s.body3d.depthMm / 2], cam), cam)[2];
-  const world = [...bodyPointsMm(s, true).map((q) => modelToWorld(q, cam)), ...(s.p3.shadow.on ? shadowPointsWorld(s, cam) : [])];
+  const world = [...bodyPointsMm(s, true).map((q) => modelToWorld(q, cam)), ...(s.p3.shadow.on ? shadowCatcherCorners(s, cam) : [])];
   let m = 0;
   for (const w of world) m = Math.max(m, cocPx(s.p3, pose.focus, s.canvas.height, zf, projectWorld(w, cam)[2]));
   return m;
@@ -477,10 +533,12 @@ export interface RoiOptions {
 
 /**
  * The canvas region the 3D pass must render: the body hull (with buttons)
- * ∪ its shadow on the catcher, unioned over `times`, dilated by the shadow
- * blur radius + the max DoF circle of confusion + 2 px, clamped to the
- * canvas, then snapped OUTWARD to whole canvas pixels (integer x/y keep the
- * FRONT screen texel-aligned, so drawImage never resamples the phone).
+ * and the catcher area that holds the whole blurred shadow
+ * (shadowCatcherCorners, projected), unioned over `times`, each dilated by
+ * the max DoF circle of confusion + 2 px, clamped to the canvas, then
+ * snapped OUTWARD to whole canvas pixels (integer x/y keep the FRONT screen
+ * texel-aligned, so drawImage never resamples the phone). Only the shadow
+ * is grown by its blur, so the blur does not inflate the phone's part.
  * May be empty (w or h 0) when the phone is entirely off the canvas.
  */
 export function renderRoi(p: SceneSource, t: number, times?: readonly number[], opts: RoiOptions & { canvas?: Size } = {}): Rect | null {
@@ -494,14 +552,14 @@ export function renderRoi(p: SceneSource, t: number, times?: readonly number[], 
     const cam = camAt(s, tt, pose);
     r = unionRect(r, bboxOf(projectedHull(s, cam, true)));
     if (shadow) {
-      r = unionRect(r, bboxOf(shadowPointsWorld(s, cam).map((w) => {
+      r = unionRect(r, bboxOf(shadowCatcherCorners(s, cam).map((w) => {
         const [x, y] = projectWorld(w, cam);
         return { x, y };
       })));
     }
     coc = Math.max(coc, maxCocPx(s, tt));
   }
-  const pad = (shadow ? shadowBlurPx(s.p3, s.canvas) : 0) + coc + 2 + (opts.extraPx ?? 0);
+  const pad = coc + 2 + (opts.extraPx ?? 0);
   const W = s.canvas.width;
   const H = s.canvas.height;
   const x0 = Math.max(0, Math.floor(r!.x - pad));
@@ -515,9 +573,10 @@ export function renderRoi(p: SceneSource, t: number, times?: readonly number[], 
  * Near/far planes that hold the whole body and its shadow catcher at t.
  * With zc the body centre's depth along the camera axis and R the body's
  * bounding radius in px (buttons, plateau and lens glass included):
- * near = max(1, min(zc − R, nearest shadow point)) and
- * far = max(zc + R, farthest shadow point) + 1 px (shadow points only with
- * the shadow on). Depths are along the view axis, the way the planes clip.
+ * near = max(1, min(zc − R, nearest catcher corner)) and
+ * far = max(zc + R, farthest catcher corner) + 1 px (the catcher area of
+ * shadowCatcherCorners, only with the shadow on). Depths are along the view
+ * axis, the way the planes clip.
  */
 export function depthRange(p: SceneSource, t: number, cam?: Cam3D, canvas?: Size): { near: number; far: number } | null {
   const s = asScene(p, canvas);
@@ -533,7 +592,7 @@ export function depthRange(p: SceneSource, t: number, cam?: Cam3D, canvas?: Size
   let lo = zc - R;
   let hi = zc + R;
   if (s.p3.shadow.on) {
-    for (const w of shadowPointsWorld(s, c)) {
+    for (const w of shadowCatcherCorners(s, c)) {
       const z = projectWorld(w, c)[2];
       lo = Math.min(lo, z);
       hi = Math.max(hi, z);

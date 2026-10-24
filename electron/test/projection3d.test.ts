@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_FRAME_SHADOW, frameGeometry } from '../src/shared/deviceGeometry';
 import { FRONT, POSE_RANGE, type Pose } from '../src/shared/phone3d/model';
 import {
   applyHomography,
@@ -19,8 +20,15 @@ import {
   scene3d,
   screenMap3d,
   screenQuad,
+  SHADOW_AMBIENT_SIGMA,
+  SHADOW_CONTACT,
+  SHADOW_SUPPORT_SIGMAS,
+  shadowBlurPx,
+  shadowCatcherCorners,
   shadowHull,
   shadowPointsWorld,
+  shadowSigma,
+  WALL_GAP_MM,
   subFrameTimes,
   type Cam3D,
   type Quad,
@@ -230,17 +238,156 @@ describe('ROI, shadow and depth', () => {
     expect(one.x).toBeGreaterThan(b.x - 2 - 12);
   });
 
-  it('shadow catchers: the wall is 0.8·bodyW behind the phone; the floor is under its lowest point', () => {
+  it('shadow catchers: the wall is WALL_GAP_MM behind the rearmost hull point at every pose; the floor is 1 mm under the lowest', () => {
     const base = with3d(phoneProject(), { shadow: { on: true, kind: 'wall', opacity: 0.4, softness: 0.5 } });
     const s = scene3d(base)!;
-    const cam = camAt(s, 0);
-    const wall = shadowPointsWorld(s, cam);
-    for (const q of wall) expect(q[2]).toBeCloseTo(cam.pos[2] - 0.8 * s.bodyMm.width * cam.scale, 6);
+    for (const pose of [FRONT, { ...FRONT, turn: 60 }, { ...FRONT, tilt: -40, rotate: 30 }, { ...FRONT, turn: 180 }, { ...FRONT, size: 0.5, x: 0.2 }]) {
+      const cam = camAt(s, 0, pose);
+      const rear = Math.min(...bodyPointsMm(s, true).map((q) => modelToWorld(q, cam)[2]));
+      for (const q of shadowPointsWorld(s, cam)) expect(q[2]).toBeCloseTo(rear - WALL_GAP_MM * cam.scale, 6);
+    }
     const fs = scene3d(with3d(phoneProject(), { shadow: { on: true, kind: 'floor', opacity: 0.4, softness: 0.5 } }))!;
     const fcam = camAt(fs, 0);
     const floor = shadowPointsWorld(fs, fcam);
     const lowest = Math.min(...bodyPointsMm(fs, true).map((q) => modelToWorld(q, fcam)[1]));
     for (const q of floor) expect(q[1]).toBeCloseTo(lowest - fcam.scale, 6);
+  });
+
+  it('the default wall shadow stays close under the phone, like the 2D frame shadow (D14)', () => {
+    // The first spec's wall (0.8·bodyW behind the centre) put the shadow's TOP 56% of the body height down.
+    for (const presetId of LAYOUTS) {
+      const p = with3d(phoneProject({ presetId }));
+      const b = bodyBounds(p, 0)!;
+      const sh = shadowHull(p, 0)!;
+      const top = Math.min(...sh.map((q) => q.y));
+      const bottom = Math.max(...sh.map((q) => q.y));
+      expect(top - b.y, presetId).toBeLessThan(0.05 * b.h);
+      expect(bottom - (b.y + b.h), presetId).toBeLessThan(0.2 * b.h);
+    }
+  });
+
+  it('shadowSigma mirrors DEFAULT_FRAME_SHADOW at the default softness and scales with softness and size', () => {
+    expect(SHADOW_AMBIENT_SIGMA).toBe(DEFAULT_FRAME_SHADOW.blur / 2); // canvas shadowBlur = 2σ
+    expect(SHADOW_CONTACT.sigma).toBe(0.22);
+    for (const presetId of LAYOUTS) {
+      const p = with3d(phoneProject({ presetId }));
+      const s = scene3d(p)!;
+      const g = frameGeometry(s.home.body, s.home.device, { orientation: s.home.orientation });
+      const long2d = Math.max(g.bodyW, g.bodyH);
+      const sig = shadowSigma(s, camAt(s, 0));
+      expect(sig.ambient * 2, presetId).toBeCloseTo(DEFAULT_FRAME_SHADOW.blur * long2d, 6);
+      expect(sig.contact).toBeCloseTo(0.22 * sig.ambient, 9);
+      const soft = scene3d(with3d(phoneProject({ presetId }), { shadow: { on: true, kind: 'wall', opacity: 0.4, softness: 1 } }))!;
+      expect(shadowSigma(soft, camAt(soft, 0)).ambient).toBeCloseTo(2 * sig.ambient, 6);
+      expect(shadowSigma(s, camAt(s, 0, { ...FRONT, size: 0.5 })).ambient).toBeCloseTo(0.5 * sig.ambient, 6);
+    }
+  });
+
+  it('the catcher area holds every shadow point plus SHADOW_SUPPORT_SIGMAS·σ, in the catcher plane', () => {
+    for (const kind of ['wall', 'floor'] as const) {
+      const s = scene3d(with3d(phoneProject(), { shadow: { on: true, kind, opacity: 0.4, softness: 0.7 }, camera: { fov: 22, elevation: 12 } }))!;
+      const cam = camAt(s, 0, { ...FRONT, turn: 35, tilt: 15 });
+      const g = SHADOW_SUPPORT_SIGMAS * shadowSigma(s, cam).ambient;
+      const corners = shadowCatcherCorners(s, cam);
+      const pts = shadowPointsWorld(s, cam);
+      const ax = kind === 'wall' ? [0, 1] : [0, 2];
+      const plane = kind === 'wall' ? 2 : 1;
+      for (const c of corners) expect(c[plane]).toBeCloseTo(pts[0][plane], 9);
+      for (const i of ax) {
+        expect(Math.min(...corners.map((c) => c[i]))).toBeCloseTo(Math.min(...pts.map((q) => q[i])) - g, 6);
+        expect(Math.max(...corners.map((c) => c[i]))).toBeCloseTo(Math.max(...pts.map((q) => q[i])) + g, 6);
+      }
+    }
+  });
+
+  it('ROI border: the blurred shadow\'s alpha is < 1/255 on every ROI edge inside the canvas (wall and floor, 5 light angles, opacity 1)', () => {
+    // The renderer blurs the silhouette with a Gaussian of σ (shadowSigma.ambient) ON THE CATCHER PLANE. A convex
+    // silhouette blurred that way puts at most 0.5·erfc(d/(σ√2)) of its mass at a point d outside it (the
+    // half-plane bound). Each ROI border point is cast back from the camera onto the catcher plane and d is
+    // measured there, so the floor's foreshortening is handled exactly.
+    const erfc = (x: number) => {
+      const t = 1 / (1 + 0.5 * x);
+      return t * Math.exp(-x * x - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+    };
+    type P2 = { x: number; y: number };
+    const hull2 = (pts: P2[]) => {
+      const q = [...pts].sort((a, b) => a.x - b.x || a.y - b.y);
+      const cross = (o: P2, a: P2, b: P2) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+      const lo: P2[] = [];
+      for (const v of q) {
+        while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], v) <= 0) lo.pop();
+        lo.push(v);
+      }
+      const up: P2[] = [];
+      for (let i = q.length - 1; i >= 0; i--) {
+        while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], q[i]) <= 0) up.pop();
+        up.push(q[i]);
+      }
+      return [...lo.slice(0, -1), ...up.slice(0, -1)];
+    };
+    const distOutside = (v: P2, hull: P2[]) => {
+      let d = Infinity;
+      for (let i = 0; i < hull.length; i++) {
+        const a = hull[i];
+        const b = hull[(i + 1) % hull.length];
+        const vx = b.x - a.x;
+        const vy = b.y - a.y;
+        const u = Math.max(0, Math.min(1, ((v.x - a.x) * vx + (v.y - a.y) * vy) / (vx * vx + vy * vy || 1)));
+        d = Math.min(d, Math.hypot(v.x - a.x - u * vx, v.y - a.y - u * vy));
+      }
+      return d;
+    };
+    let checked = 0;
+    for (const presetId of LAYOUTS) {
+      for (const kind of ['wall', 'floor'] as const) {
+        for (const azimuth of [-150, -60, 0, 45, 120]) {
+          for (const pose of [FRONT, { ...FRONT, turn: 30, tilt: 10, size: 0.7 }, { ...FRONT, size: 0.45, x: -0.2 }]) {
+            const p = with3d(phoneProject({ presetId }), {
+              pose,
+              light: { preset: 'studio', azimuth, intensity: 1 },
+              shadow: { on: true, kind, opacity: 1, softness: 1 },
+              camera: { fov: 22, elevation: 12 },
+            });
+            const roi = renderRoi(p, 0)!;
+            const s = scene3d(p)!;
+            const cam = camAt(s, 0);
+            const sigma = shadowSigma(s, cam).ambient;
+            const pts = shadowPointsWorld(s, cam);
+            const wall = kind === 'wall';
+            const inPlane = (w: number[]): P2 => ({ x: w[0], y: wall ? w[1] : w[2] });
+            const hull = hull2(pts.map(inPlane));
+            const plane = wall ? pts[0][2] : pts[0][1];
+            const axis = wall ? 2 : 1;
+            const { width: W, height: H } = s.canvas;
+            const toPlane = (px: number, py: number): P2 | null => {
+              const c = [((2 * px) / W - 1) * (W / H) / cam.focal, (1 - (2 * py) / H) / cam.focal, -1];
+              const m = cam.rot;
+              const dir = [m[0] * c[0] + m[1] * c[1] + m[2] * c[2], m[3] * c[0] + m[4] * c[1] + m[5] * c[2], m[6] * c[0] + m[7] * c[1] + m[8] * c[2]];
+              const k = (plane - cam.eye[axis]) / dir[axis];
+              if (!(k > 0)) return null; // the ray never meets the catcher: nothing is drawn there
+              return inPlane([cam.eye[0] + k * dir[0], cam.eye[1] + k * dir[1], cam.eye[2] + k * dir[2]]);
+            };
+            const edges: P2[] = [];
+            for (let k = 0; k <= 40; k++) {
+              const fx = roi.x + (roi.w * k) / 40;
+              const fy = roi.y + (roi.h * k) / 40;
+              if (roi.y > 0) edges.push({ x: fx, y: roi.y });
+              if (roi.y + roi.h < H) edges.push({ x: fx, y: roi.y + roi.h });
+              if (roi.x > 0) edges.push({ x: roi.x, y: fy });
+              if (roi.x + roi.w < W) edges.push({ x: roi.x + roi.w, y: fy });
+            }
+            for (const q of edges) {
+              const v = toPlane(q.x, q.y);
+              if (!v) continue;
+              const alpha = 0.5 * erfc(distOutside(v, hull) / (sigma * Math.SQRT2));
+              expect(alpha, `${presetId} ${kind} az ${azimuth} turn ${pose.turn}`).toBeLessThan(1 / 255);
+              checked++;
+            }
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(1000);
   });
 
   it('depthRange keeps the whole body and catcher between near and far (200 random poses); near ≥ 0.25·d when size ≤ 1.5', () => {
@@ -256,7 +403,7 @@ describe('ROI, shadow and depth', () => {
       const pose = randomPose(r);
       const cam = camAt(s, 0, pose);
       const { near, far } = depthRange(s, 0, cam)!;
-      const depths = [...bodyPointsMm(s, true).map((q) => project(q, cam)[2]), ...shadowPointsWorld(s, cam).map((w) => projectWorld(w, cam)[2])];
+      const depths = [...bodyPointsMm(s, true).map((q) => project(q, cam)[2]), ...[...shadowPointsWorld(s, cam), ...shadowCatcherCorners(s, cam)].map((w) => projectWorld(w, cam)[2])];
       for (const z of depths) {
         expect(z).toBeGreaterThanOrEqual(near - 1e-6);
         expect(z).toBeLessThanOrEqual(far + 1e-6);
