@@ -27,6 +27,7 @@ import {
   PHONE_PARTS,
   RENDER_ORDER,
   SEAM_D_MM,
+  SEAM_W_MM,
   clearPhoneCache,
   phoneDims2d,
   phoneModel,
@@ -175,6 +176,38 @@ describe('band profile (D14)', () => {
       for (let i = 1; i < prof.length; i++) expect(Math.abs(prof[i].a - prof[i - 1].a), id).toBeLessThan(12.01);
       expect(prof[0].a).toBeCloseTo(0, 6);
       expect(prof[prof.length - 1].a).toBeCloseTo(90, 6);
+    }
+  });
+
+  it('rounded edges are round, not a flat wall with a round-over: the side curves over most of the half-depth', () => {
+    for (const id of ['iphone-17-pro-max', 'iphone-17-pro', 'iphone-17', 'iphone-air', 'iphone-se-3']) {
+      const d = dev(id);
+      const d2 = body3dFor(d).depthMm / 2;
+      const lipEnd = d.rimMm - SEAM_W_MM;
+      const prof = rightEdgeProfile(d)
+        .filter((q) => q.z < d2 - 1e-6 || q.a > 89.999) // drop the seam rings that share z = d2
+        .sort((a, b) => a.z - b.z || a.inset - b.inset);
+      /** Normal angle at height z, linear between the profile samples. */
+      const angleAt = (z: number) => {
+        const k = prof.findIndex((q) => q.z >= z);
+        const p0 = prof[k - 1], p1 = prof[k];
+        return p0.a + ((p1.a - p0.a) * (z - p0.z)) / (p1.z - p0.z);
+      };
+      const zWhere = (deg: number) => prof.find((q) => q.a >= deg)!.z;
+      // Halfway up the half-depth the side already leans out of the wall plane.
+      expect(angleAt(0.5 * d2), id).toBeGreaterThan(3);
+      // The turn starts low (a flat wall would hold 0° to well above 0.6·d2) ...
+      expect(zWhere(1) / d2, id).toBeLessThan(0.3);
+      // ... and its first 45° spread over most of the half-depth: no short
+      // fillet near the face does the work.
+      expect((zWhere(45) - zWhere(1)) / d2, id).toBeGreaterThan(0.65);
+      // The curve spends nearly the whole inset the visible rim allows
+      // (the old flat-wall profile reached the face at 0.45 mm).
+      const face = prof.find((q) => q.a > 89.999)!;
+      expect(face.inset, id).toBeGreaterThan(lipEnd - 0.1);
+      expect(face.inset, id).toBeLessThanOrEqual(lipEnd + 1e-6);
+      // Insets grow monotonically from wall to face (convex, no dents).
+      for (let i = 1; i < prof.length; i++) expect(prof[i].inset, id).toBeGreaterThanOrEqual(prof[i - 1].inset - 1e-6);
     }
   });
 

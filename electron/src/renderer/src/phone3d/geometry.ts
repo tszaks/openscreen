@@ -14,9 +14,17 @@
 // - The band is a swept profile along that outline. Flat edges (12–16, the
 //   iPads) have a straight wall and 0.35 mm 45° chamfers; a 0.1 mm fillet
 //   of 3 rings sits on each chamfer edge, so a 1–2 px glint runs along it.
-//   Rounded edges (17, Air, SE) have a flat middle and arcs of radius
-//   0.45·depth. Normals are analytic (never averaged across a crease); every
-//   real crease duplicates its ring. Tangents run along the outline for the
+//   Rounded edges (17, Air, SE) are a quarter-ellipse per half, wall to
+//   face, tangent-continuous at both ends: its z semi-axis is 0.45·depth, so
+//   the side curves over 90% of each half; its inset semi-axis is all the
+//   metal the 2D rim shows (rim − seam − a 0.06 mm land), because the front
+//   glass starts at the rim and the band cannot inset further without
+//   changing the FRONT silhouette. With about 0.7 mm of inset over about
+//   4 mm of height the side is a gentle bow that tightens into a ~0.1 mm
+//   round at the face (the ellipse's own end curvature a²/b, no separate
+//   fillet). A circle of radius 0.45·depth would need an inset of 0.45·depth.
+//   Normals are analytic (never averaged across a crease); every real
+//   crease duplicates its ring. Tangents run along the outline for the
 //   brushed-metal anisotropy.
 // - A dark recessed seam separates the band from the glass on both faces.
 //   The glass has a small rounded edge that drops into the seam.
@@ -65,12 +73,10 @@ export const CHAMFER_MM = 0.35;
 export const FILLET_MM = 0.1;
 /** Rings in each fillet (D14: 2 or 3). */
 export const FILLET_RINGS = 3;
-/** Rounded edges: the profile arc radius, as a fraction of depth. */
+/** Rounded edges: the profile's z semi-axis, as a fraction of depth (spec §3.3). */
 export const ROUNDED_ARC = 0.45;
-/** Rounded edges: where the arc meets the face (inset from the outline). */
-const ROUNDED_LIP_MM = 0.45;
-/** Rounded edges: the fillet between the arc and the face. */
-const ROUNDED_FILLET_MM = 0.3;
+/** Rounded edges: the flat metal land between the curve's end and the seam. */
+export const ROUNDED_LAND_MM = 0.06;
 /** Seam between band and glass: width and depth (spec §3.3). */
 export const SEAM_W_MM = 0.12;
 export const SEAM_D_MM = 0.1;
@@ -340,6 +346,54 @@ function convexArc(ci: number, cz: number, r: number, a0: number, a1: number, n:
 const mirrorStrip = (s: Strip): Strip => s.map((q) => ({ z: -q.z, i: q.i, no: q.no, nz: -q.nz }));
 
 /**
+ * The rounded band's quarter-ellipse in (inset, z), centred at (a, z0): from
+ * the wall (inset 0, z0, normal outward) to the face (inset a, z0 + b,
+ * normal +z). b = 0.45·depth; a = the rim's metal less the land.
+ */
+export function roundedEllipse(depth: number, rim: number) {
+  const b = ROUNDED_ARC * depth;
+  const a = Math.max(0.05, rim - SEAM_W_MM - ROUNDED_LAND_MM);
+  return { a, b, z0: depth / 2 - b };
+}
+
+/** Where the band reaches the flat face (inset from the outline): the end of the chamfer or the ellipse. */
+export function faceInset(edge: Body3D['edge'], depth: number, rim: number): number {
+  return edge === 'flat' ? CHAMFER_MM : roundedEllipse(depth, rim).a;
+}
+
+/**
+ * Samples of the quarter-ellipse i = a(1 − cos t), z = z0 + b·sin t, with
+ * the analytic normal ∝ (b·cos t, a·sin t). With b ≫ a the normal turns
+ * slowly along the side and fast at the face, so samples are the union of
+ * even steps in t (for the silhouette along z) and even steps in the normal
+ * angle (≤ 7.5° apart, for smooth shading at the face).
+ */
+function ellipseStrip(a: number, b: number, z0: number): Strip {
+  const N = 12;
+  const ts: number[] = [];
+  for (let k = 0; k <= N; k++) {
+    ts.push((k / N) * (Math.PI / 2));
+    // Normal angle θ = atan((a/b)·tan t)  ⇒  t = atan((b/a)·tan θ).
+    const th = (k / N) * (Math.PI / 2);
+    ts.push(k === N ? Math.PI / 2 : Math.atan((b / a) * Math.tan(th)));
+  }
+  ts.sort((x, y) => x - y);
+  const out: Strip = [];
+  for (const t of ts) {
+    const [no, nz] = norm2(b * Math.cos(t), a * Math.sin(t));
+    const q: PP = { i: a * (1 - Math.cos(t)), z: z0 + b * Math.sin(t), no, nz };
+    const prev = out[out.length - 1];
+    // Two samples that nearly coincide in both height and normal add a ring and nothing else.
+    if (prev && q.z - prev.z < 0.03 && Math.abs(Math.atan2(q.nz, q.no) - Math.atan2(prev.nz, prev.no)) < Math.PI / 180) {
+      if (t === Math.PI / 2) out[out.length - 1] = q; // keep the exact end
+      continue;
+    }
+    out.push(q);
+  }
+  return out;
+}
+
+/**
  * The band's front half, wall to lip, plus the seam. Returns the band strips
  * (continuous normals inside each strip), the seam strips, where the glass
  * starts, and the crease z values.
@@ -365,16 +419,9 @@ function bandProfile(edge: Body3D['edge'], depth: number, rim: number) {
     // The 45° chamfer is the straight span from f1's end to f2's start.
     band.push(strip);
   } else {
-    // Flat middle → arc (radius 0.45·depth) → fillet → lip, all tangent-continuous.
-    const R = ROUNDED_ARC * depth;
-    const f = Math.min(ROUNDED_FILLET_MM, R * 0.5);
-    const iL = Math.min(ROUNDED_LIP_MM, lipEnd - 0.05);
-    const cosPhi = Math.min(1, Math.max(-1, (R - iL) / (R - f)));
-    const phi = Math.acos(cosPhi);
-    const zc = d2 - f - (R - f) * Math.sin(phi);
-    const arc = convexArc(R, Math.max(0, zc), R, 0, phi, 8);
-    const fil = convexArc(iL, d2 - f, f, phi, 90 * deg, 8);
-    band.push([{ z: 0, i: 0, no: 1, nz: 0 }, ...arc.slice(zc > 1e-6 ? 0 : 1), ...fil.slice(1), { z: d2, i: lipEnd, no: 0, nz: 1 }]);
+    // Short flat middle → quarter-ellipse → land → lip, tangent-continuous.
+    const { a, b, z0 } = roundedEllipse(depth, rim);
+    band.push([{ z: 0, i: 0, no: 1, nz: 0 }, ...ellipseStrip(a, b, z0).slice(z0 > 1e-6 ? 0 : 1), { z: d2, i: lipEnd, no: 0, nz: 1 }]);
   }
   // Seam: lip edge drops (normal inward), floor (normal +z), then the glass
   // edge rises and rounds onto the flat glass. Hard creases between them.
@@ -907,7 +954,7 @@ function build(device: DeviceModel, body: Body3D): PhoneModel {
     topInset = 0;
   } else if (pl.kind === 'bar' || fullWidth) {
     // Full-width bar (17 Pro, Air): flush with the body sides, a sloped edge at the bottom.
-    const iL = body.edge === 'flat' ? CHAMFER_MM : ROUNDED_LIP_MM;
+    const iL = faceInset(body.edge, depth, rim);
     const bw = W - 2 * iL;
     const top = iL;
     const bh = fh - top;
