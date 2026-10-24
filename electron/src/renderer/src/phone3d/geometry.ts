@@ -1,0 +1,1051 @@
+// The procedural 3D phone (spec §3.3, D14). Everything is built from the
+// public numbers in shared/devices.ts (body, screen, corner radius, buttons)
+// and shared/devices3d.ts (depth, edge, camera plateau). No CAD, no Apple
+// artwork, no logo: the back is blank.
+//
+// Units are millimetres. The phone is portrait, y up, the screen faces +z,
+// and the body is centred on the origin, so the front glass lies on
+// z = depth/2 (the plane projection.ts puts on the canvas at FRONT).
+//
+// Shape language:
+// - The body outline is the continuous ("squircle") corner from
+//   shared/phone3d/outline.ts, the same table the 2D frame draws with, so the
+//   3D silhouette at FRONT is the 2D silhouette.
+// - The band is a swept profile along that outline. Flat edges (12–16, the
+//   iPads) have a straight wall and 0.35 mm 45° chamfers; a 0.1 mm fillet
+//   of 3 rings sits on each chamfer edge, so a 1–2 px glint runs along it.
+//   Rounded edges (17, Air, SE) have a flat middle and arcs of radius
+//   0.45·depth. Normals are analytic (never averaged across a crease); every
+//   real crease duplicates its ring. Tangents run along the outline for the
+//   brushed-metal anisotropy.
+// - A dark recessed seam separates the band from the glass on both faces.
+//   The glass has a small rounded edge that drops into the seam.
+// - The camera plateau is a swept footprint with a pillow edge; each lens
+//   is a ring, a dark barrel (BackSide), stacked element discs and a cover
+//   glass, so the lens parallaxes when the phone turns.
+// - Screen, glare and lens cover are overlay layers (depthWrite off, polygon
+//   offset, fixed renderOrder; materials.ts sets those).
+//
+// Each mesh carries `userData.part`; materials.ts `applyMaterials` maps
+// parts to materials. Geometry is cached per device (LRU 3).
+
+import {
+  BufferGeometry,
+  CircleGeometry,
+  Float32BufferAttribute,
+  Group,
+  InstancedMesh,
+  Matrix4,
+  Mesh,
+  ShapeUtils,
+  Vector2,
+  type Material,
+} from 'three';
+import type { DeviceModel, SideButton } from '../../../shared/devices';
+import type { Body3D } from '../../../shared/devices3d';
+import { frameGeometry } from '../../../shared/deviceGeometry';
+import { CONTINUOUS_CORNER, CORNER_EXTENT, clampCornerRadius, cornerFrames } from '../../../shared/phone3d/outline';
+
+// ---------------------------------------------------------------------------
+// Dimensions (mm). Each is a measured proportion or a stated estimate.
+
+/** Chamfer on flat-edged bands (45°, front and back). */
+export const CHAMFER_MM = 0.35;
+/** Fillet on each chamfer edge; catches the 1–2 px glint (D14: 0.08–0.12). */
+export const FILLET_MM = 0.1;
+/** Rings in each fillet (D14: 2 or 3). */
+export const FILLET_RINGS = 3;
+/** Rounded edges: the profile arc radius, as a fraction of depth. */
+export const ROUNDED_ARC = 0.45;
+/** Rounded edges: where the arc meets the face (inset from the outline). */
+const ROUNDED_LIP_MM = 0.45;
+/** Rounded edges: the fillet between the arc and the face. */
+const ROUNDED_FILLET_MM = 0.3;
+/** Seam between band and glass: width and depth (spec §3.3). */
+export const SEAM_W_MM = 0.12;
+export const SEAM_D_MM = 0.1;
+/** The glass edge rounds down into the seam over this width. */
+const GLASS_EDGE_MM = 0.25;
+/** Antenna line width (along the outline). */
+const ANTENNA_W_MM = 0.6;
+/** Plateau: the concave fillet where it meets the back (spec: 0.4). */
+const PLATEAU_BASE_FILLET_MM = 0.4;
+/** Plateau with no measured inset still gets a rounded top edge. */
+const PLATEAU_MIN_ROUND_MM = 0.2;
+/** Lens assembly. */
+const LENS_GLASS_FRAC = 0.78; // cover-glass radius / ring radius
+const LENS_RING_FILLET_MM = 0.1;
+const LENS_BEVEL_MM = 0.25; // the cover glass sits this far below the ring top
+const LENS_BARREL_MM = 1.5;
+/** Buttons. */
+export const BUTTON_PROUD_MM = 0.55;
+const BUTTON_EMBED_MM = 0.3;
+const CAMERA_CONTROL_PROUD_MM = 0.28;
+/** Bottom edge: USB-C pill and grilles. */
+const PORT_MM = { w: 8.3, h: 2.5 };
+const GRILLE = { holes: 6, d: 0.95, pitch: 1.3, gap: 2.4 };
+/** Decals sit this far proud of the surface they are on (plus polygon offset). */
+const DECAL_LIFT_MM = 0.01;
+/** Outline samples per corner (3 bezier spans; 12 per span). */
+export const SEG_PER_CORNER = 36;
+const CIRCLE_SEG = 64;
+
+/**
+ * Estimate (no Apple drawing gives it): the aluminium-unibody 17 Pro / Pro Max
+ * has a Ceramic Shield panel "slightly larger than a credit card" inlaid in
+ * the back below the plateau. Margin from the body edges and the plateau, mm.
+ */
+const UNIBODY_PANEL = { margin: 7, rMm: 6 };
+
+export const RENDER_ORDER = { glass: 0, screen: 1, glare: 2, lensElements: 3, lensCover: 4, decal: 1 } as const;
+
+export type PhonePart =
+  | 'band'
+  | 'seam'
+  | 'frontGlass'
+  | 'screen'
+  | 'glare'
+  | 'back'
+  | 'backPanel'
+  | 'plateau'
+  | 'lensRing'
+  | 'lensBarrel'
+  | 'lensElements'
+  | 'lensCover'
+  | 'flash'
+  | 'sensor'
+  | 'mic'
+  | 'button'
+  | 'cameraControl'
+  | 'port';
+
+export const PHONE_PARTS: readonly PhonePart[] = [
+  'band', 'seam', 'frontGlass', 'screen', 'glare', 'back', 'backPanel', 'plateau', 'lensRing', 'lensBarrel',
+  'lensElements', 'lensCover', 'flash', 'sensor', 'mic', 'button', 'cameraControl', 'port',
+];
+
+/** Material groups inside the band mesh. */
+export const BAND_GROUP = { metal: 0, antenna: 1 } as const;
+/** Material groups inside the flash mesh. */
+export const FLASH_GROUP = { ring: 0, lamp: 1 } as const;
+
+/** The measured layout the meshes were built from, for tests and the renderer. */
+export interface PhoneDims {
+  bodyW: number;
+  bodyH: number;
+  depth: number;
+  bodyRadius: number;
+  rim: number;
+  screenW: number;
+  screenH: number;
+  screenRadius: number;
+  edge: Body3D['edge'];
+  unibody: boolean;
+  /** z of the plateau top and of the lens ring tops (negative: the back is −z). */
+  plateauTopZ: number;
+  lensTopZ: number;
+  /** Profile z values where a hard crease duplicates a ring (front half; the back mirrors them). */
+  creaseZ: number[];
+}
+
+// ---------------------------------------------------------------------------
+// 2D loops: CCW points (y up) with unit tangents (direction of travel).
+
+type V2 = [number, number];
+interface Loop {
+  p: V2[];
+  t: V2[];
+}
+
+const norm2 = (x: number, y: number): V2 => {
+  const l = Math.hypot(x, y) || 1;
+  return [x / l, y / l];
+};
+/** Outward normal of a CCW loop at a point with tangent t. */
+const outwardOf = (t: V2): V2 => [t[1], -t[0]];
+
+const bez = (a: number, b: number, c: number, d: number, t: number) => {
+  const u = 1 - t;
+  return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d;
+};
+const bezD = (a: number, b: number, c: number, d: number, t: number) => {
+  const u = 1 - t;
+  return 3 * (u * u * (b - a) + 2 * u * t * (c - b) + t * t * (d - c));
+};
+
+/**
+ * The continuous-corner rect of w × h centred on the origin, with its own
+ * radius per corner (y-up order: bottom-right, top-right, top-left,
+ * bottom-left). With four equal radii the points are exactly
+ * continuousRectPoints(w, h, r, segPerCorner): the 2D frame's outline.
+ */
+export function rectLoop(w: number, h: number, radii: number | readonly [number, number, number, number], segPerCorner = SEG_PER_CORNER): Loop {
+  const rs = typeof radii === 'number' ? [radii, radii, radii, radii] : radii;
+  const corners = cornerFrames(-w / 2, -h / 2, w, h);
+  const perSpan = Math.max(1, Math.round(segPerCorner / 3));
+  const p: V2[] = [];
+  const t: V2[] = [];
+  const push = (q: V2, tq: V2) => {
+    const last = p[p.length - 1];
+    if (last && Math.abs(last[0] - q[0]) < 1e-12 && Math.abs(last[1] - q[1]) < 1e-12) return;
+    p.push(q);
+    t.push(tq);
+  };
+  const at = (ci: number, a: number, b: number): V2 => {
+    const c = corners[ci];
+    const r = clampCornerRadius(w, h, rs[ci]);
+    return [c[0] + (c[2] * a + c[4] * b) * r, c[1] + (c[3] * a + c[5] * b) * r];
+  };
+  // Start where continuousRectCommands starts: on the edge before corner 0.
+  let cur = at(3, 0, CORNER_EXTENT);
+  push(cur, [1, 0]);
+  for (let ci = 0; ci < 4; ci++) {
+    for (const cmd of CONTINUOUS_CORNER) {
+      if (cmd[0] === 'L') {
+        const q = at(ci, cmd[1], cmd[2]);
+        const d = norm2(q[0] - cur[0], q[1] - cur[1]);
+        if (Math.hypot(q[0] - cur[0], q[1] - cur[1]) > 1e-12) push(q, d);
+        cur = q;
+      } else {
+        const c1 = at(ci, cmd[1], cmd[2]);
+        const c2 = at(ci, cmd[3], cmd[4]);
+        const q = at(ci, cmd[5], cmd[6]);
+        for (let k = 1; k <= perSpan; k++) {
+          const s = k / perSpan;
+          push(
+            [bez(cur[0], c1[0], c2[0], q[0], s), bez(cur[1], c1[1], c2[1], q[1], s)],
+            norm2(bezD(cur[0], c1[0], c2[0], q[0], s), bezD(cur[1], c1[1], c2[1], q[1], s)),
+          );
+        }
+        cur = q;
+      }
+    }
+  }
+  // The path closes onto its start.
+  const f = p[0];
+  const l = p[p.length - 1];
+  if (p.length > 1 && Math.abs(f[0] - l[0]) < 1e-9 && Math.abs(f[1] - l[1]) < 1e-9) {
+    p.pop();
+    t.pop();
+  }
+  return { p, t };
+}
+
+/** A stadium (two semicircle ends on the long axis), centred, CCW. */
+export function stadiumLoop(w: number, h: number, seg = CIRCLE_SEG / 2): Loop {
+  if (w > h) {
+    const v = stadiumLoop(h, w, seg);
+    // Rotate +90° (keeps CCW): (x, y) → (−y, x).
+    return { p: v.p.map(([x, y]) => [-y, x]), t: v.t.map(([x, y]) => [-y, x]) };
+  }
+  const r = w / 2;
+  const a = h / 2 - r;
+  const p: V2[] = [];
+  const t: V2[] = [];
+  for (const [cy, a0] of [[a, 0], [-a, Math.PI]] as const) {
+    for (let k = 0; k <= seg; k++) {
+      const th = a0 + (Math.PI * k) / seg;
+      p.push([r * Math.cos(th), cy + r * Math.sin(th)]);
+      t.push([-Math.sin(th), Math.cos(th)]);
+    }
+  }
+  if (a < 1e-9) {
+    // A circle: drop the duplicated joins.
+    return circleLoop(r, seg * 2);
+  }
+  return { p, t };
+}
+
+export function circleLoop(r: number, seg = CIRCLE_SEG): Loop {
+  const p: V2[] = [];
+  const t: V2[] = [];
+  for (let k = 0; k < seg; k++) {
+    const th = (2 * Math.PI * k) / seg;
+    p.push([r * Math.cos(th), r * Math.sin(th)]);
+    t.push([-Math.sin(th), Math.cos(th)]);
+  }
+  return { p, t };
+}
+
+/** The loop moved inward by `d` along its normals (uniform, or one value per point). */
+export function insetLoop(loop: Loop, d: number | readonly number[]): V2[] {
+  return loop.p.map((q, j) => {
+    const n = outwardOf(loop.t[j]);
+    const dj = typeof d === 'number' ? d : d[j];
+    return [q[0] - n[0] * dj, q[1] - n[1] * dj];
+  });
+}
+
+/** Insert a point wherever an edge crosses one of the horizontal lines y = c (strictly). */
+function cutLoop(loop: Loop, ys: readonly number[]): Loop {
+  const p: V2[] = [];
+  const t: V2[] = [];
+  const n = loop.p.length;
+  for (let j = 0; j < n; j++) {
+    const a = loop.p[j];
+    const b = loop.p[(j + 1) % n];
+    p.push(a);
+    t.push(loop.t[j]);
+    const cuts = ys
+      .filter((c) => (a[1] - c) * (b[1] - c) < 0)
+      .map((c) => (c - a[1]) / (b[1] - a[1]))
+      .sort((x, y) => x - y);
+    for (const s of cuts) {
+      const ta = loop.t[j];
+      const tb = loop.t[(j + 1) % n];
+      p.push([a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s]);
+      t.push(norm2(ta[0] + (tb[0] - ta[0]) * s, ta[1] + (tb[1] - ta[1]) * s));
+    }
+  }
+  return { p, t };
+}
+
+// ---------------------------------------------------------------------------
+// Profiles: (z, inset) samples with analytic normals (outward, z) components.
+
+interface PP {
+  z: number;
+  i: number;
+  no: number;
+  nz: number;
+}
+type Strip = PP[];
+
+/** Arc of radius r around centre (ci, cz) in (inset, z), normal angle from a0 to a1 (0 = outward, 90° = +z), convex. */
+function convexArc(ci: number, cz: number, r: number, a0: number, a1: number, n: number): Strip {
+  const out: Strip = [];
+  for (let k = 0; k <= n; k++) {
+    const a = a0 + ((a1 - a0) * k) / n;
+    out.push({ i: ci - r * Math.cos(a), z: cz + r * Math.sin(a), no: Math.cos(a), nz: Math.sin(a) });
+  }
+  return out;
+}
+
+/** Mirror a strip through z = 0 (front half → back half). */
+const mirrorStrip = (s: Strip): Strip => s.map((q) => ({ z: -q.z, i: q.i, no: q.no, nz: -q.nz }));
+
+/**
+ * The band's front half, wall to lip, plus the seam. Returns the band strips
+ * (continuous normals inside each strip), the seam strips, where the glass
+ * starts, and the crease z values.
+ */
+function bandProfile(edge: Body3D['edge'], depth: number, rim: number) {
+  const d2 = depth / 2;
+  const lipEnd = rim - SEAM_W_MM;
+  const band: Strip[] = [];
+  const deg = Math.PI / 180;
+  if (edge === 'flat') {
+    // Wall → fillet → 45° chamfer → fillet → lip. Fillet tangent length f·tan(22.5°).
+    const f = FILLET_MM;
+    const tl = f * Math.tan(22.5 * deg);
+    const c = CHAMFER_MM;
+    // Corner 1 at (i 0, z d2 − c); corner 2 at (i c, z d2).
+    const f1 = convexArc(f, d2 - c - tl, f, 0, 45 * deg, FILLET_RINGS);
+    // Fillet 2: centre sits f inside the lip plane and f inside the chamfer line.
+    const c2z = d2 - f;
+    const c2i = c + tl;
+    const f2 = convexArc(c2i, c2z, f, 45 * deg, 90 * deg, FILLET_RINGS);
+    const wall: PP[] = [{ z: 0, i: 0, no: 1, nz: 0 }];
+    const strip: Strip = [...wall, ...f1, ...f2, { z: d2, i: lipEnd, no: 0, nz: 1 }];
+    // The 45° chamfer is the straight span from f1's end to f2's start.
+    band.push(strip);
+  } else {
+    // Flat middle → arc (radius 0.45·depth) → fillet → lip, all tangent-continuous.
+    const R = ROUNDED_ARC * depth;
+    const f = Math.min(ROUNDED_FILLET_MM, R * 0.5);
+    const iL = Math.min(ROUNDED_LIP_MM, lipEnd - 0.05);
+    const cosPhi = Math.min(1, Math.max(-1, (R - iL) / (R - f)));
+    const phi = Math.acos(cosPhi);
+    const zc = d2 - f - (R - f) * Math.sin(phi);
+    const arc = convexArc(R, Math.max(0, zc), R, 0, phi, 8);
+    const fil = convexArc(iL, d2 - f, f, phi, 90 * deg, 8);
+    band.push([{ z: 0, i: 0, no: 1, nz: 0 }, ...arc.slice(zc > 1e-6 ? 0 : 1), ...fil.slice(1), { z: d2, i: lipEnd, no: 0, nz: 1 }]);
+  }
+  // Seam: lip edge drops (normal inward), floor (normal +z), then the glass
+  // edge rises and rounds onto the flat glass. Hard creases between them.
+  const seamTop = d2;
+  const seamFloor = d2 - SEAM_D_MM;
+  const seam: Strip[] = [
+    [
+      { z: seamTop, i: lipEnd, no: -1, nz: 0 },
+      { z: seamFloor, i: lipEnd, no: -1, nz: 0 },
+    ],
+    [
+      { z: seamFloor, i: lipEnd, no: 0, nz: 1 },
+      { z: seamFloor, i: rim, no: 0, nz: 1 },
+    ],
+  ];
+  // Glass edge: from the seam floor at `rim`, a quarter-ellipse up to the flat glass.
+  const ge = GLASS_EDGE_MM;
+  const glassEdge: Strip = [];
+  for (let k = 0; k <= 6; k++) {
+    const a = (k / 6) * (Math.PI / 2);
+    // inset = rim + ge·(1 − cos a); z = seamFloor + SEAM_D·sin a; normal ∝ (SEAM_D·cos a, ge·sin a)
+    const n = norm2(SEAM_D_MM * Math.cos(a), ge * Math.sin(a));
+    glassEdge.push({ i: rim + ge * (1 - Math.cos(a)), z: seamFloor + SEAM_D_MM * Math.sin(a), no: n[0], nz: n[1] });
+  }
+  return { band, seam, glassEdge, glassInset: rim + ge, creaseZ: [seamTop, seamFloor] };
+}
+
+// ---------------------------------------------------------------------------
+// Mesh building
+
+class Builder {
+  pos: number[] = [];
+  nrm: number[] = [];
+  tan: number[] = [];
+  uv: number[] = [];
+  groups: number[][] = [];
+  withUv = false;
+
+  v(x: number, y: number, z: number, nx: number, ny: number, nz: number, tx = 1, ty = 0, tz = 0, u = 0, w = 0): number {
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    const tl = Math.hypot(tx, ty, tz) || 1;
+    this.pos.push(x, y, z);
+    this.nrm.push(nx / nl, ny / nl, nz / nl);
+    this.tan.push(tx / tl, ty / tl, tz / tl, 1);
+    this.uv.push(u, w);
+    return this.pos.length / 3 - 1;
+  }
+
+  /** Triangle a-b-c, flipped if its winding disagrees with the vertex normals. */
+  tri(a: number, b: number, c: number, group = 0) {
+    const P = this.pos;
+    const ax = P[a * 3], ay = P[a * 3 + 1], az = P[a * 3 + 2];
+    const ux = P[b * 3] - ax, uy = P[b * 3 + 1] - ay, uz = P[b * 3 + 2] - az;
+    const wx = P[c * 3] - ax, wy = P[c * 3 + 1] - ay, wz = P[c * 3 + 2] - az;
+    const cx = uy * wz - uz * wy, cy = uz * wx - ux * wz, cz = ux * wy - uy * wx;
+    const area = Math.hypot(cx, cy, cz);
+    if (area < 1e-14) return; // degenerate (a collapsed ring)
+    const N = this.nrm;
+    const sx = N[a * 3] + N[b * 3] + N[c * 3];
+    const sy = N[a * 3 + 1] + N[b * 3 + 1] + N[c * 3 + 1];
+    const sz = N[a * 3 + 2] + N[b * 3 + 2] + N[c * 3 + 2];
+    const g = (this.groups[group] ??= []);
+    if (cx * sx + cy * sy + cz * sz >= 0) g.push(a, b, c);
+    else g.push(a, c, b);
+  }
+
+  geometry(): BufferGeometry {
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new Float32BufferAttribute(this.pos, 3));
+    geo.setAttribute('normal', new Float32BufferAttribute(this.nrm, 3));
+    geo.setAttribute('tangent', new Float32BufferAttribute(this.tan, 4));
+    if (this.withUv) geo.setAttribute('uv', new Float32BufferAttribute(this.uv, 2));
+    const index: number[] = [];
+    this.groups.forEach((g, gi) => {
+      if (!g || g.length === 0) return;
+      geo.addGroup(index.length, g.length, gi);
+      index.push(...g);
+    });
+    geo.setIndex(index);
+    geo.computeBoundingBox();
+    geo.computeBoundingSphere();
+    return geo;
+  }
+}
+
+/**
+ * Sweep profile strips along a loop. Each strip gets its own rings, so
+ * strips meet at hard creases. `scale[j]` scales the inset at loop point j
+ * (the plateau bar's flush sides); `groupOf(j)` picks the material group
+ * of the faces between loop points j and j+1.
+ */
+function sweep(b: Builder, loop: Loop, strips: Strip[], opts: { scale?: number[]; groupOf?: (j: number) => number; z0?: number } = {}) {
+  const n = loop.p.length;
+  const z0 = opts.z0 ?? 0;
+  for (const strip of strips) {
+    const ring: number[][] = [];
+    for (const q of strip) {
+      const row: number[] = [];
+      for (let j = 0; j < n; j++) {
+        const s = opts.scale ? opts.scale[j] : 1;
+        const t = loop.t[j];
+        const o = outwardOf(t);
+        const nn = norm2(q.no, q.nz * s);
+        row.push(
+          b.v(
+            loop.p[j][0] - o[0] * q.i * s,
+            loop.p[j][1] - o[1] * q.i * s,
+            z0 + q.z,
+            o[0] * nn[0],
+            o[1] * nn[0],
+            nn[1],
+            t[0],
+            t[1],
+            0,
+          ),
+        );
+      }
+      ring.push(row);
+    }
+    for (let k = 0; k + 1 < ring.length; k++) {
+      for (let j = 0; j < n; j++) {
+        const j2 = (j + 1) % n;
+        const g = opts.groupOf ? opts.groupOf(j) : 0;
+        b.tri(ring[k][j], ring[k][j2], ring[k + 1][j], g);
+        b.tri(ring[k][j2], ring[k + 1][j2], ring[k + 1][j], g);
+      }
+    }
+  }
+}
+
+/** A flat cap over a polygon (with optional holes) at height z, facing ±z. */
+function cap(b: Builder, contour: V2[], z: number, facing: 1 | -1, holes: V2[][] = [], uvRect?: { x: number; y: number; w: number; h: number }, group = 0) {
+  const c = contour.map(([x, y]) => new Vector2(x, y));
+  const hs = holes.map((h) => h.map(([x, y]) => new Vector2(x, y)));
+  const faces = ShapeUtils.triangulateShape(c, hs);
+  const all = [...contour, ...holes.flat()];
+  const base = all.map(([x, y]) =>
+    b.v(x, y, z, 0, 0, facing, 1, 0, 0, uvRect ? (x - uvRect.x) / uvRect.w : 0, uvRect ? (y - uvRect.y) / uvRect.h : 0),
+  );
+  for (const [i, j, k] of faces) b.tri(base[i], base[j], base[k], group);
+}
+
+/** Merge builder output into a mesh with its part tag. */
+function partMesh(part: PhonePart, b: Builder, renderOrder = 0): Mesh | null {
+  if (b.pos.length === 0) return null;
+  const m = new Mesh(b.geometry(), PLACEHOLDER);
+  m.name = part;
+  m.userData.part = part;
+  m.renderOrder = renderOrder;
+  return m;
+}
+
+/** Shared stand-in until applyMaterials runs (never rendered by itself). */
+const PLACEHOLDER: Material[] = [];
+
+/** Apply a matrix to everything a builder has so far (positions, normals, tangents). */
+function transformBuilder(b: Builder, from: number, m: Matrix4) {
+  const e = m.elements;
+  for (let v = from; v < b.pos.length / 3; v++) {
+    const x = b.pos[v * 3], y = b.pos[v * 3 + 1], z = b.pos[v * 3 + 2];
+    b.pos[v * 3] = e[0] * x + e[4] * y + e[8] * z + e[12];
+    b.pos[v * 3 + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
+    b.pos[v * 3 + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
+    // Rotations only (orthonormal): normals and tangents transform like directions.
+    for (const arr of [b.nrm, b.tan]) {
+      const s = arr === b.tan ? 4 : 3;
+      const ax = arr[v * s], ay = arr[v * s + 1], az = arr[v * s + 2];
+      arr[v * s] = e[0] * ax + e[4] * ay + e[8] * az;
+      arr[v * s + 1] = e[1] * ax + e[5] * ay + e[9] * az;
+      arr[v * s + 2] = e[2] * ax + e[6] * ay + e[10] * az;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parts
+
+/** A capsule button: stadium outline in its own plane, swept outward. */
+function buildButton(b: Builder, length: number, width: number, proud: number, place: Matrix4) {
+  const from = b.pos.length / 3;
+  // Local: stadium in xy (x = across the band depth, y = along its length), sweep +z outward.
+  const loop = stadiumLoop(width, length, 16);
+  const rf = Math.min(0.3, width * 0.25, proud * 0.6);
+  const wall: Strip = [
+    { z: -BUTTON_EMBED_MM, i: 0, no: 1, nz: 0 },
+    ...convexArc(rf, proud - rf, rf, 0, Math.PI / 2, 5),
+  ];
+  sweep(b, loop, [wall]);
+  cap(b, insetLoop(loop, rf), proud, 1);
+  transformBuilder(b, from, place);
+}
+
+/** Rotation + translation that maps a button's local frame onto the body. */
+function buttonPlacement(btn: SideButton, W: number, H: number): { m: Matrix4; length: number } {
+  const m = new Matrix4();
+  if (btn.kind === 'top') {
+    // Top edge: `top` and `length` are fractions of body width from the left (front view).
+    const length = btn.length * W;
+    const xc = -W / 2 + (btn.top + btn.length / 2) * W;
+    // local z → +Y, local y → +X, local x → +Z.
+    m.set(0, 1, 0, xc, 0, 0, 1, H / 2, 1, 0, 0, 0, 0, 0, 0, 1);
+    return { m, length };
+  }
+  const length = btn.length * H;
+  const yc = H / 2 - (btn.top + btn.length / 2) * H;
+  if (btn.side === 'right') {
+    // local z → +X, local y → +Y, local x → −Z.
+    m.set(0, 0, 1, W / 2, 0, 1, 0, yc, -1, 0, 0, 0, 0, 0, 0, 1);
+  } else {
+    // local z → −X, local y → +Y, local x → +Z.
+    m.set(0, 0, -1, -W / 2, 0, 1, 0, yc, 1, 0, 0, 0, 0, 0, 0, 1);
+  }
+  return { m, length };
+}
+
+/** Back frame (the back seen from behind, y up, z out of the back) → model: a half turn about y. */
+const BACK_TO_MODEL = new Matrix4().makeRotationY(Math.PI);
+
+interface BackFrame {
+  /** Back-view mm (from the back's top-left as seen from behind) → back-frame xy. */
+  xy(bx: number, by: number): V2;
+}
+
+/** A pillow-edged plateau (or turret) footprint, swept up from the back surface. */
+function buildPlateau(b: Builder, loop: Loop, zBack: number, heightMm: number, insetMm: number, scale?: number[], holes: V2[][] = []) {
+  const a = Math.max(insetMm, PLATEAU_MIN_ROUND_MM);
+  const rb = Math.min(PLATEAU_BASE_FILLET_MM, heightMm * 0.4);
+  const deg = Math.PI / 180;
+  const strip: Strip = [];
+  // Concave base fillet: from the back surface (normal up) to the wall foot (normal outward).
+  for (let k = 0; k <= 4; k++) {
+    const ph = (k / 4) * 90 * deg;
+    strip.push({ i: -rb + rb * Math.sin(ph), z: rb - rb * Math.cos(ph), no: Math.sin(ph), nz: Math.cos(ph) });
+  }
+  // Pillow: quarter-ellipse with semi-axes (a, h − rb), wall to top.
+  const hh = heightMm - rb;
+  for (let k = 1; k <= 10; k++) {
+    const th = (k / 10) * 90 * deg;
+    const n = norm2(hh * Math.cos(th), a * Math.sin(th));
+    strip.push({ i: a * (1 - Math.cos(th)), z: rb + hh * Math.sin(th), no: n[0], nz: n[1] });
+  }
+  sweep(b, loop, [strip], { scale, z0: zBack });
+  const sc = scale ?? loop.p.map(() => 1);
+  cap(b, insetLoop(loop, sc.map((s) => a * s)), zBack + heightMm, 1, holes);
+}
+
+interface LensBuild {
+  ring: Builder;
+  barrel: Builder;
+  elements: Builder;
+  cover: Builder;
+}
+
+interface LensSpec {
+  /** Back-frame centre. */
+  x: number;
+  y: number;
+  /** Outer radius of the metal ring; 0 = no ring (the lens sits in a turret's top). */
+  ringR: number;
+  /** Cover-glass (and barrel) radius. */
+  glassR: number;
+  /** The surface the lens stands on (back-frame z). */
+  zBase: number;
+  /** How far the ring top stands above zBase (0 without a ring). */
+  proud: number;
+  /** Deepest the barrel may go below the cover glass (stays inside the solid under it). */
+  maxDepth: number;
+}
+
+/**
+ * One lens: a metal ring (outer wall, 0.1 mm top fillet, flat top, an inner
+ * bevel down to the glass), a dark barrel whose inside we see, three
+ * stacked element domes (one material group each, rougher further down)
+ * and a cover glass at the top of the barrel. The elements sit at
+ * different depths, so the lens parallaxes as the phone turns.
+ */
+function buildLens(L: LensBuild, s: LensSpec) {
+  const { x, y, ringR, glassR, zBase, proud } = s;
+  const top = zBase + proud;
+  const ringed = ringR > 0 && proud > 0;
+  const coverZ = ringed ? top - Math.min(LENS_BEVEL_MM, proud * 0.25 + 0.05) : top - 0.15;
+  const barrelTop = ringed ? coverZ : top;
+  const at = (loop: Loop): Loop => ({ p: loop.p.map(([px, py]) => [px + x, py + y]), t: loop.t });
+  if (ringed) {
+    const outer = at(circleLoop(ringR));
+    const f = Math.min(LENS_RING_FILLET_MM, proud * 0.3);
+    const wall: Strip = [{ z: 0, i: 0, no: 1, nz: 0 }, ...convexArc(f, proud - f, f, 0, Math.PI / 2, 3)];
+    const bevelW = ringR - f - glassR;
+    const flat: Strip = [
+      { z: proud, i: f, no: 0, nz: 1 },
+      { z: proud, i: f + bevelW * 0.45, no: 0, nz: 1 },
+    ];
+    const drop = top - coverZ;
+    const n = norm2(-drop, bevelW * 0.55);
+    const slope: Strip = [
+      { z: proud, i: f + bevelW * 0.45, no: n[0], nz: n[1] },
+      { z: proud - drop, i: ringR - glassR, no: n[0], nz: n[1] },
+    ];
+    sweep(L.ring, outer, [wall, flat, slope], { z0: zBase });
+  }
+  const depth = Math.max(0.2, Math.min(LENS_BARREL_MM, s.maxDepth));
+  const bottom = coverZ - depth;
+  const bLoop = at(circleLoop(glassR));
+  // The barrel's normals point at its axis: we only ever see its inside.
+  sweep(L.barrel, bLoop, [[
+    { z: barrelTop, i: 0, no: -1, nz: 0 },
+    { z: bottom, i: 0, no: -1, nz: 0 },
+  ]]);
+  cap(L.barrel, bLoop.p, bottom, 1);
+  const fr = [0.22, 0.5, 0.8];
+  const rr = [0.94, 0.8, 0.62];
+  fr.forEach((fz, gi) => {
+    const r = glassR * rr[gi];
+    const zc = coverZ - depth * fz;
+    const sag = Math.min(r * 0.12, depth * 0.15);
+    const rings = 6;
+    const seg = 48;
+    const idx: number[][] = [];
+    for (let k = 0; k <= rings; k++) {
+      const rk = (r * k) / rings;
+      const zk = zc + sag * (1 - (rk / r) ** 2);
+      // Dome z = sag·(1 − (ρ/r)²): slope −2·sag·ρ/r².
+      const slope = (2 * sag * rk) / (r * r);
+      const row: number[] = [];
+      for (let q = 0; q < (k === 0 ? 1 : seg); q++) {
+        const th = (2 * Math.PI * q) / seg;
+        row.push(L.elements.v(x + rk * Math.cos(th), y + rk * Math.sin(th), zk, slope * Math.cos(th), slope * Math.sin(th), 1, -Math.sin(th), Math.cos(th), 0));
+      }
+      idx.push(row);
+    }
+    for (let k = 1; k <= rings; k++) {
+      for (let q = 0; q < seg; q++) {
+        const q2 = (q + 1) % seg;
+        if (k === 1) L.elements.tri(idx[0][0], idx[1][q], idx[1][q2], gi);
+        else {
+          L.elements.tri(idx[k - 1][q], idx[k][q], idx[k][q2], gi);
+          L.elements.tri(idx[k - 1][q], idx[k][q2], idx[k - 1][q2], gi);
+        }
+      }
+    }
+  });
+  cap(L.cover, bLoop.p, coverZ, 1);
+}
+
+/** A flat disc decal at back-frame (x, y), height z (facing +z). */
+function disc(b: Builder, x: number, y: number, r: number, z: number, group = 0, seg = 40) {
+  cap(b, circleLoop(r, seg).p.map(([px, py]) => [px + x, py + y]), z, 1, [], undefined, group);
+}
+
+// ---------------------------------------------------------------------------
+// The phone
+
+export interface PhoneModel {
+  group: Group;
+  dims: PhoneDims;
+  /** Total triangles (instances counted). */
+  triangles: number;
+}
+
+/** Body, screen and corner radii in mm, exactly as the 2D frame computes them. */
+export function phoneDims2d(device: DeviceModel) {
+  const W = device.bodyMm.width;
+  const H = device.bodyMm.height;
+  const g = frameGeometry({ x: 0, y: 0, w: W, h: H }, device, { orientation: 'portrait' });
+  return { W, H, bodyRadius: g.bodyRadius, screenW: g.screenW, screenH: g.screenH, screenRadius: g.screenRadius, rim: device.rimMm };
+}
+
+/** The 17 Pro / Pro Max: aluminium unibody, metal back and plateau, glass inlay. */
+export function isUnibody(device: DeviceModel, body: Body3D): boolean {
+  return body.plateau.kind === 'bar' && device.material === 'aluminum' && device.family === 'iphone';
+}
+
+function build(device: DeviceModel, body: Body3D): PhoneModel {
+  const { W, H, bodyRadius, screenW, screenH, screenRadius, rim } = phoneDims2d(device);
+  const depth = body.depthMm;
+  const d2 = depth / 2;
+  const unibody = isUnibody(device, body);
+  const group = new Group();
+  group.name = `phone3d:${device.id}`;
+  const add = (m: Mesh | null) => m && group.add(m);
+
+  // --- Band (+ antenna lines), seams, glass edges --------------------------------
+  const outline = rectLoop(W, H, bodyRadius);
+  const antennaYs = body.antennaLines.flatMap((f) => {
+    const yc = H / 2 - f * H;
+    return [yc - ANTENNA_W_MM / 2, yc + ANTENNA_W_MM / 2];
+  });
+  const bandLoop = cutLoop(outline, antennaYs);
+  const isAntenna = (j: number) => {
+    const a = bandLoop.p[j];
+    const c = bandLoop.p[(j + 1) % bandLoop.p.length];
+    const ym = (a[1] + c[1]) / 2;
+    return body.antennaLines.some((f) => Math.abs(ym - (H / 2 - f * H)) < ANTENNA_W_MM / 2);
+  };
+  const prof = bandProfile(body.edge, depth, rim);
+  const band = new Builder();
+  sweep(band, bandLoop, [...prof.band, ...prof.band.map(mirrorStrip)], { groupOf: (j) => (isAntenna(j) ? BAND_GROUP.antenna : BAND_GROUP.metal) });
+  add(partMesh('band', band));
+
+  const seam = new Builder();
+  sweep(seam, outline, prof.seam); // front
+  if (!unibody) sweep(seam, outline, prof.seam.map(mirrorStrip)); // back
+  add(partMesh('seam', seam));
+
+  // Front glass: rounded edge into the seam, then the flat cap.
+  const glassContour = insetLoop(outline, prof.glassInset);
+  const front = new Builder();
+  sweep(front, outline, [prof.glassEdge]);
+  cap(front, glassContour, d2, 1);
+  add(partMesh('frontGlass', front, RENDER_ORDER.glass));
+
+  // Screen and glare: the 2D screen outline, on the glass plane (overlay layers).
+  const screenLoop = rectLoop(screenW, screenH, screenRadius);
+  const screen = new Builder();
+  screen.withUv = true;
+  cap(screen, screenLoop.p, d2, 1, [], { x: -screenW / 2, y: -screenH / 2, w: screenW, h: screenH });
+  add(partMesh('screen', screen, RENDER_ORDER.screen));
+  const glare = new Builder();
+  cap(glare, screenLoop.p, d2, 1);
+  add(partMesh('glare', glare, RENDER_ORDER.glare));
+
+  // --- Back --------------------------------------------------------------------
+  const pl = body.plateau;
+  const fx0 = pl.x * W;
+  const fy0 = pl.y * H;
+  const fw = pl.w * W;
+  const fh = pl.h * H;
+  const frame: BackFrame = { xy: (bx, by) => [bx - W / 2, H / 2 - by] };
+  const backFrom = (b: Builder, from: number) => transformBuilder(b, from, BACK_TO_MODEL);
+
+  // Back cap: glass with a rounded edge into its seam; on the unibody the
+  // metal runs straight from the band into the back (no seam) and a glass
+  // panel is inlaid below the plateau.
+  const back = new Builder();
+  const backPanel = new Builder();
+  const backSeam = new Builder();
+  const fullBack = rectLoop(W, H, bodyRadius);
+  // Back-frame outline: the body outline is symmetric in x, so the same loop serves.
+  if (!unibody) {
+    sweep(back, fullBack, [prof.glassEdge]);
+    cap(back, insetLoop(fullBack, prof.glassInset), d2, 1);
+  } else {
+    // Metal lip to the outline inset `rim − seam`, flush; then the cap with a hole for the panel.
+    const lipInset = rim - SEAM_W_MM;
+    const pTop = fy0 + fh + UNIBODY_PANEL.margin;
+    const pBottom = H - UNIBODY_PANEL.margin;
+    const pw = W - 2 * UNIBODY_PANEL.margin;
+    const ph = pBottom - pTop;
+    const [pcx, pcy] = frame.xy(W / 2, (pTop + pBottom) / 2);
+    const panelLoop = rectLoop(pw, ph, UNIBODY_PANEL.rMm);
+    const moved = (l: Loop): Loop => ({ p: l.p.map(([x, y]) => [x + pcx, y + pcy]), t: l.t });
+    const pl2 = moved(panelLoop);
+    cap(back, insetLoop(fullBack, lipInset), d2, 1, [pl2.p.slice().reverse()]);
+    // Panel seam: a wall down from the metal (facing the panel), a 0.12 mm
+    // floor, then the panel glass rounds up out of it.
+    sweep(backSeam, pl2, [
+      [
+        { z: d2, i: 0, no: -1, nz: 0 },
+        { z: d2 - SEAM_D_MM, i: 0, no: -1, nz: 0 },
+      ],
+      [
+        { z: d2 - SEAM_D_MM, i: 0, no: 0, nz: 1 },
+        { z: d2 - SEAM_D_MM, i: SEAM_W_MM, no: 0, nz: 1 },
+      ],
+    ]);
+    const pe = prof.glassEdge.map((q) => ({ ...q, i: q.i - rim + SEAM_W_MM }));
+    sweep(backPanel, pl2, [pe]);
+    cap(backPanel, insetLoop(pl2, SEAM_W_MM + GLASS_EDGE_MM), d2, 1);
+  }
+  backFrom(back, 0);
+  backFrom(backPanel, 0);
+  backFrom(backSeam, 0);
+  add(partMesh('back', back));
+  add(partMesh('backPanel', backPanel));
+  if (backSeam.pos.length) {
+    // The panel seam shares the seam material.
+    const sm = partMesh('seam', backSeam);
+    if (sm) {
+      sm.name = 'seam:panel';
+      add(sm);
+    }
+  }
+
+  // Plateau.
+  const plateau = new Builder();
+  const [pcx, pcy] = frame.xy(fx0 + fw / 2, fy0 + fh / 2);
+  const fullWidth = pl.w > 0.98;
+  let plLoop: Loop;
+  let scale: number[] | undefined;
+  let topInset = pl.insetMm;
+  if (pl.kind === 'single') {
+    plLoop = circleLoop(Math.min(fw, fh) / 2);
+    topInset = 0;
+  } else if (pl.kind === 'bar' || fullWidth) {
+    // Full-width bar (17 Pro, Air): flush with the body sides, a sloped edge at the bottom.
+    const iL = body.edge === 'flat' ? CHAMFER_MM : ROUNDED_LIP_MM;
+    const bw = W - 2 * iL;
+    const top = iL;
+    const bh = fh - top;
+    const rTop = Math.max(0.5, bodyRadius - iL);
+    plLoop = rectLoop(bw, bh, [pl.rMm, rTop, rTop, pl.rMm]);
+    const cy = H / 2 - top - bh / 2;
+    plLoop = { p: plLoop.p.map(([x, y]) => [x, y + cy]), t: plLoop.t };
+    scale = plLoop.t.map((t) => Math.max(0.1, -outwardOf(t)[1]));
+  } else if (pl.kind === 'pill') {
+    plLoop = stadiumLoop(fw, fh);
+  } else {
+    plLoop = rectLoop(fw, fh, pl.rMm);
+  }
+  if (pl.kind !== 'bar' && !fullWidth) plLoop = { p: plLoop.p.map(([x, y]) => [x + pcx, y + pcy]), t: plLoop.t };
+  const plateauTop = d2 + pl.heightMm;
+  const lensPos = (f: { x: number; y: number }): V2 => frame.xy(fx0 + f.x * fw, fy0 + f.y * fh);
+  const turretR = Math.min(fw, fh) / 2;
+  const lensSpecs: LensSpec[] = pl.lenses.map((lens) => {
+    const [x, y] = lensPos(lens);
+    if (pl.kind === 'single') {
+      // The turret is the ring: the lens is set into its top, the barrel goes down inside it.
+      return { x, y, ringR: 0, glassR: Math.min(lens.rMm, turretR * 0.8), zBase: plateauTop, proud: 0, maxDepth: pl.heightMm - 0.25 };
+    }
+    const proud = pl.lensProudMm;
+    return { x, y, ringR: lens.rMm, glassR: lens.rMm * LENS_GLASS_FRAC, zBase: plateauTop, proud, maxDepth: proud - Math.min(LENS_BEVEL_MM, proud * 0.25 + 0.05) - 0.05 };
+  });
+  const holes = pl.kind === 'single' ? lensSpecs.map((l) => circleLoop(l.glassR).p.map(([px, py]): V2 => [px + l.x, py + l.y])) : [];
+  buildPlateau(plateau, plLoop, d2, pl.heightMm, topInset, scale, holes);
+  transformBuilder(plateau, 0, BACK_TO_MODEL);
+  add(partMesh('plateau', plateau));
+
+  // Lenses.
+  const L: LensBuild = { ring: new Builder(), barrel: new Builder(), elements: new Builder(), cover: new Builder() };
+  const topContour = insetLoop(plLoop, (scale ?? plLoop.p.map(() => 1)).map((s) => Math.max(topInset, PLATEAU_MIN_ROUND_MM) * s));
+  const onTop = (q: V2) => pointInPoly(topContour, q);
+  for (const spec of lensSpecs) buildLens(L, spec);
+  for (const b of [L.ring, L.barrel, L.elements, L.cover]) transformBuilder(b, 0, BACK_TO_MODEL);
+  add(partMesh('lensRing', L.ring));
+  add(partMesh('lensBarrel', L.barrel));
+  add(partMesh('lensElements', L.elements, RENDER_ORDER.lensElements));
+  add(partMesh('lensCover', L.cover, RENDER_ORDER.lensCover));
+
+  // Flash, sensor (LiDAR), mic: discs on the plateau top, or on the back beside it.
+  const surfaceZ = (q: V2) => (onTop(q) ? plateauTop : d2) + DECAL_LIFT_MM;
+  const flash = new Builder();
+  if (pl.flash) {
+    const q = lensPos(pl.flash);
+    const r = pl.flash.rMm ?? 3.4;
+    disc(flash, q[0], q[1], r, surfaceZ(q), FLASH_GROUP.ring);
+    disc(flash, q[0], q[1], r * 0.78, surfaceZ(q) + DECAL_LIFT_MM, FLASH_GROUP.lamp);
+  }
+  const sensor = new Builder();
+  if (pl.sensor) {
+    const q = lensPos(pl.sensor);
+    disc(sensor, q[0], q[1], pl.sensor.rMm ?? 3.3, surfaceZ(q));
+  }
+  const mic = new Builder();
+  if (pl.mic) {
+    const q = lensPos(pl.mic);
+    disc(mic, q[0], q[1], Math.max(0.35, pl.mic.rMm ?? 0.5), surfaceZ(q), 0, 20);
+  }
+  for (const b of [flash, sensor, mic]) transformBuilder(b, 0, BACK_TO_MODEL);
+  add(partMesh('flash', flash, RENDER_ORDER.decal));
+  add(partMesh('sensor', sensor, RENDER_ORDER.decal));
+  add(partMesh('mic', mic, RENDER_ORDER.decal));
+
+  // --- Buttons --------------------------------------------------------------------
+  const buttons = new Builder();
+  const control = new Builder();
+  for (const btn of [...device.buttons, ...(body.extraButtons ?? [])]) {
+    const { m, length } = buttonPlacement(btn, W, H);
+    if (btn.kind === 'cameraControl') buildButton(control, length, body.buttonDepth * depth, CAMERA_CONTROL_PROUD_MM, m);
+    else buildButton(buttons, length, body.buttonDepth * depth, BUTTON_PROUD_MM, m);
+  }
+  add(partMesh('button', buttons));
+  add(partMesh('cameraControl', control));
+
+  // --- Bottom edge: port pill and two grilles (decals on the wall) ------------------
+  const port = new Builder();
+  const portH = Math.min(PORT_MM.h, depth * 0.45);
+  const toBottom = new Matrix4().set(1, 0, 0, 0, 0, 0, -1, -H / 2 - DECAL_LIFT_MM, 0, 1, 0, 0, 0, 0, 0, 1);
+  // local x → model x, local y → model z, local z (normal) → model −y.
+  cap(port, stadiumLoop(PORT_MM.w, portH, 12).p, 0, 1);
+  transformBuilder(port, 0, toBottom);
+  const portMesh = partMesh('port', port, RENDER_ORDER.decal);
+  add(portMesh);
+  let grilleTris = 0;
+  if (portMesh) {
+    const hole = new CircleGeometry(GRILLE.d / 2, 12);
+    hole.applyMatrix4(new Matrix4().makeRotationX(Math.PI / 2)); // face −y
+    const holes = new InstancedMesh(hole, PLACEHOLDER, GRILLE.holes * 2);
+    holes.name = 'port:grille';
+    holes.userData.part = 'port';
+    holes.renderOrder = RENDER_ORDER.decal;
+    const m = new Matrix4();
+    let k = 0;
+    for (const side of [-1, 1]) {
+      for (let h = 0; h < GRILLE.holes; h++) {
+        const x = side * (PORT_MM.w / 2 + GRILLE.gap + GRILLE.d / 2 + h * GRILLE.pitch);
+        m.makeTranslation(x, -H / 2 - DECAL_LIFT_MM, 0);
+        holes.setMatrixAt(k++, m);
+      }
+    }
+    holes.instanceMatrix.needsUpdate = true;
+    group.add(holes);
+    grilleTris = (hole.index ? hole.index.count / 3 : 0) * holes.count;
+  }
+
+  let triangles = grilleTris;
+  group.traverse((o) => {
+    if (o instanceof Mesh && !(o instanceof InstancedMesh)) triangles += (o.geometry.index?.count ?? 0) / 3;
+  });
+
+  const dims: PhoneDims = {
+    bodyW: W,
+    bodyH: H,
+    depth,
+    bodyRadius,
+    rim,
+    screenW,
+    screenH,
+    screenRadius,
+    edge: body.edge,
+    unibody,
+    plateauTopZ: -plateauTop,
+    lensTopZ: -(plateauTop + (pl.kind === 'single' ? 0 : pl.lensProudMm)),
+    creaseZ: prof.creaseZ,
+  };
+  group.userData.dims = dims;
+  return { group, dims, triangles };
+}
+
+function pointInPoly(poly: V2[], q: V2): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if (yi > q[1] !== yj > q[1] && q[0] < ((xj - xi) * (q[1] - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+// ---------------------------------------------------------------------------
+// Cache (LRU 3)
+
+const CACHE_SIZE = 3;
+const cache = new Map<string, PhoneModel>();
+
+function cacheKey(device: DeviceModel, body: Body3D): string {
+  return JSON.stringify([device.id, device.bodyMm, device.screenPx, device.ppi, device.cornerRadiusPt, device.rimMm, body]);
+}
+
+/** Dispose every geometry in a phone group. */
+export function disposePhone(model: PhoneModel) {
+  model.group.traverse((o) => {
+    if (o instanceof Mesh) o.geometry.dispose();
+  });
+}
+
+/**
+ * The phone for a device, in mm (portrait, y up, front +z, centred). Cached
+ * by device (LRU 3); evicted phones are disposed, so callers must not keep a
+ * group across a buildPhone call for a 4th device.
+ */
+export function buildPhone(device: DeviceModel, body3d: Body3D): Group {
+  return phoneModel(device, body3d).group;
+}
+
+/** buildPhone plus its dimensions and triangle count. */
+export function phoneModel(device: DeviceModel, body3d: Body3D): PhoneModel {
+  const key = cacheKey(device, body3d);
+  const hit = cache.get(key);
+  if (hit) {
+    cache.delete(key);
+    cache.set(key, hit);
+    return hit;
+  }
+  const model = build(device, body3d);
+  cache.set(key, model);
+  while (cache.size > CACHE_SIZE) {
+    const oldest = cache.keys().next().value as string;
+    const old = cache.get(oldest)!;
+    cache.delete(oldest);
+    disposePhone(old);
+  }
+  return model;
+}
+
+/** Drop every cached phone (context loss, unload). */
+export function clearPhoneCache() {
+  for (const m of cache.values()) disposePhone(m);
+  cache.clear();
+}
