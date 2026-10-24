@@ -61,6 +61,7 @@ import {
   type ScreenMap3D,
 } from '../../shared/phone3d/projection';
 import { engineSync, ensurePhone3d } from './phone3d/loader';
+import type { Render3DResult } from './phone3d/view';
 
 // Background images by raw path, shared by every compositor: the editor
 // builds a new compositor on each edit, and reloading the image each time
@@ -417,8 +418,8 @@ export class CanvasCompositor {
     // Overlays sit on the part of the screen that is on the canvas.
     const visible = this.screenMap.screen;
 
-    // A 3D phone: render it now (into the engine's own canvas), copy it at the content slot.
-    let phone3dOut: { canvas: HTMLCanvasElement; roi: Rect } | null = null;
+    // A 3D phone: plan it now (ROI, samples, screen texture, shadow); its tiles render and copy at the content slot.
+    let phone3dOut: Extract<Render3DResult, { draw: unknown }> | null = null;
     const s3 = this.scene3d;
     if (engine && s3 && phone && frameBody) {
       const body = frameBody;
@@ -449,7 +450,7 @@ export class CanvasCompositor {
         if (strict3d) this.error3d = '3D renderer lost the GPU';
       } else {
         this.drew3d = true;
-        if (!('empty' in out)) phone3dOut = out;
+        if ('draw' in out) phone3dOut = out;
         const map = screenMap3d(s3, time);
         if (map) this.screenMap = { ...this.screenMap, phone3d: { map, flat: rect } };
       }
@@ -459,10 +460,9 @@ export class CanvasCompositor {
     // The recording's own layer: the video, its touch indicators, cursor and ripples.
     const drawContent = () => {
       if (use3d) {
-        // 1:1 at integer coordinates: the output pass already did any supersample downsample.
-        if (phone3dOut) {
-          const { canvas: src, roi } = phone3dOut;
-          ctx.drawImage(src, 0, 0, roi.w, roi.h, roi.x, roi.y, roi.w, roi.h);
+        // Tile by tile, each core 1:1 at integer coordinates (the output pass already did any supersample downsample).
+        if (phone3dOut && !phone3dOut.draw((src, w, h, x, y) => ctx.drawImage(src, 0, 0, w, h, x, y, w, h)) && strict3d) {
+          this.error3d = '3D renderer lost the GPU';
         }
         return;
       }

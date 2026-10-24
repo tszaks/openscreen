@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { Passes } from '../src/renderer/src/phone3d/passes';
 import { ShadowPass, SHADOW_SLOTS } from '../src/renderer/src/phone3d/shadow';
 import { MAX_SCREEN_TEXTURE, ScreenTexture, screenCanvasSize, screenRoom, textureSide } from '../src/renderer/src/phone3d/screenTexture';
-import { planShadowSlots, renderPhone3D, type Render3DArgs, type Render3DQuality } from '../src/renderer/src/phone3d/view';
+import { planShadowSlots, renderPhone3D, type Blit3D, type Render3DArgs, type Render3DQuality } from '../src/renderer/src/phone3d/view';
 import type { Engine } from '../src/renderer/src/phone3d/engine';
 import { scene3d, type Scene3D } from '../src/shared/phone3d/projection';
 import { defaultPhone3D, FRONT, type Phone3D } from '../src/shared/phone3d/model';
@@ -29,6 +29,7 @@ type Call = { kind: 'scene' | 'shadow' | 'pass'; target: THREE.WebGLRenderTarget
 /** An Engine whose renderer records draws: the real passes, shadow and screen texture objects, no GL. */
 function fakeEngine(maxSide = 8192) {
   const calls: Call[] = [];
+  const canvasSizes: { w: number; h: number }[] = [];
   let target: THREE.WebGLRenderTarget | null = null;
   const scene = new THREE.Scene();
   const renderer = {
@@ -86,11 +87,24 @@ function fakeEngine(maxSide = 8192) {
     current: { phone: null, rig: null },
     stats: { renders: 0, lastMs: 0, samples: 0, tiles: 0, roi: { x: 0, y: 0, w: 0, h: 0 }, texture: { w: 0, h: 0 }, gpuBytes: 0 },
     maxSide: () => maxSide,
-    sizeCanvas: (w: number, h: number) => ({ w, h }),
+    sizeCanvas: (w: number, h: number) => {
+      canvasSizes.push({ w, h });
+      return { w, h };
+    },
     gpuBytes: () => 0,
     gpuName: () => 'fake',
   };
-  return { engine: engine as unknown as Engine, calls, shadow, passes, screen };
+  return { engine: engine as unknown as Engine, calls, shadow, passes, screen, canvasSizes };
+}
+
+/** One frame: plan it, then draw its tiles with a blit that records each copy. */
+function frame(engine: Engine, a: Render3DArgs) {
+  const out = renderPhone3D(engine, a);
+  if (!('draw' in out)) throw new Error('expected a rendered frame');
+  const blits: { w: number; h: number; x: number; y: number }[] = [];
+  const blit: Blit3D = (_src, w, h, x, y) => void blits.push({ w, h, x, y });
+  const ok = out.draw(blit);
+  return { out, blits, ok };
 }
 
 const moving = (patch: Partial<Phone3D> = {}): Partial<Phone3D> => ({ transitions: [move('m', 1, 3, { turn: 200, tilt: 10 }, { easing: { kind: 'cinematic' } })], ...patch });
@@ -144,8 +158,7 @@ describe('renderPhone3D frame loop', () => {
     for (const t of [1.6, 1.8, 2.0]) {
       calls.length = 0;
       const before = shadow.maskRenders;
-      const out = renderPhone3D(engine, args(s, t));
-      if (!('canvas' in out)) throw new Error('expected a rendered frame');
+      const { out } = frame(engine, args(s, t));
       const plan = planShadowSlots({ n: out.samples, nMotion: out.samples });
       expect(out.samples).toBeGreaterThan(SHADOW_SLOTS); // a real moving frame: more samples than slots
       expect(shadow.maskRenders - before).toBe(Math.min(SHADOW_SLOTS, out.samples));
@@ -164,8 +177,7 @@ describe('renderPhone3D frame loop', () => {
   it('each sample of every tile draws the catcher with its own slot’s masks, placed at that slot’s pose', () => {
     const s = sceneFor(moving(), true);
     const { engine, calls } = fakeEngine();
-    const out = renderPhone3D(engine, args(s, 1.8));
-    if (!('canvas' in out)) throw new Error('expected a rendered frame');
+    const { out } = frame(engine, args(s, 1.8));
     const slots = planShadowSlots({ n: out.samples, nMotion: out.samples });
     const scenes = calls.filter((c) => c.kind === 'scene');
     // Slot textures by first use in tile 0 (sample order), then every tile must repeat the same sequence.
@@ -186,20 +198,69 @@ describe('renderPhone3D frame loop', () => {
     for (const k4 of [false, true]) {
       const s = sceneFor({}, k4);
       const { engine, shadow } = fakeEngine();
-      const a = renderPhone3D(engine, args(s, 0.5));
-      if (!('canvas' in a)) throw new Error('expected a rendered frame');
+      const { out: a } = frame(engine, args(s, 0.5));
       expect(a.samples).toBe(8);
       expect(shadow.maskRenders).toBe(1);
       expect(shadow.slotCount).toBe(1); // a still phone never makes the moving-frame slots
-      renderPhone3D(engine, args(s, 0.5));
+      frame(engine, args(s, 0.5));
       expect(shadow.maskRenders).toBe(1);
     }
+  });
+
+  it('tiles are copied one by one: the cores cover the ROI exactly once, 1:1 at integer coordinates, and the engine canvas holds one core', () => {
+    for (const [patch, k4, t] of [
+      [moving(), true, 1.8],
+      [{}, true, 0.5],
+      [{}, false, 0.5],
+      [{ supersample: 2 }, false, 0.5],
+    ] as const) {
+      const s = sceneFor(patch as Partial<Phone3D>, k4);
+      const { engine, canvasSizes } = fakeEngine();
+      const { out, blits, ok } = frame(engine, args(s, t));
+      expect(ok).toBe(true);
+      expect(blits).toHaveLength(out.tiles);
+      const canvas = canvasSizes.at(-1)!;
+      const roi = out.roi;
+      let area = 0;
+      for (const b of blits) {
+        for (const v of [b.w, b.h, b.x, b.y]) expect(Number.isInteger(v)).toBe(true);
+        expect(b.w).toBeLessThanOrEqual(canvas.w);
+        expect(b.h).toBeLessThanOrEqual(canvas.h);
+        expect(b.x).toBeGreaterThanOrEqual(roi.x);
+        expect(b.y).toBeGreaterThanOrEqual(roi.y);
+        expect(b.x + b.w).toBeLessThanOrEqual(roi.x + roi.w);
+        expect(b.y + b.h).toBeLessThanOrEqual(roi.y + roi.h);
+        area += b.w * b.h;
+      }
+      // Inside the ROI, pairwise disjoint, and their areas add up to it: an exact cover.
+      for (let i = 0; i < blits.length; i++)
+        for (let j = i + 1; j < blits.length; j++) {
+          const a = blits[i];
+          const b = blits[j];
+          expect(a.x >= b.x + b.w || b.x >= a.x + a.w || a.y >= b.y + b.h || b.y >= a.y + a.h).toBe(true);
+        }
+      expect(area).toBe(roi.w * roi.h);
+      // The canvas is one core, not the ROI, when there are several tiles.
+      if (out.tiles > 1) expect(canvas.w * canvas.h).toBeLessThan(roi.w * roi.h);
+    }
+  });
+
+  it('draw runs once, for the latest frame only', () => {
+    const s = sceneFor({}, false);
+    const { engine } = fakeEngine();
+    const a = renderPhone3D(engine, args(s, 0.5));
+    if (!('draw' in a)) throw new Error('expected a rendered frame');
+    const b = renderPhone3D(engine, args(s, 0.6));
+    if (!('draw' in b)) throw new Error('expected a rendered frame');
+    expect(() => a.draw(() => undefined)).toThrow(/latest frame/);
+    expect(b.draw(() => undefined)).toBe(true);
+    expect(() => b.draw(() => undefined)).toThrow(/once/);
   });
 
   it('shadow off: no masks at all', () => {
     const s = sceneFor(moving({ shadow: { ...defaultPhone3D().shadow, on: false } }), true);
     const { engine, shadow, calls } = fakeEngine();
-    renderPhone3D(engine, args(s, 1.8));
+    frame(engine, args(s, 1.8));
     expect(shadow.maskRenders).toBe(0);
     expect(calls.some((c) => c.kind === 'shadow')).toBe(false);
   });
@@ -239,8 +300,7 @@ describe('screen texture size limit (§3.6)', () => {
       ] as const) {
         const s = sceneFor({ supersample: ss, pose: { ...FRONT, size } }, true);
         const { engine, screen } = fakeEngine(maxSide);
-        const out = renderPhone3D(engine, args(s, 0.5, { full: false, motion: null }));
-        expect('canvas' in out).toBe(true);
+        frame(engine, args(s, 0.5, { full: false, motion: null }));
         const c = screen.canvas!;
         expect(c.width).toBeLessThanOrEqual(maxSide);
         expect(c.height).toBeLessThanOrEqual(maxSide);

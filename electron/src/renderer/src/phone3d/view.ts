@@ -12,9 +12,14 @@
 //      range, jittered view offset, the scene into the 2-attachment target,
 //      added into the accumulation target
 //   6. DoF on both attachments, when it would show
-//   7. the output pass into the engine canvas's top-left roi.w × roi.h
-// Returns the engine canvas and the ROI; the compositor copies that area
-// 1:1 at integer coordinates, so drawImage never resamples the phone.
+//   7. the output pass: the tile's core into the engine canvas's top-left,
+//      then the caller's blit copies it 1:1, at integer coordinates, to its
+//      place on the output canvas, so drawImage never resamples the phone
+// Steps 1-4 run in renderPhone3D; steps 5-7 run when the caller calls the
+// returned draw(blit), at the content layer's turn in its layer order. The
+// engine canvas holds one tile core, not the whole ROI: at 4K that is about
+// 1.4 Mpx instead of up to 8.3 Mpx (two WebGL drawing buffers of it, ~55 MB,
+// which the 340 MB budget of §3.9 cannot carry).
 import * as THREE from 'three';
 import type { Rect } from '../../../shared/deviceGeometry';
 import {
@@ -62,8 +67,27 @@ export interface Render3DArgs {
   quality: Render3DQuality;
 }
 
+/**
+ * Copies the engine canvas's top-left `w × h` (one tile core, output px) to
+ * (`x`, `y`) on the output canvas, 1:1 at integer coordinates (the output
+ * pass already did any supersample downsample). The cores tile the ROI
+ * exactly once, so the copies never overlap.
+ */
+export type Blit3D = (src: HTMLCanvasElement, w: number, h: number, x: number, y: number) => void;
+
 export type Render3DResult =
-  | { canvas: HTMLCanvasElement; roi: Rect; samples: number; tiles: number }
+  | {
+      roi: Rect;
+      samples: number;
+      tiles: number;
+      /**
+       * Renders the tiles and blits each one. Call it once, before the engine
+       * renders anything else (the compositor calls it inside the same
+       * render(), at the content layer). Returns false when the context was
+       * lost meanwhile (nothing, or part of the phone, was drawn).
+       */
+      draw: (blit: Blit3D) => boolean;
+    }
   | { lost: true }
   | { empty: true; roi: Rect };
 
@@ -255,7 +279,8 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   const tw = Math.max(...tiles.map((x) => x.pw));
   const th = Math.max(...tiles.map((x) => x.ph));
   engine.passes.ensure(tw, th);
-  const canvas = engine.sizeCanvas(roi.w, roi.h);
+  // One tile core at a time (output px).
+  const canvas = engine.sizeCanvas(Math.max(...tiles.map((x) => x.w / ss)), Math.max(...tiles.map((x) => x.h / ss)));
   const passes = engine.passes;
   const shadowOn = p3.shadow.on && p3.shadow.opacity > 0;
   engine.shadow.catcher.visible = shadowOn;
@@ -276,90 +301,97 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
     mark('shadow');
   }
 
-  for (const tile of tiles) {
-    if (N > 1) passes.clearAccum(tile.pw, tile.ph);
-    let range = { near: 1, far: 2 };
-    let last = passes.msaa!;
-    let shadowSlot = -1;
-    for (let k = 0; k < N; k++) {
-      const cam = camFor(k);
-      const tk = plan.times[k];
-      applyPose(engine, s, cam);
-      engine.poseGroup.updateMatrixWorld(true);
-      const slot = shadowSlots.of[k];
-      if (shadowOn && slot !== shadowSlot) {
-        shadowSlot = slot;
-        engine.shadow.use(slot, catchers[slot], p3.shadow.opacity);
-      }
-      const [jx, jy] = plan.jitter[k];
-      range = applyCamera(engine, s, cam, tk, ss, {
-        x: roi.x * ss + tile.px + jx,
-        y: roi.y * ss + tile.py + jy,
-        w: tile.pw,
-        h: tile.ph,
-      });
-      // Sample 0 renders with MSAA (the preview's only sample; a still phone's screen); jittered ones without.
-      const target = k === 0 && plan.nMotion === 1 ? passes.msaa! : passes.plain!;
-      // Only the last sample's depth is read (by DoF): skip resolving it otherwise.
-      target.resolveDepthBuffer = dofOn && k === N - 1;
-      Passes.view(target, tile.pw, tile.ph);
-      r.setRenderTarget(target);
-      r.setClearColor(0x000000, 0);
-      r.clear(true, true, false);
-      r.render(engine.scene, engine.camera);
-      last = target;
-      mark('scene');
-      if (N > 1) {
-        const w1 = plan.screenFromFirst ? (k === 0 ? 1 : 0) : 1 / N;
-        passes.accumulate(target, tile.pw, tile.ph, 1 / N, w1);
-        mark('accumulate');
-      }
-    }
-    let src = N > 1 ? passes.accum! : last;
-    if (dofOn) {
-      // Focus on the screen centre at the frame's centre pose.
-      const focusZ = projectScreenCentreDepth(s, camT) ?? projectWorld(camT.pos, camT)[2];
-      const pose = camT.pose;
-      src = passes.dof(src, last.depthTexture!, tile.pw, tile.ph, {
-        near: range.near,
-        far: range.far,
-        focusZ,
-        cocScale: p3.dof.amount * pose.focus * 0.02 * H * ss,
-        maxCoc: coc,
-        taps: dofTaps(coc, a.quality.full),
-      });
-      mark('dof');
-    }
-    passes.output(
-      src,
-      { x: tile.x / ss, y: tile.y / ss, w: tile.w / ss, h: tile.h / ss },
-      { x: tile.px, y: tile.py, w: tile.pw, h: tile.ph },
-      ss,
-      canvas.h,
-    );
-    mark('output');
-  }
-  r.setRenderTarget(null);
-
   const st = engine.stats;
   st.renders++;
+  const frameId = st.renders;
   st.samples = N;
   st.tiles = tiles.length;
   st.roi = roi;
   st.texture = { w: layout.w, h: layout.h };
-  st.gpuBytes = engine.gpuBytes();
-  if (timing) {
-    // Finish the GPU work so the time is the real cost, not just the submit (stats runs only).
-    syncGpu(engine);
-    st.lastMs = performance.now() - t0; // stats only
-    const g = globalThis as { __p3d?: { n: number; ms: number[]; last: EngineStatsSnapshot } };
-    const rec = (g.__p3d ??= { n: 0, ms: [], last: null as unknown as EngineStatsSnapshot });
-    rec.n++;
-    rec.ms.push(st.lastMs);
-    if (rec.ms.length > 2000) rec.ms.shift();
-    rec.last = { ...st, W, H, ss, travelPx, nMotion: plan.nMotion, dof: dofOn, gpu: engine.gpuName(), profile: prof ? Object.fromEntries(prof) : undefined };
-  }
-  return { canvas: engine.canvas, roi, samples: N, tiles: tiles.length };
+  let drawn = false;
+
+  // 5-7, per tile, at the caller's content layer.
+  const draw = (blit: Blit3D): boolean => {
+    if (drawn || st.renders !== frameId) throw new Error('phone3d: draw() belongs to the latest frame and runs once');
+    drawn = true;
+    for (const tile of tiles) {
+      if (engine.lost || r.getContext().isContextLost()) return false;
+      if (N > 1) passes.clearAccum(tile.pw, tile.ph);
+      let range = { near: 1, far: 2 };
+      let last = passes.msaa!;
+      let shadowSlot = -1;
+      for (let k = 0; k < N; k++) {
+        const cam = camFor(k);
+        const tk = plan.times[k];
+        applyPose(engine, s, cam);
+        engine.poseGroup.updateMatrixWorld(true);
+        const slot = shadowSlots.of[k];
+        if (shadowOn && slot !== shadowSlot) {
+          shadowSlot = slot;
+          engine.shadow.use(slot, catchers[slot], p3.shadow.opacity);
+        }
+        const [jx, jy] = plan.jitter[k];
+        range = applyCamera(engine, s, cam, tk, ss, {
+          x: roi.x * ss + tile.px + jx,
+          y: roi.y * ss + tile.py + jy,
+          w: tile.pw,
+          h: tile.ph,
+        });
+        // Sample 0 renders with MSAA (the preview's only sample; a still phone's screen); jittered ones without.
+        const target = k === 0 && plan.nMotion === 1 ? passes.msaa! : passes.plain!;
+        // Only the last sample's depth is read (by DoF): skip resolving it otherwise.
+        target.resolveDepthBuffer = dofOn && k === N - 1;
+        Passes.view(target, tile.pw, tile.ph);
+        r.setRenderTarget(target);
+        r.setClearColor(0x000000, 0);
+        r.clear(true, true, false);
+        r.render(engine.scene, engine.camera);
+        last = target;
+        mark('scene');
+        if (N > 1) {
+          const w1 = plan.screenFromFirst ? (k === 0 ? 1 : 0) : 1 / N;
+          passes.accumulate(target, tile.pw, tile.ph, 1 / N, w1);
+          mark('accumulate');
+        }
+      }
+      let src = N > 1 ? passes.accum! : last;
+      if (dofOn) {
+        // Focus on the screen centre at the frame's centre pose.
+        const focusZ = projectScreenCentreDepth(s, camT) ?? projectWorld(camT.pos, camT)[2];
+        const pose = camT.pose;
+        src = passes.dof(src, last.depthTexture!, tile.pw, tile.ph, {
+          near: range.near,
+          far: range.far,
+          focusZ,
+          cocScale: p3.dof.amount * pose.focus * 0.02 * H * ss,
+          maxCoc: coc,
+          taps: dofTaps(coc, a.quality.full),
+        });
+        mark('dof');
+      }
+      // The core lands at the canvas's top-left: the window shifts by the core's offset in the ROI (render px).
+      const cw = tile.w / ss;
+      const ch = tile.h / ss;
+      passes.output(src, { x: 0, y: 0, w: cw, h: ch }, { x: tile.px - tile.x, y: tile.py - tile.y, w: tile.pw, h: tile.ph }, ss, canvas.h);
+      blit(engine.canvas, cw, ch, roi.x + tile.x / ss, roi.y + tile.y / ss);
+      mark('output');
+    }
+    r.setRenderTarget(null);
+    st.gpuBytes = engine.gpuBytes();
+    if (timing) {
+      // Finish the GPU work so the time is the real cost, not just the submit (stats runs only).
+      syncGpu(engine);
+      st.lastMs = performance.now() - t0; // stats only
+      const g = globalThis as { __p3d?: { n: number; ms: number[]; last: EngineStatsSnapshot } };
+      const rec = (g.__p3d ??= { n: 0, ms: [], last: null as unknown as EngineStatsSnapshot });
+      rec.n++;
+      rec.ms.push(st.lastMs);
+      if (rec.ms.length > 2000) rec.ms.shift();
+      rec.last = { ...st, W, H, ss, travelPx, nMotion: plan.nMotion, dof: dofOn, gpu: engine.gpuName(), profile: prof ? Object.fromEntries(prof) : undefined };
+    }
+    return !engine.lost && !r.getContext().isContextLost();
+  };
+  return { roi, samples: N, tiles: tiles.length, draw };
 }
 
 type EngineStatsSnapshot = Engine['stats'] & {

@@ -11,7 +11,7 @@ import { defaultPhone3D, type Phone3D } from '../src/shared/phone3d/model';
 import { renderRoi, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
 import { projectCanvasSize } from '../src/shared/mobileProject';
 import { planScreenTexture } from '../src/renderer/src/phone3d/screenTexture';
-import type { Render3DArgs } from '../src/renderer/src/phone3d/view';
+import type { Blit3D, Render3DArgs } from '../src/renderer/src/phone3d/view';
 import type { Project } from '../src/shared/types';
 import type { CanvasCompositor } from '../src/renderer/src/compositor';
 
@@ -32,7 +32,8 @@ vi.mock('../src/renderer/src/phone3d/loader', () => ({
   onEngineReady: () => () => {},
 }));
 
-type FakeResult = 'ok' | 'lost' | 'empty';
+/** 'lostInDraw': the plan succeeds, the context is lost before the tiles render. */
+type FakeResult = 'ok' | 'lost' | 'empty' | 'lostInDraw';
 
 /** An engine that plans the screen texture like the real one and has the compositor draw into it. */
 function fakeEngine(h: Harness, W: number, H: number, result: () => FakeResult = () => 'ok') {
@@ -53,7 +54,19 @@ function fakeEngine(h: Harness, W: number, H: number, result: () => FakeResult =
       calls.push({ args, dst: layout.dst, scale: layout.scale, tex: h.format(tex) });
       const roi = renderRoi(s, args.time)!;
       if (r === 'empty') return { empty: true as const, roi: { x: 0, y: 0, w: 0, h: 0 } };
-      return { canvas: canvas as unknown as HTMLCanvasElement, roi, samples: 1, tiles: 1 };
+      // Two tiles, top and bottom, as view.ts copies them: each core from the engine canvas's top-left.
+      const top = Math.floor(roi.h / 2);
+      return {
+        roi,
+        samples: 1,
+        tiles: 2,
+        draw: (blit: Blit3D) => {
+          if (r === 'lostInDraw') return false;
+          blit(canvas as unknown as HTMLCanvasElement, roi.w, top, roi.x, roi.y);
+          blit(canvas as unknown as HTMLCanvasElement, roi.w, roi.h - top, roi.x, roi.y + top);
+          return true;
+        },
+      };
     },
   };
 }
@@ -145,17 +158,23 @@ describe('3D active, engine not loaded yet', () => {
 describe('3D active with an engine', () => {
   const base = () => loadGoldenFixture('ios-social').project;
 
-  it('copies the engine output 1:1 at integer coordinates in the content slot, and draws no hardware frame', async () => {
+  it('copies each engine tile 1:1 at integer coordinates in the content slot, and draws no hardware frame', async () => {
     const p = with3d(base());
     const r = await renderOnce(p, 0.5, {}, (h) => fakeEngine(h, 1080, 1920));
     expect(r.c.drew3d).toBe(true);
     const copies = r.log.filter((l) => l.startsWith('canvas#0.drawImage(video:engine,'));
-    expect(copies).toHaveLength(1);
-    const [, sx, sy, sw, sh, dx, dy, dw, dh] = args(copies[0]).map(Number);
-    expect([sx, sy]).toEqual([0, 0]);
-    expect(sw).toBe(dw);
-    expect(sh).toBe(dh);
-    for (const v of [dx, dy, dw, dh]) expect(Number.isInteger(v)).toBe(true);
+    expect(copies).toHaveLength(2);
+    const roi = renderRoi(r.engine!.calls[0].args.scene, 0.5)!;
+    let area = 0;
+    for (const copy of copies) {
+      const [, sx, sy, sw, sh, dx, dy, dw, dh] = args(copy).map(Number);
+      expect([sx, sy]).toEqual([0, 0]);
+      expect(sw).toBe(dw);
+      expect(sh).toBe(dh);
+      for (const v of [dx, dy, dw, dh]) expect(Number.isInteger(v)).toBe(true);
+      area += dw * dh;
+    }
+    expect(area).toBe(roi.w * roi.h);
     // The recording is drawn into the screen texture, not onto the canvas.
     expect(r.log.some((l) => l.startsWith('canvas#0.drawImage(video:screen,'))).toBe(false);
     const tex = r.engine!.calls[0].tex;
@@ -260,6 +279,13 @@ describe('3D active with an engine', () => {
     );
     expect(strict.c.error3d).toBe('3D renderer lost the GPU');
     expect(await strict.c.recover3d(10)).toBe(false);
+    // Lost between the plan and the tiles: a strict render still reports it (the frame is incomplete).
+    const strictLate = await renderOnce(with3d(base0), 0.5, { render3d: { ss: 1, quality: 'full', motionBlur: null, fps: 30, strict: true } }, (h) =>
+      fakeEngine(h, 1080, 1920, () => 'lostInDraw'),
+    );
+    expect(strictLate.c.error3d).toBe('3D renderer lost the GPU');
+    const previewLate = await renderOnce(with3d(base0), 0.5, {}, (h) => fakeEngine(h, 1080, 1920, () => 'lostInDraw'));
+    expect(previewLate.c.error3d).toBeNull();
   });
 
   it('a phone moved entirely off the canvas draws nothing for the content (and no flat phone)', async () => {
