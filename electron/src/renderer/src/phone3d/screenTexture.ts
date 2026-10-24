@@ -194,6 +194,11 @@ export class ScreenTexture {
     return this.size ? Math.round(this.size.w * this.size.h * 4 * (4 / 3)) : 0;
   }
 
+  /** Bytes of the 2D canvas the content is drawn into (a GPU surface when the 2D canvas is accelerated). */
+  canvasBytes(): number {
+    return this.size ? this.size.w * this.size.h * 4 : 0;
+  }
+
   dispose(): void {
     this.texture?.dispose();
     this.texture = null;

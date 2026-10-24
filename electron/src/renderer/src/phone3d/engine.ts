@@ -246,6 +246,28 @@ class Lru<V extends { dispose(): void }> {
   get size(): number {
     return this.map.size;
   }
+  values(): IterableIterator<V> {
+    return this.map.values();
+  }
+}
+
+/** Bytes per texel of a texture's type (RGBA). */
+function texelBytes(t: THREE.Texture): number {
+  return t.type === THREE.HalfFloatType ? 8 : t.type === THREE.FloatType ? 16 : 4;
+}
+
+/** GPU bytes of every buffer geometry under `root` (each counted once). */
+function geometryBytes(root: THREE.Object3D): number {
+  const seen = new Set<THREE.BufferGeometry>();
+  let b = 0;
+  root.traverse((o) => {
+    const g = (o as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
+    if (!g?.isBufferGeometry || seen.has(g)) return;
+    seen.add(g);
+    for (const a of Object.values(g.attributes)) b += (a as THREE.BufferAttribute).array.byteLength;
+    if (g.index) b += g.index.array.byteLength;
+  });
+  return b;
 }
 
 /** Per-frame numbers for budgets and tests (window.__p3d with ?p3dstats). */
@@ -274,9 +296,12 @@ export class Engine {
   screen: ScreenTexture;
   shadow: ShadowPass;
   kit: PhoneKit = STAND_IN_KIT;
-  /** Built phones by device + look (LRU 3); environments by preset + bg (LRU 4); light rigs by preset + intensity. */
+  /**
+   * Built phones by device + look (LRU 3); the environment by preset + bg (LRU 1: a 512 PMREM is 25 MB, and the
+   * 4K budget of §3.9 holds one; a new preset or background rebuilds it once); light rigs by preset + intensity.
+   */
   readonly phones = new Lru<PhoneModel>(3);
-  readonly envs = new Lru<{ tex: THREE.Texture | null; dispose(): void }>(4);
+  readonly envs = new Lru<{ tex: THREE.Texture | null; dispose(): void }>(1);
   readonly rigs = new Lru<{ obj: THREE.Object3D; dispose(): void }>(4);
   current: { phone: PhoneModel | null; rig: THREE.Object3D | null } = { phone: null, rig: null };
   readonly stats: EngineStats = { renders: 0, lastMs: 0, samples: 0, tiles: 0, roi: { x: 0, y: 0, w: 0, h: 0 }, texture: { w: 0, h: 0 }, gpuBytes: 0 };
@@ -369,10 +394,26 @@ export class Engine {
     });
   }
 
-  /** GPU bytes held by the engine's own targets and textures (not three's internal caches). */
+  /**
+   * GPU bytes the 3D path holds (the §3.9 budget): the tile targets, the shadow masks, the screen texture with
+   * mips and its 2D canvas (an accelerated 2D canvas is a GPU surface), the engine canvas (two drawing buffers),
+   * the cached environments (PMREM) and the cached phones' geometry. Not counted: three's shader programs and the
+   * browser's own overhead (the GPU harness measures the GPU process's footprint for that).
+   */
   gpuBytes(): number {
-    return this.passes.bytes() + this.screen.bytes() + this.shadow.bytes() + this.canvasSize.w * this.canvasSize.h * 4 * 2;
+    let b = this.passes.bytes() + this.screen.bytes() + this.screen.canvasBytes() + this.shadow.bytes() + this.canvasSize.w * this.canvasSize.h * 4 * 2;
+    for (const env of this.envs.values()) {
+      const img = env.tex?.image as { width?: number; height?: number } | undefined;
+      if (env.tex && img?.width && img.height) b += img.width * img.height * texelBytes(env.tex);
+    }
+    for (const phone of this.phones.values()) {
+      let g = this.geometrySizes.get(phone);
+      if (g === undefined) this.geometrySizes.set(phone, (g = geometryBytes(phone.root)));
+      b += g;
+    }
+    return b;
   }
+  private readonly geometrySizes = new WeakMap<PhoneModel, number>();
 
   private readonly onLost = (e: Event) => {
     e.preventDefault();

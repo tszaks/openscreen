@@ -7,6 +7,7 @@
 // the 3D loader.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHarness, loadGoldenFixture, type Harness, type HarnessInputs } from './helpers/compositorHarness';
+import { move } from './helpers/phone3dFixtures';
 import { defaultPhone3D, type Phone3D } from '../src/shared/phone3d/model';
 import { renderRoi, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
 import { projectCanvasSize } from '../src/shared/mobileProject';
@@ -286,6 +287,26 @@ describe('3D active with an engine', () => {
     expect(strictLate.c.error3d).toBe('3D renderer lost the GPU');
     const previewLate = await renderOnce(with3d(base0), 0.5, {}, (h) => fakeEngine(h, 1080, 1920, () => 'lostInDraw'));
     expect(previewLate.c.error3d).toBeNull();
+  });
+
+  it('exactly one engine render per compositor frame (§6.5 counter), in export and in the preview', async () => {
+    const h = await createHarness();
+    try {
+      const p = with3d(base(), { transitions: [move('m', 1, 3, { turn: 200, tilt: 10 })] });
+      const engine = fakeEngine(h, 1080, 1920);
+      loader.engine = engine;
+      const c = h.compositor(p, projectCanvasSize(p));
+      const strict = { render3d: { ss: 1 as const, quality: 'full' as const, motionBlur: { samples: 12, shutter: 0.5 }, fps: 30, strict: true } };
+      const frames = Array.from({ length: 12 }, (_, i) => 0.5 + i / 4);
+      for (const [k, t] of frames.entries()) {
+        h.render(c, t, inputsFor(h, p, k % 2 ? strict : {}));
+        expect(engine.calls).toHaveLength(k + 1);
+        expect(engine.calls[k].args.time).toBe(t);
+      }
+    } finally {
+      loader.engine = null;
+      h.dispose();
+    }
   });
 
   it('a phone moved entirely off the canvas draws nothing for the content (and no flat phone)', async () => {
