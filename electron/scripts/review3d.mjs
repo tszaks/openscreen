@@ -83,23 +83,51 @@ export function sourceToOutput(clips, t) {
 }
 
 /**
- * A source window of `len` seconds with no gesture in it, inside [lo, hi]. `taps` are times or `{t, duration}`
- * (a swipe or long press covers t..t+duration); each is padded by 0.5 s on both sides. A window may start right
- * at a padded gesture's end. Of the free windows, the one that sits most inside a wait wins, then the earliest.
- * Falls back to `lo` (free: false) when none is free.
+ * The kept stretches of source, in output order: clips that follow each other on the timeline and also touch in
+ * the source are one run (a cut between them, or a reorder, starts a new run). `trim` keeps cuts, so a take
+ * window must stay inside one run or it comes out shorter than asked.
  */
-export function quietWindow(taps, waits, len, lo, hi) {
+export function keptRuns(clips) {
+  const eps = 1e-6;
+  const runs = [];
+  for (const c of clips) {
+    const last = runs[runs.length - 1];
+    if (last && Math.abs(c.sourceStart - last.end) <= eps) last.end = c.sourceEnd;
+    else runs.push({ start: c.sourceStart, end: c.sourceEnd });
+  }
+  return runs.filter((r) => r.end > r.start + eps);
+}
+
+/**
+ * A source window of `len` seconds with no gesture in it, inside one kept run of `clips` (see keptRuns: a window
+ * never spans a cut). `taps` are times or `{t, duration}` (a swipe or long press covers t..t+duration); each is
+ * padded by 0.5 s on both sides. Candidates are run starts, padded gesture ends and wait starts (a wait that
+ * begins in a cut starts at the run's start). Of the free windows, the one that sits most inside a wait (counted
+ * only where the wait is kept) wins, then the earliest.
+ * When no window is free, falls back to the start of the first run long enough (free: false); when no run is
+ * `len` long, to the start of the longest run (free: false, fits: false: the take would be shorter than `len`).
+ */
+export function quietWindow(taps, waits, len, clips) {
   const pad = 0.5;
   const eps = 1e-9;
+  const runs = keptRuns(clips);
   const spans = taps
     .map((x) => (typeof x === 'number' ? { t: x, duration: 0 } : { t: x.t, duration: Math.max(0, x.duration ?? 0) }))
     .map(({ t, duration }) => ({ a: t - pad, b: t + duration + pad }))
     .sort((x, y) => x.a - y.a);
-  const cands = [lo, ...spans.map((g) => g.b), ...waits.map((w) => w.start)].filter((s) => s >= lo - eps && s + len <= hi + eps);
   const free = (s) => spans.every((g) => g.b <= s + eps || g.a >= s + len - eps);
   const inWait = (s) => waits.reduce((m, w) => m + Math.max(0, Math.min(w.end, s + len) - Math.max(w.start, s)), 0);
+  const fitting = runs.filter((r) => r.end - r.start >= len - eps);
+  const cands = fitting.flatMap((r) => {
+    const inRun = (s) => s >= r.start - eps && s + len <= r.end + eps;
+    const waitStarts = waits.filter((w) => w.end > r.start && w.start < r.end).map((w) => Math.max(w.start, r.start));
+    return [...new Set([r.start, ...spans.map((g) => g.b), ...waitStarts])].filter(inRun);
+  });
   const ok = [...new Set(cands)].filter(free).sort((a, b) => inWait(b) - inWait(a) || a - b);
-  return { start: ok[0] ?? lo, free: ok.length > 0 };
+  if (ok.length) return { start: ok[0], free: true, fits: true };
+  if (fitting.length) return { start: fitting[0].start, free: false, fits: true };
+  const longest = runs.reduce((m, r) => (!m || r.end - r.start > m.end - m.start ? r : m), null);
+  return { start: longest?.start ?? 0, free: false, fits: false };
 }
 
 /** Every tap of a bundle, from project.json (info lists at most 100), as {t, duration} in source seconds. */
@@ -501,20 +529,31 @@ export async function build(opts) {
   // One short take per recipe.
   const srcTaps = bundleTaps(JSON.parse(readFileSync(join(src, 'project.json'), 'utf8')), info.taps?.items ?? []);
   const srcWaits = info.waits ?? [];
-  const lo = info.clips?.[0]?.sourceStart ?? 0;
-  const hi = info.clips?.length ? info.clips[info.clips.length - 1].sourceEnd : info.source.duration;
+  const keptClips = info.clips?.length ? info.clips : [{ sourceStart: 0, sourceEnd: info.source.duration }];
   const recipeDur = Object.fromEntries((info.shotRecipes ?? []).map((r) => [r.name, r.duration]));
   const recipes = [];
   for (const r of RECIPES) {
     const len = Math.max(3, (recipeDur[r] ?? 0) + 1);
-    const win = quietWindow(srcTaps, srcWaits, len, lo, Math.max(lo + len, hi));
-    const b = await clone(`recipe-${r}`);
+    const win = quietWindow(srcTaps, srcWaits, len, keptClips);
     // Normal speed over the window: a polished take plays its waits faster, and a quiet window often sits in one
     // (the recipe would then run past the end of a 1 s take).
     const ops = [{ op: 'trim', start: win.start, end: win.start + len }, { op: 'speed', start: win.start, end: win.start + len, speed: 1 }, { op: 'phone3d', enabled: true }, r === 'float' ? { op: 'shot', recipe: 'float' } : { op: 'shot', recipe: r, at: 0.3 }];
+    const entry = { recipe: r, ops, len, ok: false, window: { start: win.start, end: win.start + len, quiet: win.free }, warnings: [], strip: null, files: [], clip: null };
+    recipes.push(entry);
+    if (!win.fits) {
+      failures.push({ step: `${r}: set up`, error: `no kept stretch of the take is ${len} s long (every run between cuts is shorter), so this recipe has no take` });
+      continue;
+    }
+    const b = await clone(`recipe-${r}`);
     const ap = await step(`${r}: set up`, ['apply', b, JSON.stringify(ops)]);
-    const entry = { recipe: r, ops, len, ok: ap.ok, window: { start: win.start, end: win.start + len, quiet: win.free }, warnings: ap.json?.warnings ?? [], strip: null, files: [], clip: null };
-    if (ap.ok) {
+    entry.warnings = ap.json?.warnings ?? [];
+    entry.ok = ap.ok;
+    // trim keeps cuts: a take shorter than asked means the window crossed one (keptRuns should prevent that).
+    if (ap.ok && Math.abs((ap.json.outputDuration ?? 0) - len) > 0.05) {
+      failures.push({ step: `${r}: set up`, error: `the take is ${ap.json.outputDuration} s, not ${len} s: the window ${win.start}–${win.start + len} crosses a cut` });
+      entry.ok = false;
+    }
+    if (entry.ok) {
       const fr = await step(`${r}: frames`, ['frames', b, '--every', String(Math.round((len / 12) * 1000) / 1000), '--sheet', '--out', join(out, 'recipes', r), ...draft]);
       entry.strip = fr.json?.sheet ?? null;
       entry.files = (fr.json?.files ?? []).filter((f) => f.path);
@@ -526,7 +565,6 @@ export async function build(opts) {
         entry.exportSeconds = ex.json?.wallSeconds ?? ex.seconds;
       }
     }
-    recipes.push(entry);
   }
 
   // Blinded pairs against the reference captures. Ours is rendered again for each pair, on the layout preset

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { createRequire } from 'node:module';
 // @ts-expect-error plain .mjs script without types
-import { AXES, blindPairs, bundleTaps, compareTimes, esc, matchRefs, mediaSize, nearestShapePreset, pairCanvas, pairFilter, parseArgs, planSvg, prng, quietWindow, sourceToOutput, tallyEqual, tallyLook } from '../scripts/review3d.mjs';
+import { AXES, blindPairs, bundleTaps, compareTimes, esc, matchRefs, mediaSize, nearestShapePreset, pairCanvas, pairFilter, parseArgs, planSvg, keptRuns, prng, quietWindow, sourceToOutput, tallyEqual, tallyLook } from '../scripts/review3d.mjs';
 
 const SCRIPT = join(__dirname, '..', 'scripts', 'review3d.mjs');
 
@@ -60,25 +60,53 @@ describe('review3d: time and windows', () => {
     expect(sourceToOutput(clips, 8)).toBeNull();
   });
 
+  const run = (a: number, b: number) => [{ sourceStart: a, sourceEnd: b }];
+
   it('quietWindow prefers a tap-free window inside a wait, else falls back', () => {
     const taps = [1, 2, 9, 10];
     const waits = [{ start: 4, end: 8.5 }];
-    expect(quietWindow(taps, waits, 3, 0, 12)).toEqual({ start: 4, free: true });
-    expect(quietWindow([0.5, 2, 3.5, 5], [], 3, 0, 6)).toEqual({ start: 0, free: false });
+    expect(quietWindow(taps, waits, 3, run(0, 12))).toEqual({ start: 4, free: true, fits: true });
+    expect(quietWindow([0.5, 2, 3.5, 5], [], 3, run(0, 6))).toEqual({ start: 0, free: false, fits: true });
   });
 
   it('quietWindow accepts a window that starts right after a padded tap (no wait needed)', () => {
     // 0.7..3.7 and 10.5..13.5 are tap-free; the earliest wins.
-    expect(quietWindow([0.2, 10], [], 3, 0, 20)).toEqual({ start: 0.7, free: true });
-    expect(quietWindow([1, 10], [], 3, 0, 20)).toEqual({ start: 1.5, free: true });
+    expect(quietWindow([0.2, 10], [], 3, run(0, 20))).toEqual({ start: 0.7, free: true, fits: true });
+    expect(quietWindow([1, 10], [], 3, run(0, 20))).toEqual({ start: 1.5, free: true, fits: true });
     // Exactly one free start, right after the second tap's pad.
-    expect(quietWindow([0.4, 2], [], 3, 0, 5.5)).toEqual({ start: 2.5, free: true });
+    expect(quietWindow([0.4, 2], [], 3, run(0, 5.5))).toEqual({ start: 2.5, free: true, fits: true });
   });
 
   it('quietWindow counts a swipe or long press for its whole duration', () => {
     // A 4 s long press at 1 s covers 0.5..5.5: the window starts after it, not at 1.5.
-    expect(quietWindow([{ t: 1, duration: 4 }], [], 3, 0, 20)).toEqual({ start: 5.5, free: true });
-    expect(quietWindow([{ t: 1, duration: 4 }], [], 3, 0, 8)).toEqual({ start: 0, free: false });
+    expect(quietWindow([{ t: 1, duration: 4 }], [], 3, run(0, 20))).toEqual({ start: 5.5, free: true, fits: true });
+    expect(quietWindow([{ t: 1, duration: 4 }], [], 3, run(0, 8))).toEqual({ start: 0, free: false, fits: true });
+  });
+
+  it('keptRuns joins clips that touch in the source and splits at a cut or a reorder', () => {
+    expect(keptRuns([{ sourceStart: 40, sourceEnd: 49.98 }, { sourceStart: 49.98, sourceEnd: 55.68 }, { sourceStart: 55.68, sourceEnd: 62 }])).toEqual([{ start: 40, end: 62 }]);
+    expect(keptRuns([{ sourceStart: 0, sourceEnd: 20 }, { sourceStart: 44, sourceEnd: 62 }])).toEqual([{ start: 0, end: 20 }, { start: 44, end: 62 }]);
+    // Reordered: 10..20 plays before 0..10, so they are not one run even though they touch.
+    expect(keptRuns([{ sourceStart: 10, sourceEnd: 20 }, { sourceStart: 0, sourceEnd: 10 }])).toEqual([{ start: 10, end: 20 }, { start: 0, end: 10 }]);
+  });
+
+  it('quietWindow never picks a window that crosses a cut, and ignores a wait inside the cut', () => {
+    // AGENTS.md's example edit: trim 0..62 + cut 20..44. The wait 25..40 is all cut away, so it must not pull the
+    // window into the cut (it used to return 25: trim 25..28 then left a 0.05 s take).
+    const cut = [{ sourceStart: 0, sourceEnd: 20 }, { sourceStart: 44, sourceEnd: 62 }];
+    expect(quietWindow([1, 18, 46, 50], [{ start: 25, end: 40 }], 3, cut)).toEqual({ start: 1.5, free: true, fits: true });
+    // A wait that starts in the cut and runs on into a kept run counts from the run's start.
+    expect(quietWindow([5, 18, 50], [{ start: 40, end: 48 }], 3, cut)).toEqual({ start: 44, free: true, fits: true });
+    // Clips 0..5 and 15..30, taps at 4 and 16: 4.5 is free in source but 4.5..8.5 crosses the cut at 5.
+    const two = [{ sourceStart: 0, sourceEnd: 5 }, { sourceStart: 15, sourceEnd: 30 }];
+    expect(quietWindow([4, 16], [], 4, two)).toEqual({ start: 16.5, free: true, fits: true });
+  });
+
+  it('quietWindow says when no kept run is long enough (fits: false) instead of handing back a short take', () => {
+    const short = [{ sourceStart: 0, sourceEnd: 2 }, { sourceStart: 10, sourceEnd: 12.5 }];
+    expect(quietWindow([], [], 3, short)).toEqual({ start: 10, free: false, fits: false });
+    // A run is long enough but every window in it has a tap: the first such run, free: false.
+    expect(quietWindow([11, 12], [], 3, [{ sourceStart: 0, sourceEnd: 2 }, { sourceStart: 10, sourceEnd: 13 }])).toEqual({ start: 10, free: false, fits: true });
   });
 
   it('bundleTaps reads every tap from project.json (info lists at most 100), with durations', () => {
@@ -203,11 +231,19 @@ appendFileSync(process.env.FAKE_LOG, JSON.stringify([cmd, ...a]) + '\\n');
 const flag = (n) => { const i = a.indexOf(n); return i < 0 ? undefined : a[i + 1]; };
 const out = (o) => process.stdout.write(JSON.stringify(o));
 const recipes = [['spin-in',1.6],['turn-to-back',3.2],['hero-layback',1.4],['float',0],['settle',1]].map(([name, duration]) => ({ name, duration, summary: '', use: '' }));
-if (cmd === 'info') out({ ok: true, source: { kind: process.env.FAKE_KIND || 'iosDevice', duration: 30 }, outputDuration: 20,
-  clips: [{ sourceStart: 0, sourceEnd: 20, speed: 1, outputStart: 0, outputEnd: 20 }],
-  taps: { items: [{ t: 2 }, { t: 9 }] }, waits: [{ start: 12, end: 18 }], shotRecipes: recipes,
+// FAKE_CLIPS: the kept source runs ([[start, end], ...]); apply reports the take length trim really leaves
+// (trim keeps cuts), and FAKE_SHORT makes it report a too-short take.
+const kept = JSON.parse(process.env.FAKE_CLIPS || '[[0,20]]');
+let o0 = 0;
+const clips = kept.map(([s, e]) => { const c = { sourceStart: s, sourceEnd: e, speed: 1, outputStart: o0, outputEnd: o0 + e - s }; o0 += e - s; return c; });
+if (cmd === 'info') out({ ok: true, source: { kind: process.env.FAKE_KIND || 'iosDevice', duration: 30 }, outputDuration: o0,
+  clips, taps: { items: [{ t: 2 }, { t: 9 }] }, waits: JSON.parse(process.env.FAKE_WAITS || '[{"start":12,"end":18}]'), shotRecipes: recipes,
   transitions: [{ start: 13, end: 14.4, recipe: 'hero-layback', easing: { kind: 'cinematic' } }] });
-else if (cmd === 'apply') out({ ok: true, warnings: a[1].includes('turn-to-back') ? [{ code: 'tap-back', message: 'm', at: 1 }] : [] });
+else if (cmd === 'apply') {
+  const trim = JSON.parse(a[1]).find((x) => x.op === 'trim');
+  const len = trim ? kept.reduce((m, [s, e]) => m + Math.max(0, Math.min(e, trim.end) - Math.max(s, trim.start)), 0) : o0;
+  out({ ok: true, warnings: a[1].includes('turn-to-back') ? [{ code: 'tap-back', message: 'm', at: 1 }] : [], outputDuration: process.env.FAKE_SHORT ? 0.05 : Math.round(len * 100) / 100 });
+}
 else if (cmd === 'direct') out({ ok: true, shots: [{ recipe: 'hero-layback', start: 13, end: 14.4, reason: 'middle; quiet wait' }], warnings: [] });
 else if (cmd === 'validate') out({ ok: true, problems: [], warnings: [{ code: 'over-zoom', message: '<zoom>', at: 13.5 }] });
 else if (cmd === 'frames') {
@@ -350,6 +386,42 @@ describe('review3d: commands (fake agent)', { timeout: 120_000 }, () => {
     const r = run(['pairs', '--a', join(root, 'mixA'), '--b', join(root, 'mixB'), '--out', join(root, 'mix'), '--seed', '1', '--agent', agent]);
     expect(r.code).toBe(2);
     expect(r.out.error).toMatch(/one side is a clip and the other a still/);
+  });
+
+  it('build: recipe takes stay inside one kept run when the take has a cut (a wait inside the cut is ignored)', () => {
+    // AGENTS.md's example edit: trim 0..62 + cut 20..44 leaves runs 0..20 and 44..62; the only wait is cut away.
+    writeFileSync(logFile, '');
+    const out = join(root, 'run-cut');
+    const env = { FAKE_CLIPS: '[[0,20],[44,62]]', FAKE_WAITS: '[{"start":25,"end":40}]' };
+    const { code, out: r } = run([bundle, '--out', out, '--agent', agent, '--no-clips', '--draft'], env);
+    expect(code, JSON.stringify(r.failures)).toBe(0);
+    expect(r.recipes.every((x: any) => x.frames === 12)).toBe(true);
+    const calls = readFileSync(logFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const setups = calls.filter((c) => c[0] === 'apply' && c[2].startsWith('[{"op":"trim"'));
+    expect(setups).toHaveLength(5);
+    for (const c of setups) {
+      const { start, end } = JSON.parse(c[2])[0];
+      expect([[0, 20], [44, 62]].some(([s, e]) => start >= s && end <= e), `${start}..${end}`).toBe(true);
+    }
+  });
+
+  it('build: a take shorter than asked (the window crossed a cut) is a failure, not a quiet take', () => {
+    const out = join(root, 'run-short');
+    const { code, out: r } = run([bundle, '--out', out, '--agent', agent, '--no-clips', '--draft'], { FAKE_SHORT: '1' });
+    expect(code).toBe(1);
+    expect(r.ok).toBe(false);
+    expect(r.recipes.every((x: any) => x.frames === 0)).toBe(true);
+    expect(r.failures.filter((f: any) => /crosses a cut/.test(f.error))).toHaveLength(5);
+  });
+
+  it('build: no kept run long enough for a recipe is a failure, and that recipe gets no take', () => {
+    writeFileSync(logFile, '');
+    const out = join(root, 'run-tiny');
+    const { code, out: r } = run([bundle, '--out', out, '--agent', agent, '--no-clips', '--draft'], { FAKE_CLIPS: '[[0,2],[5,7.5]]' });
+    expect(code).toBe(1);
+    expect(r.failures.filter((f: any) => /no kept stretch/.test(f.error))).toHaveLength(5);
+    const calls = readFileSync(logFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(calls.filter((c) => c[0] === 'apply' && c[2].startsWith('[{"op":"trim"'))).toHaveLength(0);
   });
 
   it('build with a clip reference and --no-clips reports it and leaves that pair out', () => {
