@@ -389,8 +389,8 @@ describe('materials (§3.4)', () => {
     expect(ti.glare.visible).toBe(true);
     expect(materialsFor('#3C3C3D', 'titanium', 'frosted', 0).glare.visible).toBe(false);
     // Lens cover: iridescent AR tint.
-    expect(ti.lensCover.iridescence).toBe(1);
-    expect(ti.lensCover.iridescenceIOR).toBe(1.8);
+    expect(ti.lensCover.iridescence).toBe(0.6);
+    expect(ti.lensCover.iridescenceIOR).toBe(1.38);
     expect(ti.lensCover.iridescenceThicknessRange).toEqual([250, 450]);
     expect(ti.lensElements.map((m) => m.roughness)).toEqual([0.05, 0.17, 0.3]);
     expect(ti.lensRing.metalness).toBe(1);

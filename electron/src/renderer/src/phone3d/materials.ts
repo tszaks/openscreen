@@ -304,10 +304,15 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
         roughness: 0.02,
         metalness: 0,
         ior: 1.5,
-        // AR-coated sapphire reflects about 1%: a tint, not a mirror.
+        // AR-coated sapphire reflects about 1%: a tint, not a mirror. In
+        // r186 the thin-film Fresnel REPLACES the base Fresnel (by
+        // `iridescence`, lights_fragment_begin). The spec's film IOR 1.8
+        // reflects 8–20% and turned every lens into a magenta disc straight
+        // on; a real AR film is MgF2-like (1.38): about 1–3%, still tinted,
+        // blended 60/40 with the plain coated Fresnel so it stays a cast.
         specularIntensity: 0.3,
-        iridescence: 1,
-        iridescenceIOR: 1.8,
+        iridescence: 0.6,
+        iridescenceIOR: 1.38,
         iridescenceThicknessRange: [250, 450],
       }),
       reversed,
