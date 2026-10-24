@@ -216,6 +216,23 @@ describe('renderPhone3D frame loop', () => {
     expect(out.samples).toBeGreaterThan(1);
   });
 
+  it('full quality renders every sample plain (no MSAA target at all at 4K); a single-sample frame renders with MSAA', () => {
+    const s = sceneFor({}, true);
+    const { engine, calls, passes } = fakeEngine();
+    frame(engine, args(s, 0.5));
+    const scenes = calls.filter((c) => c.kind === 'scene');
+    expect(scenes.length).toBeGreaterThan(8);
+    expect(scenes.every((c) => c.target === passes.plain)).toBe(true);
+    expect(passes.msaa).toBeNull();
+    calls.length = 0;
+    const s1080 = sceneFor({}, false);
+    const { out } = frame(engine, args(s1080, 0.5, { full: false, motion: null }));
+    const one = calls.filter((c) => c.kind === 'scene');
+    expect(one).toHaveLength(out.tiles); // one sample per tile
+    expect(one.every((c) => c.target === passes.msaa)).toBe(true);
+    expect(passes.msaa).not.toBeNull();
+  });
+
   it('a still frame renders its shadow once, and a repeat of the same frame (paused preview) reuses it', () => {
     for (const k4 of [false, true]) {
       const s = sceneFor({}, k4);

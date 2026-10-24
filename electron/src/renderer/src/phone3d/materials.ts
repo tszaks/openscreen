@@ -32,7 +32,7 @@ import {
   } from 'three';
 import type { DeviceModel, FrameMaterial } from '../../../shared/devices';
 import type { Body3D } from '../../../shared/devices3d';
-import { lodBias, mrtOutput } from './passes';
+import { lodBias, mrtOutput, screenJitter } from './passes';
 import { FLASH_GROUP, BAND_GROUP, FRONT_GROUP, isUnibody, type PhonePart } from './geometry';
 
 // ---------------------------------------------------------------------------
@@ -295,7 +295,7 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   // Camera Control: sapphire over a dark sensor, read as dark glossy glass.
   const cameraControl = physical({ color: srgb('#0b0b0c'), roughness: 0.05, metalness: 0, specularIntensity: 0.8 });
 
-  const screen = lodBias(mrtOutput(overlay(new MeshBasicMaterial({ map: null, toneMapped: false }), reversed), 'screen'));
+  const screen = screenJitter(lodBias(mrtOutput(overlay(new MeshBasicMaterial({ map: null, toneMapped: false }), reversed), 'screen')));
   // The screen is the one overlay that writes depth (pulled forward by the same offset): the GPU's hidden-surface
   // removal then skips shading the glass cap under it, which covers most of a FRONT phone. The glare drawn over it
   // is at the same offset depth and passes the LESS_EQUAL test.

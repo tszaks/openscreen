@@ -524,13 +524,14 @@ describe('materials (§3.4)', () => {
     const set = materialsFor('#3C3C3D', 'titanium', 'frosted', 0.25);
     const s2 = { fragmentShader: ShaderLib.basic.fragmentShader, vertexShader: '', uniforms: {} };
     set.screen.onBeforeCompile(s2 as never, undefined as never);
-    expect(s2.fragmentShader).toContain(LOD_MAP_FRAGMENT);
+    // The −0.5 bias sample, its uv shifted back by the sample's jitter (screenJitter).
+    expect(s2.fragmentShader).toContain(LOD_MAP_FRAGMENT.replace('texture( map, vMapUv,', 'texture( map, vMapUv - dFdx( vMapUv ) * uScreenJitter.x + dFdy( vMapUv ) * uScreenJitter.y,'));
     expect(s2.fragmentShader).not.toContain('#include <map_fragment>');
     expect(s2.fragmentShader).toContain('pc_fragScreen = vec4( gl_FragColor.rgb * gl_FragColor.a, gl_FragColor.a );');
     expect(s2.fragmentShader).toContain('gl_FragColor = vec4( 0.0, 0.0, 0.0, gl_FragColor.a );');
     // Patches compose once and key the program cache.
     lodBias(set.screen);
-    expect(set.screen.customProgramCacheKey()).toBe('mrt-screen|lodbias');
+    expect(set.screen.customProgramCacheKey()).toBe('mrt-screen|lodbias|jitter');
     // Every lit material in the set is patched; the screen and the glare over it go to the screen attachment.
     for (const m of set.all) {
       expect(m.customProgramCacheKey(), m.type).toMatch(m === set.screen ? /^mrt-screen/ : m === set.glare ? /^mrt-glare$/ : /^mrt-lit$/);

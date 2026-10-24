@@ -55,8 +55,6 @@ export interface SamplePlan {
   times: number[];
   /** Sub-pixel camera offset of each sample, render px. */
   jitter: (readonly [number, number])[];
-  /** The screen attachment comes from sample 0 alone (the phone is still and jittered AA would soften the UI). */
-  screenFromFirst: boolean;
 }
 
 export interface SampleInputs {
@@ -77,26 +75,37 @@ export interface SampleInputs {
  * [max(2, samples), 64]; N = max(Nmotion, 8) at full quality, 1 otherwise.
  */
 export function planSamples({ t, travelPx, motion, full }: SampleInputs): SamplePlan {
-  if (!full) return { n: 1, nMotion: 1, times: [t], jitter: [JITTER[0]], screenFromFirst: false };
+  if (!full) return { n: 1, nMotion: 1, times: [t], jitter: [JITTER[0]] };
   const moving = motion !== null && motion.shutterSec > 0 && travelPx >= STILL_TRAVEL_PX;
   const nMotion = moving
     ? Math.min(MAX_SAMPLES, Math.max(Math.max(2, Math.round(motion.samples)), Math.ceil(travelPx / MOTION_STEP_PX)))
     : 1;
   const n = Math.max(nMotion, AA_SAMPLES);
   const times = Array.from({ length: n }, (_, k) => (nMotion > 1 ? t + ((k + 0.5) / n - 0.5) * motion!.shutterSec : t));
-  return { n, nMotion, times, jitter: JITTER.slice(0, n), screenFromFirst: nMotion === 1 };
+  return { n, nMotion, times, jitter: JITTER.slice(0, n) };
 }
 
 // ---------------------------------------------------------------------------
 // Tiles (pure)
 
-/** GPU bytes per render pixel of one tile: 4 MSAA samples × (2 attachments × 8 B + 4 B depth). */
-export const TILE_BYTES_PER_PX = 80;
+/**
+ * GPU bytes per render pixel that decide the tiling (§3.7 step 8). Full
+ * quality (export, frames, the paused preview) renders every sample without
+ * MSAA (the jitter anti-aliases): the plain target (2 × 8 B colour + 4 B
+ * depth), the accumulation and the DoF output (2 × 8 B each). A
+ * single-sample frame (live preview, --draft) renders with 4× MSAA: the spec's
+ * 4 × (2 × 8 B + 4 B) of MSAA storage (its resolve is counted in bytes()).
+ */
+export const TILE_BYTES_PER_PX = { full: 20 + 16 + 16, msaa: 4 * 20 } as const;
+
 /** Above this many bytes, the ROI renders in tiles (§3.7 step 8). */
 export const TILE_THRESHOLD_BYTES = 120e6;
-/** Largest tile: area and long side, render px. */
-export const TILE_MAX_PX = 1.5e6;
+/** Largest tile side, render px. */
 export const TILE_MAX_SIDE = 2048;
+/** Largest tile area, render px: as many pixels as TILE_THRESHOLD_BYTES of targets hold at `bytesPerPx`. */
+export function tileMaxPx(bytesPerPx: number): number {
+  return Math.floor(TILE_THRESHOLD_BYTES / bytesPerPx);
+}
 
 /** One tile: its core (written to the canvas) and the padded window rendered for it, render px, top-down. */
 export interface Tile {
@@ -112,23 +121,25 @@ export interface Tile {
 }
 
 /**
- * Splits a w × h render area into tiles when one target would pass
- * TILE_THRESHOLD_BYTES: each core is at most TILE_MAX_PX with a long side
+ * Splits a w × h render area into tiles when its targets would pass
+ * TILE_THRESHOLD_BYTES at `bytesPerPx`: each padded tile is at most
+ * tileMaxPx(bytesPerPx) with a long side
  * ≤ TILE_MAX_SIDE, its size a multiple of `ss` (so a tile never splits an
  * output pixel), and is padded by `overlap` px (the DoF reach) that is
  * rendered and discarded. One tile (the whole area) otherwise.
  */
-export function planTiles(w: number, h: number, ss: number, overlap: number): Tile[] {
+export function planTiles(w: number, h: number, ss: number, overlap: number, bytesPerPx: number = TILE_BYTES_PER_PX.full): Tile[] {
   if (w <= 0 || h <= 0) return [];
-  if (w * h * TILE_BYTES_PER_PX <= TILE_THRESHOLD_BYTES) return [{ x: 0, y: 0, w, h, px: 0, py: 0, pw: w, ph: h }];
+  if (w * h * bytesPerPx <= TILE_THRESHOLD_BYTES) return [{ x: 0, y: 0, w, h, px: 0, py: 0, pw: w, ph: h }];
   const ov = Math.max(0, Math.ceil(overlap));
+  const maxPx = tileMaxPx(bytesPerPx);
   // The fewest columns and rows whose padded tiles fit the limits.
   let cols = Math.max(1, Math.ceil(w / TILE_MAX_SIDE));
   let rows = Math.max(1, Math.ceil(h / TILE_MAX_SIDE));
   const fits = () => {
     const tw = Math.ceil(w / cols / ss) * ss + 2 * ov;
     const th = Math.ceil(h / rows / ss) * ss + 2 * ov;
-    return tw <= TILE_MAX_SIDE && th <= TILE_MAX_SIDE && tw * th <= TILE_MAX_PX;
+    return tw <= TILE_MAX_SIDE && th <= TILE_MAX_SIDE && tw * th <= maxPx;
   };
   for (let guard = 0; !fits() && guard < 256; guard++) {
     // Split the longer tile side.
@@ -250,6 +261,37 @@ export function lodBias<M extends THREE.Material>(mat: M): M {
     },
   });
   return mat;
+}
+
+/**
+ * The screen texture lookup undoes the sample's sub-pixel jitter (§3.6,
+ * D19): a jittered sample sees the scene moved by `j` render px, so the
+ * fragment at a pixel reads the texel the UNjittered render read there:
+ * uv − dFdx(uv)·jx + dFdy(uv)·jy (render px are y down, gl_FragCoord y up).
+ * The screen's EDGE (its coverage) still moves with the jitter and is
+ * anti-aliased by it; its inside stays texel exact, so every sample can add
+ * the screen without softening the UI. Apply after lodBias.
+ */
+export function screenJitter<M extends THREE.Material>(mat: M): M {
+  const data = mat.userData as { screenJitter?: { value: THREE.Vector2 } };
+  const uniform = (data.screenJitter ??= { value: new THREE.Vector2() });
+  addPatch(mat, {
+    key: 'jitter',
+    apply: (shader) => {
+      const call = 'texture( map, vMapUv,';
+      if (!shader.fragmentShader.includes(call)) throw new Error('phone3d: screenJitter needs lodBias first');
+      shader.uniforms.uScreenJitter = uniform;
+      shader.fragmentShader =
+        'uniform vec2 uScreenJitter;\n' +
+        shader.fragmentShader.replace(call, 'texture( map, vMapUv - dFdx( vMapUv ) * uScreenJitter.x + dFdy( vMapUv ) * uScreenJitter.y,');
+    },
+  });
+  return mat;
+}
+
+/** Sets the jitter (render px) the screen's texture lookup undoes for the next draw. */
+export function setScreenJitter(mat: THREE.Material, x: number, y: number): void {
+  (mat.userData as { screenJitter?: { value: THREE.Vector2 } }).screenJitter?.value.set(x, y);
 }
 
 // ---------------------------------------------------------------------------
@@ -460,18 +502,22 @@ export interface DofParams {
 
 /** The targets and fullscreen passes, one set per engine. */
 export class Passes {
-  /** Where the unjittered sample renders: 2 attachments, 4× MSAA, HalfFloat, with a resolved depth texture for DoF. */
+  /**
+   * Where a single-sample frame renders (the live preview, --draft): 2
+   * attachments, 4× MSAA, HalfFloat, with a resolved depth texture for DoF.
+   * Made only for those frames, and dropped when a tiled full-quality frame
+   * comes: it is the biggest target (100 B per pixel), and at 4K it alone was
+   * most of the memory budget.
+   */
   msaa: THREE.WebGLRenderTarget | null = null;
   /**
-   * Where the jittered sub-samples render: the same, without MSAA. The jitter
-   * itself anti-aliases them (8 or more Halton offsets), so storing and
-   * resolving 4 MSAA samples of two HalfFloat attachments per sub-sample (the
-   * bulk of the frame's memory traffic) buys nothing. Sample 0 keeps MSAA: it is
-   * the whole frame in the live preview, and it alone carries the screen of a
-   * still phone (the screen exactness rule), whose edge MSAA anti-aliases.
+   * Where every sample of a full-quality frame renders: the same, without
+   * MSAA. The jitter itself anti-aliases (8 or more Halton offsets), the
+   * screen's edge included; the screen's texels stay exact because the screen
+   * shader undoes the jitter in its texture lookup (screenJitter).
    */
   plain: THREE.WebGLRenderTarget | null = null;
-  /** The sum of the sub-samples. */
+  /** The sum of the sub-samples (full quality). */
   accum: THREE.WebGLRenderTarget | null = null;
   /** The DoF result. */
   dofOut: THREE.WebGLRenderTarget | null = null;
@@ -540,25 +586,52 @@ export class Passes {
     );
   }
 
-  /** Makes the targets at least w × h (needsRealloc); returns true when they were re-created. */
-  ensure(w: number, h: number): boolean {
-    if (!needsRealloc(this.size, w, h) && this.msaa && this.plain && this.accum && this.dofOut) return false;
-    this.disposeTargets();
-    this.size = { w, h };
-    this.msaa = mrtTarget(w, h, 4, true);
-    this.plain = mrtTarget(w, h, 0, true);
-    this.accum = mrtTarget(w, h, 0, false);
-    this.dofOut = mrtTarget(w, h, 0, false);
-    return true;
+  /**
+   * Makes the targets a frame needs at least w × h (needsRealloc): `msaa` for a
+   * single-sample frame, else the plain and accumulation targets; the DoF
+   * output either way. A target the frame does not need is kept while it is
+   * small (a 1080 preview going between live and paused frames), and dropped
+   * when it would hold more than one tile's budget (a 4K export).
+   */
+  ensure(w: number, h: number, msaa: boolean): void {
+    if (needsRealloc(this.size, w, h)) {
+      this.disposeTargets();
+      this.size = { w, h };
+    }
+    const { w: W, h: H } = this.size!;
+    const px = W * H;
+    if (msaa) {
+      this.msaa ??= mrtTarget(W, H, 4, true);
+      if (this.plain && px > tileMaxPx(TILE_BYTES_PER_PX.full)) this.dropFull();
+    } else {
+      this.plain ??= mrtTarget(W, H, 0, true);
+      this.accum ??= mrtTarget(W, H, 0, false);
+      if (this.msaa && px > tileMaxPx(TILE_BYTES_PER_PX.msaa)) this.dropMsaa();
+    }
+    this.dofOut ??= mrtTarget(W, H, 0, false);
   }
 
   /** Bytes the targets hold on the GPU (MSAA renderbuffers + resolve textures + depth), for the memory budget. */
   bytes(): number {
     if (!this.size) return 0;
     const px = this.size.w * this.size.h;
-    // msaa: 4 samples × (2 × 8 B colour + 4 B depth); its resolve and the plain target: 2 × 8 B + 4 B depth each;
-    // accum and dof: 2 × 8 B each.
-    return px * (4 * (16 + 4) + 20 + 20 + 16 + 16);
+    // msaa: 4 samples × (2 × 8 B colour + 4 B depth) plus its resolve (2 × 8 B + 4 B depth); plain: 2 × 8 B + 4 B
+    // depth; accum and dof: 2 × 8 B each.
+    return px * ((this.msaa ? TILE_BYTES_PER_PX.msaa + 20 : 0) + (this.plain ? 20 : 0) + (this.accum ? 16 : 0) + (this.dofOut ? 16 : 0));
+  }
+
+  private dropMsaa(): void {
+    this.msaa?.depthTexture?.dispose();
+    this.msaa?.dispose();
+    this.msaa = null;
+  }
+
+  private dropFull(): void {
+    for (const t of [this.plain, this.accum]) {
+      t?.depthTexture?.dispose();
+      t?.dispose();
+    }
+    this.plain = this.accum = null;
   }
 
   /** Points the target's viewport at its top-left w × h (it may be larger: hysteresis). */

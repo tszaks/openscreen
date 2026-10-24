@@ -33,7 +33,7 @@ import {
   type Scene3D,
 } from '../../../shared/phone3d/projection';
 import type { Engine, PhoneLook } from './engine';
-import { planSamples, planTiles, Passes, type SamplePlan } from './passes';
+import { planSamples, planTiles, Passes, setScreenJitter, TILE_BYTES_PER_PX, type SamplePlan } from './passes';
 import { planScreenTexture, screenRoom, textureLimit } from './screenTexture';
 import { frameCatcher, sampleLight } from './shadow';
 
@@ -265,10 +265,12 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
     for (let k = 0; k < plan.times.length; k++) if (k === 0 || cams[k]) coc = Math.max(coc, maxCocPx(s, plan.times[k]) * ss);
   }
   const dofOn = coc >= DOF_MIN_PX;
-  const tiles = planTiles(rw, rh, ss, dofOn ? coc + 2 : 0);
+  // One sample (live preview, --draft) renders with MSAA; full quality renders every sample plain and jittered.
+  const msaa = plan.n === 1;
+  const tiles = planTiles(rw, rh, ss, dofOn ? coc + 2 : 0, msaa ? TILE_BYTES_PER_PX.msaa : TILE_BYTES_PER_PX.full);
   const tw = Math.max(...tiles.map((x) => x.pw));
   const th = Math.max(...tiles.map((x) => x.ph));
-  engine.passes.ensure(tw, th);
+  engine.passes.ensure(tw, th, msaa);
   // One tile core at a time (output px).
   const canvas = engine.sizeCanvas(Math.max(...tiles.map((x) => x.w / ss)), Math.max(...tiles.map((x) => x.h / ss)));
   const passes = engine.passes;
@@ -324,8 +326,8 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
           w: tile.pw,
           h: tile.ph,
         });
-        // Sample 0 renders with MSAA (the preview's only sample; a still phone's screen); jittered ones without.
-        const target = k === 0 && plan.nMotion === 1 ? passes.msaa! : passes.plain!;
+        const target = msaa ? passes.msaa! : passes.plain!;
+        setScreenJitter(phone.screen.material, jx, jy);
         // Only the last sample's depth is read (by DoF): skip resolving it otherwise.
         target.resolveDepthBuffer = dofOn && k === N - 1;
         Passes.view(target, tile.pw, tile.ph);
@@ -336,8 +338,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
         last = target;
         mark('scene');
         if (N > 1) {
-          const w1 = plan.screenFromFirst ? (k === 0 ? 1 : 0) : 1 / N;
-          passes.accumulate(target, tile.pw, tile.ph, 1 / N, w1);
+          passes.accumulate(target, tile.pw, tile.ph, 1 / N, 1 / N);
           mark('accumulate');
         }
       }

@@ -13,7 +13,8 @@ import {
   needsRealloc,
   planSamples,
   planTiles,
-  TILE_MAX_PX,
+  TILE_BYTES_PER_PX,
+  tileMaxPx,
   TILE_MAX_SIDE,
 } from '../src/renderer/src/phone3d/passes';
 import { planScreenTexture, screenUvMatrix } from '../src/renderer/src/phone3d/screenTexture';
@@ -51,15 +52,14 @@ describe('sample plan (§3.7 step 4)', () => {
 
   it('live preview / draft: one sample, no jitter, no motion', () => {
     const p = planSamples({ t: 2, travelPx: 300, motion: { samples: 12, shutterSec: 1 / 60 }, full: false });
-    expect(p).toEqual({ n: 1, nMotion: 1, times: [2], jitter: [[0, 0]], screenFromFirst: false });
+    expect(p).toEqual({ n: 1, nMotion: 1, times: [2], jitter: [[0, 0]] });
   });
 
-  it('a still phone in export: 8 jittered AA samples at the same time, the screen from sample 0 only', () => {
+  it('a still phone in export: 8 jittered AA samples at the same time', () => {
     const p = planSamples({ t: 2, travelPx: 0.3, motion: { samples: 12, shutterSec: 1 / 60 }, full: true });
     expect(p.n).toBe(AA_SAMPLES);
     expect(p.nMotion).toBe(1);
     expect(p.times.every((x) => x === 2)).toBe(true);
-    expect(p.screenFromFirst).toBe(true);
     expect(planSamples({ t: 2, travelPx: 50, motion: null, full: true }).nMotion).toBe(1);
   });
 
@@ -69,7 +69,6 @@ describe('sample plan (§3.7 step 4)', () => {
     const fast = planSamples({ t: 1, travelPx: 45, motion: { samples: 12, shutterSec: sh }, full: true });
     expect(fast.nMotion).toBe(30);
     expect(fast.n).toBe(30);
-    expect(fast.screenFromFirst).toBe(false);
     expect(45 / fast.nMotion).toBeLessThanOrEqual(1.5);
     expect(fast.times).toEqual(subFrameTimes(1, sh, 30));
     expect(Math.min(...fast.times)).toBeGreaterThan(1 - sh / 2);
@@ -104,8 +103,17 @@ describe('sample plan (§3.7 step 4)', () => {
 });
 
 describe('tiles (§3.7 step 8)', () => {
-  it('a 1080×1920 preview ROI is one tile', () => {
-    expect(planTiles(1000, 1500, 1, 4)).toEqual([{ x: 0, y: 0, w: 1000, h: 1500, px: 0, py: 0, pw: 1000, ph: 1500 }]);
+  it('a 1080×1920 preview ROI is one tile, with MSAA (live) and without (full quality)', () => {
+    for (const b of [TILE_BYTES_PER_PX.msaa, TILE_BYTES_PER_PX.full])
+      expect(planTiles(1000, 1500, 1, 4, b)).toEqual([{ x: 0, y: 0, w: 1000, h: 1500, px: 0, py: 0, pw: 1000, ph: 1500 }]);
+  });
+
+  it('a full-quality 4K ROI (no MSAA target) needs fewer tiles than an MSAA one, each within 120 MB of targets', () => {
+    const full = planTiles(1972, 3840, 1, 6, TILE_BYTES_PER_PX.full);
+    const ms = planTiles(1972, 3840, 1, 6, TILE_BYTES_PER_PX.msaa);
+    expect(full.length).toBeLessThan(ms.length);
+    for (const t of full) expect(t.pw * t.ph * TILE_BYTES_PER_PX.full).toBeLessThanOrEqual(120e6);
+    for (const t of ms) expect(t.pw * t.ph * TILE_BYTES_PER_PX.msaa).toBeLessThanOrEqual(120e6);
   });
 
   for (const [w, h, ss, ov] of [
@@ -115,13 +123,13 @@ describe('tiles (§3.7 step 8)', () => {
     [5100, 9600, 3, 3],
   ] as const) {
     it(`${w}×${h} at ss ${ss}: cores tile the area exactly once, each window within the limits`, () => {
-      const tiles = planTiles(w, h, ss, ov);
+      const tiles = planTiles(w, h, ss, ov, TILE_BYTES_PER_PX.msaa);
       expect(tiles.length).toBeGreaterThan(1);
       const cover = new Map<string, number>();
       let area = 0;
       for (const t of tiles) {
         area += t.w * t.h;
-        expect(t.pw * t.ph).toBeLessThanOrEqual(TILE_MAX_PX);
+        expect(t.pw * t.ph).toBeLessThanOrEqual(tileMaxPx(TILE_BYTES_PER_PX.msaa));
         expect(Math.max(t.pw, t.ph)).toBeLessThanOrEqual(TILE_MAX_SIDE);
         expect(t.x % ss).toBe(0);
         expect(t.y % ss).toBe(0);
