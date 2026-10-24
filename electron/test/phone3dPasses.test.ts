@@ -14,6 +14,8 @@ import {
   planSamples,
   planTiles,
   TILE_BYTES_PER_PX,
+  planGlare,
+  GLARE_SAMPLES,
   tileMaxPx,
   TILE_MAX_SIDE,
 } from '../src/renderer/src/phone3d/passes';
@@ -98,6 +100,25 @@ describe('sample plan (§3.7 step 4)', () => {
         }
       }
       expect(worst).toBeLessThanOrEqual(2);
+    }
+  });
+});
+
+describe('glass sheen samples (planGlare)', () => {
+  it('still: sample 0 only, standing for all N; draft: the one sample', () => {
+    expect(planGlare({ n: 8, nMotion: 1 })).toEqual([8, 0, 0, 0, 0, 0, 0, 0]);
+    expect(planGlare({ n: 1, nMotion: 1 })).toEqual([1]);
+  });
+  it('moving: at most GLARE_SAMPLES draws, evenly spaced, whose weights add up to N', () => {
+    for (const n of [2, 8, 12, 13, 30, 36, 63, 64]) {
+      const w = planGlare({ n, nMotion: n });
+      expect(w).toHaveLength(n);
+      expect(w.reduce((a, b) => a + b, 0)).toBe(n);
+      const drawn = w.flatMap((x, k) => (x > 0 ? [k] : []));
+      expect(drawn.length).toBeLessThanOrEqual(GLARE_SAMPLES);
+      expect(drawn[0]).toBe(0);
+      const step = Math.ceil(n / GLARE_SAMPLES);
+      drawn.forEach((k, i) => expect(k).toBe(i * step));
     }
   });
 });

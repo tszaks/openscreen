@@ -213,11 +213,10 @@ export const MRT_DECL = 'layout(location = 1) out highp vec4 pc_fragScreen;';
  * - 'screen': attachment 1 = the screen colour, linear premultiplied, alpha =
  *   coverage; attachment 0 = (0, 0, 0, a), so the lit layer knows it is covered.
  * - 'glare': the cover glass's sheen over the screen (an additive layer, its
- *   alpha kept by its blending): its colour goes to attachment 1 with the
- *   screen, attachment 0 gets nothing. So it follows the screen exactness
- *   rule (a still phone's screen layer comes from the unjittered sample
- *   only): with the sheen in the lit layer, the 8 jittered AA samples moved
- *   2239 screen pixels of a still FRONT frame by one level against --draft.
+ *   alpha kept by its blending): its colour, × the material's glare weight
+ *   (planGlare), goes to attachment 1 with the screen; attachment 0 gets
+ *   nothing. The sheen is drawn on only some samples (planGlare), each
+ *   weighted by how many samples it stands for.
  * Every material drawn into the target must have one, so no attachment is ever
  * left undefined. Idempotent.
  */
@@ -229,12 +228,49 @@ export function mrtOutput<M extends THREE.Material>(mat: M, role: MrtRole): M {
         role === 'lit'
           ? '\tpc_fragScreen = vec4( 0.0 );'
           : role === 'glare'
-            ? '\tpc_fragScreen = vec4( gl_FragColor.rgb, 0.0 );\n\tgl_FragColor = vec4( 0.0 );'
+            ? '\tpc_fragScreen = vec4( gl_FragColor.rgb * uGlareWeight, 0.0 );\n\tgl_FragColor = vec4( 0.0 );'
             : '\tpc_fragScreen = vec4( gl_FragColor.rgb * gl_FragColor.a, gl_FragColor.a );\n\tgl_FragColor = vec4( 0.0, 0.0, 0.0, gl_FragColor.a );';
+      if (role === 'glare') {
+        shader.uniforms.uGlareWeight = glareWeight(mat);
+        shader.fragmentShader = `uniform float uGlareWeight;\n${shader.fragmentShader}`;
+      }
       shader.fragmentShader = closeMain(`${MRT_DECL}\n${shader.fragmentShader}`, tail);
     },
   });
   return mat;
+}
+
+/** The glare material's weight uniform (how many samples this draw stands for). */
+function glareWeight(mat: THREE.Material): { value: number } {
+  const data = mat.userData as { glareWeight?: { value: number } };
+  return (data.glareWeight ??= { value: 1 });
+}
+
+/** Sets the glare's weight for the next draw (planGlare). */
+export function setGlareWeight(mat: THREE.Material, w: number): void {
+  glareWeight(mat).value = w;
+}
+
+/** Most samples a frame draws the glass sheen on. */
+export const GLARE_SAMPLES = 8;
+
+/**
+ * Which samples draw the screen's glass sheen, and with what weight (§3.7
+ * step 5). The sheen is a broad, soft gradient (GLARE_ROUGHNESS) and the
+ * costliest thing on a FRONT phone (a lit physical surface over the whole
+ * screen, 27% of a 4K still frame's scene time), so:
+ * - a still phone draws it on sample 0 only, × N: the screen layer of a
+ *   still export frame is then the --draft frame's exactly, sheen included;
+ * - a moving one on every ⌈N / GLARE_SAMPLES⌉-th sample, each × the samples
+ *   it stands for (the weights add up to N, so the sheen keeps its strength);
+ *   adjacent sheen copies are then at most 8 × 1.5 px apart, which a gradient
+ *   that soft does not show.
+ * `weight[k]` is 0 for a sample that skips it. Pure.
+ */
+export function planGlare(plan: Pick<SamplePlan, 'n' | 'nMotion'>): number[] {
+  const N = plan.n;
+  const step = plan.nMotion > 1 ? Math.ceil(N / GLARE_SAMPLES) : N;
+  return Array.from({ length: N }, (_, k) => (k % step === 0 ? Math.min(step, N - k) : 0));
 }
 
 /** Inserts `code` just before the closing brace of main(). */

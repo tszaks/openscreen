@@ -33,7 +33,7 @@ import {
   type Scene3D,
 } from '../../../shared/phone3d/projection';
 import type { Engine, PhoneLook } from './engine';
-import { planSamples, planTiles, Passes, setScreenJitter, TILE_BYTES_PER_PX, type SamplePlan } from './passes';
+import { planGlare, planSamples, planTiles, Passes, setGlareWeight, setScreenJitter, TILE_BYTES_PER_PX, type SamplePlan } from './passes';
 import { planScreenTexture, screenRoom, textureLimit } from './screenTexture';
 import { frameCatcher, sampleLight } from './shadow';
 
@@ -296,6 +296,8 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
     mark('shadow');
   }
 
+  const glareWeights = planGlare(plan);
+
   const st = engine.stats;
   st.renders++;
   const frameId = st.renders;
@@ -328,6 +330,10 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
         });
         const target = msaa ? passes.msaa! : passes.plain!;
         setScreenJitter(phone.screen.material, jx, jy);
+        if (phone.glare) {
+          phone.glare.visible = glareWeights[k] > 0;
+          setGlareWeight(phone.glare.material as THREE.Material, glareWeights[k]);
+        }
         // Only the last sample's depth is read (by DoF): skip resolving it otherwise.
         target.resolveDepthBuffer = dofOn && k === N - 1;
         Passes.view(target, tile.pw, tile.ph);

@@ -22,6 +22,8 @@ export interface PhoneModel {
    * texture stays texel exact.
    */
   screen: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  /** The glass sheen over the screen (mrtOutput 'glare'), or null when the look has none (glass 0). */
+  glare: THREE.Mesh | null;
   dispose(): void;
 }
 
@@ -57,13 +59,16 @@ export const STUDIO_KIT: PhoneKit = {
     });
     applyMaterials(model.group, mats);
     let screen: PhoneModel['screen'] | null = null;
+    let glare: THREE.Mesh | null = null;
     model.group.traverse((o) => {
       if (o.userData.part === 'screen' && o instanceof THREE.Mesh) screen = o as PhoneModel['screen'];
+      if (o.userData.part === 'glare' && o instanceof THREE.Mesh) glare = o;
     });
     if (!screen) throw new Error(`phone3d: ${device.id} has no screen mesh`);
     return {
       root: model.group,
       screen,
+      glare: look.glass > 0 ? glare : null,
       dispose() {
         disposePhone(model);
         for (const m of mats.all) m.dispose();

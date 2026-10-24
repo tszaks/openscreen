@@ -538,7 +538,8 @@ describe('materials (§3.4)', () => {
     }
     const s3 = frag() as never as { fragmentShader: string };
     set.glare.onBeforeCompile(s3 as never, undefined as never);
-    expect(s3.fragmentShader.trimEnd().endsWith('pc_fragScreen = vec4( gl_FragColor.rgb, 0.0 );\n\tgl_FragColor = vec4( 0.0 );\n}')).toBe(true);
+    expect(s3.fragmentShader.trimEnd().endsWith('pc_fragScreen = vec4( gl_FragColor.rgb * uGlareWeight, 0.0 );\n\tgl_FragColor = vec4( 0.0 );\n}')).toBe(true);
+    expect(s3.fragmentShader.startsWith('uniform float uGlareWeight;') || s3.fragmentShader.includes('\nuniform float uGlareWeight;')).toBe(true);
   });
 
   it('device resolution: unibody, iPad metal back, single-lens turret, polished Air', () => {

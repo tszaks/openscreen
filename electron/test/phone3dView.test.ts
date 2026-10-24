@@ -233,6 +233,25 @@ describe('renderPhone3D frame loop', () => {
     expect(passes.msaa).not.toBeNull();
   });
 
+  it('the glass sheen is drawn on the samples planGlare picks, with their weights (still: sample 0 × N)', async () => {
+    const { planGlare } = await import('../src/renderer/src/phone3d/passes');
+    for (const [patch, t] of [[{}, 0.5], [moving(), 1.8]] as const) {
+      const s = sceneFor(patch as Partial<Phone3D>, false);
+      const { engine } = fakeEngine();
+      const glare = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      (engine.kit as { phone: unknown }).phone = () => ({ root: new THREE.Group(), screen: new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial()), glare, dispose() {} });
+      const seen: number[] = [];
+      const r = engine.renderer as unknown as { render: (sc: THREE.Scene, c: THREE.Camera) => void };
+      const orig = r.render;
+      r.render = (sc, c) => {
+        if (sc === engine.scene) seen.push(glare.visible ? (glare.material.userData.glareWeight?.value ?? 1) : 0);
+        orig(sc, c);
+      };
+      const { out } = frame(engine, args(s, t));
+      expect(seen).toEqual(Array.from({ length: out.tiles }, () => planGlare({ n: out.samples, nMotion: out.samples > 8 ? out.samples : 1 })).flat());
+    }
+  });
+
   it('a still frame renders its shadow once, and a repeat of the same frame (paused preview) reuses it', () => {
     for (const k4 of [false, true]) {
       const s = sceneFor({}, k4);
