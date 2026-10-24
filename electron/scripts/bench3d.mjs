@@ -22,7 +22,7 @@
 
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { cpus, totalmem } from 'node:os';
+import { cpus, loadavg, totalmem } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -142,8 +142,9 @@ export function checksFrom(m) {
   if (m.frames) {
     const f = m.frames;
     out.push(check('frames: first PNG, cold', f.coldS, `≤ ${B.framesColdS} s`, f.coldS !== null && f.coldS <= B.framesColdS));
-    out.push(check('frames: per PNG, 1080p draft', f.draft1080S, `≤ ${B.framesDraft1080S} s`, f.draft1080S !== null && f.draft1080S <= B.framesDraft1080S));
-    if (f.full4kS !== undefined) out.push(check('frames: per PNG, 4K full', f.full4kS, `≤ ${B.framesFull4kS} s`, f.full4kS !== null && f.full4kS <= B.framesFull4kS));
+    const noise = (r) => (r?.noise ? 'the n-PNG run was not slower than the 1-PNG run (machine noise): run again on a quiet machine' : undefined);
+    out.push(check('frames: per PNG, 1080p draft', f.draft1080S, `≤ ${B.framesDraft1080S} s`, f.draft1080S !== null && f.draft1080S <= B.framesDraft1080S, noise(f.draftRuns)));
+    if (f.full4kS !== undefined) out.push(check('frames: per PNG, 4K full', f.full4kS, `≤ ${B.framesFull4kS} s`, f.full4kS !== null && f.full4kS <= B.framesFull4kS, noise(f.full4kRuns)));
   }
   if (m.memory) {
     const flat = median(m.memory.flat);
@@ -413,6 +414,8 @@ const log = (o) => process.stderr.write(JSON.stringify(o) + '\n');
 export async function bench(o) {
   const src = resolve(o.bundle);
   if (!existsSync(join(src, 'project.json'))) throw new Usage(`not a bundle: ${src}`);
+  // Other work on the machine skews every timing: the 1-minute load average at the start and the end is recorded.
+  const load0 = loadavg()[0];
   const stampNow = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const out = resolve(o.out ?? join('/tmp/openscreen-bench', `${basename(src).replace(/\.openscreen$/, '')}-${stampNow}`));
   const work = join(out, 'work');
@@ -475,22 +478,31 @@ export async function bench(o) {
     }
   }
 
-  // frames through the CLI (cold = one PNG in a fresh app process).
+  // frames through the CLI. Every run is a fresh app process, so the cost per PNG is the difference between an
+  // n-PNG run and a 1-PNG run of the same bundle at the same quality, taken back to back; cold = the first 1-PNG run.
   log({ step: 'frames' });
-  const fr = { };
-  const one = await agent(['frames', B.e1080still, '--at', '1', '--draft', '--out', join(out, 'frames-cold')], env);
-  fr.coldS = one.ok ? r3(one.json.seconds) : null;
-  const n = 20;
-  const every = r3(o.seconds / n);
-  const many = await agent(['frames', B.e1080moving, '--every', String(every), '--draft', '--out', join(out, 'frames-draft')], env);
-  fr.draft1080S = many.ok && fr.coldS !== null ? r3(Math.max(0, many.json.seconds - fr.coldS) / Math.max(1, many.json.files.length - 1)) : null;
+  const fr = {};
+  const perPng = async (bundle, quality, n, label) => {
+    const q = quality === 'draft' ? ['--draft'] : [];
+    const one = await agent(['frames', bundle, '--at', '1', ...q, '--out', join(out, `frames-${label}-1`)], env);
+    const many = await agent(['frames', bundle, '--every', String(r3(o.seconds / n)), ...q, '--out', join(out, `frames-${label}-n`)], env);
+    if (!one.ok || !many.ok) {
+      errors.push(`frames ${label}: ${(one.ok ? many : one).json.error}`);
+      return { one: null, per: null };
+    }
+    const k = many.json.files.filter((f) => f.path).length;
+    const per = (many.json.seconds - one.json.seconds) / Math.max(1, k - 1);
+    return { one: r3(one.json.seconds), per: per > 0 ? r3(per) : null, n: k, noise: per <= 0 };
+  };
+  const d = await perPng(B.e1080moving, 'draft', 20, 'draft1080');
+  fr.coldS = d.one;
+  fr.draft1080S = d.per;
+  fr.draftRuns = d;
   if (o.k4) {
-    const k = await agent(['frames', B.e4kmoving, '--every', String(r3(o.seconds / 6)), '--out', join(out, 'frames-4k')], env);
-    fr.full4kS = k.ok && fr.coldS !== null ? r3(Math.max(0, k.json.seconds - fr.coldS) / Math.max(1, k.json.files.length - 1)) : null;
-    if (!k.ok) errors.push(`frames 4K: ${k.json.error}`);
+    const k = await perPng(B.e4kmoving, 'full', 6, 'full4k');
+    fr.full4kS = k.per;
+    fr.full4kRuns = k;
   }
-  if (!one.ok) errors.push(`frames cold: ${one.json.error}`);
-  if (!many.ok) errors.push(`frames draft: ${many.json.error}`);
   m.frames = fr;
 
   if (o.preview) {
@@ -503,7 +515,7 @@ export async function bench(o) {
   }
 
   const mem = totalmem();
-  const machine = { cpu: cpus()[0]?.model ?? 'unknown', memoryGB: Math.round(mem / 2 ** 30), gpu: m.e1080still?.gpu ?? null, note: Math.round(mem / 2 ** 30) === 8 ? 'measured on 8 GB' : 'not measured on 8 GB (the budgets are for an M1 8 GB)' };
+  const machine = { loadAverage: { start: r1(load0), end: r1(loadavg()[0]) }, cpu: cpus()[0]?.model ?? 'unknown', memoryGB: Math.round(mem / 2 ** 30), gpu: m.e1080still?.gpu ?? null, note: Math.round(mem / 2 ** 30) === 8 ? 'measured on 8 GB' : 'not measured on 8 GB (the budgets are for an M1 8 GB)' };
   const checks = checksFrom(m);
   const summary = { pass: checks.filter((c) => c.pass === true).length, fail: checks.filter((c) => c.pass === false).length, notMeasured: checks.filter((c) => c.pass === null).length };
   const result = {
