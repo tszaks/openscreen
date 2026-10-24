@@ -113,17 +113,90 @@ describe('install-skill.mjs', { timeout: 60_000 }, () => {
     expect(out.homes.map((h: any) => h.status)).toEqual(['linked', 'already linked']);
   });
 
-  it("the skill's Step 0 line finds the checkout from another folder", () => {
-    mkdirSync(join(home, '.claude'));
-    mkdirSync(join(home, '.codex'));
-    run();
-    const skill = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
-    for (const tool of ['claude', 'codex']) {
-      const line = skill.split('\n').find((l) => l.startsWith('OS=') && l.includes(`~/.${tool}/`));
-      expect(line, `Step 0 line for ~/.${tool}`).toBeDefined();
-      const os = execFileSync('/bin/sh', ['-c', `${line!.replace(/~\//g, '$HOME/')}; printf %s "$OS"`], { env: { ...process.env, HOME: home }, cwd: tmpdir(), encoding: 'utf8' });
-      expect(os).toBe(CHECKOUT);
+  // Step 0 runs as one block in one shell call (each tool call is a new shell), under zsh (the macOS shell,
+  // which does not split a variable into words) and bash. These run it against a fake checkout whose CLI is a
+  // stub and whose `npm run build` makes the stub ready, so no real build ever runs.
+  describe('Step 0, run as written', () => {
+    const block = () => {
+      const skill = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
+      const step0 = skill.slice(skill.indexOf('## Step 0'), skill.indexOf('## Step 1'));
+      const m = step0.match(/```sh\n([\s\S]*?)```/);
+      expect(m, 'Step 0 has one sh block').not.toBeNull();
+      return m![1];
+    };
+    const STUB = (ready: boolean) => `const c = process.argv[2];
+process.stdout.write(JSON.stringify(c === 'ops' ? { ok: true, ops: ${JSON.stringify(ready ? ['trim', 'phone3d', 'direct'] : ['trim'])} } : { ok: true, commands: { ${ready ? 'frames: "x", ' : ''}info: "x" } }));`;
+    /** A checkout with the real SKILL.md, a CLI stub, and a build script that makes the stub ready (or fails). */
+    function fakeCheckout(builds: boolean) {
+      const co = join(home, 'checkout with space');
+      mkdirSync(join(co, 'skills', 'openscreen'), { recursive: true });
+      mkdirSync(join(co, 'electron', 'scripts'), { recursive: true });
+      writeFileSync(join(co, 'skills', 'openscreen', 'SKILL.md'), readFileSync(join(SKILL_DIR, 'SKILL.md')));
+      const cli = join(co, 'electron', 'scripts', 'openscreen-agent.mjs');
+      writeFileSync(cli, STUB(false));
+      writeFileSync(join(co, 'electron', 'ready.mjs'), STUB(true));
+      const build = builds ? 'node -e "require(\'fs\').copyFileSync(\'ready.mjs\', \'scripts/openscreen-agent.mjs\')"' : 'echo compile error >&2; exit 1';
+      writeFileSync(join(co, 'electron', 'package.json'), JSON.stringify({ name: 'fake', private: true, scripts: { build } }));
+      return { co, cli };
     }
+    const runBlock = (shell: string) =>
+      spawnSync(shell, ['-c', block()], { env: { ...process.env, HOME: home, TMPDIR: home }, cwd: tmpdir(), encoding: 'utf8' });
+
+    for (const shell of ['/bin/zsh', '/bin/bash', '/bin/sh']) {
+      it(`${shell}: finds the checkout through either home, builds once when the CLI is not ready, prints READY with the full command`, () => {
+        const { co, cli } = fakeCheckout(true);
+        // Only ~/.codex has the skill: the ~/.claude line must not clobber the path.
+        mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
+        symlinkSync(join(co, 'skills', 'openscreen'), join(home, '.codex', 'skills', 'openscreen'));
+        const r = runBlock(shell);
+        expect(r.stdout, r.stderr).toContain(`building ${realpathSync(co)}/electron/dist (once)`);
+        expect(r.stdout.trim().split('\n').at(-1)).toBe(`READY: node ${realpathSync(cli)}`);
+        // Built now: a second run is READY with no build.
+        const again = runBlock(shell);
+        expect(again.stdout.trim()).toBe(`READY: node ${realpathSync(cli)}`);
+      });
+    }
+
+    it('prints NOT READY and the build output when the build fails, and never READY', () => {
+      const { co } = fakeCheckout(false);
+      mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+      symlinkSync(join(co, 'skills', 'openscreen'), join(home, '.claude', 'skills', 'openscreen'));
+      const r = runBlock('/bin/zsh');
+      expect(r.stdout).toContain(`NOT READY (checkout: ${realpathSync(co)})`);
+      expect(r.stdout).toContain('compile error');
+      expect(r.stdout).not.toContain('READY:');
+    });
+
+    it('prints NOT READY when the skill is not installed in either home', () => {
+      const r = runBlock('/bin/zsh');
+      expect(r.stdout).toContain('NOT READY (checkout: not found)');
+      expect(r.stdout).not.toContain('READY:');
+    });
+
+    it('install-skill.mjs links the real skill so Step 0 resolves this checkout', () => {
+      mkdirSync(join(home, '.claude'));
+      run();
+      const os = execFileSync('/bin/zsh', ['-c', `${block().split('\n')[0]}; printf %s "$OS"`], { env: { ...process.env, HOME: home }, cwd: tmpdir(), encoding: 'utf8' });
+      expect(os).toBe(CHECKOUT);
+    });
+
+    it("the READY probe's patterns match the real CLI's ops and help", async () => {
+      const { main } = await import('../src/node/agentCli');
+      const capture = async (cmd: string) => {
+        let text = '';
+        const write = process.stdout.write;
+        process.stdout.write = ((t: string) => ((text += t), true)) as typeof process.stdout.write;
+        try {
+          await main([cmd]);
+        } finally {
+          process.stdout.write = write;
+        }
+        return JSON.stringify(JSON.parse(text));
+      };
+      const probes = [...block().matchAll(/node "\$CLI" (ops|help) \| grep -q '([^']+)'/g)].map((m) => ({ cmd: m[1], pattern: m[2] }));
+      expect(probes.map((p) => p.pattern)).toEqual(['"phone3d"', '"direct"', '"frames"']);
+      for (const p of probes) expect(await capture(p.cmd), p.pattern).toContain(p.pattern);
+    });
   });
 
   it('refuses arguments, and no npm script runs it (a person runs it)', () => {
@@ -132,23 +205,36 @@ describe('install-skill.mjs', { timeout: 60_000 }, () => {
     for (const [name, cmd] of Object.entries(pkg.scripts as Record<string, string>)) expect(cmd, `npm script ${name}`).not.toMatch(/install-skill/);
   });
 
-  it('the skill is written for agents: name, trigger branches, Step 0, the loop, and AGENTS.md as the reference', () => {
+  it('the skill is written for agents: name, trigger branches, Step 0, the loop, and AGENTS.md as the reference', async () => {
     const skill = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
     const front = skill.match(/^---\n([\s\S]*?)\n---\n/)![1];
     expect(front).toMatch(/^name: openscreen$/m);
     const description = front.match(/^description: (.+)$/m)![1];
     for (const trigger of ['use openscreen', 'world class', '3D phone', 'export']) expect(description).toContain(trigger);
-    for (const step of ['$A info', '$A review', '$A polish', '$A direct', '$A frames $B --moves --sheet --draft', '$A validate', '$A export', 'review /abs/out.mp4']) {
+    for (const step of ['<cli> info <bundle>', '<cli> review <bundle>', '"op":"trim"', '<cli> polish <bundle>', '<cli> direct <bundle>', '<cli> frames <bundle> --moves --sheet --draft', '<cli> apply <bundle>', '<cli> validate <bundle>', '<cli> export <bundle>', '<cli> review /abs/out.mp4']) {
       expect(skill, step).toContain(step);
     }
-    // The loop order: review → direct → frames → apply → validate → export → review the mp4.
-    const at = (s: string) => skill.indexOf(s);
-    expect(at('$A review $B')).toBeLessThan(at('$A direct $B'));
-    expect(at('$A direct $B')).toBeLessThan(at('$A frames $B --moves --sheet --draft'));
-    expect(at('$A frames $B --moves --sheet --draft')).toBeLessThan(at('$A apply $B'));
-    expect(at('$A apply $B')).toBeLessThan(at('$A validate $B'));
-    expect(at('$A validate $B')).toBeLessThan(at('$A export $B'));
-    expect(at('$A export $B')).toBeLessThan(at('$A review /abs/out.mp4'));
+    // The loop order: review → cut to the best moments → polish → direct → frames → apply → validate → export → review the mp4.
+    const at = (t: string) => skill.indexOf(t);
+    const order = ['<cli> review <bundle>', '"op":"trim"', '<cli> polish <bundle>', '<cli> direct <bundle>', '<cli> frames <bundle> --moves --sheet --draft', "<cli> apply <bundle> '[…]'", '<cli> validate <bundle>', '<cli> export <bundle>', '<cli> review /abs/out.mp4'];
+    for (let i = 1; i < order.length; i++) expect(at(order[i - 1]), `${order[i - 1]} before ${order[i]}`).toBeLessThan(at(order[i]));
+    // No command goes through a variable holding "node …" (zsh runs that as one program name).
+    expect(skill).not.toMatch(/^\s*[A-Z]+="node /m);
+    expect(skill).not.toMatch(/\$[A-Z]+ (info|review|apply|polish|direct|frames|validate|export|ops|help|latest|undo)\b/);
+    // Every command the skill runs is one the CLI has.
+    const { main } = await import('../src/node/agentCli');
+    let text = '';
+    const write = process.stdout.write;
+    process.stdout.write = ((t: string) => ((text += t), true)) as typeof process.stdout.write;
+    try {
+      await main(['help']);
+    } finally {
+      process.stdout.write = write;
+    }
+    const commands = Object.keys(JSON.parse(text).commands);
+    const used = [...skill.matchAll(/<cli> ([a-z]+)/g)].map((m) => m[1]);
+    expect(used.length).toBeGreaterThan(10);
+    for (const c of used) expect(commands, `<cli> ${c}`).toContain(c);
     expect(skill).toContain('AGENTS.md');
     expect(skill).toContain('npm --prefix "$OS/electron" run build');
   });
