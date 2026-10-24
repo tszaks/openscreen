@@ -80,8 +80,18 @@ function fnv1a(bytes: Uint8ClampedArray | Uint8Array): string {
   return h.toString(16).padStart(8, '0');
 }
 
-/** Builds a harness: stubs the globals and imports a fresh compositor module. */
+// The stubs are globals, so one harness owns them at a time: the next
+// createHarness() waits until the current one is disposed.
+let released: Promise<void> = Promise.resolve();
+
+/** Builds a harness: stubs the globals and imports a fresh compositor module.
+ *  Only one harness is live at a time; dispose() it (in a finally) to let the
+ *  next one start. */
 export async function createHarness(): Promise<Harness> {
+  const previous = released;
+  let release!: () => void;
+  released = new Promise<void>((r) => (release = r));
+  await previous;
   const log: string[] = [];
   const names = new WeakMap<object, string>();
   const counters = new Map<string, number>();
@@ -181,8 +191,19 @@ export async function createHarness(): Promise<Harness> {
   // Left undefined on purpose: every scratch canvas then comes from `document`.
   delete (globalThis as Record<string, unknown>).OffscreenCanvas;
 
-  vi.resetModules();
-  const { CanvasCompositor } = await import('../../src/renderer/src/compositor');
+  let disposed = false;
+  let CanvasCompositor: typeof import('../../src/renderer/src/compositor').CanvasCompositor;
+  try {
+    vi.resetModules();
+    ({ CanvasCompositor } = await import('../../src/renderer/src/compositor'));
+  } catch (e) {
+    for (const [g, d] of saved) {
+      if (d) Object.defineProperty(globalThis, g, d);
+      else delete (globalThis as Record<string, unknown>)[g];
+    }
+    release();
+    throw e;
+  }
 
   const state = (c: CanvasCompositor) => ({
     contentRect: c.contentRect,
@@ -213,10 +234,13 @@ export async function createHarness(): Promise<Harness> {
       log.push(`# state ${format(state(c))}`);
     },
     dispose() {
+      if (disposed) return;
+      disposed = true;
       for (const [g, d] of saved) {
         if (d) Object.defineProperty(globalThis, g, d);
         else delete (globalThis as Record<string, unknown>)[g];
       }
+      release();
     },
   };
 }

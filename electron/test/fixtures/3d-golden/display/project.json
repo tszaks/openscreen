@@ -1,0 +1,129 @@
+{
+  "name": "Golden display",
+  "recording": {
+    "screenVideoFile": "screen.mp4",
+    "sourceKind": "display",
+    "sourceSize": {
+      "width": 1280,
+      "height": 800
+    },
+    "duration": 8
+  },
+  "clips": [
+    {
+      "id": "clip-1",
+      "sourceStart": 0,
+      "sourceEnd": 3.5,
+      "speed": 1
+    },
+    {
+      "id": "clip-2",
+      "sourceStart": 4.5,
+      "sourceEnd": 8,
+      "speed": 1.5
+    }
+  ],
+  "zoomKeyframes": [],
+  "manualZooms": [
+    {
+      "holdStart": 2.6,
+      "holdEnd": 3.8,
+      "inStart": 2,
+      "outEnd": 4.4,
+      "center": {
+        "x": 0.62,
+        "y": 0.4
+      },
+      "scale": 1.8
+    }
+  ],
+  "zoom": {
+    "autofocus": true,
+    "dwell": true,
+    "depth": 2,
+    "motionEvents": [],
+    "fromTaps": true
+  },
+  "audio": {
+    "clickSounds": false,
+    "voiceCleanup": false
+  },
+  "style": {
+    "paddingFraction": 0.08,
+    "cornerRadius": 24,
+    "shadowRadius": 60,
+    "shadowOpacity": 0.35,
+    "cropRect": null,
+    "background": {
+      "kind": "gradient",
+      "startHex": "#3a1c71",
+      "endHex": "#d76d77",
+      "angle": 120
+    },
+    "deviceFrame": "none",
+    "cursorSize": 0.016,
+    "cursorTrail": true,
+    "cursorHex": "#ffd60a",
+    "cursorShow": true,
+    "cursorOpacity": 0.85
+  },
+  "cameraOverlay": {
+    "enabled": false,
+    "corner": "bottomRight",
+    "sizeFraction": 0.325,
+    "circular": true
+  },
+  "phoneOverlay": {
+    "enabled": false,
+    "layout": "side-by-side-right",
+    "corner": "bottomRight",
+    "size": 0.9,
+    "frame": true,
+    "shadow": true,
+    "sound": false
+  },
+  "captions": [
+    {
+      "id": "cap-1",
+      "start": 0.3,
+      "end": 2.4,
+      "text": "Golden fixture: a display recording with a cut and a speed-up"
+    }
+  ],
+  "chapters": [
+    {
+      "id": "ch-1",
+      "start": 0,
+      "title": "Intro"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "ann-1",
+      "start": 4,
+      "end": 5.5,
+      "text": "Look here",
+      "band": 0,
+      "hex": "#ffffff"
+    }
+  ],
+  "exportPreset": "p1080",
+  "outputFPS": 30,
+  "device": {
+    "frame": false
+  },
+  "taps": [],
+  "tapStyle": {
+    "show": true,
+    "style": "ripple",
+    "color": "white",
+    "sizePt": 52
+  },
+  "waits": [],
+  "tapsAnalyzed": true,
+  "layout": {
+    "presetId": "none",
+    "background": "style"
+  },
+  "tracks": []
+}

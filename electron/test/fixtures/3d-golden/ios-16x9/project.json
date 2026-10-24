@@ -1,0 +1,171 @@
+{
+  "name": "Golden iPhone 16:9",
+  "recording": {
+    "screenVideoFile": "screen.mp4",
+    "sourceKind": "iosDevice",
+    "sourceSize": {
+      "width": 590,
+      "height": 1278
+    },
+    "duration": 8
+  },
+  "clips": [
+    {
+      "id": "clip-1",
+      "sourceStart": 0,
+      "sourceEnd": 8,
+      "speed": 1
+    }
+  ],
+  "zoomKeyframes": [],
+  "manualZooms": [
+    {
+      "holdStart": 3,
+      "holdEnd": 4.2,
+      "inStart": 2.4,
+      "outEnd": 4.8,
+      "center": {
+        "x": 0.4,
+        "y": 0.6
+      },
+      "scale": 1.4
+    }
+  ],
+  "zoom": {
+    "autofocus": true,
+    "dwell": true,
+    "depth": 1.6,
+    "motionEvents": [],
+    "fromTaps": true
+  },
+  "audio": {
+    "clickSounds": false,
+    "voiceCleanup": false
+  },
+  "style": {
+    "paddingFraction": 0.08,
+    "cornerRadius": 24,
+    "shadowRadius": 60,
+    "shadowOpacity": 0.35,
+    "cropRect": null,
+    "background": {
+      "kind": "solid",
+      "hex": "#1d2433"
+    },
+    "deviceFrame": "none",
+    "cursorSize": 0.012,
+    "cursorTrail": false,
+    "cursorHex": "#ffffff",
+    "cursorShow": true,
+    "cursorOpacity": 0.85
+  },
+  "cameraOverlay": {
+    "enabled": false,
+    "corner": "bottomRight",
+    "sizeFraction": 0.325,
+    "circular": true
+  },
+  "phoneOverlay": {
+    "enabled": false,
+    "layout": "side-by-side-right",
+    "corner": "bottomRight",
+    "size": 0.9,
+    "frame": true,
+    "shadow": true,
+    "sound": false
+  },
+  "captions": [],
+  "chapters": [],
+  "annotations": [
+    {
+      "id": "ann-1",
+      "start": 0.5,
+      "end": 3,
+      "text": "Middle band",
+      "band": 1,
+      "hex": "#ffffff"
+    }
+  ],
+  "exportPreset": "p1080",
+  "outputFPS": 30,
+  "device": {
+    "frame": true,
+    "modelId": "iphone-17-pro",
+    "finishId": "cosmic-orange"
+  },
+  "taps": [
+    {
+      "id": "tap-1",
+      "t": 1.2,
+      "x": 0.3,
+      "y": 0.62,
+      "kind": "tap",
+      "confidence": 0.9,
+      "settleT": 1.6
+    },
+    {
+      "id": "tap-2",
+      "t": 3.9,
+      "x": 0.5,
+      "y": 0.45,
+      "endX": 0.5,
+      "endY": 0.7,
+      "kind": "swipe",
+      "duration": 0.3,
+      "confidence": 0.75,
+      "settleT": 4.5
+    },
+    {
+      "id": "tap-3",
+      "t": 5.6,
+      "x": 0.72,
+      "y": 0.2,
+      "kind": "longpress",
+      "duration": 0.6,
+      "confidence": 0.8,
+      "settleT": 6.4
+    },
+    {
+      "id": "tap-4",
+      "t": 6.9,
+      "x": 0.4,
+      "y": 0.85,
+      "kind": "typing",
+      "duration": 0.5,
+      "confidence": 0.7,
+      "settleT": 7.5
+    }
+  ],
+  "tapStyle": {
+    "show": true,
+    "style": "pulse",
+    "color": "accent",
+    "sizePt": 64
+  },
+  "waits": [
+    {
+      "start": 0,
+      "end": 0.6,
+      "edge": "start"
+    },
+    {
+      "start": 2.2,
+      "end": 3.4
+    },
+    {
+      "start": 7.6,
+      "end": 8,
+      "edge": "end"
+    }
+  ],
+  "tapsAnalyzed": true,
+  "layout": {
+    "presetId": "landscape-16x9",
+    "background": "style",
+    "titleCard": {
+      "title": "Sideways",
+      "subtitle": "Title beside the phone"
+    }
+  },
+  "tracks": []
+}

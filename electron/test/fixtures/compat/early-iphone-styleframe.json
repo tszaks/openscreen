@@ -1,0 +1,98 @@
+{
+  "recording": {
+    "screenVideoFile": "screen.mov",
+    "audioFile": "audio.wav",
+    "sourceKind": "iosDevice",
+    "sourceSize": {
+      "width": 1179,
+      "height": 2556
+    },
+    "duration": 19.2
+  },
+  "clips": [
+    {
+      "id": "c1",
+      "sourceStart": 0.5,
+      "sourceEnd": 12,
+      "speed": 1
+    },
+    {
+      "id": "c2",
+      "sourceStart": 14,
+      "sourceEnd": 19.2,
+      "speed": 2
+    }
+  ],
+  "zoomKeyframes": [],
+  "manualZooms": [
+    {
+      "holdStart": 4,
+      "holdEnd": 5,
+      "inStart": 3.4,
+      "outEnd": 5.6,
+      "center": {
+        "x": 0.5,
+        "y": 0.3
+      },
+      "scale": 1.6
+    }
+  ],
+  "zoom": {
+    "autofocus": true,
+    "dwell": true,
+    "depth": 1.6,
+    "motionEvents": [
+      {
+        "time": 2.2,
+        "x": 0.4,
+        "y": 0.6,
+        "kind": "clickDown"
+      }
+    ]
+  },
+  "audio": {
+    "clickSounds": true,
+    "voiceCleanup": true
+  },
+  "style": {
+    "paddingFraction": 0.06,
+    "cornerRadius": 0,
+    "shadowRadius": 40,
+    "shadowOpacity": 0.3,
+    "cropRect": null,
+    "background": {
+      "kind": "solid",
+      "hex": "#000000"
+    },
+    "deviceFrame": "phone",
+    "cursorSize": 0.012,
+    "cursorTrail": false,
+    "cursorHex": "#ffffff"
+  },
+  "cameraOverlay": {
+    "enabled": false,
+    "corner": "bottomRight",
+    "sizeFraction": 0.325,
+    "circular": true
+  },
+  "captions": [],
+  "chapters": [
+    {
+      "id": "h1",
+      "start": 0,
+      "title": "Start"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "a1",
+      "start": 2,
+      "end": 4,
+      "text": "Tap",
+      "band": 2,
+      "hex": "#ffffff"
+    }
+  ],
+  "exportPreset": "p1080",
+  "outputFPS": 30
+}
