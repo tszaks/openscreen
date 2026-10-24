@@ -13,7 +13,10 @@ electron/
 ├── native/
 │   └── ios-capture/  Swift helper for wired iPhone and iPad capture
 ├── scripts/
-│   └── openscreen-agent.mjs  Command-line entry point for agents
+│   ├── openscreen-agent.mjs  Command-line entry point for agents
+│   ├── install-skill.mjs     Links the openscreen agent skill (R/skills/openscreen) into ~/.claude and ~/.codex
+│   ├── review3d.mjs          3D review page; bench3d.mjs: 3D performance budgets
+│   └── golden/               Flat-identity gate (main vs this branch, frame by frame)
 └── test/           Vitest suites
 ```
 
@@ -39,13 +42,20 @@ Everything that decides how a video *looks and moves* is a pure function here, s
 | `canvasLayers.ts` | One layer model for the recording, camera, phone, text and title: stacking order, hit-testing (topmost wins), snapping across layers, moving, nudging, resizing limits, reset and hide |
 | `importVideo.ts` | Import Video…: the bundle name and its de-duplication, whether a video is an iPhone/iPad screen, whether Chromium plays it as it is or it needs converting, and what a file dropped on the window does |
 | `previewPointer.ts` | What a press on the editor's preview does, in order: crop, place a tap, the selected layer's corner handle, the topmost layer, empty canvas |
+| `phone3d/` | The 3D phone as pure math and data: the model and its normalizer, easing, poses over time, the camera and projection, shot recipes, the edit ops, the Auto 3D planner and the warnings (see [3d-phone/ARCHITECTURE.md](3d-phone/ARCHITECTURE.md)) |
+| `devices3d.ts` | What the 3D phone needs beyond `devices.ts`: depth, edge shape, back finish and camera plateau per model, each row with its Apple source |
+| `focusSegments.ts` | Every zoom the editor plays (autofocus, tap zooms, manual zooms) from one function, so the editor, the CLI and the 3D planner see the same list |
 | `types.ts` | The project model, defaults, migration of older projects, reset |
 
 ## Rendering and export
 
 The editor's `CanvasCompositor` draws the backdrop, then the canvas layers in the project's order (`shared/canvasLayers.ts`). The order they have always had is recording (with its cursor, ripples and taps) → camera → phone layer → keystrokes and device frame → text overlays → captions → title card; once the layers are reordered by hand, the keystrokes and device frame ride on the recording and captions stay on top. Export runs **the same compositor** and pipes raw frames into ffmpeg (rawvideo → H.264), so the exported video always matches the preview. Audio follows the cuts through an ffmpeg filter graph (`atrim` / `atempo` / `concat`), with click sounds mixed in. With "Phone sound" on, a Mac + iPhone take's phone audio is shifted onto the Mac's clock and goes through the same cuts. Items on the audio tracks are cut, looped, faded and delayed to their output time (`atrim` / `aloop` / `afade` / `adelay`) and mixed over the same silent bed, so the file always ends where the video ends.
 
-Headless export (`OpenScreen --export <bundle> --out file.mp4`) runs the real renderer with no window and no dialogs.
+Headless export (`OpenScreen --export <bundle> --out file.mp4`) runs the real renderer with no window and no dialogs. With `--frames t1,t2,…` it writes still PNGs instead (the agent CLI's `frames`), each the export frame `round(t·fps)`, drawn by the same compositor with the export's inputs.
+
+## 3D phone
+
+An iPhone or iPad take can show its device frame as a lit 3D phone that turns, leans and moves over time, with a shadow, depth of field and motion blur. All of it is one optional key, `project.phone3d`; without it a project renders exactly as before, and three.js is never loaded. The compositor draws the 3D phone in the recording's layer slot from `renderer/src/phone3d/` (the only code that imports three); everything that decides where the phone is and what it does is pure code in `shared/phone3d/`, shared by the editor, the agent CLI and the export. Every 3D edit, in the editor or from an agent, is one of the shared edit ops. The full picture is in [3d-phone/ARCHITECTURE.md](3d-phone/ARCHITECTURE.md); the design and its reasons are in [3d-phone/SPEC.md](3d-phone/SPEC.md).
 
 ## iPhone and iPad capture
 
@@ -84,7 +94,8 @@ A recording is a folder named `<name>.openscreen`:
 | `screen.mov` / `screen.webm` | The original recording, never modified (an imported video keeps its own extension, or is `screen.mp4` when converted) |
 | `cam.webm` | Camera overlay, if recorded |
 | `phone.mov` | The iPhone screen recorded alongside a Mac take, if any |
-| `project.json` | Every edit: clips, zooms, taps, captions, style, layout |
+| `project.json` | Every edit: clips, zooms, taps, captions, style, layout, the 3D phone |
+| `analysis/scenes.json` | Scene changes found by ffmpeg (Auto 3D and `review`), cached against the video's size and date |
 | `cursor.json`, `keystrokes.json` | Input tracks for Mac recordings |
 | `transcript.json`, `audio.wav` | Created on demand for captions |
 | `audio/` | Music and voiceover files added to the project's audio track (copies, so the bundle stays self-contained) |
