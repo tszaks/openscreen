@@ -191,9 +191,29 @@ export async function framesCmd(argv: string[], deps: FramesDeps) {
       const asked = sent.get(s.t)?.t ?? s.t;
       if (!s.path) return { t: asked, error: s.error ?? 'not rendered' };
       const at = s.at ?? s.t;
-      // The text the still drew (PNG px), as the app reported it; absent from an app built before textBoxes.
-      const textBoxes = s.textBoxes?.map(({ kind, rect: r }) => ({ kind, rect: { x: round3(r.x), y: round3(r.y), w: round3(r.w), h: round3(r.h) } }));
-      return { t: asked, frame: s.frame ?? null, at: r6(at), path: s.path, ...poseInfo(p, at), ...(textBoxes ? { textBoxes } : {}) };
+      // The text the still drew and the flat device frame's edges (PNG px), as
+      // the app reported them; absent from an app built before they existed.
+      const rect3 = (r: { x: number; y: number; w: number; h: number }) => ({ x: round3(r.x), y: round3(r.y), w: round3(r.w), h: round3(r.h) });
+      const textBoxes = s.textBoxes?.map(({ kind, rect: r, text, drawn }) => ({
+        kind,
+        rect: rect3(r),
+        ...(text !== undefined ? { text } : {}),
+        ...(drawn ? { drawn: rect3(drawn) } : {}),
+      }));
+      const df = s.deviceFrame;
+      const deviceFrame =
+        df === undefined
+          ? undefined
+          : df && { body: rect3(df.body), screen: rect3(df.screen), edges: df.edges.map((e) => e.map(([x, y]) => [round3(x), round3(y)])) };
+      return {
+        t: asked,
+        frame: s.frame ?? null,
+        at: r6(at),
+        path: s.path,
+        ...poseInfo(p, at),
+        ...(textBoxes ? { textBoxes } : {}),
+        ...(deviceFrame !== undefined ? { deviceFrame } : {}),
+      };
     }),
     ...past.map((t) => ({ t, error: 'past the end' })),
   ].sort((x, y) => x.t - y.t);

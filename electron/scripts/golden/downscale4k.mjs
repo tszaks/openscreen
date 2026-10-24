@@ -1,18 +1,38 @@
 #!/usr/bin/env node
-// The 4K-downscale check (SPEC §4.2, D18, owner decision 8). With
+// The 4K-downscale check (SPEC §4.2, D18, owner decisions 8 and 14). With
 // `exportPreset: 'uhd4k'` a social/web layout preset renders at a 2160 short
 // side, and the layout is meant to be resolution-independent. Each still is
-// checked in two parts:
+// checked in three parts:
 //
 //   picture  The 4K frame, area-downscaled to the 1080-class size, matches
 //            the 1080-class frame at PSNR >= 40 dB (RGB) over every pixel
-//            OUTSIDE the text boxes.
+//            OUTSIDE the text boxes and the device-frame edge bands.
 //   layout   Inside the text boxes the gate is layout, not pixels: the
 //            compositor's own text boxes (CanvasCompositor.textBoxes, which
 //            `frames` reports per still: caption pills, keycaps, text
-//            overlays, the title card) are the same boxes in the same order,
-//            and each one's x, y, width and height match within 1 px at 1080
+//            overlays, and each title and subtitle line the title card drew)
+//            are the same boxes with the same text in the same order, and
+//            each one's x, y, width and height match within 1 px at 1080
 //            scale (the 4K box divided by the scale factor).
+//   frame    The flat device frame's body rect and screen rect (`frames`
+//            reports them per still from the compositor's contentRect and
+//            screenMap: HeadlessFrame.deviceFrame) match within 1 px at 1080
+//            scale.
+//
+// Why the frame's two hard edges are out of the picture gate (owner decision
+// 14): mobile/deviceFrame.ts cuts the screen hole half an OUTPUT pixel in (so
+// the bezel overlaps the content's anti-aliased edge) and strokes the outer
+// edge a quarter output pixel in. That is right per output pixel at every
+// size, so at 4K those insets are half as wide at 1080 scale and a downscaled
+// 4K frame differs from the 1080 frame along them by design (the 4K hole
+// edge is a quarter 1080 px further out, so the pixels it touches are within
+// 0.75 px of the 1080 hole edge). A band BAND_PX wide centred on the 1080
+// still's outer body edge and screen-hole edge is left out of the PSNR. It is
+// centred on the 1080 geometry only, never widened by the 4K side's: a 4K
+// frame that is moved, or whose bezel is wider, by 1 px at 1080 scale puts
+// its edge outside the band and fails the picture gate, and the frame part
+// checks the geometry the compositor placed. Everything else in the frame
+// (the metal band, bezel, island, buttons, shadow) stays in the 40 dB gate.
 //
 // Why text is out of the picture gate: glyphs never scale exactly (macOS
 // system font optical sizing, glyph-edge anti-aliasing), and the owner ruled
@@ -52,6 +72,8 @@ export const DEFAULT_TOL_PX = 1;
 /** Mask growth around each text box: MASK_PAD_PX + MASK_PAD_FRAC × its short side, px at 1080 scale. */
 export const MASK_PAD_PX = 2;
 export const MASK_PAD_FRAC = 0.1;
+/** Width of the band left out along each device-frame edge, px at 1080 scale, centred on the edge (owner decision 14). */
+export const BAND_PX = 1.5;
 const DEFAULT_OUT = join(tmpdir(), 'openscreen-golden', 'downscale4k');
 const AGENT = join(ELECTRON_DIR, 'scripts', 'openscreen-agent.mjs');
 
@@ -86,6 +108,39 @@ export function textMask(boxes, w, h, { padPx = MASK_PAD_PX, padFrac = MASK_PAD_
 }
 
 /**
+ * Marks in `mask` (a `w` × `h` frame, 1 = left out) every pixel whose centre
+ * is within `half` px of one of the closed outlines in `edges` (each a list
+ * of [x, y] points in that frame's px, the first not repeated). Returns
+ * `mask`.
+ */
+export function edgeBand(edges, w, h, mask = new Uint8Array(w * h), half = BAND_PX / 2) {
+  for (const pts of edges) {
+    for (let i = 0; i < pts.length; i++) {
+      const [ax, ay] = pts[i];
+      const [bx, by] = pts[(i + 1) % pts.length];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      const x0 = Math.max(0, Math.floor(Math.min(ax, bx) - half - 1));
+      const x1 = Math.min(w - 1, Math.ceil(Math.max(ax, bx) + half + 1));
+      const y0 = Math.max(0, Math.floor(Math.min(ay, by) - half - 1));
+      const y1 = Math.min(h - 1, Math.ceil(Math.max(ay, by) + half + 1));
+      for (let y = y0; y <= y1; y++) {
+        const cy = y + 0.5;
+        for (let x = x0; x <= x1; x++) {
+          const cx = x + 0.5;
+          const t = len2 ? Math.max(0, Math.min(1, ((cx - ax) * dx + (cy - ay) * dy) / len2)) : 0;
+          const ex = ax + t * dx - cx;
+          const ey = ay + t * dy - cy;
+          if (ex * ex + ey * ey <= half * half) mask[y * w + x] = 1;
+        }
+      }
+    }
+  }
+  return mask;
+}
+
+/**
  * PSNR of two RGB24 frames `w` px wide over the pixels of rows [y0, y1)
  * whose mask value is `where` (0 = outside the text, 1 = inside), with the
  * number of pixels it covered. Infinity when they are identical there; NaN
@@ -109,51 +164,88 @@ export function maskedPsnr(a, b, mask, w, { where = 0, y0 = 0, y1 = mask.length 
   return { db: mse === 0 ? Infinity : 10 * Math.log10((255 * 255) / mse), pixels: n };
 }
 
+/** Each of x, y, w, h of `big` / k against `small`: the largest difference, and a sentence per one over `tol`. */
+function rectDelta(label, small, big, k, tol, problems) {
+  let max = 0;
+  for (const key of ['x', 'y', 'w', 'h']) {
+    const d = Math.abs(big[key] / k - small[key]);
+    max = Math.max(max, d);
+    if (!(d <= tol)) problems.push(`${label} ${key}: 1080 ${r2(small[key])} px, 4K/${k} ${r2(big[key] / k)} px (off by ${r2(d)} > ${tol})`);
+  }
+  return max;
+}
+
 /**
  * The layout half: the 1080 still's text boxes against the 4K still's,
- * divided by `k` (4K px per 1080 px). Same count, same kinds in the same
- * order, and every x, y, w, h within `tol` px. Returns the largest
- * difference and a sentence per problem.
+ * divided by `k` (4K px per 1080 px). Same count, same kinds and line texts
+ * in the same order (a title that wraps differently fails here), and every
+ * x, y, w, h within `tol` px. Returns the largest difference and a sentence
+ * per problem.
  */
 export function layoutCheck(small, big, k, tol = DEFAULT_TOL_PX) {
   const problems = [];
   let maxDelta = 0;
-  const kinds = (bs) => bs.map((b) => b.kind).join(',');
+  const kinds = (bs) => bs.map((b) => (b.text === undefined ? b.kind : `${b.kind} "${b.text}"`)).join(', ');
   if (kinds(small) !== kinds(big)) {
     problems.push(`text boxes differ: 1080 has [${kinds(small)}], 4K has [${kinds(big)}]`);
     return { ok: false, maxDelta: Infinity, problems };
   }
   small.forEach((a, i) => {
-    const b = big[i].rect;
-    for (const key of ['x', 'y', 'w', 'h']) {
-      const d = Math.abs(b[key] / k - a.rect[key]);
-      maxDelta = Math.max(maxDelta, d);
-      if (!(d <= tol)) problems.push(`${a.kind} #${i} ${key}: 1080 ${r2(a.rect[key])} px, 4K/${k} ${r2(b[key] / k)} px (off by ${r2(d)} > ${tol})`);
-    }
+    maxDelta = Math.max(maxDelta, rectDelta(`${a.kind} #${i}${a.text === undefined ? '' : ` "${a.text}"`}`, a.rect, big[i].rect, k, tol, problems));
   });
   return { ok: problems.length === 0, maxDelta: r2(maxDelta), problems };
 }
 
 /**
- * One still, both parts. `a` is the 1080 frame and `b` the 4K frame
- * area-downscaled to it, RGB24 `w` × `h`; `boxes` / `boxes4k` are each
- * side's text boxes in its own PNG px; `k` = 4K px per 1080 px. The picture
- * PSNR is over the pixels outside the union of both sides' text masks; the
- * PSNR inside is reported, never gated.
+ * The frame half (owner decision 14): the 1080 still's device frame against
+ * the 4K still's (HeadlessFrame.deviceFrame, or null when no flat frame was
+ * drawn), body rect and screen rect within `tol` px at 1080 scale. A frame on
+ * one side only fails.
  */
-export function compareStill({ a, b, w, h, boxes, boxes4k, k, min = DEFAULT_MIN_DB, tol = DEFAULT_TOL_PX }) {
-  const down = boxes4k.map(({ kind, rect: r }) => ({ kind, rect: { x: r.x / k, y: r.y / k, w: r.w / k, h: r.h / k } }));
-  const mask = textMask([...boxes, ...down], w, h);
+export function frameLayoutCheck(small, big, k, tol = DEFAULT_TOL_PX) {
+  if (!small && !big) return { ok: true, frame: false, maxDelta: 0, problems: [] };
+  if (!small || !big) return { ok: false, frame: true, maxDelta: Infinity, problems: [`device frame drawn at ${small ? '1080 only' : '4K only'}`] };
+  const problems = [];
+  const maxDelta = Math.max(rectDelta('frame body', small.body, big.body, k, tol, problems), rectDelta('frame screen', small.screen, big.screen, k, tol, problems));
+  return { ok: problems.length === 0, frame: true, maxDelta: r2(maxDelta), problems };
+}
+
+/**
+ * One still, all three parts. `a` is the 1080 frame and `b` the 4K frame
+ * area-downscaled to it, RGB24 `w` × `h`; `boxes` / `boxes4k` are each
+ * side's text boxes and `frame` / `frame4k` each side's device frame
+ * (HeadlessFrame.deviceFrame, or null), in its own PNG px; `k` = 4K px per
+ * 1080 px. The picture PSNR is over the pixels outside the union of both
+ * sides' text masks and the 1080 frame's edge band; the PSNR of what is left
+ * out is reported, never gated.
+ */
+export function compareStill({ a, b, w, h, boxes, boxes4k, frame = null, frame4k = null, k, min = DEFAULT_MIN_DB, tol = DEFAULT_TOL_PX }) {
+  const div = (r) => ({ x: r.x / k, y: r.y / k, w: r.w / k, h: r.h / k });
+  const down = boxes4k.map(({ rect, drawn, ...rest }) => ({ ...rest, rect: div(rect), ...(drawn ? { drawn: div(drawn) } : {}) }));
+  // A title line is masked over both its layout box and the box it was drawn in (they differ by the font's optical sizing).
+  const both = (bs) => bs.flatMap((x) => (x.drawn ? [x, { kind: x.kind, rect: x.drawn }] : [x]));
+  const mask = textMask([...both(boxes), ...both(down)], w, h);
+  const textPixels = mask.reduce((n, v) => n + v, 0);
+  // The frame-edge band: on the 1080 still's edges only (see the header).
+  if (frame) edgeBand(frame.edges, w, h, mask);
   const outside = maskedPsnr(a, b, mask, w, { where: 0 });
   const inside = maskedPsnr(a, b, mask, w, { where: 1 });
   const layout = layoutCheck(boxes, boxes4k, k, tol);
+  const frameLayout = frameLayoutCheck(frame, frame4k, k, tol);
   const picture = outside.pixels > 0 && outside.db >= min;
   const bands = h > w ? 16 : 9;
   return {
-    pass: picture && layout.ok,
-    picture: { pass: picture, db: r2(outside.db), maskedFraction: r2(1 - outside.pixels / (w * h)) },
+    pass: picture && layout.ok && frameLayout.ok,
+    picture: {
+      pass: picture,
+      db: r2(outside.db),
+      maskedFraction: r2(1 - outside.pixels / (w * h)),
+      // The share of the picture left out as frame-edge band (pixels also in a text box count as text).
+      bandFraction: Math.round(((w * h - outside.pixels - textPixels) / (w * h)) * 10000) / 10000,
+    },
     text: { db: r2(inside.db) },
     layout,
+    frame: frameLayout,
     // Where the picture differs: the outside-text PSNR of each horizontal band.
     bands: Array.from({ length: bands }, (_, i) => {
       const y0 = Math.round((i * h) / bands);
@@ -225,7 +317,13 @@ export async function downscale4k({ out = DEFAULT_OUT, only, times = DEFAULT_TIM
       if (!Array.isArray(f.textBoxes) || !Array.isArray(g.textBoxes)) throw new Error(`frames reported no textBoxes for ${name} at ${f.t} s: rebuild (npm run build)`);
       const a = rgb(ffmpeg, f.path, w, h);
       const b = rgb(ffmpeg, g.path, w, h);
-      stills.push({ t: f.t, ...compareStill({ a, b, w, h, boxes: f.textBoxes, boxes4k: g.textBoxes, k, min, tol }), textBoxes: f.textBoxes.map((x) => x.kind) });
+      // Likewise the device frame (null = none drawn; undefined = an app built before deviceFrame).
+      if (f.deviceFrame === undefined || g.deviceFrame === undefined) throw new Error(`frames reported no deviceFrame for ${name} at ${f.t} s: rebuild (npm run build)`);
+      stills.push({
+        t: f.t,
+        ...compareStill({ a, b, w, h, boxes: f.textBoxes, boxes4k: g.textBoxes, frame: f.deviceFrame, frame4k: g.deviceFrame, k, min, tol }),
+        textBoxes: f.textBoxes.map((x) => (x.text === undefined ? x.kind : `${x.kind}: ${x.text}`)),
+      });
     }
     fixtures.push({ name, size: { w, h }, size4k: big, k, stills });
   }

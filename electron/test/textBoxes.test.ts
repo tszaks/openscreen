@@ -72,7 +72,12 @@ describe('CanvasCompositor.textBoxes', () => {
     expect((await drawAt(project, projectCanvasSize(project), 1)).boxes).toEqual([]);
   });
 
-  it('lays text out independently of resolution: the 4K boxes are the 1080 boxes times 2 (the layout half of the 4K-downscale check)', async () => {
+  // The title card's lines are not compared here: the card picks its font
+  // size with whole-pixel steps, so its lines at 4K are not exactly twice the
+  // 1080 ones (requests.md R4). scripts/golden/downscale4k.mjs compares them
+  // line by line in the real app (test/titleLineBoxes.test.ts checks those
+  // line boxes against the drawing).
+  it("lays its boxes out independently of resolution: at 4K every box, and the title card's area, is the 1080 one times 2", async () => {
     for (const name of ['ios-social', 'ios-16x9']) {
       const { project } = loadGoldenFixture(name);
       // Set as the CLI sets it (apply exportSettings): the layout preset, and so the canvas, follow exportPreset (D18).

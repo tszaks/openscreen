@@ -508,8 +508,10 @@ export class CanvasCompositor {
       const placed = placeContent(base, title.transform, canvasSize);
       boxes.set('title', { id: 'title', rect: placed, base });
       draws.set('title', () => {
-        this.textBoxes.push({ kind: 'title', rect: { ...placed } });
-        drawTitleCard(ctx, placed, { title: title.title, subtitle: title.subtitle }, { align: layout.titleTextAlign, valign: layout.titleAlign });
+        const align = layout.titleTextAlign;
+        const valign = layout.titleAlign;
+        const m = drawTitleCard(ctx, placed, { title: title.title, subtitle: title.subtitle }, { align, valign });
+        this.textBoxes.push({ kind: 'title', rect: { ...placed }, card: { ...m, align, valign } });
       });
     }
     // What rides on the recording: keystroke keycaps (bottom-left inside it)

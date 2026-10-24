@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { exportFrameCount, frameFileName, framesOutputPath, MAX_FRAMES, parseHeadlessArgs, sheetLayout, snapToExportFrame } from '../src/shared/headless';
 import { holdPreview, runFrames, type FramesCompositor, type FramesRun } from '../src/renderer/src/headlessFrames';
 import type { TextBox } from '../src/shared/textBoxes';
+import { frameEdges, scaleFrameEdges } from '../src/shared/frameEdges';
+import { titleLineBoxes } from '../src/renderer/src/titleLineBoxes';
+import type { Rect } from '../src/shared/deviceGeometry';
 import { mockCanvas } from './helpers/mockCanvas';
 import { phoneProject, with3d } from './helpers/phone3dFixtures';
 
@@ -161,15 +164,18 @@ const boxesAt = (t: number): TextBox[] => [
   { kind: 'title', rect: { x: 40, y: 60, w: 1000, h: 200 } },
 ];
 
-function fakeComp(W = 1080, H = 1920) {
+function fakeComp(W = 1080, H = 1920, over: { contentRect?: Rect; screen?: Rect; drew3d?: boolean; boxes?: (t: number) => TextBox[] } = {}) {
   const renders: { t: number; input: unknown }[] = [];
   const comp: FramesCompositor = {
+    contentRect: over.contentRect ?? null,
+    screenMap: over.screen ? { screen: over.screen } : null,
+    drew3d: over.drew3d ?? false,
     canvas: { toBlob: (cb: (b: Blob) => void) => cb(new Blob([`frame@${renders.at(-1)?.t}`])) } as unknown as HTMLCanvasElement,
     canvasSize: { width: W, height: H },
     render: (t, input) => renders.push({ t, input }),
     get textBoxes() {
       const last = renders.at(-1);
-      return last ? boxesAt(last.t) : [];
+      return last ? (over.boxes ?? boxesAt)(last.t) : [];
     },
   };
   return { comp, renders };
@@ -179,6 +185,7 @@ function fakeRun(over: Partial<FramesRun> = {}) {
   const written: { name: string; text: string }[] = [];
   const seeks: number[] = [];
   const run: FramesRun = {
+    project: phoneProject(),
     times: [0, 2, 9],
     fps: 30,
     outputDuration: 8,
@@ -243,8 +250,8 @@ describe('runFrames', () => {
       out: '/out',
       frames: 2,
       stills: [
-        { t: 0, frame: 0, at: 0, path: '/out/f-0000.000.png', textBoxes: boxesAt(0) },
-        { t: 2, frame: 60, at: 2, path: '/out/f-0002.000.png', textBoxes: boxesAt(2) },
+        { t: 0, frame: 0, at: 0, path: '/out/f-0000.000.png', textBoxes: boxesAt(0), deviceFrame: null },
+        { t: 2, frame: 60, at: 2, path: '/out/f-0002.000.png', textBoxes: boxesAt(2), deviceFrame: null },
         { t: 9, error: 'past the end' },
       ],
       size: { w: 1080, h: 1920 },
@@ -265,9 +272,9 @@ describe('runFrames', () => {
     expect(r.frames).toBe(2);
     expect(r.stills).toEqual([
       // A time on an already drawn frame reports that frame's PNG and text boxes.
-      { t: 4.25, frame: 128, at: 128 / 30, path: '/out/f-0004.267.png', textBoxes: boxesAt(128 / 30) },
-      { t: 4.26, frame: 128, at: 128 / 30, path: '/out/f-0004.267.png', textBoxes: boxesAt(128 / 30) },
-      { t: 7.99, frame: 239, at: 239 / 30, path: '/out/f-0007.967.png', textBoxes: boxesAt(239 / 30) },
+      { t: 4.25, frame: 128, at: 128 / 30, path: '/out/f-0004.267.png', textBoxes: boxesAt(128 / 30), deviceFrame: null },
+      { t: 4.26, frame: 128, at: 128 / 30, path: '/out/f-0004.267.png', textBoxes: boxesAt(128 / 30), deviceFrame: null },
+      { t: 7.99, frame: 239, at: 239 / 30, path: '/out/f-0007.967.png', textBoxes: boxesAt(239 / 30), deviceFrame: null },
       { t: 8, error: 'past the end' },
     ]);
   });
@@ -344,6 +351,40 @@ describe('runFrames', () => {
       { kind: 'caption', rect: { x: 51, y: 750, w: 200, h: 40 } },
       { kind: 'title', rect: { x: 20, y: 30, w: 500, h: 100 } },
     ]);
+  });
+
+  it('reports a title card as its drawn lines, measured on its own canvas, in PNG px', async () => {
+    const made = stubDocument();
+    const card = { titlePx: 120, subtitlePx: 55, titleLines: ['Tap anywhere'], subtitleLines: ['to start', 'again'], blockHeight: 400, align: 'center' as const, valign: 'bottom' as const };
+    const rect = { x: 40, y: 1200, w: 1000, h: 500 };
+    const { comp } = fakeComp(1080, 1920, { boxes: () => [{ kind: 'caption', rect: { x: 1, y: 2, w: 3, h: 4 } }, { kind: 'title', rect, card }] });
+    const r = await runFrames(comp, fakeRun({ times: [0], scale: 0.5 }).run);
+    // The mock canvas measures each character at half the font size it was given, so the font set before measuring shows.
+    const lines = titleLineBoxes(rect, card, (font, _l, t) => t.length * Number(/(\d+(?:\.\d+)?)px/.exec(font)![1]) * 0.5);
+    expect(lines.map((l) => l.text)).toEqual(['Tap anywhere', 'to start', 'again']);
+    expect(r.stills?.[0].textBoxes).toEqual([
+      { kind: 'caption', rect: { x: 0.5, y: 1, w: 1.5, h: 2 } },
+      ...lines.map((l) => {
+        const half = (r: Rect) => ({ x: r.x / 2, y: r.y / 2, w: r.w / 2, h: r.h / 2 });
+        return { kind: 'title', text: l.text, rect: half(l.rect), drawn: half(l.drawn!) };
+      }),
+    ]);
+    // One canvas for the scaled PNG, one 1 × 1 canvas to measure on (never the compositor's).
+    expect(made.map((m) => [m.width, m.height])).toEqual([[540, 960], [1, 1]]);
+  });
+
+  it("reports the flat device frame's body, screen and edges from the compositor's boxes, in PNG px; none when the phone drew in 3D", async () => {
+    stubDocument();
+    const project = phoneProject();
+    project.device.frame = true;
+    const contentRect = { x: 200, y: 160, w: 680, h: 1400 };
+    const screen = { x: 230, y: 190, w: 620, h: 1340 };
+    const r = await runFrames(fakeComp(1080, 1920, { contentRect, screen }).comp, fakeRun({ project, times: [0], scale: 0.5 }).run);
+    const want = frameEdges(project, { contentRect, screen, drew3d: false });
+    expect(want).not.toBeNull();
+    expect(r.stills?.[0].deviceFrame).toEqual(scaleFrameEdges(want!, 0.5));
+    const r3d = await runFrames(fakeComp(1080, 1920, { contentRect, screen, drew3d: true }).comp, fakeRun({ project, times: [0] }).run);
+    expect(r3d.stills?.[0].deviceFrame).toBeNull();
   });
 });
 

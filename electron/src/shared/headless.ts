@@ -6,6 +6,7 @@
 // unit-tested; main owns the window and the process exit.
 
 import type { TextBox } from './textBoxes';
+import type { FrameEdges } from './frameEdges';
 
 export interface HeadlessJob {
   bundleDir: string;
@@ -39,6 +40,8 @@ export interface HeadlessFrame {
   error?: string;
   /** The text boxes drawn in this still (captions, keycaps, text overlays, title), PNG px, in drawing order. */
   textBoxes?: TextBox[];
+  /** The flat device frame's body, screen and edges, PNG px (null when no flat frame was drawn: no frame, or a 3D phone). */
+  deviceFrame?: FrameEdges | null;
 }
 
 export interface HeadlessResult {

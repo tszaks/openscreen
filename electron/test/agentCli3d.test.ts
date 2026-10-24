@@ -152,7 +152,17 @@ const argv = process.argv.slice(2);
 fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify(argv));
 const out = argv[argv.indexOf('--out') + 1];
 const times = argv[argv.indexOf('--frames') + 1].split(',').map(Number);
-const stills = times.map((t) => { const frame = Math.round(t * 30); return { t, frame, at: frame / 30, path: out + '/f-' + frame + '.png', ...(frame === 128 ? { textBoxes: [{ kind: 'caption', rect: { x: 10.12345, y: 20, w: 300.5, h: 64.00049 } }] } : {}) }; });
+const extra = {
+  128: {
+    textBoxes: [
+      { kind: 'caption', rect: { x: 10.12345, y: 20, w: 300.5, h: 64.00049 } },
+      { kind: 'title', text: 'Golden', rect: { x: 1, y: 2, w: 3.00049, h: 4 }, drawn: { x: 1.5, y: 2, w: 2.00051, h: 4 } },
+    ],
+    deviceFrame: { body: { x: 100.0004, y: 200, w: 300, h: 600 }, screen: { x: 110, y: 210, w: 280.12345, h: 580 }, edges: [[[1.23456, 2], [3, 4.00049]]] },
+  },
+  143: { textBoxes: [], deviceFrame: null },
+};
+const stills = times.map((t) => { const frame = Math.round(t * 30); return { t, frame, at: frame / 30, path: out + '/f-' + frame + '.png', ...(extra[frame] ?? {}) }; });
 console.log(JSON.stringify({ ok: true, out, stills, size: { w: 1080, h: 1920 }, gpu: null }));
 `,
   );
@@ -169,9 +179,22 @@ console.log(JSON.stringify({ ok: true, out, stills, size: { w: 1080, h: 1920 }, 
     expect(r.fps).toBe(30);
     expect(r.files).toEqual([
       { t: 1, frame: 30, at: 1, path: join(scratch, 'fc-out', 'f-30.png'), pose: null, facing: null },
-      // The still's text boxes, as the app reported them (rounded to 0.001 px); none reported, none printed.
-      { t: 4.25, frame: 128, at: 4.266667, path: join(scratch, 'fc-out', 'f-128.png'), pose: null, facing: null, textBoxes: [{ kind: 'caption', rect: { x: 10.123, y: 20, w: 300.5, h: 64 } }] },
-      { t: 4.75, frame: 143, at: 4.766667, path: join(scratch, 'fc-out', 'f-143.png'), pose: null, facing: null },
+      // The still's text boxes (a title line with its text and drawn box) and device frame, as the app
+      // reported them (rounded to 0.001 px); none reported, none printed; a null frame stays null.
+      {
+        t: 4.25,
+        frame: 128,
+        at: 4.266667,
+        path: join(scratch, 'fc-out', 'f-128.png'),
+        pose: null,
+        facing: null,
+        textBoxes: [
+          { kind: 'caption', rect: { x: 10.123, y: 20, w: 300.5, h: 64 } },
+          { kind: 'title', text: 'Golden', rect: { x: 1, y: 2, w: 3, h: 4 }, drawn: { x: 1.5, y: 2, w: 2.001, h: 4 } },
+        ],
+        deviceFrame: { body: { x: 100, y: 200, w: 300, h: 600 }, screen: { x: 110, y: 210, w: 280.123, h: 580 }, edges: [[[1.235, 2], [3, 4]]] },
+      },
+      { t: 4.75, frame: 143, at: 4.766667, path: join(scratch, 'fc-out', 'f-143.png'), pose: null, facing: null, textBoxes: [], deviceFrame: null },
       { t: 99, error: 'past the end' },
     ]);
   });

@@ -7,8 +7,11 @@
 import { frameFileName, sheetLabel, sheetLayout, snapToExportFrame, type HeadlessFrame, type HeadlessResult } from '../../shared/headless';
 import { phone3dActive } from '../../shared/phone3d/placement';
 import { scaleTextBoxes, type TextBox } from '../../shared/textBoxes';
+import { frameEdges, scaleFrameEdges, type FrameEdges } from '../../shared/frameEdges';
+import type { Rect } from '../../shared/deviceGeometry';
 import type { Project } from '../../shared/types';
 import type { FrameInputs, Render3DSettings } from './compositor';
+import { layoutRefScale, splitTitleCards, type MeasureText } from './titleLineBoxes';
 
 /**
  * How the 3D pass renders a frame (SPEC §3.8 `FrameInputs.render3d`):
@@ -40,6 +43,8 @@ export function holdPreview(s: { headless: boolean; exporting: boolean; project:
 
 /** What a frames run draws with; the Editor supplies it from its own export plumbing. */
 export interface FramesRun {
+  /** The project the compositor draws (where its flat device frame is, for HeadlessFrame.frame). */
+  project: Project;
   /** Output seconds, ascending. Each is drawn at its export frame (snapToExportFrame). */
   times: number[];
   /** The export's frame rate and output length: the frame grid the stills snap to. */
@@ -76,6 +81,10 @@ export interface FramesCompositor {
   render(t: number, input: FrameInputs): void;
   /** The text boxes the last render drew, canvas px (CanvasCompositor.textBoxes). */
   readonly textBoxes: readonly TextBox[];
+  /** The last render's content box (the device body box when a frame is drawn), its screen, and whether the phone drew in 3D. */
+  readonly contentRect: Rect | null;
+  readonly screenMap: { screen: Rect } | null;
+  readonly drew3d: boolean;
 }
 
 const pngBytes = (canvas: HTMLCanvasElement) =>
@@ -92,6 +101,17 @@ function canvas2d(w: number, h: number): { canvas: HTMLCanvasElement; ctx: Canva
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   return { canvas, ctx };
+}
+
+/** A text measurer on its own canvas (never the compositor's, whose calls are the flat-identity log). */
+function canvasMeasurer(): MeasureText {
+  let ctx: CanvasRenderingContext2D | null = null;
+  return (font, letterSpacing, text) => {
+    ctx ??= canvas2d(1, 1).ctx;
+    ctx.font = font;
+    ctx.letterSpacing = letterSpacing;
+    return ctx.measureText(text).width;
+  };
 }
 
 /**
@@ -123,7 +143,10 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
     sheet.ctx.fillRect(0, 0, layout.width, layout.height);
   }
   const stills: HeadlessFrame[] = [];
-  const written = new Map<number, { path: string; textBoxes: TextBox[] }>();
+  const written = new Map<number, { path: string; textBoxes: TextBox[]; frame: FrameEdges | null }>();
+  const measure = canvasMeasurer();
+  // Title lines are measured at their 1080-class size too (titleLineBoxes).
+  const refScale = layoutRefScale(run.project, H);
   let tile = 0;
   for (let i = 0; i < run.times.length; i++) {
     const t = run.times[i];
@@ -135,7 +158,7 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
     const { frame: index, at, srcT } = g;
     const done = written.get(index);
     if (done) {
-      stills.push({ t, frame: index, at, ...done });
+      stills.push({ t, frame: index, at, path: done.path, textBoxes: done.textBoxes, deviceFrame: done.frame });
       run.progress?.(i + 1, run.times.length);
       continue;
     }
@@ -153,11 +176,15 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
       scaled.ctx.drawImage(comp.canvas, 0, 0, W, H, 0, 0, w, h);
       frame = scaled.canvas;
     }
-    // The text the frame drew, in the PNG's pixels (the 4K-downscale check masks and compares it).
-    const textBoxes = scaleTextBoxes(comp.textBoxes, w / W, h / H);
+    // The text the frame drew (title cards as their drawn lines) and the flat
+    // device frame's edges, in the PNG's pixels: the 4K-downscale check masks
+    // and compares them (owner decisions 8 and 14).
+    const textBoxes = scaleTextBoxes(splitTitleCards(comp.textBoxes, measure, refScale), w / W, h / H);
+    const edges = frameEdges(run.project, { contentRect: comp.contentRect, screen: comp.screenMap?.screen ?? null, drew3d: comp.drew3d });
+    const frameAt = edges ? scaleFrameEdges(edges, w / W) : null;
     const path = await run.writePng(frameFileName(at), await pngBytes(frame));
-    written.set(index, { path, textBoxes });
-    stills.push({ t, frame: index, at, path, textBoxes });
+    written.set(index, { path, textBoxes, frame: frameAt });
+    stills.push({ t, frame: index, at, path, textBoxes, deviceFrame: frameAt });
     if (sheet && layout) {
       const { x, y } = layout.cell(tile++);
       sheet.ctx.drawImage(frame, 0, 0, w, h, x, y, layout.tileW, layout.tileH);

@@ -1424,6 +1424,7 @@ export function Editor({
     exportingRef.current = true;
     try {
       return await runFrames(compositor, {
+        project: proj,
         times: [...job.frames].sort((a, b) => a - b),
         // The grid exportVideo renders on: frame i at i / fps, floor(duration · fps) frames.
         fps,
