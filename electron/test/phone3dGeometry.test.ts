@@ -62,6 +62,46 @@ const meshes = (g: Group) => {
 const part = (g: Group, name: string) => meshes(g).filter((m) => m.userData.part === name && !(m instanceof InstancedMesh));
 const attr = (geo: BufferGeometry, n: string) => geo.getAttribute(n);
 
+describe('nothing lies under the screen', () => {
+  it('the front glass is a border with the screen cut out: no glass triangle on the screen plane inside the screen, and the two meet edge to edge', () => {
+    for (const d of DEVICES) {
+      const { group, dims } = build(d);
+      const glass = part(group, 'frontGlass')[0];
+      const screen = part(group, 'screen')[0];
+      const z = dims.depth / 2;
+      const pos = attr(glass.geometry, 'position');
+      const idx = glass.geometry.index!;
+      // A point strictly inside the screen's rounded rect (0.01 mm in from its edge).
+      const inside = (x: number, y: number) => {
+        const hw = dims.screenW / 2 - 0.01;
+        const hh = dims.screenH / 2 - 0.01;
+        const r = Math.max(0, dims.screenRadius - 0.01);
+        const ax = Math.abs(x);
+        const ay = Math.abs(y);
+        if (ax > hw || ay > hh) return false;
+        if (ax <= hw - r || ay <= hh - r) return true;
+        return Math.hypot(ax - (hw - r), ay - (hh - r)) <= r * 0.95;
+      };
+      let onPlane = 0;
+      for (let i = 0; i < idx.count; i += 3) {
+        const v = [0, 1, 2].map((k) => idx.getX(i + k));
+        if (!v.every((j) => Math.abs(pos.getZ(j) - z) < 1e-6)) continue;
+        onPlane++;
+        const cx = v.reduce((a, j) => a + pos.getX(j), 0) / 3;
+        const cy = v.reduce((a, j) => a + pos.getY(j), 0) / 3;
+        expect(inside(cx, cy), `${d.id}: glass triangle at ${cx.toFixed(2)}, ${cy.toFixed(2)} under the screen`).toBe(false);
+      }
+      expect(onPlane).toBeGreaterThan(0);
+      // Every screen outline vertex is also a glass vertex (shared edge: no crack, no overlap).
+      const sp = attr(screen.geometry, 'position');
+      const key = (x: number, y: number) => `${x.toFixed(5)},${y.toFixed(5)}`;
+      const glassKeys = new Set<string>();
+      for (let j = 0; j < pos.count; j++) if (Math.abs(pos.getZ(j) - z) < 1e-6) glassKeys.add(key(pos.getX(j), pos.getY(j)));
+      for (let j = 0; j < sp.count; j++) expect(glassKeys.has(key(sp.getX(j), sp.getY(j)))).toBe(true);
+    }
+  });
+});
+
 describe('every device builds', () => {
   const all = [...DEVICES, genericDevice(1179, 2556), genericDevice(1080, 1920)];
   it('covers 22 iPhones and 5 iPads', () => {

@@ -158,6 +158,9 @@ const srgb = (hex: string) => new Color().setStyle(hex);
  * (the etched surface's own specular already lightens it). The unibody's
  * Ceramic Shield panel reads a step lighter than the aluminium around it.
  */
+/** Specular of the lens elements under the cover: F0 6.7% × this ≈ 0.5% (multi-coated). Picked by looking: 0.25 still drew the key softbox as a bright block in each lens, 0 loses the glass. */
+export const LENS_ELEMENT_SPECULAR = 0.08;
+
 export const BACK_LIFT = { glossy: 0.04, frosted: 0.06, panel: 0.1 };
 /** Mix a swatch toward white by `t` in sRGB (how a designer lightens a colour), returned linear. */
 function towardWhite(hex: string, t: number): Color {
@@ -233,13 +236,17 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   const plateau = opts.plateau === 'band' ? band : opts.plateau === 'lensRing' ? lensRing : plateauGlass;
 
   const lensBarrel = physical({ color: srgb('#1c1c1f'), metalness: 1, roughness: 0.5, side: FrontSide });
-  // Coated optics: near-black with a cool cast, glossy at the top, rougher deeper down.
+  // Coated optics: near-black with a cool cast, glossy at the top, rougher deeper down. Multi-coated lens glass
+  // reflects well under 1%, not the 6.7% of bare ior-1.7 glass: at full specular the key softbox showed as a white
+  // block inside every lens on the turn to the back.
   const lensElements = [
     [0.05, '#07080c'],
     [0.17, '#0a0b12'],
     [0.3, '#0c0d16'],
-  ].map(([r, c]) => physical({ color: srgb(c as string), roughness: r as number, metalness: 0, specularIntensity: 1, ior: 1.7 })) as PhoneMaterials['lensElements'];
-  const lensRetainer = physical({ color: srgb('#2c2c30'), metalness: 1, roughness: 0.3 });
+  ].map(([r, c]) => physical({ color: srgb(c as string), roughness: r as number, metalness: 0, specularIntensity: LENS_ELEMENT_SPECULAR, ior: 1.7 })) as PhoneMaterials['lensElements'];
+  // The retaining ring inside the lens: black anodised (real lenses blacken everything inside the barrel). As a
+  // bright metal it read as a light grey ring in every lens once the softbox fell on it.
+  const lensRetainer = physical({ color: srgb('#0e0e10'), metalness: 0, roughness: 0.55, specularIntensity: 0.5 });
   const lensCover = reflectionOnly(
     overlay(
       physical({

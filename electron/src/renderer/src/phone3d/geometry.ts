@@ -839,18 +839,25 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
   if (!unibody) sweep(seam, outline, prof.seam.map(mirrorStrip)); // back
   add(partMesh('seam', seam));
 
-  // Front glass: rounded edge into the seam, then the flat cap.
+  // Screen and glare: the 2D screen outline ON the glass plane (z = depth/2,
+  // where projection.ts puts the screen quad, so FRONT is exact).
+  const screenLoop = rectLoop(screenW, screenH, screenRadius);
+
+  // Front glass: rounded edge into the seam, then the flat cap: the black
+  // border AROUND the screen. The screen's own outline is a hole in it, so no
+  // glass lies under the screen: two coplanar surfaces with different
+  // triangles z-fight at small turns (the polygon offset's few depth units
+  // cannot cover their interpolation difference), and showed as black blocks
+  // over the screen at turn 0.02°. The hole shares the screen's vertices, so
+  // the two meet with no crack.
   const glassContour = insetLoop(outline, prof.glassInset);
   const front = new Builder();
   sweep(front, outline, [prof.glassEdge]);
-  cap(front, glassContour, d2, 1);
+  cap(front, glassContour, d2, 1, [screenLoop.p]);
   add(partMesh('frontGlass', front, RENDER_ORDER.glass));
 
-  // Screen and glare: the 2D screen outline ON the glass plane (z = depth/2,
-  // where projection.ts puts the screen quad, so FRONT is exact). They are
-  // overlay layers (materials.ts: no depth write, polygon offset), so they
-  // need no +0.02 / +0.04 lift to beat the glass.
-  const screenLoop = rectLoop(screenW, screenH, screenRadius);
+  // The screen and the glare over it are the same triangles (the same cap of
+  // the same points), so their depths are equal and the glare passes LEQUAL.
   const screen = new Builder();
   screen.withUv = true;
   cap(screen, screenLoop.p, d2, 1, [], { x: -screenW / 2, y: -screenH / 2, w: screenW, h: screenH });
