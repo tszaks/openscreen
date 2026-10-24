@@ -152,6 +152,17 @@ function maxOffFront(out: Project): number {
 }
 
 const moving = (plan: ReturnType<typeof planDirect>) => plan.shots.filter((s) => s.recipe !== 'float');
+const turning = (plan: ReturnType<typeof planDirect>) => plan.shots.filter((s) => ['spin-in', 'hero-layback', 'turn-to-back'].includes(s.recipe));
+
+/** Share of the take (60 Hz samples) where the drawn phone is at least `deg` off straight on. */
+function heldOff(out: Project, deg: number): number {
+  const p3 = out.phone3d!;
+  const D = new Timeline(out.recording.duration, out.clips).outputDuration;
+  const n = Math.ceil(D * 60);
+  let hit = 0;
+  for (let k = 0; k <= n; k++) if ((Math.acos(Math.min(1, facing(p3, (D * k) / n))) * 180) / Math.PI >= deg) hit++;
+  return hit / (n + 1);
+}
 
 const FIXTURES: { name: string; p: () => Project; scenes?: number[] }[] = [
   { name: 'no taps', p: () => take(30) },
@@ -464,16 +475,30 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     for (const style of STYLES) {
       const opts: DirectOptions = { style, replace: true, cursor };
       const { plan, out } = checkPlan(project, opts, `ios-social/${style}`);
+      expect(moving(plan).map((s) => s.recipe), style).toEqual(['settle']);
       const intro = plan.shots[0];
-      expect(intro.recipe, style).toBe('settle');
       expect(intro.start).toBe(0);
       expect(intro.end - intro.start).toBeGreaterThanOrEqual(SHORT_INTRO_MIN);
       // It lands before the first busy start (the tap at 1.2 s is busy from 0.6 s), and before the first zoom.
       expect(intro.end).toBeLessThanOrEqual(0.6 + 1e-9);
       expect(intro.end).toBeLessThanOrEqual(Math.min(...focusSegmentsFor(project, cursor).map((z) => z.inStart)));
       expect(maxOffFront(out), style).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
-      expect(plan.note).toBeUndefined();
     }
+    // Hero fits no turning shot, so it rests at the posed angle and holds it (a settle alone is a 0.2 s lean); bold
+    // holds its own angle; subtle keeps straight on with its float.
+    const hero = checkPlan(project, { style: 'hero', replace: true, cursor }, 'ios-social/hero');
+    expect(hero.plan.ops[0]).toMatchObject({ op: 'phone3d', pose: { ...POSED_REST } });
+    expect(heldOff(hero.out, VISIBLE_DEG)).toBeGreaterThan(0.9);
+    expect(hero.plan.note).toBe(
+      'No turning shot fits: the phone must face front from 0.6 s, too soon for a spin-in (it needs 2.0 s free); the longest free gap is 0.4 s (a middle move needs 2.4 s, the closing move 1.5 s at the end). The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+    const bold = checkPlan(project, { style: 'bold', replace: true, cursor }, 'ios-social/bold');
+    expect(bold.plan.ops[0]).toMatchObject({ pose: { ...BOLD_BASE } });
+    expect(heldOff(bold.out, VISIBLE_DEG)).toBeGreaterThan(0.9);
+    expect(bold.plan.note).toBeUndefined();
+    const subtle = checkPlan(project, { style: 'subtle', replace: true, cursor }, 'ios-social/subtle');
+    expect(subtle.plan.ops[0]).toMatchObject({ pose: { ...FRONT } });
+    expect(subtle.plan.note).toBeUndefined();
   });
 
   it('a take with no room for any move rests at a posed angle and says why', () => {
@@ -518,25 +543,42 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     expect(plan.note).toMatch(/\. The phone stays straight on: a posed angle would push the phone further off the canvas\.$/);
   });
 
-  it('a plan with no moving shot always carries a note, and a plan with one never does', () => {
-    for (const [p, style] of [
-      [take(30, [tap(10)]), 'hero'],
-      [take(8, [tap(0.3), tap(1.2), tap(2.1), tap(3), tap(3.9), tap(4.8), tap(5.7), tap(6.6), tap(7.5)]), 'subtle'],
-      [take(2.5), 'bold'],
-    ] as const) {
-      const plan = planDirect(p, { style, replace: true });
-      expect(plan.note === undefined, style).toBe(moving(plan).length > 0);
-    }
+  it('a posed angle that would break the 12° tap rule (with a strong float) is refused, and the note says so', () => {
+    // The user turned the float up to full: ±4° turn and ±2.5° tilt on top of 9.4° would pass 12° during taps.
+    const p = with3d(take(8, Array.from({ length: 10 }, (_, i) => tap(0.4 + i * 0.8, {}, i))), { float: { on: false, amount: 1, period: 6 } });
+    const { plan, out } = checkPlan(p, { style: 'subtle', replace: true }, 'strong float');
+    expect(plan.ops[0]).toMatchObject({ pose: { ...FRONT } });
+    expect(out.phone3d!.float).toEqual({ on: true, amount: 1, period: 6 });
+    expect(plan.note).toMatch(/\. The phone stays straight on: a posed angle would turn the phone more than 12° off front during taps\.$/);
+    // At the default float amount the posed angle fits.
+    const calm = planDirect(with3d(take(8, Array.from({ length: 10 }, (_, i) => tap(0.4 + i * 0.8, {}, i)))), { style: 'subtle', replace: true });
+    expect(calm.ops[0]).toMatchObject({ pose: { ...POSED_REST } });
   });
 
-  it('sweep: 400 iPhone takes of 3-30 s, dense taps from the first moment, every style: visible 3D, clean, and a note whenever no move fits', () => {
+  it('a note exactly when the style\'s own moves do not fit: no moving shot, or hero with no turning shot', () => {
+    const cases: [Project, DirectStyle, boolean][] = [
+      [take(30, [tap(10)]), 'hero', false],
+      [take(30, [tap(10)]), 'subtle', false],
+      [take(8, [tap(0.3), tap(1.2), tap(2.1), tap(3), tap(3.9), tap(4.8), tap(5.7), tap(6.6), tap(7.5)]), 'subtle', true],
+      [take(2.5), 'bold', false],
+      // A 2.5 s clip: hero gets settle only (no room for spin-in), so it rests posed and says why.
+      [take(2.5), 'hero', true],
+    ];
+    for (const [p, style, noted] of cases) {
+      const plan = planDirect(p, { style, replace: true });
+      expect(plan.note !== undefined, `${style} ${JSON.stringify(plan.shots)}`).toBe(noted);
+    }
+    expect(planDirect(take(2.5), { style: 'hero', replace: true }).note).toMatch(/^No turning shot fits: the take is 2\.5 s, under the 4 s a spin-in needs; /);
+  });
+
+  it('sweep: 400 iPhone takes of 3-30 s, dense taps from the first moment, every style: visible 3D, clean, and a note whenever the style\'s own moves do not fit', () => {
     const presets = ['social-9x16', 'feed-4x5', 'square', 'landscape-16x9', 'none'];
     const tally = { short: 0, posed: 0, full: 0 };
     for (let seed = 1; seed <= 400; seed++) {
       const rnd = lcg(seed * 6151);
       const D = 3 + rnd() * 27;
-      // 0.3 to 2 taps a second; the first one anywhere in the first 2.5 s (often before 1.2 s, where no intro fits).
-      const rate = 0.3 + rnd() * 1.7;
+      // 0.1 to 2 taps a second; the first one anywhere in the first 2.5 s (often before 1.2 s, where no intro fits).
+      const rate = 0.1 + rnd() * 1.9;
       const taps: TapSuggestion[] = [];
       for (let t = rnd() * 2.5, i = 0; t < D; t += (0.4 + rnd() * 1.6) / rate, i++) {
         const k = rnd();
@@ -555,17 +597,20 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
         const { plan, out } = checkPlan(p, { style, replace: true }, label);
         if (outD >= 3) expect(maxOffFront(out), `${label}: visible 3D`).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
         const moves = moving(plan);
-        expect(plan.note === undefined, `${label}: note iff no move (${plan.note})`).toBe(moves.length > 0);
-        if (!moves.length) {
-          tally.posed++;
-          expect(plan.note, label).toMatch(/^No moving shot fits: .+\. The phone rests at (a posed angle instead|the bold angle)/);
-        } else if (moves[0].reason.startsWith('intro (short')) tally.short++;
-        else tally.full++;
+        const ownMovesFit = moves.length > 0 && (style !== 'hero' || turning(plan).length > 0);
+        expect(plan.note === undefined, `${label}: note iff the style's own moves do not fit (${plan.note})`).toBe(ownMovesFit);
+        if (plan.note) expect(plan.note, label).toMatch(/^No (moving|turning) shot fits: .+\. The phone rests at (a posed angle instead|the bold angle)/);
+        // Hero and bold read as 3D for most of the take, unless a turning shot carries it.
+        if (style !== 'subtle' && !turning(plan).length) expect(heldOff(out, VISIBLE_DEG), `${label}: holds a 3D angle`).toBeGreaterThan(0.75);
+        if (plan.ops[0].op === 'phone3d' && JSON.stringify(plan.ops[0].pose) === JSON.stringify(POSED_REST) && style !== 'bold') tally.posed++;
+        if (moves[0]?.reason.startsWith('intro (short')) tally.short++;
+        if (turning(plan).length) tally.full++;
       }
     }
     // Every branch is exercised many times (the sweep is not passing by planning the same thing everywhere).
-    expect(tally.short).toBeGreaterThan(50);
-    expect(tally.posed).toBeGreaterThan(50);
+    // (Measured: 255 short intros, 547 posed rests, 92 plans with a turning shot.)
+    expect(tally.short).toBeGreaterThan(150);
+    expect(tally.posed).toBeGreaterThan(300);
     expect(tally.full).toBeGreaterThan(50);
   }, 240_000);
 });

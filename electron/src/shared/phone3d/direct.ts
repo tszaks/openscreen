@@ -45,7 +45,8 @@ export interface DirectPlan {
   shots: PlannedShot[];
   /** What the self-check did: re-plan rounds, shots it dropped, and retries after a refused apply (must stay 0). */
   check: { rounds: number; dropped: PlannedShot[]; retries: number };
-  /** Present when the plan has no moving shot: why none fits, and what the phone does instead (one line). */
+  /** Present when the style's own moves do not fit (no moving shot at all, or hero with no turning shot): why,
+   *  and what the phone does instead (one line). */
   note?: string;
 }
 
@@ -84,11 +85,11 @@ export const OUTRO_END_GAP = 0.1;
 export const OUTRO_DURATION = 1.4;
 /** Bold's resting pose: 9.4° off straight on, inside the 12° rule. */
 export const BOLD_BASE: Pose = { ...FRONT, turn: -8, tilt: 5 };
-/** The resting pose when no move fits at all (owner decision 12): the bold angle, so the phone still reads as 3D
- *  while staying inside the 12° rule for taps. */
+/** The resting pose when the style's own moves do not fit (owner decision 12): the bold angle, so the phone still
+ *  reads as 3D while staying inside the 12° rule for taps. */
 export const POSED_REST: Pose = { ...BOLD_BASE };
-/** Every plan on a layout that has room for it turns the phone at least this far off straight on at some moment:
- *  settle's lean (8°), any bigger shot, or the posed rest (9.4°). */
+/** Every plan on a layout that has room for it turns the phone at least this far off straight on: settle's lean
+ *  (8°, subtle), a turning shot, or the posed rest (9.4°, held all take). */
 export const VISIBLE_DEG = 8;
 /** Self-check: re-plan rounds before offenders are just dropped. */
 export const MAX_ROUNDS = 4;
@@ -437,29 +438,47 @@ function selfChecked(p: Project, opts: DirectOptions, inp: Inputs, base: Pose): 
 /** How far `pose` is off straight on (degrees, camera at eye level). */
 const offFront = (pose: Pose) => Math.acos(Math.min(1, facingOf(pose, 0))) / DEG;
 
+/** Shots that turn the phone to a hero angle (what makes hero read as 3D; settle only leans 8° for a moment). */
+const TURNING: readonly ShotRecipe[] = ['spin-in', 'hero-layback', 'turn-to-back'];
+
 /**
- * Whether the posed rest can replace the style's base pose when no shot fits:
- * it must stay inside the 12° busy rule at every moment (float and camera
- * height included) and add no warning and no overflow past any edge over the
- * project as it is. Returns the reason it cannot, or null when it can.
+ * The style could not use its own moves, so the posed rest stands in: hero
+ * (base straight on) with no turning shot, or subtle with no shot at all.
+ * Never with kept moves (they are the user's 3D), and not for bold (its base
+ * is already posed).
  */
-function posedRestRefusal(p: Project, opts: DirectOptions, inp: Inputs, checked: Checked): string | null {
-  const posed = tryPlan(p, opsFor(opts.style, POSED_REST, opts.replace, []), []).project;
-  const p3 = posed.phone3d!;
-  const n = Math.max(1, Math.ceil(inp.D * 30));
-  for (let k = 0; k <= n; k++) if (facing(p3, (inp.D * k) / n) < COS_BUSY) return `turn the phone more than ${BUSY_FACING_DEG}° off front during taps`;
-  if (offCanvasAdded(posed, checked.baseOverflow).length) return 'push the phone further off the canvas';
-  const known = (w: Warning) => checked.baseline.some((b) => b.code === w.code && overlaps(b, w));
-  const added = projectWarnings(posed, { cursor: opts.cursor }).filter((w) => !known(w));
+function needsPosedRest(opts: DirectOptions, styleBase: Pose, checked: Checked): boolean {
+  if ((checked.baseProject.phone3d?.transitions.length ?? 0) > 0 || offFront(styleBase) >= VISIBLE_DEG) return false;
+  return opts.style === 'subtle' ? !checked.drafts.length : !checked.drafts.some((d) => TURNING.includes(d.recipe));
+}
+
+/**
+ * Whether the posed plan can replace the style's plan: during busy time it
+ * stays inside the 12° rule (float and camera height included), and over the
+ * style's base project without shots it adds no warning and pushes the phone
+ * no further past any edge. Returns the reason it cannot, or null when it can.
+ */
+function posedRestRefusal(p: Project, opts: DirectOptions, inp: Inputs, styled: Checked, posed: Checked): string | null {
+  const project = tryPlan(p, posed.ops, posed.drafts).project;
+  const p3 = project.phone3d!;
+  for (const b of inp.busy) {
+    const n = Math.max(1, Math.ceil((b.end - b.start) * 60));
+    for (let k = 0; k <= n; k++) if (facing(p3, b.start + ((b.end - b.start) * k) / n) < COS_BUSY) return `turn the phone more than ${BUSY_FACING_DEG}° off front during taps`;
+  }
+  if (offCanvasAdded(project, styled.baseOverflow).length) return 'push the phone further off the canvas';
+  const known = (w: Warning) => styled.baseline.some((b) => b.code === w.code && overlaps(b, w));
+  const added = projectWarnings(project, { cursor: opts.cursor }).filter((w) => !known(w));
   return added.length ? `add a ${added[0].code} warning` : null;
 }
 
-/** Why no moving shot fits (one clause per cause), for DirectPlan.note. */
-function noShotCauses(opts: DirectOptions, inp: Inputs, checked: Checked): string[] {
+/** Why the style's own moves do not fit (one clause per cause), for DirectPlan.note. `turning`: only turning shots are missing. */
+function missingCauses(opts: DirectOptions, inp: Inputs, checked: Checked, turning: boolean): string[] {
   const out: string[] = [];
   const room = introRoom(inp);
-  if (room < SHORT_INTRO_MIN) {
+  if (!turning && room < SHORT_INTRO_MIN) {
     out.push(room <= 0 ? 'the phone must face front from 0.0 s (a tap, zoom or kept move starts there), so no intro fits' : `the phone must face front from ${s1(room)} (the first tap, zoom or kept move), under the ${SHORT_INTRO_MIN} s an intro needs`);
+  } else if (turning && !checked.drafts.some((d) => d.recipe === 'spin-in') && !checked.dropped.some((d) => d.recipe === 'spin-in')) {
+    out.push(inp.D < INTRO_MIN_OUTPUT ? `the take is ${s1(inp.D)}, under the ${INTRO_MIN_OUTPUT} s a spin-in needs` : `the phone must face front from ${s1(room)}, too soon for a spin-in (it needs ${SPIN_IN_MIN.toFixed(1)} s free)`);
   }
   if (opts.style === 'subtle') out.push('subtle plans no moves after the intro');
   else {
@@ -491,34 +510,35 @@ function noShotCauses(opts: DirectOptions, inp: Inputs, checked: Checked): strin
  *
  * Owner decision 12: Auto 3D always gives a visible 3D result. A take too
  * dense with taps for the full intro gets a short settle (≥ SHORT_INTRO_MIN s)
- * that lands before the first busy start; when no moving shot fits at all and
- * there are no kept moves, the phone rests at POSED_REST (inside the 12° rule)
- * instead of straight on. A plan with no moving shot always says why in
- * `note`.
+ * that lands before the first busy start. A settle alone is only a quick 8°
+ * lean (its spring lands in about 0.2 s), so when hero fits no turning shot,
+ * or subtle fits no shot at all, and there are no kept moves, the phone rests
+ * at POSED_REST (inside the 12° rule) instead of straight on, after a check
+ * that this adds no warning and no edge overflow. Every such plan, and every
+ * plan with no moving shot, says why in `note`.
  */
 export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
   if (!isPhoneProject(p)) throw new Error(NOT_IPHONE);
   const inp = readInputs(p, opts);
   const styleBase = opts.style === 'bold' ? { ...BOLD_BASE } : { ...FRONT };
-  const checked = selfChecked(p, opts, inp, styleBase);
-  let ops = checked.ops;
-  let note: string | undefined;
-  if (!checked.drafts.length) {
-    const causes = noShotCauses(opts, inp, checked);
-    const kept = (checked.baseProject.phone3d?.transitions.length ?? 0) > 0;
-    let rest: string;
-    if (kept) rest = 'Your own moves stay as they are.';
-    else if (offFront(styleBase) >= VISIBLE_DEG) rest = `The phone rests at the ${opts.style} angle (${offFront(styleBase).toFixed(1)}° off front).`;
+  const styled = selfChecked(p, opts, inp, styleBase);
+  let checked = styled;
+  let rest: string | undefined;
+  const someMove = styled.drafts.length > 0;
+  if (needsPosedRest(opts, styleBase, styled)) {
+    const posed = selfChecked(p, opts, inp, POSED_REST);
+    const refusal = posedRestRefusal(p, opts, inp, styled, posed);
+    if (refusal) rest = `The phone stays straight on: a posed angle would ${refusal}.`;
     else {
-      const refusal = posedRestRefusal(p, opts, inp, checked);
-      if (refusal) rest = `The phone stays straight on: a posed angle would ${refusal}.`;
-      else {
-        ops = opsFor(opts.style, POSED_REST, opts.replace, []);
-        rest = `The phone rests at a posed angle instead (${offFront(POSED_REST).toFixed(1)}° off front, inside the ${BUSY_FACING_DEG}° rule for taps).`;
-      }
+      checked = posed;
+      rest = `The phone rests at a posed angle instead (${offFront(POSED_REST).toFixed(1)}° off front, inside the ${BUSY_FACING_DEG}° rule for taps).`;
     }
-    note = `No moving shot fits: ${causes.join('; ')}. ${rest}`;
+  } else if (!styled.drafts.length) {
+    const kept = (styled.baseProject.phone3d?.transitions.length ?? 0) > 0;
+    rest = kept ? 'Your own moves stay as they are.' : `The phone rests at the ${opts.style} angle (${offFront(styleBase).toFixed(1)}° off front).`;
   }
+  // A note whenever the style's own moves did not fit: no moving shot at all, or (hero) no turning shot.
+  const note = rest ? `${someMove ? 'No turning shot fits' : 'No moving shot fits'}: ${missingCauses(opts, inp, styled, someMove).join('; ')}. ${rest}` : undefined;
   const shots = [...checked.drafts.map(toShot), ...(opts.style === 'subtle' ? [{ recipe: 'float' as const, start: 0, end: r3(inp.D), reason: 'subtle; idle float' }] : [])];
-  return { ops, shots, check: { rounds: checked.rounds, dropped: checked.dropped, retries: checked.retries }, ...(note ? { note } : {}) };
+  return { ops: checked.ops, shots, check: { rounds: checked.rounds, dropped: checked.dropped, retries: checked.retries }, ...(note ? { note } : {}) };
 }
