@@ -26,7 +26,7 @@ This spec is built on the "parity" proposal, with every judge finding fixed and 
 | D16 | Hit-testing uses an **exact homography of the screen plane**. This is the same result as a raycast against that plane, but it is pure shared math with no three import. A vitest test checks it against three's camera. Selection uses the convex hull of the projected body. | parity |
 | D17 | One WebGL context per process (a module singleton). A lost GPU context aborts export. A flat export is never written silently. | all three |
 | D18 | **4K for preset layouts.** `exportPreset: 'uhd4k'` scales a preset layout's canvas so its short side is 2160 (social-9x16 and shorts-hq → 2160×3840, landscape-16x9 → 3840×2160). `'p1080'` and `'original'` keep the preset's own size. App Store presets are never scaled (Apple needs exact sizes). The Classic layout keeps today's `exportCanvasSize` (source aspect). This goes through `projectCanvasSize`, `presetCompositor`, `planRenders` and the transcode size, so `export --preset social-9x16` gives a real 2160×3840 file. | critique: no 4K path for presets |
-| D19 | **Anti-aliasing is jittered accumulation, not supersample × MSAA.** MSAA 4 at ss 1. Each accumulation sub-sample offsets the camera by a fixed Halton(2,3) sub-pixel amount through `camera.setViewOffset` (the method of three's SSAARenderPass and TAARenderPass). Motion-blur samples are AA samples at no extra cost. Export always takes at least 8 jittered samples, even when the phone is still. `supersample` 2 or 3 stays as an opt-in. Big ROIs render in tiles (§3.7), so GPU memory stays ≤ 300 MB at 4K. | critique: 4K memory plan fails (≈1.2 GB) |
+| D19 | **Anti-aliasing is jittered accumulation, not supersample × MSAA.** MSAA 4 at ss 1. Each accumulation sub-sample offsets the camera by a fixed Halton(2,3) sub-pixel amount through `camera.setViewOffset` (the method of three's SSAARenderPass and TAARenderPass). Motion-blur samples are AA samples at no extra cost. Export always takes at least 8 jittered samples, even when the phone is still. `supersample` 2 or 3 stays as an opt-in. Big ROIs render in tiles (§3.7), so GPU memory stays ≤ 340 MB at 4K (advisor, 2026-10-24: raised from 300 for the D14 shadow ROI). | critique: 4K memory plan fails (≈1.2 GB) |
 | D20 | **The content LayerBox keeps `rect` = the placed home body** (`contentRect`, unchanged), so `placeLayer`, `resizeFromCorner`, `snapBox` and `nudgeLayer` math stays the same. A new optional `LayerBox.hull?: Point[]` (the projected body hull) is used for hit-testing and the drawn outline only. | critique: §3.8 broke move and resize |
 | D21 | **Turn never runs away.** `expandShot` rebases the `before` turn to the equal angle (mod 360) nearest 0, in [-180, 180], and writes it as an explicit `from` on the shot's first move. `pose-jump` compares `turn` and `rotate` modulo 360, so a rebase is not a jump. Any number of shots stays inside `POSE_RANGE`. | critique: turn values only grow |
 | D22 | **8-bit output is clean.** The output pass unpremultiplies, encodes sRGB, premultiplies again (no bright halo on edges), and adds a fixed ±0.5 LSB screen-space dither on the lit part only (never on the screen pixels, so FRONT stays exact). The shadow mask is R16F. | critique: premultiplied encode, banding |
@@ -555,7 +555,7 @@ One reflection lobe per real surface: real cover glass is one AR-coated surface,
   - preview: flat frame plus one toast, "3D paused (GPU reset)"
   - strict: wait up to 3 s for a restore and re-render the same frame, else abort
 - Dispose on cache eviction and on `beforeunload`.
-- **GPU memory ≤ 300 MB at 4K with the default settings** (ss 1, motion blur on, DoF on), worked out for a 9:16 4K phone ROI of about 1700×3200 (5.4 Mpx), which tiles (§3.7 step 8):
+- **GPU memory ≤ 340 MB at 4K with the default settings** (raised from 300 by the advisor on 2026-10-24: the D14-matching shadow pads the ROI to about 8 Mpx at 9:16 4K) (ss 1, motion blur on, DoF on), worked out for a 9:16 4K phone ROI of about 1700×3200 (5.4 Mpx), which tiles (§3.7 step 8):
 
   | Item | MB |
   |---|---|
@@ -570,7 +570,7 @@ One reflection lobe per real surface: real cover glass is one AR-coated surface,
   | geometry, LTC tables | < 10 |
   | **total** | **≈ 296** |
 
-  ss 2 is opt-in: it keeps the same tile size (more tiles, more time), and only the 2× screen texture adds memory (about +75 MB), so ss 2 at 4K is budgeted at ≤ 400 MB. The old plan (ss 2 into one 4x-MSAA target) needed about 1.2 GB and would lose the context on an 8 GB M1.
+  ss 2 is opt-in: it keeps the same tile size (more tiles, more time), and only the 2× screen texture adds memory (about +75 MB), so ss 2 at 4K is budgeted at ≤ 440 MB. The old plan (ss 2 into one 4x-MSAA target) needed about 1.2 GB and would lose the context on an 8 GB M1.
 - `HeadlessResult` gains `gpu` (WP3 adds the field in shared/headless.ts and Headless.tsx; WP4b supplies the value from `engine.gpuName()`). SwiftShader prints a warning line.
 - **Determinism**: pose and light are functions of output time; all sample patterns and iteration counts are fixed. A test greps `src/renderer/src/phone3d/**` and `src/shared/phone3d/**` for `Date.now|performance.now|Math.random` and fails on any hit outside the stats guard.
 
@@ -905,7 +905,7 @@ Each control's only write path is `apply3d`. Staff copy is terse.
 | Export 4K (2160×3840), 3D pass, defaults | ≤ 60 ms/frame while still; ≤ 150 ms p95 while moving (adaptive N up to 64 on the fastest frames is reported separately, max ≤ 400 ms) |
 | `frames` | first PNG ≤ 6 s cold; then ≤ 250 ms (1080p draft), ≤ 1.5 s (4K full) |
 | WebGL contexts | 1 across 100 compositor rebuilds |
-| GPU memory | ≤ 300 MB at 4K with defaults (§3.9 table); ≤ 400 MB at 4K ss 2 |
+| GPU memory | ≤ 340 MB at 4K with defaults (§3.9 table); ≤ 440 MB at 4K ss 2 |
 | Engine renders per exported frame | exactly 1 (counter) |
 | Flat project | three not loaded (checked with the module registry) |
 
@@ -1011,7 +1011,7 @@ Each control's only write path is `apply3d`. Staff copy is terse.
   - [ ] `WEBGL_lose_context` recovers in preview and aborts export.
   - [ ] Flat projects do not load three.
   - [ ] The App Store preset renders flat.
-  - [ ] §6.5 budgets met, including 4K on the real 2160×3840 file, GPU memory ≤ 300 MB, and one engine render per exported frame.
+  - [ ] §6.5 budgets met, including 4K on the real 2160×3840 file, GPU memory ≤ 340 MB, and one engine render per exported frame.
 
 ### WP5: Editor UI (after WP2 op shapes and the WP3/WP4b Editor merges; can start on stubs)
 - **Owns:**
@@ -1068,3 +1068,4 @@ No gap was rejected outright: each one was checked against the code (or three r1
 3. Depth and plateau numbers: WP1 fills `devices3d.ts` from Apple's official tech-spec pages (apple.com/iphone/compare and support.apple.com tech specs), with the URL per row. Values from memory are not allowed to merge.
 4. D18 accepted (reuse `uhd4k` for preset layouts). Flagged to Tyler: an old project with a hidden `uhd4k` and a layout preset will export at 4K.
 5. `focus` as an 8th pose channel (0..2) accepted.
+6. Shadow follows D14 (matches the 2D DEFAULT_FRAME_SHADOW): wall 1 mm behind the rearmost hull point, ROI padded by blur + CoC + 2. This overrides the §2.3/§3.7 shadow numbers. The 4K GPU budget is 340 MB (440 MB at ss 2).
