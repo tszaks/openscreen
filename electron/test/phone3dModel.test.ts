@@ -118,7 +118,24 @@ describe('normalizePhone3D', () => {
     expect(n.transitions[0].to.focus).toBe(1);
   });
 
-  it('is idempotent on 300 hostile inputs', () => {
+  it('makes transition ids unique: first use keeps its id, a generated id never takes an explicit one', () => {
+    const to = {};
+    const ids = (raw: unknown) => N({ transitions: raw })!.transitions.map((t) => t.id);
+    // The reviewer's repro: the missing id would have become t1, which the first one already uses.
+    expect(ids([{ id: 't1', start: 0, end: 1, to }, { start: 2, end: 3, to }])).toEqual(['t1', 't1-2']);
+    // An explicit id later in the list is still reserved before t0 is generated.
+    expect(ids([{ start: 0, end: 1, to }, { id: 't0', start: 2, end: 3, to }])).toEqual(['t0-2', 't0']);
+    // Repeats get the first free suffix, skipping suffixes already in use.
+    expect(ids([{ id: 'x', start: 0, end: 1, to }, { id: 'x', start: 2, end: 3, to }, { id: 'x-2', start: 4, end: 5, to }, { id: 'x', start: 6, end: 7, to }])).toEqual(['x', 'x-3', 'x-2', 'x-4']);
+    // Dropped entries free their id; the index used for t{i} is the saved index.
+    expect(ids([{ id: 'a', start: 0, end: 0, to }, { start: 1, end: 2, to }, { id: 'a', start: 3, end: 4, to }])).toEqual(['t1', 'a']);
+    // Sorting happens after ids are settled: the first use in SAVED order keeps the id, even if it starts later.
+    expect(N({ transitions: [{ id: 'k', start: 5, end: 6, to }, { id: 'k', start: 0, end: 1, to }] })!.transitions.map((t) => [t.id, t.start])).toEqual([['k-2', 0], ['k', 5]]);
+    // id stays the first key (byte-stable project.json).
+    expect(Object.keys(N({ transitions: [{ id: 'z', start: 0, end: 1, to }, { id: 'z', start: 2, end: 3, to }] })!.transitions[1])[0]).toBe('id');
+  });
+
+  it('is idempotent and always valid on 2000 hostile inputs', () => {
     const r = lcg(1234);
     const junk = (depth: number): unknown => {
       const k = r();
@@ -127,17 +144,21 @@ describe('normalizePhone3D', () => {
       const keys = ['enabled', 'pose', 'turn', 'tilt', 'size', 'focus', 'camera', 'fov', 'light', 'preset', 'transitions', 'start', 'end', 'id', 'to', 'from', 'easing', 'kind', 'stiffness', 'x1', 'samples', 'supersample', 'shadow', 'on', 'motionBlur'];
       const o: Record<string, unknown> = {};
       for (let i = 0; i < 6; i++) o[keys[Math.floor(r() * keys.length)]] = junk(depth + 1);
-      if (r() < 0.5) o.transitions = Array.from({ length: 4 }, () => ({ id: r() < 0.5 ? 'm' : undefined, start: r() * 10 - 2, end: r() * 12, to: junk(depth + 2), from: r() < 0.4 ? junk(depth + 2) : undefined, easing: { kind: ['spring', 'bezier', 'cinematic', 'x'][Math.floor(r() * 4)], stiffness: r() * 2000, x1: r() * 2, y1: 1, x2: 0.5, y2: 1 } }));
+      if (r() < 0.5) o.transitions = Array.from({ length: 1 + Math.floor(r() * 6) }, () => ({ id: ['m', 'm', 'm-2', 't0', 't1', 't2', 't1-2', '', 7, undefined, undefined][Math.floor(r() * 11)], start: r() * 10 - 2, end: r() * 12, to: junk(depth + 2), from: r() < 0.4 ? junk(depth + 2) : undefined, easing: { kind: ['spring', 'bezier', 'cinematic', 'x'][Math.floor(r() * 4)], stiffness: r() * 2000, x1: r() * 2, y1: 1, x2: 0.5, y2: 1 } }));
       return o;
     };
-    for (let i = 0; i < 300; i++) {
+    let withMoves = 0;
+    for (let i = 0; i < 2000; i++) {
       const raw = junk(0);
       const once = N(raw);
       if (once === undefined) continue;
       expect(json(N(JSON.parse(json(once))))).toBe(json(once));
-      // A normalized setup has no structural problems except duplicate ids (validation reports them).
-      expect(phone3dProblems({ phone3d: once }).filter((e) => !e.includes('is also used by'))).toEqual([]);
+      // Whatever was saved, the normalized setup passes validation, so applyOps can never be locked by it.
+      expect(phone3dProblems({ phone3d: once })).toEqual([]);
+      if (once.transitions.length > 1) withMoves++;
     }
+    // The generator really exercises id clashes (not a vacuous pass).
+    expect(withMoves).toBeGreaterThan(300);
   });
 });
 

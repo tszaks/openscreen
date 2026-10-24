@@ -191,7 +191,10 @@ export function compareTransitions(a: Pick<PoseTransition, 'start' | 'id'>, b: P
   return a.start - b.start || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
-function normalizeTransition(raw: unknown, index: number): PoseTransition | null {
+/** A transition before its id is settled: `id` is null when the saved one is missing or not a non-empty string. */
+type DraftTransition = Omit<PoseTransition, 'id'> & { id: string | null };
+
+function normalizeTransition(raw: unknown): DraftTransition | null {
   if (!isObj(raw)) return null;
   if (typeof raw.start !== 'number' || !Number.isFinite(raw.start)) return null;
   if (typeof raw.end !== 'number' || !Number.isFinite(raw.end)) return null;
@@ -199,11 +202,11 @@ function normalizeTransition(raw: unknown, index: number): PoseTransition | null
   const start = Math.max(0, raw.start);
   const end = raw.end;
   if (end - start < MIN_TRANSITION) return null;
-  const tr: PoseTransition = {
-    id: typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : `t${index}`,
+  const tr = {
+    id: typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : null,
     start,
     end,
-  } as PoseTransition;
+  } as DraftTransition;
   if (isObj(raw.from)) tr.from = fullPose(raw.from);
   tr.to = fullPose(raw.to);
   tr.easing = normalizeEasing(raw.easing);
@@ -212,12 +215,41 @@ function normalizeTransition(raw: unknown, index: number): PoseTransition | null
 }
 
 /**
+ * Gives every kept transition a unique, non-empty id, the same way every
+ * time (validation rejects a repeated id, and a rejected project would lock
+ * applyOps). The first transition (in saved order) that uses an id keeps it;
+ * those ids are reserved before anything is generated, so a generated id
+ * never takes one. A missing id becomes `t${i}` (i = its index in the saved
+ * list); a later repeat, or a generated id already taken, gets the first free
+ * suffix `-2`, `-3`, … ('a', 'a' → 'a', 'a-2'). Ids that are already unique
+ * are left alone, so this is idempotent.
+ */
+function withUniqueIds(drafts: ReadonlyArray<{ draft: DraftTransition; index: number }>): PoseTransition[] {
+  const taken = new Set<string>();
+  const keeps = new Set<number>();
+  for (const { draft, index } of drafts) {
+    if (draft.id !== null && !taken.has(draft.id)) {
+      taken.add(draft.id);
+      keeps.add(index);
+    }
+  }
+  return drafts.map(({ draft, index }) => {
+    if (keeps.has(index)) return draft as PoseTransition;
+    const base = draft.id ?? `t${index}`;
+    let id = base;
+    for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+    taken.add(id);
+    return { ...draft, id };
+  });
+}
+
+/**
  * Any saved value → a valid Phone3D, or undefined (the key is then deleted:
  * a non-object is not a 3D setup). The object is rebuilt in declared key
  * order from defaultPhone3D(): numbers are made finite and clamped, bad enums
  * become their default, `samples` is rounded. Transitions with a non-finite
- * start/end or shorter than MIN_TRANSITION are dropped, a missing id becomes
- * `t${index}`, partial poses are merged over FRONT (a pose saved before
+ * start/end or shorter than MIN_TRANSITION are dropped, ids are made unique
+ * (withUniqueIds: a missing id becomes `t${index}`), partial poses are merged over FRONT (a pose saved before
  * `focus` existed gets focus 1: no visual change), and the list is sorted.
  * Idempotent: normalizePhone3D(normalizePhone3D(x)) is JSON-equal to
  * normalizePhone3D(x).
@@ -237,10 +269,10 @@ export function normalizePhone3D(raw: unknown): Phone3D | undefined {
     const v = clamp(finite(g[key], spec.def), spec.range[0], spec.range[1]);
     return 'int' in spec && spec.int ? Math.round(v) : v;
   };
-  const transitions = (Array.isArray(raw.transitions) ? raw.transitions : [])
-    .map((t, i) => normalizeTransition(t, i))
-    .filter((t): t is PoseTransition => t !== null)
-    .sort(compareTransitions);
+  const drafts = (Array.isArray(raw.transitions) ? raw.transitions : [])
+    .map((t, index) => ({ draft: normalizeTransition(t), index }))
+    .filter((d): d is { draft: DraftTransition; index: number } => d.draft !== null);
+  const transitions = withUniqueIds(drafts).sort(compareTransitions);
   return {
     enabled: bool(raw.enabled, d.enabled),
     pose: fullPose(raw.pose),
