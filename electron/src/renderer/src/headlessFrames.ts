@@ -43,7 +43,7 @@ export function holdPreview(s: { headless: boolean; exporting: boolean; project:
 
 /** What a frames run draws with; the Editor supplies it from its own export plumbing. */
 export interface FramesRun {
-  /** The project the compositor draws (where its flat device frame is, for HeadlessFrame.frame). */
+  /** The project the compositor draws (where its flat device frame is, for HeadlessFrame.deviceFrame). */
   project: Project;
   /** Output seconds, ascending. Each is drawn at its export frame (snapToExportFrame). */
   times: number[];
