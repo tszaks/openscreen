@@ -55,7 +55,8 @@ export function sizedPreset(preset: ExportPreset, exportPreset: Project['exportP
   return {
     ...preset,
     ...size,
-    ...(s ? { safeZone: { top: Math.round(s.top * k), right: Math.round(s.right * k), bottom: Math.round(s.bottom * k), left: Math.round(s.left * k) } } : {}),
+    // Not rounded: the layout math is fractional, so the safe zone scales exactly with it.
+    ...(s ? { safeZone: { top: s.top * k, right: s.right * k, bottom: s.bottom * k, left: s.left * k } } : {}),
     video: b ? { ...preset.video, bitrateKbps: { target: Math.round(b.target * area), max: Math.round(b.max * area) } } : preset.video,
   };
 }

@@ -7,9 +7,10 @@
 // CLI and the editor share one analysis. The bundle watcher reacts only to
 // project.json, so writing the cache never reloads an open editor.
 
+import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { ffmpegPath, ffmpegStderr } from './media';
+import { ffmpegPath } from './media';
 
 /** ffmpeg's scene-change score above which a frame counts as a new scene. */
 export const SCENE_THRESHOLD = 0.25;
@@ -88,11 +89,23 @@ export interface SceneOptions {
   writeCache?: boolean;
 }
 
+/** ffmpeg's stderr and whether it exited cleanly. */
+function runFfmpeg(args: string[], bin: string): Promise<{ stderr: string; ok: boolean; error?: string }> {
+  return new Promise((resolve) =>
+    execFile(bin, args, { maxBuffer: 64 * 1024 * 1024 }, (e, _so, se) => {
+      const stderr = String(se ?? '');
+      resolve(e ? { stderr, ok: false, error: stderr.trim().split('\n').slice(-2).join(' | ') || e.message } : { stderr, ok: true });
+    }),
+  );
+}
+
 /**
  * Scene-change times of `video` in source seconds. With a `bundle`, a cache
  * that matches the video is used, and a fresh analysis is saved to it unless
  * `writeCache` is false. With `keyframes`, ffmpeg always runs (the JPEGs are
- * needed). A failed cache write never fails the analysis.
+ * needed). Only a clean ffmpeg run is cached: a failed one throws (for
+ * keyframes, review's best effort, it returns what ffmpeg printed). A failed
+ * cache write never fails the analysis.
  */
 export async function sceneTimes(video: string, opts: SceneOptions = {}): Promise<number[]> {
   const { bundle, keyframes, writeCache = true } = opts;
@@ -101,8 +114,10 @@ export async function sceneTimes(video: string, opts: SceneOptions = {}): Promis
     if (cached) return cached;
   }
   if (!existsSync(video)) throw new Error(`missing video: ${video}`);
-  const times = parseSceneTimes(await ffmpegStderr(sceneArgs(video, keyframes), opts.bin ?? ffmpegPath()));
-  if (bundle && writeCache) {
+  const run = await runFfmpeg(sceneArgs(video, keyframes), opts.bin ?? ffmpegPath());
+  if (!run.ok && !keyframes) throw new Error(`scene detection failed: ${run.error}`);
+  const times = parseSceneTimes(run.stderr);
+  if (run.ok && bundle && writeCache) {
     try {
       writeSceneCache(bundle, video, times);
     } catch {}
