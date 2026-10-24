@@ -1,32 +1,35 @@
 // The 3D phone's screen texture (SPEC §3.6): an offscreen 2D canvas the
 // compositor draws the recording into (video crop and zoom, touch
-// indicators, cursor, ripples, the island or notch), uploaded as a
-// CanvasTexture the screen mesh samples.
+// indicators, cursor, ripples, the island or notch), uploaded into the
+// texture the screen mesh samples.
 //
 // Size: one texel per render pixel. The texture covers the projected screen
 // at render resolution (× supersample), so a FRONT phone is a 1:1 copy and an
 // oblique one is minified at most by the hysteresis slack (the −0.5 LOD bias
-// keeps that on mip 0). At an axis-aligned pose the content starts at the
+// keeps that on mip 0); from ss 2 an oblique screen stops at the FRONT
+// density (obliqueScaleCap). At an axis-aligned pose the content starts at the
 // integer render pixel under the screen's top-left and keeps the flat rect's
 // sub-pixel phase, so the 2D draw onto the texture is the same resample as
 // the flat draw onto the canvas, and every render pixel then reads exactly
 // one texel: the screen at FRONT is the flat screen.
 //
-// Hysteresis: the canvas size is the needed size rounded UP to a fixed
+// Hysteresis: the texture size is the needed size rounded UP to a fixed
 // geometric ladder with 8% steps (textureSide), so it is re-created only when
 // the need crosses a rung; the content is drawn into its top-left and the
 // texture matrix maps the mesh's 0..1 UVs onto that area. A ladder (not
 // "keep the last size unless it is 8% off") makes the size a pure function of
 // the frame: the mip chain, and so every oblique frame, is then identical
 // whatever was rendered before (seek order never changes a pixel). The whole
-// canvas is cleared each frame for the same reason (stale texels would reach
+// texture is redrawn each frame for the same reason (stale texels would reach
 // the coarse mips).
 //
 // Bands (memory, §3.9): the GL texture is the full ladder size with mips, but
 // the 2D canvas the content is drawn into is at most SCREEN_BAND_PX: a
 // bigger screen is drawn and uploaded in horizontal bands, each the whole
-// content shifted up by a whole number of rows (so every band is the same
-// resample as one big draw), then the mips are made once. At 1080 the screen
+// content shifted up by a whole number of rows, then the mips are made once.
+// (Chromium's 2D canvas may round a few pixels one level apart under such a
+// shift, as the one big canvas already differs from the flat draw: the GPU
+// harness bounds it at 2 levels with no seam.) At 1080 the screen
 // is one band, exactly as before; at 4K a full-size 2D canvas would be one
 // more copy of the screen (26 MB at ss 1, 106 MB at ss 2), which would put 4K
 // over its memory budget.

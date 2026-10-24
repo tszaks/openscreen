@@ -3,8 +3,10 @@
 // of drawing. It pins what the loop asks the GPU to do: shadow masks once per
 // frame whatever the tile count (§3.7 step 8: "the shadow targets are per
 // frame, not per tile"), every sample's catcher pointing at the masks of the
-// pose it belongs to, N scene renders per tile, and a screen texture that
-// never outgrows the GPU's size limit (§3.6).
+// pose it belongs to, N scene renders per tile, a screen texture that
+// never outgrows the GPU's size limit (§3.6) and fills in bands, and the
+// §3.9 GPU memory budgets at 4K (ss 1 ≤ 340 MB, ss 2 ≤ 440 MB) counted the
+// way Engine.gpuBytes counts them, at the heaviest frame of a turn.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { grownSize, Passes } from '../src/renderer/src/phone3d/passes';
@@ -419,7 +421,7 @@ describe('oblique cap from ss 2 (§3.6, §3.9)', () => {
   it('FRONT is never capped (1:1 at every ss); an oblique screen is capped at ss × the largest size from ss 2 only', () => {
     expect(obliqueScaleCap(1, [1, 2])).toBe(Infinity);
     expect(obliqueScaleCap(2, [0.8, 1.3])).toBeCloseTo(2.6, 12);
-    for (const ss of [1, 2, 3]) {
+    for (const ss of [1, 2, 3] as const) {
       const front = sceneFor({ supersample: ss }, true);
       const fq = screenQuadAt(front, 0.5).quad;
       const capped = planScreenTexture(fq, front.home.screen, ss, 8192, obliqueScaleCap(ss, [1]));
