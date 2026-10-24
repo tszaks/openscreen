@@ -16,7 +16,7 @@ import { LIGHT_PRESETS } from '../../../shared/phone3d/lighting';
 import type { LightPreset, Phone3D } from '../../../shared/phone3d/model';
 import { continuousRectPoints } from '../../../shared/phone3d/outline';
 import type { Scene3D } from '../../../shared/phone3d/projection';
-import { mrtOutput, lodBias, needsRealloc, Passes } from './passes';
+import { mrtOutput, lodBias, grownSize, Passes } from './passes';
 import { ScreenTexture } from './screenTexture';
 import { ShadowPass } from './shadow';
 import { renderPhone3D, type Render3DArgs, type Render3DResult } from './view';
@@ -338,7 +338,7 @@ export class Engine {
     r.setClearColor(0x000000, 0);
     this.gpu = readGpuName(r.getContext());
     this.passes = new Passes(r);
-    this.screen = new ScreenTexture(r.capabilities.getMaxAnisotropy());
+    this.screen = new ScreenTexture(r, r.capabilities.getMaxAnisotropy());
     this.shadow = new ShadowPass(r);
     this.camera.matrixAutoUpdate = true;
     this.scene.add(this.poseGroup);
@@ -363,12 +363,10 @@ export class Engine {
   /** Makes the canvas at least w × h, re-created only when the ROI outgrows it or falls below half of it
    *  (needsRealloc); the output pass writes its top-left roi.w × roi.h (§3.7 step 7). */
   sizeCanvas(w: number, h: number): { w: number; h: number } {
-    const cur = this.canvasSize;
-    if (needsRealloc(cur.w ? cur : null, w, h)) {
-      const nw = Math.max(w, Math.min(cur.w, w * 2));
-      const nh = Math.max(h, Math.min(cur.h, h * 2));
-      this.renderer.setSize(nw, nh, false);
-      this.canvasSize = { w: nw, h: nh };
+    const next = grownSize(this.canvasSize, w, h);
+    if (next !== this.canvasSize) {
+      this.renderer.setSize(next.w, next.h, false);
+      this.canvasSize = next;
     }
     return this.canvasSize;
   }
@@ -427,7 +425,7 @@ export class Engine {
     this.generation++;
     // three re-creates its GL state; targets and passes are rebuilt from scratch.
     this.passes = new Passes(this.renderer);
-    this.screen = new ScreenTexture(this.renderer.capabilities.getMaxAnisotropy());
+    this.screen = new ScreenTexture(this.renderer, this.renderer.capabilities.getMaxAnisotropy());
     this.scene.remove(this.shadow.catcher);
     this.shadow = new ShadowPass(this.renderer);
     this.scene.add(this.shadow.catcher);

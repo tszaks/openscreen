@@ -35,7 +35,7 @@ import {
 } from '../../../shared/phone3d/projection';
 import type { Engine, PhoneLook } from './engine';
 import { planSamples, planTiles, Passes, type SamplePlan } from './passes';
-import { planScreenTexture, screenRoom } from './screenTexture';
+import { obliqueScaleCap, planScreenTexture, screenRoom } from './screenTexture';
 import { catcherFrame, SHADOW_SLOTS, type CatcherFrame } from './shadow';
 
 const DEG = Math.PI / 180;
@@ -252,20 +252,16 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   // 3. The screen texture, at the frame's centre pose (the video frame is fixed for the frame).
   const camT = camAt(s, t);
   const { quad } = screenQuadAt(s, t, camT);
-  const layout = planScreenTexture(quad, s.home.screen, ss, maxSide);
   const p3t = p3.transitions;
   const sizes = [p3.pose.size, ...p3t.map((tr) => tr.to.size), ...p3t.map((tr) => tr.from?.size ?? 0)];
-  const tctx = engine.screen.begin(layout.w, layout.h, maxSide, screenRoom(s.home.screen, ss, sizes));
-  a.drawScreen(tctx, layout.dst, layout.scale);
-  const tex = engine.screen.commit(layout, camT.landscape);
+  const layout = planScreenTexture(quad, s.home.screen, ss, maxSide, obliqueScaleCap(ss, sizes));
+  // Drawn and uploaded now, once (not inside the first sample's draw), in bands when the screen is big.
+  const tex = engine.screen.update(layout, camT.landscape, (tctx) => a.drawScreen(tctx, layout.dst, layout.scale), maxSide, screenRoom(s.home.screen, ss, sizes));
   if (phone.screen.material.map !== tex) {
     phone.screen.material.map = tex;
     phone.screen.material.needsUpdate = true;
   }
-  mark('screen2d');
-  // Upload once, now (not inside the first sample's draw).
-  r.initTexture(tex);
-  mark('upload');
+  mark('screen');
 
   // DoF reach (render px) over the frame's samples.
   const cams = plan.times.map((tt, k) => (k > 0 && tt === plan.times[0] ? null : camAt(s, tt)));

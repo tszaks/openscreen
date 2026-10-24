@@ -7,12 +7,12 @@
 // never outgrows the GPU's size limit (§3.6).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { Passes } from '../src/renderer/src/phone3d/passes';
+import { grownSize, Passes } from '../src/renderer/src/phone3d/passes';
 import { ShadowPass, SHADOW_SLOTS } from '../src/renderer/src/phone3d/shadow';
-import { MAX_SCREEN_TEXTURE, ScreenTexture, screenCanvasSize, screenRoom, textureSide } from '../src/renderer/src/phone3d/screenTexture';
+import { MAX_SCREEN_TEXTURE, obliqueScaleCap, planBands, planScreenTexture, SCREEN_BAND_PX, ScreenTexture, screenCanvasSize, screenRoom, textureSide } from '../src/renderer/src/phone3d/screenTexture';
 import { planShadowSlots, renderPhone3D, type Blit3D, type Render3DArgs, type Render3DQuality } from '../src/renderer/src/phone3d/view';
 import type { Engine } from '../src/renderer/src/phone3d/engine';
-import { scene3d, type Scene3D } from '../src/shared/phone3d/projection';
+import { scene3d, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
 import { defaultPhone3D, FRONT, type Phone3D } from '../src/shared/phone3d/model';
 import { normalizeProject, type Project } from '../src/shared/types';
 import { move, phoneProject, with3d } from './helpers/phone3dFixtures';
@@ -25,16 +25,26 @@ function fakeCanvas() {
 }
 
 type Call = { kind: 'scene' | 'shadow' | 'pass'; target: THREE.WebGLRenderTarget | null; contact?: unknown; corners?: number[] };
+/** One band upload into the screen texture: the band canvas's size, where it lands (GL rows, flipped) and whether it made the mips. */
+type Upload = { w: number; h: number; x: number; y: number; dstW: number; dstH: number; mips: boolean; flipY: boolean };
 
 /** An Engine whose renderer records draws: the real passes, shadow and screen texture objects, no GL. */
 function fakeEngine(maxSide = 8192) {
   const calls: Call[] = [];
+  const uploads: Upload[] = [];
+  /** The engine canvas as the real Engine.sizeCanvas would hold it (grownSize). */
+  const held: { canvas: { w: number; h: number } | null } = { canvas: null };
   const canvasSizes: { w: number; h: number }[] = [];
   let target: THREE.WebGLRenderTarget | null = null;
   const scene = new THREE.Scene();
   const renderer = {
     getContext: () => ({ isContextLost: () => false }),
     initTexture: () => undefined,
+    copyTextureToTexture: (src: THREE.Texture, dst: THREE.DataTexture, region: unknown, at: THREE.Vector2) => {
+      const img = src.image as { width: number; height: number };
+      expect(region).toBeNull(); // whole band canvases only: no partial (sub-rectangle) uploads
+      uploads.push({ w: img.width, h: img.height, x: at.x, y: at.y, dstW: dst.image.width, dstH: dst.image.height, mips: dst.generateMipmaps, flipY: dst.flipY });
+    },
     setRenderTarget: (t: THREE.WebGLRenderTarget | null) => void (target = t),
     getRenderTarget: () => target,
     setClearColor: () => undefined,
@@ -52,7 +62,7 @@ function fakeEngine(maxSide = 8192) {
   } as unknown as THREE.WebGLRenderer;
   const shadow = new ShadowPass(renderer);
   const passes = new Passes(renderer);
-  const screen = new ScreenTexture(1);
+  const screen = new ScreenTexture(renderer, 1);
   const poseGroup = new THREE.Group();
   const inner = new THREE.Group();
   poseGroup.add(inner);
@@ -89,12 +99,21 @@ function fakeEngine(maxSide = 8192) {
     maxSide: () => maxSide,
     sizeCanvas: (w: number, h: number) => {
       canvasSizes.push({ w, h });
-      return { w, h };
+      held.canvas = grownSize(held.canvas, w, h);
+      return held.canvas;
     },
     gpuBytes: () => 0,
     gpuName: () => 'fake',
   };
-  return { engine: engine as unknown as Engine, calls, shadow, passes, screen, canvasSizes };
+    /** What the 3D path holds on the GPU now, bytes, as Engine.gpuBytes counts it (no environment: the fake kit has none). */
+  const bytes = () => ({
+    passes: passes.bytes(),
+    shadow: shadow.bytes(),
+    texture: screen.bytes(),
+    canvas2d: screen.canvasBytes(),
+    engineCanvas: held.canvas ? held.canvas.w * held.canvas.h * 4 * 2 : 0,
+  });
+  return { engine: engine as unknown as Engine, calls, shadow, passes, screen, canvasSizes, uploads, bytes };
 }
 
 /** One frame: plan it, then draw its tiles with a blit that records each copy. */
@@ -301,7 +320,7 @@ describe('screen texture size limit (§3.6)', () => {
         const s = sceneFor({ supersample: ss, pose: { ...FRONT, size } }, true);
         const { engine, screen } = fakeEngine(maxSide);
         frame(engine, args(s, 0.5, { full: false, motion: null }));
-        const c = screen.canvas!;
+        const c = { width: screen.size!.w, height: screen.size!.h };
         expect(c.width).toBeLessThanOrEqual(maxSide);
         expect(c.height).toBeLessThanOrEqual(maxSide);
         // And it holds the frame's own (capped) need.
@@ -312,5 +331,164 @@ describe('screen texture size limit (§3.6)', () => {
         if (ss * size >= 3) expect(screenRoom(s.home.screen, ss, [size]).h).toBeGreaterThan(maxSide);
       }
     }
+  });
+});
+
+describe('screen texture bands (§3.6, §3.9)', () => {
+  it('planBands: equal bands that cover every row in order, each within the pixel limit, the last ending on the last row', () => {
+    for (const [w, h, max] of [
+      [576, 1245, SCREEN_BAND_PX],
+      [1622, 3782, SCREEN_BAND_PX],
+      [3502, 7559, SCREEN_BAND_PX],
+      [8192, 8192, SCREEN_BAND_PX],
+      [1000, 1000, 1000],
+      [5000, 3, 10],
+      [7, 1, 100],
+    ]) {
+      const b = planBands(w, h, max);
+      expect(b.height * w <= max || b.height === 1).toBe(true);
+      expect(b.height).toBeLessThanOrEqual(h);
+      expect(b.y[0]).toBe(0);
+      expect(b.y.at(-1)! + b.height).toBe(h);
+      for (let i = 1; i < b.y.length; i++) {
+        expect(b.y[i]).toBeGreaterThan(b.y[i - 1]);
+        expect(b.y[i]).toBeLessThanOrEqual(b.y[i - 1] + b.height); // no gap
+        if (i < b.y.length - 1) expect(b.y[i]).toBe(b.y[i - 1] + b.height); // only the last one overlaps
+      }
+      if (w * h <= max) expect(b).toEqual({ height: h, y: [0] });
+    }
+    expect(planBands(0, 10)).toEqual({ height: 0, y: [] });
+    expect(planBands(3000, 7000, Infinity)).toEqual({ height: 7000, y: [0] }); // 'no limit' is one band
+  });
+
+  /** A canvas whose context tracks its translation, so a paint callback can see where it draws. */
+  function trackingCanvas() {
+    const state = { ty: 0, stack: [] as number[] };
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (o, k) => {
+        if (k === 'setTransform') return (_a: number, _b: number, _c: number, _d: number, _e: number, f: number) => void (state.ty = f);
+        if (k === 'save') return () => void state.stack.push(state.ty);
+        if (k === 'restore') return () => void (state.ty = state.stack.pop() ?? 0);
+        if (k === '__ty') return state.ty;
+        return k in o ? o[k as string] : () => undefined;
+      },
+      set: (o, k, v) => ((o[k as string] = v), true),
+    });
+    return { width: 0, height: 0, getContext: () => ctx };
+  }
+
+  it('1080: one band, the 2D canvas is the texture (as before); 4K ss 1 and ss 2: bands, each the content shifted by its row, mips once', () => {
+    vi.stubGlobal('document', { createElement: () => trackingCanvas() });
+    for (const [patch, k4, bandsMin] of [
+      [{}, false, 1],
+      [{}, true, 2],
+      [{ supersample: 2 }, true, 8],
+    ] as const) {
+      const s = sceneFor(patch as Partial<Phone3D>, k4);
+      const { engine, screen, uploads } = fakeEngine();
+      const shifts: number[] = [];
+      const a = args(s, 0.5);
+      frame(engine, { ...a, drawScreen: (ctx) => void shifts.push((ctx as unknown as { __ty: number }).__ty) });
+      const { w, h } = screen.size!;
+      const band = screen.canvas!;
+      expect(screen.bands).toBe(uploads.length);
+      expect(shifts).toHaveLength(uploads.length);
+      if (bandsMin === 1) {
+        expect(uploads).toHaveLength(1);
+        expect([band.width, band.height]).toEqual([w, h]);
+      } else {
+        expect(uploads.length).toBeGreaterThanOrEqual(bandsMin);
+        expect(band.width * band.height).toBeLessThanOrEqual(SCREEN_BAND_PX);
+      }
+      // Every GL row of the texture is written, by whole-band uploads at x 0; band i's canvas row 0 is texture row
+      // shifts[i] (paint saw a −y translation), and with flipY it lands on GL row h − y − band height.
+      const rows = new Uint8Array(h);
+      uploads.forEach((u, i) => {
+        expect([u.w, u.h, u.x, u.dstW, u.dstH, u.flipY]).toEqual([w, band.height, 0, w, h, true]);
+        expect(u.y).toBe(h + shifts[i] - band.height);
+        expect(u.mips).toBe(i === uploads.length - 1);
+        rows.fill(1, u.y, u.y + u.h);
+      });
+      expect(rows.every((r) => r === 1)).toBe(true);
+      expect(screen.texture!.generateMipmaps).toBe(true); // left as allocated
+    }
+  });
+});
+
+describe('oblique cap from ss 2 (§3.6, §3.9)', () => {
+  it('FRONT is never capped (1:1 at every ss); an oblique screen is capped at ss × the largest size from ss 2 only', () => {
+    expect(obliqueScaleCap(1, [1, 2])).toBe(Infinity);
+    expect(obliqueScaleCap(2, [0.8, 1.3])).toBeCloseTo(2.6, 12);
+    for (const ss of [1, 2, 3]) {
+      const front = sceneFor({ supersample: ss }, true);
+      const fq = screenQuadAt(front, 0.5).quad;
+      const capped = planScreenTexture(fq, front.home.screen, ss, 8192, obliqueScaleCap(ss, [1]));
+      expect(capped.aligned).toBe(true);
+      expect(capped).toEqual(planScreenTexture(fq, front.home.screen, ss, 8192));
+      if (ss <= 2) expect(capped.scale).toBe(ss); // (at ss 3 the 4K screen hits the 8192 texture limit first)
+      // A turned phone whose near edge projects larger than FRONT.
+      const s = sceneFor({ supersample: ss, ...moving() }, true);
+      let grew = 0;
+      for (let i = 30; i <= 90; i++) {
+        const q = screenQuadAt(s, i / 30).quad;
+        const free = planScreenTexture(q, s.home.screen, ss, 8192);
+        const cap = planScreenTexture(q, s.home.screen, ss, 8192, obliqueScaleCap(ss, [1]));
+        if (free.aligned) continue;
+        if (ss === 1) expect(cap).toEqual(free);
+        else expect(cap.scale).toBe(Math.min(free.scale, ss));
+        if (free.scale > ss * 1.02) grew++;
+      }
+      if (ss <= 2) expect(grew).toBeGreaterThan(0); // the turn really has frames the cap acts on
+    }
+  });
+
+  it('from ss 2 the room holds every frame of a turn: the texture is made once', () => {
+    for (const ss of [2, 3] as const) {
+      const s = sceneFor({ supersample: ss, ...moving() }, true);
+      const { engine, screen } = fakeEngine();
+      for (let i = 0; i <= 120; i += 2) frame(engine, args(s, i / 30));
+      expect(screen.reallocs).toBe(1);
+      // And it is the FRONT need's rung (the room has no perspective allowance from ss 2), within the GPU limit.
+      // (At 4K, ss 3 steps down to 2: the ROI's long side × 3 is over 8192.)
+      const eff = 2;
+      const f = s.home.screen;
+      expect(screen.size).toEqual({ w: textureSide(Math.ceil(f.w * eff) + 1), h: textureSide(Math.ceil(f.h * eff) + 1) });
+    }
+  });
+});
+
+describe('GPU memory at 4K (§3.9 table method, decimal MB)', () => {
+  /** WP4a's parts the stand-in does not have, as §3.9 budgets them: a 512 HalfFloat PMREM (1536 × 2048 × 8 B),
+   *  the RectAreaLight LTC tables (2 × 64² × 16 B), and geometry up to 10 MB. */
+  const WP4A = 3 * 512 * 4 * 512 * 8 + 2 * 64 * 64 * 16 + 10e6;
+
+  /** The heaviest frame of a 200° turn at 30 fps (t 0..4 s, the move 1..3 s), counted bytes plus WP4a's parts. */
+  function peak(patch: Partial<Phone3D>, layout: 'fill' | 'social4k') {
+    let p: Project = with3d(phoneProject(), moving(patch));
+    if (layout === 'fill') p = normalizeProject({ ...p, layout: { ...p.layout, presetId: 'none' } });
+    const s = scene3d(p, { width: 2160, height: 3840 })!;
+    const { engine, bytes } = fakeEngine();
+    let worst = { total: 0, parts: bytes() };
+    for (let i = 0; i <= 120; i++) {
+      frame(engine, args(s, i / 30));
+      const parts = bytes();
+      const total = Object.values(parts).reduce((x, y) => x + y, 0) + WP4A;
+      if (total > worst.total) worst = { total, parts };
+    }
+    return worst;
+  }
+
+  it('ss 1: ≤ 340 MB with the phone filling the 2160×3840 canvas (the worst case)', () => {
+    const m = peak({}, 'fill');
+    expect(m.total / 1e6).toBeLessThanOrEqual(340);
+    expect(m.parts.canvas2d).toBeLessThanOrEqual(SCREEN_BAND_PX * 4);
+  });
+
+  it('ss 2: ≤ 440 MB with the phone filling the canvas; ss 3 steps down to the same', () => {
+    const m2 = peak({ supersample: 2 }, 'fill');
+    expect(m2.total / 1e6).toBeLessThanOrEqual(440);
+    expect(m2.parts.canvas2d).toBeLessThanOrEqual(SCREEN_BAND_PX * 4);
+    const m3 = peak({ supersample: 3 }, 'fill');
+    expect(m3.total / 1e6).toBeLessThanOrEqual(440);
   });
 });

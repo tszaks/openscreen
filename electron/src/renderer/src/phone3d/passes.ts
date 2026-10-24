@@ -378,6 +378,18 @@ export function needsRealloc(cur: { w: number; h: number } | null, w: number, h:
   return w > cur.w || h > cur.h || (w < cur.w * 0.5 && h < cur.h * 0.5);
 }
 
+/**
+ * The size to give a resource that must hold w × h, now `cur`: unchanged
+ * while needsRealloc says no; else the need, kept up to twice as large as
+ * the need where the current size already was (so a shrink-grow cycle
+ * does not re-create it every frame).
+ */
+export function grownSize(cur: { w: number; h: number } | null, w: number, h: number): { w: number; h: number } {
+  if (cur && cur.w && !needsRealloc(cur, w, h)) return cur;
+  const c = cur ?? { w: 0, h: 0 };
+  return { w: Math.max(w, Math.min(c.w, w * 2)), h: Math.max(h, Math.min(c.h, h * 2)) };
+}
+
 export interface DofParams {
   near: number;
   far: number;
