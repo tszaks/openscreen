@@ -14,6 +14,7 @@
 // scene.environmentRotation together by (light.azimuth + pose.light).
 
 import {
+  AdditiveBlending,
   BackSide,
   BufferAttribute,
   Color,
@@ -32,7 +33,7 @@ import {
 } from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { LIGHT_DISTANCE, LIGHT_PRESETS, type SoftBox } from '../../../shared/phone3d/lighting';
-import type { LightPreset } from '../../../shared/phone3d/model';
+import { defaultPhone3D, type LightPreset } from '../../../shared/phone3d/model';
 
 /**
  * Luminance (nits) of a softbox of relative intensity 1. A box seen in a
@@ -40,7 +41,7 @@ import type { LightPreset } from '../../../shared/phone3d/model';
  * 2-of-12-sample motion-blur average and tone maps to a bright streak (D3);
  * the diffuse back under the key sits around 0.1–0.3.
  */
-export const BOX_RADIANCE = 36;
+export const BOX_RADIANCE = 22;
 
 /** Fill dome levels, as multiples of the preset's `ambient` (0.02–0.06): top and horizon. */
 const DOME_TOP = 1.0;
@@ -48,9 +49,17 @@ const DOME_HORIZON = 0.4;
 /** Floor bounce: the background's mean linear colour × ambient × this. */
 const FLOOR_BOUNCE = 1.5;
 /** The sheen strip's radiance (it shows in the glass at specularIntensity × F0 ≈ 1%). */
-export const SHEEN_RADIANCE = 4;
-/** The sheen strip: size (in light distances), direction (toward the camera, a little up and right), roll. */
-const SHEEN = { w: 1.8, h: 0.16, dir: [0.06, 0.1, 1] as const, rollDeg: -32 };
+export const SHEEN_RADIANCE = 2.5;
+/**
+ * The sheen strip: size (in dome-placement units), roll, and where it sits as
+ * seen from the phone at the DEFAULT key azimuth: just above and right of
+ * the camera, so a flat glass at FRONT reflects it (reflections of a flat
+ * glass at FRONT only span about ±9° around the camera axis). The strip
+ * turns with the light channel like the rest of the environment (D13), so
+ * it lives at environment azimuth (camera az − default key az).
+ */
+const SHEEN = { w: 1.8, h: 0.4, azimuth: 3, elevation: 5, rollDeg: -32 };
+const DEFAULT_KEY_AZIMUTH = defaultPhone3D().light.azimuth;
 const DOME_RADIUS = 10;
 export const PMREM_SIZE = 512;
 
@@ -151,13 +160,26 @@ export function fillScene(preset: LightPreset, bgMean: Rgb): Scene {
   scene.add(domeMesh);
 
   const d = DOME_RADIUS * 0.6;
+  // Soft-edged: radiance falls off as cos² across the strip and toward its
+  // ends, added over the dome. A hard-edged quad showed the cube map's
+  // texels as stair steps in the glass.
+  const sg = new PlaneGeometry(SHEEN.w * d, SHEEN.h * d, 24, 12);
+  const sp = sg.getAttribute('position');
+  const sc = new Float32Array(sp.count * 3);
+  for (let i = 0; i < sp.count; i++) {
+    const u = sp.getX(i) / ((SHEEN.w * d) / 2);
+    const v = sp.getY(i) / ((SHEEN.h * d) / 2);
+    const bump = (x: number) => Math.max(0, Math.cos((Math.PI / 2) * Math.min(1, Math.abs(x))));
+    const k = SHEEN_RADIANCE * bump(v) ** 2 * Math.sqrt(bump(u));
+    sc[i * 3] = sc[i * 3 + 1] = sc[i * 3 + 2] = k;
+  }
+  sg.setAttribute('color', new BufferAttribute(sc, 3));
   const strip = new Mesh(
-    new PlaneGeometry(SHEEN.w * d, SHEEN.h * d),
-    new MeshBasicMaterial({ color: new Color(SHEEN_RADIANCE, SHEEN_RADIANCE, SHEEN_RADIANCE), side: DoubleSide, toneMapped: false }),
+    sg,
+    new MeshBasicMaterial({ vertexColors: true, side: DoubleSide, toneMapped: false, blending: AdditiveBlending, transparent: true, depthWrite: false }),
   );
-  const [sx, sy, sz] = SHEEN.dir;
-  const l = Math.hypot(sx, sy, sz);
-  strip.position.set((sx / l) * d, (sy / l) * d, (sz / l) * d);
+  const [sx, sy, sz] = lightDir(SHEEN.azimuth - DEFAULT_KEY_AZIMUTH, SHEEN.elevation);
+  strip.position.set(sx * d, sy * d, sz * d);
   strip.lookAt(0, 0, 0);
   strip.rotateZ(SHEEN.rollDeg * deg);
   strip.name = 'fill:sheen';

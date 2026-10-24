@@ -347,6 +347,11 @@ describe('materials (§3.4)', () => {
     const black = bandF0('#3C3C3D', 'titanium');
     expect(luminance(black)).toBeCloseTo(0.18, 3);
     expect(Math.max(black.r, black.g, black.b) - Math.min(black.r, black.g, black.b)).toBeLessThan(0.05);
+    // Deep Blue stays blue (saturation kept), not the grey that mixing toward the base F0 gave.
+    const blue = bandF0('#3A4659', 'aluminum');
+    expect(hue(blue).s).toBeGreaterThan(0.85 * hue(new Color().setStyle('#3A4659')).s);
+    expect(hue(blue).h * 360).toBeGreaterThan(205);
+    expect(hue(blue).h * 360).toBeLessThan(225);
   });
 
   it('matches the material table: no clearcoat on metal or front glass', () => {

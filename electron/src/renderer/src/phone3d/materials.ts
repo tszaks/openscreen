@@ -25,7 +25,6 @@ import {
   MeshBasicMaterial,
   MeshPhysicalMaterial,
   OneFactor,
-  SRGBColorSpace,
   ZeroFactor,
   type Material,
   type Object3D,
@@ -34,16 +33,22 @@ import {
 } from 'three';
 import type { DeviceModel, FrameMaterial } from '../../../shared/devices';
 import type { Body3D } from '../../../shared/devices3d';
-import { FLASH_GROUP, BAND_GROUP, isUnibody, type PhonePart } from './geometry';
+import { FLASH_GROUP, BAND_GROUP, FRONT_GROUP, isUnibody, type PhonePart } from './geometry';
 
 // ---------------------------------------------------------------------------
 // bandF0: a finish swatch → a believable metal reflectance
 
-/** Base metal reflectance (linear RGB) and the luminance floor a finish is lifted to. */
+/**
+ * Base metal reflectance (linear RGB) and the luminance floor a finish is
+ * lifted to. Aluminium's floor is 0.16, not the spec's 0.30: anodised
+ * aluminium is a dyed oxide, and at 0.30 every dark finish (Deep Blue,
+ * Midnight, Black) turned into light grey in the turntable, while 0.16
+ * keeps them dark and still lets the softbox streaks read as metal.
+ */
 export const METAL_F0: Record<FrameMaterial, { f0: [number, number, number]; floor: number }> = {
   titanium: { f0: [0.54, 0.5, 0.45], floor: 0.18 },
   steel: { f0: [0.56, 0.57, 0.58], floor: 0.18 },
-  aluminum: { f0: [0.91, 0.92, 0.92], floor: 0.3 },
+  aluminum: { f0: [0.91, 0.92, 0.92], floor: 0.16 },
 };
 
 /** Rec. 709 luminance of a linear colour. */
@@ -51,35 +56,31 @@ export const luminance = (c: { r: number; g: number; b: number }) => 0.2126 * c.
 
 /**
  * The finishes in devices.ts are marketing swatches (Black #2E2E30, Space
- * Black #403E3D…). As metal F0 they reflect 3–5%: a black mirror that reads
- * as plastic. So: convert the hex to linear, mix it toward the base metal's
- * F0 until its luminance reaches the floor (titanium/steel 0.18, anodised
- * aluminium 0.30), and keep the swatch's hue (sRGB HSL hue, the hue a
- * person sees; a near-neutral swatch takes the metal's own slight tint).
- * Swatches already above the floor are kept. The mix amount is found by 40
- * fixed bisection steps, so the result is deterministic.
+ * Black #403E3D, Deep Blue #3A4659). As metal F0 they reflect 3–5%: a black
+ * mirror that reads as plastic. So a swatch below its metal's floor is
+ * lifted to the floor by SCALING its linear colour, which keeps its hue and
+ * saturation (mixing toward the grey base F0, the spec's first idea, turned
+ * Deep Blue grey). If a channel would pass 1 it is pulled toward the neutral
+ * grey of the same luminance. A black swatch takes the base metal's own
+ * tint at the floor. Swatches already above the floor are kept.
  */
 export function bandF0(hex: string, material: FrameMaterial): Color {
   const c = new Color().setStyle(hex); // linear (ColorManagement on)
   const { f0, floor } = METAL_F0[material];
-  if (luminance(c) >= floor) return c;
-  const base = new Color(f0[0], f0[1], f0[2]);
-  const src = c.getHSL({ h: 0, s: 0, l: 0 }, SRGBColorSpace);
-  const keepHue = src.s > 0.08 && src.l > 0.02 && src.l < 0.98;
-  const at = (t: number) => {
-    const m = c.clone().lerp(base, t);
-    if (!keepHue) return m;
-    const hsl = m.getHSL({ h: 0, s: 0, l: 0 }, SRGBColorSpace);
-    return m.setHSL(src.h, hsl.s, hsl.l, SRGBColorSpace);
-  };
-  let lo = 0;
-  let hi = 1;
-  for (let i = 0; i < 40; i++) {
-    const mid = (lo + hi) / 2;
-    if (luminance(at(mid)) >= floor) hi = mid;
-    else lo = mid;
+  const L0 = luminance(c);
+  if (L0 >= floor) return c;
+  if (L0 < 1e-4) {
+    const b = new Color(f0[0], f0[1], f0[2]);
+    return b.multiplyScalar(floor / luminance(b));
   }
-  return at(hi);
+  const m = c.clone().multiplyScalar(floor / L0);
+  const peak = Math.max(m.r, m.g, m.b);
+  if (peak > 1) {
+    // Mix toward grey (same luminance) just enough to bring the peak to 1.
+    const t = (peak - 1) / (peak - floor);
+    m.lerp(new Color(floor, floor, floor), t);
+  }
+  return m;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +206,15 @@ export interface MaterialOptions {
 }
 
 const srgb = (hex: string) => new Color().setStyle(hex);
+
+/**
+ * How far each back surface's colour is mixed toward white (sRGB). The spec
+ * started at 8% (glossy) and 20% (frosted); in the turntable 20% turned
+ * Black Titanium's back mid-grey under the key, so the frosted lift is 6%
+ * (the etched surface's own specular already lightens it). The unibody's
+ * Ceramic Shield panel reads a step lighter than the aluminium around it.
+ */
+export const BACK_LIFT = { glossy: 0.04, frosted: 0.06, panel: 0.1 };
 /** Mix a swatch toward white by `t` in sRGB (how a designer lightens a colour), returned linear. */
 function towardWhite(hex: string, t: number): Color {
   const c = new Color().setStyle(hex);
@@ -268,20 +278,23 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
 
   const glossy = (c: Color) => physical({ color: c, roughness: 0.6, specularIntensity: 0, clearcoat: 1, clearcoatRoughness: 0.02, metalness: 0 });
   const frosted = (c: Color) => physical({ color: c, roughness: 0.42, specularIntensity: 1, metalness: 0 });
-  const backGlass = back === 'glossy' ? glossy(towardWhite(hex, 0.08)) : frosted(towardWhite(hex, 0.2));
+  const backGlass = back === 'glossy' ? glossy(towardWhite(hex, BACK_LIFT.glossy)) : frosted(towardWhite(hex, BACK_LIFT.frosted));
   const backMat = opts.backMetal ? band : backGlass;
   // The unibody's inlaid Ceramic Shield panel is a lighter tone of the finish.
-  const backPanel = frosted(towardWhite(hex, 0.32));
+  const backPanel = frosted(towardWhite(hex, BACK_LIFT.panel));
 
   const ringColor = bandF0(darken(hex, 0.25), material);
   const lensRing = physical({ color: ringColor, metalness: 1, roughness: 0.15 });
-  const plateauGlass = glossy(towardWhite(hex, 0.08));
+  const plateauGlass = glossy(towardWhite(hex, BACK_LIFT.glossy));
   const plateau = opts.plateau === 'band' ? band : opts.plateau === 'lensRing' ? lensRing : plateauGlass;
 
-  const lensBarrel = physical({ color: srgb('#111111'), metalness: 1, roughness: 0.7, side: FrontSide });
-  const lensElements = [0.05, 0.17, 0.3].map((r) =>
-    physical({ color: srgb('#07080a'), roughness: r, metalness: 0, specularIntensity: 1, ior: 1.6 }),
-  ) as PhoneMaterials['lensElements'];
+  const lensBarrel = physical({ color: srgb('#1c1c1f'), metalness: 1, roughness: 0.5, side: FrontSide });
+  // Coated optics: near-black with a cool cast, glossy at the top, rougher deeper down.
+  const lensElements = [
+    [0.05, '#07080c'],
+    [0.17, '#0a0b12'],
+    [0.3, '#0c0d16'],
+  ].map(([r, c]) => physical({ color: srgb(c as string), roughness: r as number, metalness: 0, specularIntensity: 1, ior: 1.7 })) as PhoneMaterials['lensElements'];
   const lensCover = reflectionOnly(
     overlay(
       physical({
@@ -289,7 +302,8 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
         roughness: 0.02,
         metalness: 0,
         ior: 1.5,
-        specularIntensity: 1,
+        // AR-coated sapphire reflects about 1%: a tint, not a mirror.
+        specularIntensity: 0.3,
         iridescence: 1,
         iridescenceIOR: 1.8,
         iridescenceThicknessRange: [250, 450],
@@ -388,6 +402,13 @@ export function materialForPart(part: PhonePart, m: PhoneMaterials): Material | 
     }
     case 'lensElements':
       return [...m.lensElements];
+    case 'frontHardware': {
+      const list: Material[] = [];
+      list[FRONT_GROUP.lens] = m.sensor;
+      list[FRONT_GROUP.ring] = m.band;
+      list[FRONT_GROUP.grille] = m.decal;
+      return list;
+    }
     case 'button':
       return m.band;
     case 'mic':

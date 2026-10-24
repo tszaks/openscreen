@@ -117,15 +117,18 @@ export type PhonePart =
   | 'mic'
   | 'button'
   | 'cameraControl'
-  | 'port';
+  | 'port'
+  | 'frontHardware';
 
 export const PHONE_PARTS: readonly PhonePart[] = [
   'band', 'seam', 'frontGlass', 'screen', 'glare', 'back', 'backPanel', 'plateau', 'lensRing', 'lensBarrel',
-  'lensElements', 'lensCover', 'flash', 'sensor', 'mic', 'button', 'cameraControl', 'port',
+  'lensElements', 'lensCover', 'flash', 'sensor', 'mic', 'button', 'cameraControl', 'port', 'frontHardware',
 ];
 
 /** Material groups inside the band mesh. */
 export const BAND_GROUP = { metal: 0, antenna: 1 } as const;
+/** Material groups of the front hardware in the bezel (SE, iPads): glass lens, metal ring, dark grille. */
+export const FRONT_GROUP = { lens: 0, ring: 1, grille: 2 } as const;
 /** Material groups inside the flash mesh. */
 export const FLASH_GROUP = { ring: 0, lamp: 1 } as const;
 
@@ -674,7 +677,7 @@ function buildLens(L: LensBuild, s: LensSpec) {
   fr.forEach((fz, gi) => {
     const r = glassR * rr[gi];
     const zc = coverZ - depth * fz;
-    const sag = Math.min(r * 0.12, depth * 0.15);
+    const sag = Math.min(r * 0.2, depth * 0.2);
     const rings = 6;
     const seg = 48;
     const idx: number[][] = [];
@@ -780,6 +783,32 @@ function build(device: DeviceModel, body: Body3D): PhoneModel {
   const glare = new Builder();
   cap(glare, screenLoop.p, d2, 1);
   add(partMesh('glare', glare, RENDER_ORDER.glare));
+
+  // Front hardware that sits in the bezel, outside the screen texture (the
+  // island and notch are drawn into the screen by drawCutouts): the SE's
+  // earpiece, camera and home button, an iPad's bezel camera. Same
+  // positions and sizes as deviceFrame.ts drawFrontHardware (y flipped).
+  const hw = new Builder();
+  const zf = d2 + DECAL_LIFT_MM;
+  const topBezelMid = (H / 2 - rim + screenH / 2) / 2; // halfway between the glass's top edge and the screen's
+  if (device.homeButton) {
+    const ew = W * 0.14;
+    const eh = 1.1;
+    cap(hw, stadiumLoop(ew, eh, 8).p.map(([x, y]): V2 => [x, y + topBezelMid]), zf, 1, [], undefined, FRONT_GROUP.grille);
+    disc(hw, -W * 0.14, topBezelMid, 1.5, zf, FRONT_GROUP.lens);
+    const hbY = -((screenH / 2 + H / 2 - rim) / 2);
+    const hbR = 5.5;
+    disc(hw, 0, hbY, hbR - 0.35, zf, FRONT_GROUP.lens, 64);
+    // The ring: a thin metal annulus standing just proud of the glass.
+    const ring = circleLoop(hbR, 64);
+    const ringIn = insetLoop(ring, 0.35);
+    cap(hw, ring.p.map(([x, y]): V2 => [x, y + hbY]), zf + DECAL_LIFT_MM, 1, [ringIn.map(([x, y]): V2 => [x, y + hbY]).reverse()], undefined, FRONT_GROUP.ring);
+  } else if (device.family === 'ipad') {
+    const onTop = device.id.startsWith('ipad-mini');
+    if (onTop) disc(hw, 0, topBezelMid, 1.4, zf, FRONT_GROUP.lens);
+    else disc(hw, (screenW / 2 + W / 2 - rim) / 2, 0, 1.4, zf, FRONT_GROUP.lens);
+  }
+  add(partMesh('frontHardware', hw, RENDER_ORDER.decal));
 
   // --- Back --------------------------------------------------------------------
   const pl = body.plateau;
