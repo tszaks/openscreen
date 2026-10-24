@@ -24,7 +24,7 @@ import { Timeline } from './timeline';
 import type { TapSuggestion } from './taps';
 import { MAX_CONTENT_SCALE, MIN_CONTENT_SCALE } from './contentTransform';
 import { compareTransitions } from './phone3d/model';
-import { applyPhone3dOp, NOT_IPHONE, Phone3dOpError, PHONE3D_OP_NAMES } from './phone3d/ops';
+import { allowOnly, applyPhone3dOp, NOT_IPHONE, Phone3dOpError, PHONE3D_OP_NAMES } from './phone3d/ops';
 import { DIRECT_STYLES, planDirect, type DirectStyle } from './phone3d/direct';
 import { phone3dProblems } from './phone3d/validate';
 import { canHide, defaultLayerOrder, hideLayer, layerOrder, resetLayer, restack, textLayer, withLayerTransform, type LayerId, type Restack } from './canvasLayers';
@@ -953,7 +953,11 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
     case 'direct': {
       // Auto 3D: the editor's button and the CLI's `direct` command plan the same way (phone3d/direct.ts).
       if (!isPhoneProject(p)) throw new OpError(`direct: ${NOT_IPHONE}`);
-      for (const k of Object.keys(o)) if (!['op', 'style', 'replace', 'scenes'].includes(k)) throw new OpError(`direct: unknown field "${k}" (known: style, replace, scenes)`);
+      try {
+        allowOnly(o);
+      } catch (e) {
+        throw new OpError((e as Error).message);
+      }
       const style = (optStr(o, 'style') ?? 'hero') as DirectStyle;
       if (!DIRECT_STYLES.includes(style)) throw new OpError(`direct: style must be ${DIRECT_STYLES.join('|')}`);
       const replace = optBool(o, 'replace') ?? true;

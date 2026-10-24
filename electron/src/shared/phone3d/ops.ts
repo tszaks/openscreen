@@ -56,6 +56,23 @@ export const PHONE3D_OP_NAMES = ['phone3d', 'setPose', 'addTransition', 'editTra
 export type Phone3dOpName = (typeof PHONE3D_OP_NAMES)[number];
 export const isPhone3dOp = (name: string): name is Phone3dOpName => (PHONE3D_OP_NAMES as readonly string[]).includes(name);
 
+/**
+ * Every field each 3D op accepts (anything else is refused, so a typo never
+ * silently does nothing). `direct` is in agentOps.ts but listed here too, so
+ * one table documents every 3D op; the parity test (test/opsParity.test.ts)
+ * reads it.
+ */
+export const PHONE3D_OP_FIELDS = {
+  phone3d: ['enabled', 'clear', 'pose', 'camera', 'light', 'glass', 'back', 'shadow', 'dof', 'float', 'motionBlur', 'supersample'],
+  setPose: ['at', 'target', 'id', 'index', 'end', ...POSE_KEYS],
+  addTransition: ['start', 'end', 'from', 'to', 'easing', 'stiffness', 'damping', 'bezier', 'fitDuration'],
+  editTransition: ['id', 'index', 'start', 'end', 'by', 'from', 'to', 'easing', 'stiffness', 'damping', 'bezier', 'fitDuration', 'swap', 'resetEnd'],
+  removeTransition: ['id', 'index'],
+  clearTransitions: [],
+  shot: ['recipe', 'at', 'duration', 'intensity', 'direction', 'return'],
+  direct: ['style', 'replace', 'scenes'],
+} as const satisfies Record<Phone3dOpName | 'direct', readonly string[]>;
+
 export const NOT_IPHONE = '3D phone needs an iPhone recording';
 /** addTransition's length when neither `end` nor `fitDuration` is given (the lane's Option-click). */
 export const DEFAULT_MOVE_LENGTH = 1.2;
@@ -71,7 +88,7 @@ const fmt = (s: number) => s.toFixed(2);
 // Argument readers
 
 /** Refuses fields an op does not know (a typo would otherwise do nothing). */
-function allowOnly(o: EditOp, keys: readonly string[]) {
+export function allowOnly(o: EditOp, keys: readonly string[] = PHONE3D_OP_FIELDS[o.op as keyof typeof PHONE3D_OP_FIELDS] ?? []) {
   for (const k of Object.keys(o)) {
     if (k !== 'op' && !keys.includes(k)) fail(`${o.op}: unknown field "${k}" (known: ${keys.join(', ')})`);
   }
@@ -274,10 +291,8 @@ function mergeGroup<G extends Group>(op: string, group: G, cur: Phone3D[G], raw:
   return next as Phone3D[G];
 }
 
-const SETTINGS_FIELDS = ['enabled', 'clear', 'pose', 'camera', 'light', 'glass', 'back', 'shadow', 'dof', 'float', 'motionBlur', 'supersample'] as const;
-
 function phone3dOp(p: Project, o: EditOp) {
-  allowOnly(o, SETTINGS_FIELDS);
+  allowOnly(o);
   if (o.clear !== undefined) {
     if (o.clear !== true) fail('phone3d: clear must be true');
     if (Object.keys(o).some((k) => k !== 'op' && k !== 'clear')) fail('phone3d: clear:true takes no other fields');
@@ -306,7 +321,7 @@ function phone3dOp(p: Project, o: EditOp) {
 // Keyframes
 
 function setPoseOp(p: Project, o: EditOp) {
-  allowOnly(o, ['at', 'target', 'id', 'index', 'end', ...POSE_KEYS]);
+  allowOnly(o);
   const patch = topLevelPose(o);
   if (!Object.keys(patch).length) fail(`setPose: pass at least one pose channel (${POSE_KEYS.join(', ')})`);
   const p3 = { ...current(p) };
@@ -344,7 +359,7 @@ function setPoseOp(p: Project, o: EditOp) {
 }
 
 function addTransitionOp(p: Project, o: EditOp, newId: () => string) {
-  allowOnly(o, ['start', 'end', 'from', 'to', 'easing', 'stiffness', 'damping', 'bezier', 'fitDuration']);
+  allowOnly(o);
   const p3 = { ...current(p) };
   const start = num(o, 'start');
   const easing = readEasing(o) ?? { kind: 'smooth' };
@@ -362,7 +377,7 @@ function addTransitionOp(p: Project, o: EditOp, newId: () => string) {
 }
 
 function editTransitionOp(p: Project, o: EditOp) {
-  allowOnly(o, ['id', 'index', 'start', 'end', 'by', 'from', 'to', 'easing', 'stiffness', 'damping', 'bezier', 'fitDuration', 'swap', 'resetEnd']);
+  allowOnly(o);
   const p3 = { ...current(p) };
   const list = p3.transitions;
   const i = locateMove(o, list);
@@ -423,7 +438,7 @@ function editTransitionOp(p: Project, o: EditOp) {
 }
 
 function removeTransitionOp(p: Project, o: EditOp) {
-  allowOnly(o, ['id', 'index']);
+  allowOnly(o);
   const p3 = { ...current(p) };
   const i = locateMove(o, p3.transitions);
   const id = p3.transitions[i].id;
@@ -432,7 +447,7 @@ function removeTransitionOp(p: Project, o: EditOp) {
 }
 
 function clearTransitionsOp(p: Project, o: EditOp) {
-  allowOnly(o, []);
+  allowOnly(o);
   if (!p.phone3d?.transitions.length) return { project: p, note: 'no 3D moves to clear' };
   const n = p.phone3d.transitions.length;
   return { project: withP3(p, { ...p.phone3d, transitions: [] }), note: `cleared ${n} 3D move${n === 1 ? '' : 's'}` };
@@ -442,7 +457,7 @@ function clearTransitionsOp(p: Project, o: EditOp) {
 // Shots
 
 function shotOp(p: Project, o: EditOp, newId: () => string) {
-  allowOnly(o, ['recipe', 'at', 'duration', 'intensity', 'direction', 'return']);
+  allowOnly(o);
   const recipe = o.recipe as ShotRecipe;
   if (!SHOT_RECIPES.includes(recipe)) fail(`shot: recipe must be ${SHOT_RECIPES.join('|')}`);
   const p3 = { ...current(p) };

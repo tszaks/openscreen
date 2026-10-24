@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { applyOp, applyOps, applyOps3d, needsCursor, needsScenes, OP_NAMES, OpError, validateProject, type EditOp } from '../src/shared/agentOps';
 import { springSettleTime } from '../src/shared/phone3d/easing3d';
 import { defaultPhone3D, FRONT, type Pose } from '../src/shared/phone3d/model';
-import { describeTransitions, PHONE3D_OP_NAMES } from '../src/shared/phone3d/ops';
+import { describeTransitions, PHONE3D_OP_FIELDS, PHONE3D_OP_NAMES } from '../src/shared/phone3d/ops';
 import { facing, poseAt, poseDelta, resolveStarts } from '../src/shared/phone3d/pose';
 import { defaultProject, type Project } from '../src/shared/types';
 import { move, phoneProject, with3d } from './helpers/phone3dFixtures';
@@ -23,6 +23,17 @@ const P = (patch: Partial<Pose>): Pose => ({ ...FRONT, ...patch });
 describe('OP_NAMES and the non-iPhone refusal', () => {
   it('lists every 3D op and direct', () => {
     for (const name of [...PHONE3D_OP_NAMES, 'direct']) expect(OP_NAMES).toContain(name);
+  });
+
+  it('PHONE3D_OP_FIELDS documents every 3D op, and the fields the editor sends are accepted', () => {
+    expect(Object.keys(PHONE3D_OP_FIELDS).sort()).toEqual([...PHONE3D_OP_NAMES, 'direct'].sort());
+    const editorFields: [keyof typeof PHONE3D_OP_FIELDS, string][] = [
+      ['direct', 'style'], ['direct', 'replace'], ['direct', 'scenes'],
+      ['shot', 'duration'], ['shot', 'return'], ['shot', 'intensity'], ['shot', 'direction'],
+      ['setPose', 'target'], ['setPose', 'focus'],
+      ['editTransition', 'swap'], ['editTransition', 'resetEnd'], ['editTransition', 'fitDuration'], ['editTransition', 'from'],
+    ];
+    for (const [op, field] of editorFields) expect(PHONE3D_OP_FIELDS[op] as readonly string[]).toContain(field);
   });
 
   it('every 3D op is refused on a screen recording', () => {
