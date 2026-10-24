@@ -379,6 +379,91 @@ function offCanvasCleared(g: OffCanvas, fc: Ctx): boolean {
   return worstOverflow(fc.scene, groupTimes(fc, g), g.worst).over <= offCanvasMargin(fc.scene);
 }
 
+/** A shot may add up to this much overflow (px) over the project without it before the self-check blames it. */
+export const OFF_CANVAS_ADDED_PX = 0.5;
+
+/** A stretch where a planned project pokes further off the canvas than it does without the shots (direct.ts). */
+export interface OffCanvasAdded {
+  /** First and last sample of the stretch, and its worst moment (OUTPUT s, raw). */
+  at: number;
+  end: number;
+  worst: number;
+  /** The overflow (px) at `worst`, and the project-without-shots overflow at the same time (absent with no baseline). */
+  over: number;
+  baseline?: number;
+  /** The move behind the worst moment (as the off-canvas warning names it). */
+  transitionId?: string;
+}
+
+/** The phone is on, valid and active, so the off-canvas checks apply (else projectWarnings has no geometry warnings). */
+const geometryChecked = (p: Project) => !!p.phone3d?.enabled && !phone3dProblems(p).length && phone3dActive(p).active;
+
+/**
+ * How far `p`'s body pokes out of its canvas at t (px; ≤ 0 = inside), memoized
+ * per time so a planner can reuse it across rounds. null when projectWarnings
+ * would not check the geometry (3D off, inactive or invalid).
+ */
+export function offCanvasMeter(p: Project): ((t: number) => number) | null {
+  if (!geometryChecked(p)) return null;
+  const scene = scene3d(p);
+  if (!scene) return null;
+  const cache: BoundsCache = new Map();
+  const memo = new Map<number, number>();
+  return (t) => {
+    let v = memo.get(t);
+    if (v === undefined) memo.set(t, (v = overflowAt(scene, t, cache)));
+    return v;
+  };
+}
+
+/**
+ * For the Auto 3D self-check, which must not judge by warning spans: one
+ * off-canvas warning covers every run its keyframe causes, so its span can
+ * be most of the take. This compares moment by moment instead. Returns the
+ * stretches where `p` pokes past the margin AND further out than `baseline`
+ * (the same project without the shots; offCanvasMeter) at the same time, by
+ * more than OFF_CANVAS_ADDED_PX. A kept pose near an edge, or the float, that
+ * already pokes out is not counted; a shot that pushes the phone further out
+ * is, wherever it does. Samples: the off-canvas check's own (15 Hz plus every
+ * keyframe of `p`). With no baseline every overflow past the margin counts.
+ */
+export function offCanvasAdded(p: Project, baseline: ((t: number) => number) | null): OffCanvasAdded[] {
+  if (!geometryChecked(p)) return [];
+  const c = makeCtx(p, []);
+  if (!c) return [];
+  const margin = offCanvasMargin(c.scene);
+  const cache: BoundsCache = new Map();
+  const out: OffCanvasAdded[] = [];
+  let cur: OffCanvasAdded | null = null;
+  let worstExcess = 0;
+  for (const t of offCanvasTimes(c)) {
+    const over = overflowAt(c.scene, t, cache);
+    const base = over > margin && baseline ? baseline(t) : undefined;
+    // How far past both the margin and the baseline this moment is.
+    const excess = over - Math.max(margin, base ?? -Infinity);
+    if (over > margin && (base === undefined || over > base + OFF_CANVAS_ADDED_PX)) {
+      if (!cur) {
+        cur = { at: t, end: t, worst: t, over, ...(base !== undefined ? { baseline: base } : {}) };
+        worstExcess = excess;
+      }
+      cur.end = t;
+      if (excess > worstExcess) {
+        worstExcess = excess;
+        Object.assign(cur, { worst: t, over, ...(base !== undefined ? { baseline: base } : {}) });
+      }
+    } else if (cur) {
+      out.push(cur);
+      cur = null;
+    }
+  }
+  if (cur) out.push(cur);
+  for (const r of out) {
+    const tr = culprit(c.p3.transitions, r.worst);
+    if (tr) r.transitionId = tr.id;
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Timing
 

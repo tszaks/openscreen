@@ -17,7 +17,7 @@ import { FRONT, type Pose, type ShotRecipe } from './model';
 import { applyPhone3dOp, NOT_IPHONE } from './ops';
 import { SHOTS, shotBase, shotKeys } from './shots';
 import { phone3dProblems } from './validate';
-import { projectWarnings, type Warning, type WarningCode } from './warnings';
+import { offCanvasAdded, offCanvasMeter, projectWarnings, type Warning, type WarningCode } from './warnings';
 
 export type DirectStyle = 'subtle' | 'hero' | 'bold';
 export const DIRECT_STYLES: readonly DirectStyle[] = ['subtle', 'hero', 'bold'];
@@ -340,7 +340,11 @@ const toShot = (d: Draft): PlannedShot => ({ recipe: d.recipe, start: r3(d.start
  * applied to a copy and any shot that causes a warning is re-planned without
  * (at most MAX_ROUNDS rounds), then dropped, so a plan adds no warnings. A
  * warning the project already has with no shot planned (for example a phone
- * the user scaled past the canvas edge) is not blamed on the shots.
+ * the user scaled past the canvas edge, or the float bobbing a kept pose past
+ * it) is not blamed on the shots. Off-canvas is judged moment by moment, not
+ * by warning span (one off-canvas warning may span most of the take): a shot
+ * is blamed wherever the phone pokes further out than it does without the
+ * shots at the same time.
  */
 export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
   if (!isPhoneProject(p)) throw new Error(NOT_IPHONE);
@@ -350,8 +354,11 @@ export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
   const dropped: PlannedShot[] = [];
   let retries = 0;
   let rounds = 0;
-  // Warnings the project has with no planned shot (the user's layout or kept moves) are not the shots' fault.
-  const baseline = projectWarnings(tryPlan(p, opsFor(opts.style, base, opts.replace, []).filter((o) => o.op !== 'shot'), []).project, { cursor: opts.cursor });
+  // The project with no planned shot: the user's layout, kept moves and the style (subtle's float included, since
+  // dropping shots cannot remove it). What it already has is not the shots' fault.
+  const baseProject = tryPlan(p, opsFor(opts.style, base, opts.replace, []), []).project;
+  const baseline = projectWarnings(baseProject, { cursor: opts.cursor });
+  const baseOverflow = offCanvasMeter(baseProject);
   const preExisting = (w: Warning) => baseline.some((b) => b.code === w.code && overlaps(b, w));
   let drafts = draftShots(p, opts, inp, base, excluded);
   for (let guard = 0; guard < 64; guard++) {
@@ -371,8 +378,15 @@ export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
     }
     const bad = new Set<Draft>();
     for (const w of projectWarnings(tried.project, { cursor: opts.cursor })) {
-      if (!SHOT_CODES.includes(w.code) || !w.transitionId || preExisting(w)) continue;
+      if (!SHOT_CODES.includes(w.code) || w.code === 'off-canvas' || !w.transitionId || preExisting(w)) continue;
       const d = tried.owner.get(w.transitionId);
+      if (d) bad.add(d);
+    }
+    // Off-canvas, moment by moment. The move behind an added overflow is a shot's (a shot returns to the pose it
+    // started from, so kept moves after it do not change). If it ever is not, the last shot that starts by then
+    // is blamed, so an added overflow can never stay in the plan.
+    for (const r of offCanvasAdded(tried.project, baseOverflow)) {
+      const d = (r.transitionId && tried.owner.get(r.transitionId)) || drafts.filter((x) => x.start <= r.worst).at(-1) || drafts[0];
       if (d) bad.add(d);
     }
     if (!bad.size) return { ops, shots: [...drafts.map(toShot), ...(opts.style === 'subtle' ? [{ recipe: 'float' as const, start: 0, end: r3(inp.D), reason: 'subtle; idle float' }] : [])], check: { rounds, dropped, retries } };

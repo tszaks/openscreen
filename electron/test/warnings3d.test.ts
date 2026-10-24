@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyOps, type EditOp } from '../src/shared/agentOps';
 import { FRONT, type Phone3D, type Pose, type PoseTransition } from '../src/shared/phone3d/model';
-import { projectWarnings, WARNING_CODES, type Warning } from '../src/shared/phone3d/warnings';
+import { OFF_CANVAS_ADDED_PX, offCanvasAdded, offCanvasMeter, projectWarnings, WARNING_CODES, type Warning } from '../src/shared/phone3d/warnings';
 import type { Project } from '../src/shared/types';
 import { move, phoneProject, with3d } from './helpers/phone3dFixtures';
 
@@ -196,6 +196,43 @@ describe('off-canvas: one warning per cause, and fast on long takes', () => {
     const ws = only(p, 'off-canvas');
     expect(ws.map((w) => w.transitionId)).toEqual(['a', 'c']);
     for (const w of ws) expectCleared(p, w);
+  });
+
+  it('one warning spans every float run from its keyframe, so the planner compares moment by moment (offCanvasAdded)', () => {
+    const baseline = longTake(20, BOB);
+    // The warning covers 0.27-18.53 s, but the phone is only out for a moment once per period.
+    const [w] = only(baseline, 'off-canvas');
+    expect([w.at, w.end]).toEqual([0.267, 18.533]);
+    const meter = offCanvasMeter(baseline)!;
+    // Out past the 2% margin at the run, about at the edge between runs.
+    expect(meter(w.at!)).toBeGreaterThan(20);
+    expect(Math.abs(meter(1))).toBeLessThan(5);
+    // The same project is no further out than itself: nothing added.
+    expect(offCanvasAdded(baseline, meter)).toEqual([]);
+    // A move that pushes it further up at 9-10 s, inside the warning's span, is caught there and blamed on itself,
+    // even where the float alone already pokes out (and was excused by the span before).
+    const pushed = longTake(20, { ...BOB, transitions: [move('up', 9, 9.5, { y: 0.14 }), move('back', 9.5, 10, { y: 0.1 })] });
+    const added = offCanvasAdded(pushed, meter);
+    expect(added.length).toBeGreaterThan(0);
+    for (const r of added) {
+      expect(r.at).toBeGreaterThanOrEqual(9);
+      expect(r.end).toBeLessThanOrEqual(10.6);
+      expect(['up', 'back']).toContain(r.transitionId);
+      expect(r.over).toBeGreaterThan(r.baseline! + OFF_CANVAS_ADDED_PX);
+    }
+    // With no baseline, every overflow past the margin counts.
+    expect(offCanvasAdded(baseline, null).length).toBe(10);
+  });
+
+  it('negative: no meter and nothing added for a phone that is off, inactive, or has errors', () => {
+    const off = { ...longTake(20, BOB), phone3d: { ...longTake(20, BOB).phone3d!, enabled: false } };
+    expect(offCanvasMeter(off)).toBeNull();
+    expect(offCanvasAdded(off, null)).toEqual([]);
+    const appStore = longTake(20, BOB);
+    appStore.layout = { ...appStore.layout, presetId: 'appstore' };
+    expect(projectWarnings(appStore).map((w) => w.code)).toEqual(['inactive']);
+    expect(offCanvasMeter(appStore)).toBeNull();
+    expect(offCanvasAdded(appStore, null)).toEqual([]);
   });
 
   it('a 10-minute take with ~300 float runs: one warning with a fix, in well under a second', () => {
