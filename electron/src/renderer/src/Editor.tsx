@@ -29,6 +29,7 @@ import type { ContentTransform, TranscriptWord } from '../../shared/types';
 import type { TapSuggestion } from '../../shared/taps';
 import { SaveTracker, isTextEntry } from '../../shared/editorSession';
 import { exportCanvasSize, ipcErrorMessage, presetCanvasSize } from '../../shared/exportArgs';
+import { applyOps3d } from '../../shared/agentOps';
 import { focusSegmentsFor } from '../../shared/focusSegments';
 import { getPreset, PRESETS, type ExportPreset, type PresetId } from '../../shared/exportPresets';
 import {
@@ -3436,6 +3437,28 @@ export function Editor({
           {exportMenuOpen && (
             <ExportPanel
               layoutPreset={exportLayoutPreset}
+              presetSize={exportLayoutPreset ? presetCanvasSize(exportLayoutPreset, proj.exportPreset) : null}
+              presetSettings={
+                exportLayoutPreset && exportLayoutPreset.group !== 'App Store' ? (
+                  <div className="field-block">
+                    <span className="row-label">Resolution</span>
+                    <Segmented
+                      label="Resolution"
+                      value={proj.exportPreset === 'uhd4k' ? 'uhd4k' : 'p1080'}
+                      options={[
+                        { value: 'p1080', label: `${exportLayoutPreset.width}×${exportLayoutPreset.height}` },
+                        { value: 'uhd4k', label: `4K ${presetCanvasSize(exportLayoutPreset, 'uhd4k').width}×${presetCanvasSize(exportLayoutPreset, 'uhd4k').height}` },
+                      ]}
+                      onChange={(v) => {
+                        // The agent's op, on the editor's apply path (D18): the same write as exportSettings {preset}.
+                        const r = applyOps3d(proj, [{ op: 'exportSettings', preset: v }]);
+                        if ('error' in r) setStatus(r.error);
+                        else setProj(r.project);
+                      }}
+                    />
+                  </div>
+                ) : null
+              }
               singleSettings={
                 <>
                   <div className="field-block">

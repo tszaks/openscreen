@@ -120,6 +120,26 @@ describe('ops parity: AGENTS.md names every op and every editor field', () => {
     expect(row).toMatch(/App Store/);
   });
 
+  it('the editor has the preset Resolution control the row names, writing exportPreset through the exportSettings op', () => {
+    const row = PARITY.split('\n').find((l) => l.includes('exportSettings {preset'))!;
+    expect(row).toMatch(/for a layout preset: Resolution/);
+    const panel = SRC('src/renderer/src/components/ExportPanel.tsx');
+    // The preset branch renders the picker the editor passes in, and its hint uses the size the export writes.
+    expect(panel).toMatch(/\{layoutPreset \? \(\s*<>\s*\{presetSettings\}/);
+    expect(panel).toMatch(/\(presetSize \?\? layoutPreset\)\.width\}x\{\(presetSize \?\? layoutPreset\)\.height/);
+    const editor = SRC('src/renderer/src/Editor.tsx');
+    expect(editor).toMatch(/presetSize=\{exportLayoutPreset \? presetCanvasSize\(exportLayoutPreset, proj\.exportPreset\) : null\}/);
+    const block = editor.slice(editor.indexOf('presetSettings={'), editor.indexOf('singleSettings={', editor.indexOf('presetSettings={')));
+    expect(block, 'presetSettings is passed to ExportPanel').not.toBe('');
+    expect(block).toMatch(/exportLayoutPreset\.group !== 'App Store'/);
+    expect(block).toMatch(/applyOps3d\(proj, \[\{ op: 'exportSettings', preset: v \}\]\)/);
+    expect(block).toMatch(/value: 'uhd4k'/);
+    expect(block).not.toMatch(/setProj\(\(/); // no direct field write: the op is the only path
+    // The op it sends writes exportPreset, and a layout preset at uhd4k exports at 2160x3840.
+    const p = defaultProject({ screenVideoFile: 'screen.mov', sourceKind: 'iosDevice', sourceSize: { width: 1206, height: 2622 }, duration: 20 });
+    expect(applyOps(p, [{ op: 'exportSettings', preset: 'uhd4k' }]).project.exportPreset).toBe('uhd4k');
+  });
+
   it('exportSettings.fps follows the editor: no frame-rate control on a layout preset, so the op refuses it there', () => {
     const row = PARITY.split('\n').find((l) => l.includes('exportSettings {preset'))!;
     expect(row).toMatch(/`fps` applies only with no layout preset/);
@@ -303,6 +323,11 @@ describe('ops parity: the editor writes 3D state only through apply3d', () => {
         for (const k of [...rest.matchAll(/(?:^|,)\s*(\w+)\s*:/g)].map((x) => x[1])) expect(known, `${f}: ${op}.${k}`).toContain(k);
       }
     }
+  });
+
+  it.skipIf(!wp5)('after WP5: the preset Resolution still writes exportPreset through the op path (apply3d or applyOps3d)', () => {
+    const block = editor.slice(editor.indexOf('presetSettings={'), editor.indexOf('singleSettings={', editor.indexOf('presetSettings={')));
+    expect(block).toMatch(/(apply3d|applyOps3d)\([^)]*\{ op: 'exportSettings', preset: v \}/);
   });
 
   it('before WP5 lands, Editor.tsx has no 3D write path at all (so nothing escapes the checks above)', () => {

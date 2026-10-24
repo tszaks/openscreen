@@ -204,6 +204,10 @@ reference must be a clean render of a phone (an export), not a screenshot of
 another app's editor, or judges see the difference at once.
 
 Recipe takes on the review page use a tap-free source window (every tap with
-its length, read from `project.json`), played at normal speed.
+its length, read from `project.json`), played at normal speed. The window
+stays inside one kept stretch of source between cuts (`keptRuns` in
+`review3d.mjs`): `trim` keeps the take's cuts, so a window across a cut would
+give a shorter take. A wait inside a cut does not count. A take that comes out
+shorter than asked, or no stretch long enough, is a failure on the page.
 
 The judged half of the equal test is [EQUAL_TEST.md](../EQUAL_TEST.md).

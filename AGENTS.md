@@ -210,7 +210,7 @@ same code (`applyOps3d`), so the editor refuses what the CLI refuses:
 | Export quality › Motion blur, Shutter, Samples; Quality 1× / 2× / 3× | `phone3d.motionBlur`, `phone3d.supersample` | `phone3d {motionBlur:{on?, shutter?, samples?}, supersample?}` |
 | Warning row › Fix | whatever the fix changes | the warning's `fix` list, as one `apply` |
 | (looking at the preview canvas) | — | command `frames` |
-| Export menu: resolution, frame rate; for a layout preset: Resolution (preset size / 4K) | `exportPreset`, `outputFPS` | `exportSettings {preset?, fps?}` (`uhd4k` also scales a layout preset to a 2160 px short side, e.g. social-9x16 → 2160×3840; App Store presets keep Apple's exact size; `p1080` and `original` keep the preset's size. `info.export.canvas` shows the size before you export. `fps` applies only with no layout preset, as in the editor, which shows no frame rate there: a layout preset exports at its own rate (30 fps for every social preset; an iPhone take starts on `social-9x16`), and `fps` on one is refused. `info.export.fps` is the rate the export writes) |
+| Export menu: resolution, frame rate; for a layout preset: Resolution (preset size, e.g. 1080×1920 / 4K, e.g. 2160×3840; not shown for App Store presets), and the hint under it states the size the export writes | `exportPreset`, `outputFPS` | `exportSettings {preset?, fps?}` (the editor's preset Resolution runs this same op; `uhd4k` also scales a layout preset to a 2160 px short side, e.g. social-9x16 → 2160×3840; App Store presets keep Apple's exact size; `p1080` and `original` keep the preset's size. `info.export.canvas` shows the size before you export. `fps` applies only with no layout preset, as in the editor, which shows no frame rate there: a layout preset exports at its own rate (30 fps for every social preset; an iPhone take starts on `social-9x16`), and `fps` on one is refused. `info.export.fps` is the rate the export writes) |
 | Export MP4 / GIF | — | `export --out x.mp4` / `export --gif` |
 | Export formats (multi-preset) | — | `export --preset square,feed-4x5 --out folder` |
 | Undo | — | `undo` (one level, file-based) |
@@ -522,8 +522,9 @@ at every tap, does each move read as one idea, does anything leave the
 canvas? Each file's `facing` is 1 when the screen is straight at the camera
 and below 0 when it shows its back. Then `frames --moves` at full quality
 (motion blur, anti-aliasing) before the one export. For a 4K hero file on a
-layout preset: `apply [{"op":"exportSettings","preset":"uhd4k"}]`, check
-`info.export.canvas`, then export.
+layout preset: `apply [{"op":"exportSettings","preset":"uhd4k"}]` (the
+editor's Export menu › Resolution › 4K), check `info.export.canvas`, then
+export.
 
 ### Example: "make this world class" (an iPhone take)
 

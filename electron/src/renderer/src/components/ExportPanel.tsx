@@ -33,6 +33,10 @@ export interface ExportPanelProps {
   layoutPreset: ExportPreset | null;
   /** Shown when there is no layout preset: today's resolution and fps pickers. */
   singleSettings: React.ReactNode;
+  /** The size the single export writes with the layout preset (4K scales social and web presets, D18). */
+  presetSize: { width: number; height: number } | null;
+  /** Shown with a layout preset: its Resolution picker (null for App Store presets, which keep Apple's size). */
+  presetSettings: React.ReactNode;
   choices: ExportPreset[];
   selected: PresetId[];
   warnings: Partial<Record<PresetId, ExportWarning[]>>;
@@ -45,6 +49,8 @@ export interface ExportPanelProps {
 export function ExportPanel({
   layoutPreset,
   singleSettings,
+  presetSize,
+  presetSettings,
   choices,
   selected,
   warnings,
@@ -60,8 +66,9 @@ export function ExportPanel({
         <span className="xpanel-heading">This project</span>
         {layoutPreset ? (
           <>
+            {presetSettings}
             <p className="hint">
-              Uses the {layoutPreset.label} layout: {layoutPreset.width}x{layoutPreset.height}, {layoutPreset.fps} fps.
+              Uses the {layoutPreset.label} layout: {(presetSize ?? layoutPreset).width}x{(presetSize ?? layoutPreset).height}, {layoutPreset.fps} fps.
             </p>
             <div className="xpanel-flush">
               <Notes notes={warnings[layoutPreset.id] ?? []} />
