@@ -1,4 +1,43 @@
-# Driving OpenScreen from an agent
+# OpenScreen
+
+A Mac app for recording iPhone, iPad and Mac screens and editing them into demo videos. Electron 41, TypeScript, React 19, a Swift helper for wired iPhone capture. Everything lives under `electron/`.
+
+This file has two parts. The first is for AI agents that work **on** OpenScreen's code. The second ([Driving OpenScreen from an agent](#driving-openscreen-from-an-agent)) is for agents that **use** OpenScreen to record, edit and export videos.
+
+## Working on the code
+
+### Build, test, run
+Run these from `electron/`:
+- Install: `npm install` (needs Node.js 22.12 or later).
+- Typecheck: `npm run typecheck` and `npx tsc -p tsconfig.main.json --noEmit`. CI runs both.
+- Test: `npm test` (Vitest, `electron/test/`). Run the whole suite before you say something works.
+- Build: `npm run build` (compiles the Swift helper with `xcrun swiftc`, the main process with `tsc`, and the renderer with Vite). Needs Xcode's command line tools.
+- Run in development: `npm run electron:dev`. This opens a window; do not run it unless asked.
+- Package a release: `npm run dist`. It signs and notarizes. Do not run it or publish anything unless asked.
+- The agent CLI needs a build first: `npm run agent -- <command>`.
+
+### Code map
+- `src/shared/`: the pure model layer. Everything that decides how a video looks and moves. No Electron or DOM imports. Unit tested.
+- `src/main/`: Electron main process (windows, capture, files, ffmpeg jobs, menus, the updater).
+- `src/node/`: Node-only helpers shared by the main process and the agent CLI (`agentCli.ts`, `importVideo.ts`, `media.ts`).
+- `src/preload/`: the `contextBridge` API the renderer sees.
+- `src/renderer/`: React UI (picker, recording, editor, export).
+- `native/ios-capture/`: the Swift helper for wired iPhone and iPad capture.
+- `scripts/openscreen-agent.mjs`: the command-line entry point.
+- Design notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### Conventions
+- Match the surrounding code: naming, comment density, idiom.
+- Put decisions in `src/shared/` as pure functions with a test in `electron/test/`. Keep the UI thin.
+- Never modify a user's original recording. Edits live in `project.json`.
+- Every editor control has an agent op. When you add or change a control, update `src/shared/agentOps.ts`, the parity table below and `CHANGELOG.md`.
+- Add no dependency without a reason you can state in the pull request.
+- Do not commit recordings, `release/`, `dist/`, signing material or `.env` files.
+- Do not quit or `pkill` an OpenScreen the user has open. It may be recording.
+
+---
+
+## Driving OpenScreen from an agent
 
 OpenScreen can be run entirely by an agent: record an iPhone, watch the
 recording, edit it, export it, and check the result. Everything goes through
@@ -20,7 +59,7 @@ directory. It needs a build first: `cd electron && npm run build` (creates
 `<bundle>` is a recording folder (`…/rec-<ts>.openscreen`), or the word
 `latest`.
 
-## The loop
+### The loop
 
 ```sh
 A="node /abs/path/electron/scripts/openscreen-agent.mjs"
@@ -32,7 +71,7 @@ $A record stop                      # …writes project.json; bundle path in the
 $A latest                           # or take the newest recording made in the app
 $A import ~/Desktop/demo.mov        # or start from a video you already have
 
-$A review latest                    # contact sheets + review.json — LOOK at the sheet PNGs
+$A review latest                    # contact sheets + review.json. LOOK at the sheet PNGs
 $A info latest                      # clips, captions, taps, style, … (times, ids, indexes)
 $A polish latest --style clean --title "Headline" --subtitle "Sub"
 $A apply latest edits.json          # precise edits (see below)
@@ -63,10 +102,10 @@ $A undo latest                      # swap project.json <-> project.json.bak
 
 ### Time domains (important)
 
-- **Source seconds** — the raw recording: `trim`, `cut`, `speed`, clip
+- **Source seconds**: the raw recording: `trim`, `cut`, `speed`, clip
   `sourceStart/sourceEnd`, taps, waits, and every time in `review.json` of a
   bundle.
-- **Output seconds** — the edited timeline: captions, chapters, annotations,
+- **Output seconds**: the edited timeline: captions, chapters, annotations,
   manual zooms, `split`, and where an audio item `start`s. `info` shows each clip's `outputStart/outputEnd` so
   you can convert. After a `trim` or `cut`, output-time items move with their
   footage automatically (the editor's own remap).
@@ -159,10 +198,10 @@ LayoutSection, TapsLane, ExportPanel) and the op that does the same thing:
 | Canvas (layout preset), title card; drag the title on the preview, or its corners to resize it | `layout.presetId`, `layout.titleCard` (`transform`, `hidden`) | `layout {presetId?, background?}`, `titleCard {title, subtitle, x?, y?, scale?, hidden?, reset?} \| {enabled:false}` |
 | Right-click a layer on the preview: Bring to Front, Send to Back, Reset Position & Size, Hide; ⌘] / ⌘[ (⇧: all the way); arrows nudge 1 px (⇧ 10 px); ⌫ hides (never the recording); double-click resets | `layerOrder` (bottom to top; absent = the order they always drew in), each layer's transform, `hidden`/`enabled` | `layer {id: content\|camera\|phone\|title\|text:<annotation id or index>, restack?: front\|back\|forward\|backward, reset?: true, hide?: true}` |
 | Export menu: resolution, frame rate | `exportPreset`, `outputFPS` | `exportSettings {preset?, fps?}` |
-| Export MP4 / GIF | — | `export --out x.mp4` / `export --gif` |
-| Export formats (multi-preset) | — | `export --preset square,feed-4x5 --out folder` |
-| Undo | — | `undo` (one level, file-based) |
-| Anything else | any field | `set {path: "/json/pointer", value}` — the value's JSON type must match; `/recording` is read-only |
+| Export MP4 / GIF | n/a | `export --out x.mp4` / `export --gif` |
+| Export formats (multi-preset) | n/a | `export --preset square,feed-4x5 --out folder` |
+| Undo | n/a | `undo` (one level, file-based) |
+| Anything else | any field | `set {path: "/json/pointer", value}`. The value's JSON type must match; `/recording` is read-only |
 
 Not in the editor, so not ops: keystroke overlay and click ripples have no
 switch (they are drawn whenever the recording has keystrokes/clicks); use
@@ -198,7 +237,7 @@ allows. The phone's own sound goes into exports only with `sound: true`
   title card when `--title` is given.
 - Screen recording: background, frame style, auto-focus + dwell zoom, cursor size.
 
-## Caveats
+### Caveats
 
 - **Audio tracks** are mixed into every export (MP4, presets, the
   multi-format batch, headless); a GIF has no sound. A recording with no

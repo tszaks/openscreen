@@ -4,7 +4,7 @@
 
 # OpenScreen
 
-**Polished iPhone, iPad and Mac demo videos — recorded, edited and exported in minutes.**
+**Polished iPhone, iPad and Mac demo videos, recorded, edited and exported in minutes.**
 
 [![Download for macOS](https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/tszaks/openscreen/releases/latest)
 
@@ -37,7 +37,7 @@ OpenScreen is a free, open-source screen recorder for Mac, built for app demos. 
 **A full editor**
 - A native Mac design in light and dark, following your system appearance.
 - Split, trim, reorder and change the speed of clips, with each clip's frames shown on the timeline. Undo everything.
-- A resizable workspace and a zoomable timeline — pinch to work down to a fraction of a second.
+- A resizable workspace and a zoomable timeline: pinch to work down to a fraction of a second.
 - 24 backdrops, plus your own images or desktop wallpaper.
 - Captions with on-device transcription, transcript editing, and smart cutting of silences and filler words.
 - Right-click menus, project naming, and a one-step reset back to the original recording.
@@ -86,9 +86,38 @@ You'll need Node.js 22.12 or later, and Xcode's command line tools (`xcode-selec
 
 How it fits together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## FAQ
+
+**Does OpenScreen phone home?**
+One thing does: the packaged app checks GitHub Releases for a new version when it starts (`electron-updater`, in `electron/src/main/index.ts`). That request goes to GitHub, not to a server of ours, and there is no analytics or crash reporting. Builds you run from source (`npm run electron:dev`) do not check for updates. The only other network request is the speech model download for captions (see below), and only when you ask for captions for the first time.
+
+**Where do my recordings go?**
+Each take is a folder named `rec-<timestamp>.openscreen` in `~/Movies/OpenScreen` (set `OPENSCREEN_RECORDINGS_DIR` to move it). Your original recording is never changed. Edits are saved in `project.json` next to it. Nothing is uploaded.
+
+**Which permissions does it ask for?**
+Screen Recording (to record a display or window), Camera (an iPhone or iPad connected by cable shows up as a camera, and the camera overlay uses it), Microphone (only when you turn it on) and Accessibility (for click and keystroke detection on Mac recordings). iPhone recording works without Accessibility.
+
+**How does captioning work?**
+Transcription runs on your Mac with `whisper-cpp` (`brew install whisper-cpp`). The first time, OpenScreen downloads the 148 MB `ggml-base.en.bin` model from Hugging Face into `~/models`. Set `OPENSCREEN_WHISPER_MODEL` to use a model you already have. The model is English only.
+
+**Does it run on Intel Macs, Windows or Linux?**
+No. Releases are built for Apple silicon Macs only.
+
+## Configuration
+
+These environment variables are optional.
+
+| Variable | What it does | Default |
+|---|---|---|
+| `OPENSCREEN_RECORDINGS_DIR` | Where recordings are saved and where the agent CLI looks | `~/Movies/OpenScreen` |
+| `OPENSCREEN_APP` | Path to an `OpenScreen.app` for the agent CLI's `export` and `open` commands | This checkout's Electron |
+| `OPENSCREEN_WHISPER_MODEL` | Path to a whisper.cpp model file for captions | `~/models/ggml-base.en.bin` |
+
 ## Contributing
 
-Bug reports, ideas and pull requests are welcome — please read [CONTRIBUTING.md](CONTRIBUTING.md) first. To report a security issue, see [SECURITY.md](SECURITY.md).
+Bug reports, ideas and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first. Security problems go through [SECURITY.md](SECURITY.md). Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Docs: [agent guide](AGENTS.md) · [architecture](docs/ARCHITECTURE.md) · [changelog](CHANGELOG.md)
 
 ## License
 
