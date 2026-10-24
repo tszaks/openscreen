@@ -9,12 +9,12 @@
 // way Engine.gpuBytes counts them, at the heaviest frame of a turn.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { grownSize, Passes } from '../src/renderer/src/phone3d/passes';
-import { ShadowPass, SHADOW_SLOTS } from '../src/renderer/src/phone3d/shadow';
+import { grownSize, Passes, planSamples } from '../src/renderer/src/phone3d/passes';
+import { ShadowPass } from '../src/renderer/src/phone3d/shadow';
 import { MAX_SCREEN_TEXTURE, planBands, planScreenTexture, SCREEN_BAND_PX, ScreenTexture, screenCanvasSize, screenRoom, textureLimit, textureSide } from '../src/renderer/src/phone3d/screenTexture';
-import { planShadowSlots, renderPhone3D, type Blit3D, type Render3DArgs, type Render3DQuality } from '../src/renderer/src/phone3d/view';
+import { renderPhone3D, shadowSamples, type Blit3D, type Render3DArgs, type Render3DQuality } from '../src/renderer/src/phone3d/view';
 import type { Engine } from '../src/renderer/src/phone3d/engine';
-import { scene3d, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
+import { camAt, scene3d, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
 import { defaultPhone3D, FRONT, type Phone3D } from '../src/shared/phone3d/model';
 import { normalizeProject, type Project } from '../src/shared/types';
 import { move, phoneProject, with3d } from './helpers/phone3dFixtures';
@@ -158,63 +158,62 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('shadow slots (§3.7 steps 5 and 8)', () => {
-  it('still: one slot at sample 0; moving: min(SHADOW_SLOTS, N) slots, each cast from the middle of its samples', () => {
-    expect(planShadowSlots({ n: 8, nMotion: 1 })).toEqual({ count: 1, at: [0], of: Array(8).fill(0) });
-    for (const n of [2, 5, 6, 7, 12, 36, 64]) {
-      const p = planShadowSlots({ n, nMotion: n });
-      expect(p.count).toBe(Math.min(SHADOW_SLOTS, n));
-      expect(p.of).toHaveLength(n);
-      // Every slot serves a contiguous run of samples, in order, and is cast from a sample inside its own run.
-      for (let k = 1; k < n; k++) expect(p.of[k] - p.of[k - 1]).toBeGreaterThanOrEqual(0);
-      expect(new Set(p.of).size).toBe(p.count);
-      p.at.forEach((k, i) => expect(p.of[k]).toBe(i));
-    }
+describe('shadow samples (§3.7 steps 5 and 8)', () => {
+  it('still: sample 0 alone casts; moving: every sub-sample casts its own pose', () => {
+    expect(shadowSamples({ n: 8, nMotion: 1 })).toEqual([0]);
+    for (const n of [2, 7, 12, 36, 64]) expect(shadowSamples({ n, nMotion: n })).toEqual(Array.from({ length: n }, (_, k) => k));
   });
 });
 
 describe('renderPhone3D frame loop', () => {
-  it('a moving 4K frame renders each shadow slot once, before the tiles, whatever the tile count', () => {
+  it('a moving 4K frame casts one silhouette per sub-sample and blurs once, before the tiles, whatever the tile count', () => {
     const s = sceneFor(moving(), true);
     const { engine, calls, shadow } = fakeEngine();
     let checkedTiles = 0;
     for (const t of [1.6, 1.8, 2.0]) {
       calls.length = 0;
-      const before = shadow.maskRenders;
+      const masks = shadow.maskRenders;
+      const sil = shadow.silhouettes;
       const { out } = frame(engine, args(s, t));
-      const plan = planShadowSlots({ n: out.samples, nMotion: out.samples });
-      expect(out.samples).toBeGreaterThan(SHADOW_SLOTS); // a real moving frame: more samples than slots
-      expect(shadow.maskRenders - before).toBe(Math.min(SHADOW_SLOTS, out.samples));
-      // Silhouettes all come before the first scene draw (no tile re-renders a mask).
+      expect(out.samples).toBeGreaterThan(8); // a real moving frame: more samples than the AA minimum
+      expect(shadow.maskRenders - masks).toBe(1);
+      expect(shadow.silhouettes - sil).toBe(out.samples);
+      // Silhouettes all come before the first scene draw (no tile casts one again).
       const firstScene = calls.findIndex((c) => c.kind === 'scene');
-      expect(calls.filter((c) => c.kind === 'shadow')).toHaveLength(plan.count);
+      expect(calls.filter((c) => c.kind === 'shadow')).toHaveLength(out.samples);
       expect(calls.slice(firstScene).some((c) => c.kind === 'shadow')).toBe(false);
       // N scene draws per tile.
       const scenes = calls.filter((c) => c.kind === 'scene');
       expect(scenes).toHaveLength(out.samples * out.tiles);
       checkedTiles = Math.max(checkedTiles, out.tiles);
     }
-    expect(checkedTiles).toBeGreaterThan(1); // the case the bug lived in: several tiles
+    expect(checkedTiles).toBeGreaterThan(1); // the case the per-tile bug lived in: several tiles
   });
 
-  it('each sample of every tile draws the catcher with its own slot’s masks, placed at that slot’s pose', () => {
+  it('every sample of every tile draws the one frame catcher, which holds every sample’s own catcher area', async () => {
+    const { catcherFrame, frameCatcher } = await import('../src/renderer/src/phone3d/shadow');
     const s = sceneFor(moving(), true);
     const { engine, calls } = fakeEngine();
     const { out } = frame(engine, args(s, 1.8));
-    const slots = planShadowSlots({ n: out.samples, nMotion: out.samples });
     const scenes = calls.filter((c) => c.kind === 'scene');
-    // Slot textures by first use in tile 0 (sample order), then every tile must repeat the same sequence.
-    const slotTex = slots.at.map((k) => scenes[k].contact);
-    expect(new Set(slotTex).size).toBe(slots.count);
-    for (let tile = 0; tile < out.tiles; tile++) {
-      for (let k = 0; k < out.samples; k++) {
-        const c = scenes[tile * out.samples + k];
-        expect(c.contact).toBe(slotTex[slots.of[k]]);
-        expect(c.corners).toEqual(scenes[slots.at[slots.of[k]]].corners);
-      }
+    for (const c of scenes) {
+      expect(c.contact).toBe(scenes[0].contact);
+      expect(c.corners).toEqual(scenes[0].corners);
     }
-    // Different slots are cast at different poses (the catcher moves with the phone).
-    expect(scenes[slots.at[0]].corners).not.toEqual(scenes[slots.at[slots.count - 1]].corners);
+    // The union really grows past the middle sample's own area while moving, and holds every sample's.
+    const plan = planSamples({ t: 1.8, travelPx: 100, motion: { samples: 12, shutterSec: 0.5 / 30 }, full: true });
+    const cams = plan.times.map((tt) => camAt(s, tt));
+    const all = frameCatcher(s, cams, Math.floor(cams.length / 2));
+    const mid = catcherFrame(s, cams[Math.floor(cams.length / 2)]);
+    expect((all.u1 - all.u0) * (all.v1 - all.v0)).toBeGreaterThan((mid.u1 - mid.u0) * (mid.v1 - mid.v0));
+    for (const c of cams) {
+      const f = catcherFrame(s, c);
+      expect(f.u0).toBeGreaterThanOrEqual(all.u0 - 1e-9);
+      expect(f.u1).toBeLessThanOrEqual(all.u1 + 1e-9);
+      expect(f.v0).toBeGreaterThanOrEqual(all.v0 - 1e-9);
+      expect(f.v1).toBeLessThanOrEqual(all.v1 + 1e-9);
+    }
+    expect(out.samples).toBeGreaterThan(1);
   });
 
   it('a still frame renders its shadow once, and a repeat of the same frame (paused preview) reuses it', () => {
@@ -224,7 +223,7 @@ describe('renderPhone3D frame loop', () => {
       const { out: a } = frame(engine, args(s, 0.5));
       expect(a.samples).toBe(8);
       expect(shadow.maskRenders).toBe(1);
-      expect(shadow.slotCount).toBe(1); // a still phone never makes the moving-frame slots
+      expect(shadow.silhouettes).toBe(1); // 8 jittered samples, one pose: one silhouette
       frame(engine, args(s, 0.5));
       expect(shadow.maskRenders).toBe(1);
     }
