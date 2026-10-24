@@ -127,8 +127,11 @@ describe('planRenders at 4K', () => {
 
 // The 4K-downscale layout check: the layout is resolution-independent, so a
 // 4K canvas is the 1080 canvas scaled by exactly 2: the phone, its screen,
-// the title box and the safe zone, through the real compositor. (Pixels:
-// see the WP3 report; text sizes are whole pixels, so glyph edges differ.)
+// the title box and the safe zone, through the real compositor. The pixel
+// half (a 4K frame area-downscaled vs the 1080 frame, PSNR) needs the real
+// app: scripts/golden/downscale4k.mjs. Measured 29.3-29.9 dB whole frame:
+// text never scales exactly (macOS system font optical sizing below ~80 px,
+// glyph-edge anti-aliasing), so the spec's 40 dB awaits the owner's ruling.
 describe('4K layout = 2 × the 1080 layout', () => {
   const scale = (r: { x: number; y: number; w: number; h: number } | null | undefined, k: number) => r && { x: r.x * k, y: r.y * k, w: r.w * k, h: r.h * k };
   const close = (a: unknown, b: unknown, label: string) => {
