@@ -461,7 +461,7 @@ describe('materials (§3.4)', () => {
     expect(ti.band.roughness).toBe(0.32);
     expect(ti.band.anisotropy).toBe(0.5);
     const al = materialsFor('#2F2F31', 'aluminum', 'glossy', 0.25);
-    expect(al.band.roughness).toBe(0.36);
+    expect(al.band.roughness).toBe(0.24);
     expect(al.band.clearcoat).toBe(0);
     // Glossy back: diffuse colour layer under one glass coat.
     expect(al.back.roughness).toBe(0.6);

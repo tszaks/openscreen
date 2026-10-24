@@ -194,7 +194,10 @@ function bandMaterial(hex: string, material: FrameMaterial, polished: boolean): 
       ? physical({ color, metalness: 1, roughness: 0.12, anisotropy: 0.2 })
       : physical({ color, metalness: 1, roughness: 0.32, anisotropy: 0.5 });
   }
-  return physical({ color, metalness: 1, roughness: 0.36 });
+  // Anodised aluminium: 0.24, not the spec's 0.36. Picked by looking at the 17 Pro unibody (its whole back is this
+  // metal): at 0.36 the key softbox spread over the back as one flat pale wash in the turn to the back; at 0.24
+  // the back falls off top to bottom like a lit product.
+  return physical({ color, metalness: 1, roughness: 0.24 });
 }
 
 /**
