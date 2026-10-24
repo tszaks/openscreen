@@ -48,22 +48,25 @@ function busyOf(p: Project, cursor: readonly CursorSample[] = []): { start: numb
   return out;
 }
 
-/** How far the body pokes out of the canvas at t (px; <= 0 inside). Measured here, not with warnings.ts. */
-function overflowOf(p: Project): (t: number) => number {
+/** How far the body pokes past each canvas edge at t: [left, top, right, bottom] (px; <= 0 inside). Measured here, not with warnings.ts. */
+function edgesOf(p: Project): (t: number) => number[] {
   const s = scene3d(p)!;
   return (t) => {
     const b = bodyBounds(s, t)!;
-    return Math.max(-b.x, -b.y, b.x + b.w - s.canvas.width, b.y + b.h - s.canvas.height);
+    return [-b.x, -b.y, b.x + b.w - s.canvas.width, b.y + b.h - s.canvas.height];
   };
 }
 
+const EDGE_NAMES = ['left', 'top', 'right', 'bottom'];
+
 /**
- * Moments where the planned project pokes further off the canvas than the same
- * project without the shots (past the 2% margin, by more than 0.5 px), sampled
- * at 20 Hz plus every keyframe. A kept pose near an edge or the float may
- * already poke out; a shot must never push it further.
+ * Moments where the planned project pokes further past a canvas edge than the
+ * same project without the shots pokes past THAT edge (past the 2% margin, by
+ * more than 0.5 px), sampled at 20 Hz plus every keyframe. A kept pose near an
+ * edge or the float may already poke out; a shot must never push it further,
+ * and a big overflow at one edge never excuses a new one at another.
  */
-function offCanvasAddedByShots(p: Project, plan: ReturnType<typeof planDirect>): { t: number; planned: number; baseline: number }[] {
+function offCanvasAddedByShots(p: Project, plan: ReturnType<typeof planDirect>): { t: number; edge: string; planned: number; baseline: number }[] {
   let n = 0;
   const out = applyOps(p, plan.ops, { newId: () => `d${++n}` }).project;
   const base = applyOps(p, plan.ops.filter((o) => o.op !== 'shot' || o.recipe === 'float'), { newId: () => `b${++n}` }).project;
@@ -73,14 +76,16 @@ function offCanvasAddedByShots(p: Project, plan: ReturnType<typeof planDirect>):
   const D = new Timeline(p.recording.duration, p.clips).outputDuration;
   const ts = Array.from({ length: Math.ceil(D * 20) + 1 }, (_, k) => Math.min(D, k / 20));
   for (const tr of out.phone3d!.transitions) ts.push(tr.start, tr.end);
-  const [po, bo] = [overflowOf(out), overflowOf(base)];
-  const bad: { t: number; planned: number; baseline: number }[] = [];
+  const [po, bo] = [edgesOf(out), edgesOf(base)];
+  const bad: { t: number; edge: string; planned: number; baseline: number }[] = [];
   for (const t of ts) {
     if (t < 0 || t > D) continue;
     const planned = po(t);
-    if (planned <= margin) continue;
+    if (planned.every((o) => o <= margin)) continue;
     const baseline = bo(t);
-    if (planned > baseline + 0.5) bad.push({ t: Math.round(t * 1000) / 1000, planned: Math.round(planned), baseline: Math.round(baseline) });
+    planned.forEach((o, i) => {
+      if (o > margin && o > baseline[i] + 0.5) bad.push({ t: Math.round(t * 1000) / 1000, edge: EDGE_NAMES[i], planned: Math.round(o), baseline: Math.round(baseline[i]) });
+    });
   }
   return bad;
 }
@@ -352,6 +357,57 @@ describe('planDirect: rules', () => {
     const out = applyOps(p, plan.ops, { newId: () => `d${++n}` }).project;
     expect(projectWarnings(out).map((w) => w.message)).toEqual([expect.stringContaining('(the idle float carries it past the edge)')]);
   });
+
+  it('self-check: a shot that pushes the phone past a NEW edge is dropped, even when another edge is further out', () => {
+    // The review repro: a kept move parks the phone up and to the right, so its top pokes about 50 px out all take
+    // (the float bobs it). The outro's hero angle pulls the top back in but pushes the right side about 20 px past
+    // the right edge, which the kept pose never crosses. Comparing only the worst edge (50 px vs 50 px) excused it.
+    const p = with3d(take(52, [tap(9.76)]), { transitions: [move('k', 1, 2, { x: 0.1457, y: -0.1234 })], float: { on: true, amount: 1, period: 2 } });
+    const plan = planDirect(p, { style: 'hero', replace: false });
+    expect(plan.check.dropped.map((s) => `${s.recipe}@${s.start}`)).toContain('hero-layback@50.5');
+    expect(plan.shots.some((s) => s.reason.startsWith('outro'))).toBe(false);
+    expect(plan.shots.length).toBeGreaterThan(0);
+    expect(offCanvasAddedByShots(p, plan)).toEqual([]);
+    // The outro on its own does push the right side out: the oracle is not blind to it.
+    const outro = planDirect(p, { style: 'hero', replace: false }).ops.slice(0, 1).concat([{ op: 'shot', recipe: 'hero-layback', at: 50.5, duration: 1.4, direction: 1, intensity: 1, return: 'stay' }]);
+    const added = offCanvasAddedByShots(p, { ...plan, ops: outro });
+    expect(added.length).toBeGreaterThan(0);
+    expect(new Set(added.map((x) => x.edge))).toEqual(new Set(['right']));
+    let n = 0;
+    const out = applyOps(p, plan.ops, { newId: () => `d${++n}` }).project;
+    const planned = new Set(out.phone3d!.transitions.map((t) => t.id).filter((id) => id.startsWith('d')));
+    expect(projectWarnings(out).filter((w) => w.transitionId && planned.has(w.transitionId))).toEqual([]);
+  });
+
+  it('self-check sweep: 300 kept poses near every edge, with and without the float; no shot pushes the phone past any edge', () => {
+    let withShots = 0;
+    let edgeDrops = 0;
+    for (let seed = 1; seed <= 300; seed++) {
+      const r = lcg(seed * 104729);
+      const D = 20 + Math.floor(r() * 60);
+      const taps = Array.from({ length: Math.floor(r() * 8) }, () => Math.round(r() * D * 100) / 100).sort((a, b) => a - b);
+      // A kept pose near a corner: up or down 0.08-0.16 and sideways up to 0.15, so two edges are in play.
+      const to = { y: (r() < 0.5 ? -1 : 1) * (0.08 + r() * 0.08), x: (r() - 0.5) * 0.3 };
+      const p = with3d(
+        take(
+          D,
+          taps.map((t, i) => tap(t, {}, i)),
+        ),
+        { transitions: [move('k', 1, 2, to)], float: { on: r() < 0.6, amount: 1, period: 2 } },
+      );
+      for (const style of STYLES) {
+        const label = `seed ${seed} ${style} D ${D} kept ${JSON.stringify(to)}`;
+        const plan = planDirect(p, { style, replace: false });
+        expect(plan.check.retries, label).toBe(0);
+        expect(offCanvasAddedByShots(p, plan), `${label}: shots push the phone further past an edge`).toEqual([]);
+        if (plan.shots.some((s) => s.recipe !== 'float')) withShots++;
+        if (plan.check.dropped.length) edgeDrops++;
+      }
+    }
+    // The sweep plans real shots and exercises the self-check (it is not passing by planning nothing).
+    expect(withShots).toBeGreaterThan(600);
+    expect(edgeDrops).toBeGreaterThan(10);
+  }, 240_000);
 
   it('a 120 s bold plan with long waits: many middle shots, both directions, a hero-layback among them, all in range', () => {
     const p = take(

@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyOps, type EditOp } from '../src/shared/agentOps';
 import { FRONT, type Phone3D, type Pose, type PoseTransition } from '../src/shared/phone3d/model';
-import { OFF_CANVAS_ADDED_PX, offCanvasAdded, offCanvasMeter, projectWarnings, WARNING_CODES, type Warning } from '../src/shared/phone3d/warnings';
+import { EDGES, OFF_CANVAS_ADDED_PX, OFF_CANVAS_FRACTION, offCanvasAdded, offCanvasMeter, projectWarnings, WARNING_CODES, type Warning } from '../src/shared/phone3d/warnings';
 import type { Project } from '../src/shared/types';
 import { move, phoneProject, with3d } from './helpers/phone3dFixtures';
 
@@ -204,12 +204,14 @@ describe('off-canvas: one warning per cause, and fast on long takes', () => {
     const [w] = only(baseline, 'off-canvas');
     expect([w.at, w.end]).toEqual([0.267, 18.533]);
     const meter = offCanvasMeter(baseline)!;
-    // Out past the 2% margin at the run, about at the edge between runs.
-    expect(meter(w.at!)).toBeGreaterThan(20);
-    expect(Math.abs(meter(1))).toBeLessThan(5);
+    // Out past the 2% margin at the bottom edge during the run, about at that edge between runs, inside the rest.
+    const BOTTOM = EDGES.indexOf('bottom');
+    expect(meter(w.at!)[BOTTOM]).toBeGreaterThan(20);
+    expect(Math.abs(meter(1)[BOTTOM])).toBeLessThan(5);
+    for (const t of [w.at!, 1]) meter(t).forEach((o, i) => i !== BOTTOM && expect(o).toBeLessThan(-100));
     // The same project is no further out than itself: nothing added.
     expect(offCanvasAdded(baseline, meter)).toEqual([]);
-    // A move that pushes it further up at 9-10 s, inside the warning's span, is caught there and blamed on itself,
+    // A move that pushes it further down at 9-10 s, inside the warning's span, is caught there and blamed on itself,
     // even where the float alone already pokes out (and was excused by the span before).
     const pushed = longTake(20, { ...BOB, transitions: [move('up', 9, 9.5, { y: 0.14 }), move('back', 9.5, 10, { y: 0.1 })] });
     const added = offCanvasAdded(pushed, meter);
@@ -218,10 +220,46 @@ describe('off-canvas: one warning per cause, and fast on long takes', () => {
       expect(r.at).toBeGreaterThanOrEqual(9);
       expect(r.end).toBeLessThanOrEqual(10.6);
       expect(['up', 'back']).toContain(r.transitionId);
+      expect(r.edge).toBe('bottom');
       expect(r.over).toBeGreaterThan(r.baseline! + OFF_CANVAS_ADDED_PX);
     }
     // With no baseline, every overflow past the margin counts.
     expect(offCanvasAdded(baseline, null).length).toBe(10);
+  });
+
+  it('offCanvasAdded compares edge by edge: a big overflow at one edge never excuses a new one at another', () => {
+    // The layout itself pokes about 58 px past the bottom edge, all take long (no float: one pose).
+    const low = { pose: P({ y: 0.13 }), float: { on: false, amount: 1, period: 6 } };
+    const baseline = longTake(20, low);
+    const meter = offCanvasMeter(baseline)!;
+    const [, , baseRight, baseBottom] = meter(10);
+    expect(baseBottom).toBeGreaterThan(50);
+    expect(baseRight).toBeLessThan(0);
+    expect(offCanvasAdded(baseline, meter)).toEqual([]);
+    // A move slides it right at 9-11 s: about 44 px past the right edge, less than the bottom overflow, so comparing
+    // only the worst edge (58 px both ways) would excuse it.
+    const slid = longTake(20, { ...low, transitions: [move('right', 9, 10, { y: 0.13, x: 0.2 }), move('back', 10, 11, { y: 0.13, x: 0 })] });
+    const margin = OFF_CANVAS_FRACTION * 1080;
+    const [, , right, bottom] = offCanvasMeter(slid)!(10);
+    expect(right).toBeGreaterThan(margin + 10);
+    expect(right).toBeLessThan(bottom);
+    expect(Math.max(...offCanvasMeter(slid)!(10))).toBeCloseTo(Math.max(...meter(10)), 6);
+    const added = offCanvasAdded(slid, meter);
+    expect(added).toHaveLength(1);
+    const [r] = added;
+    expect(r.edge).toBe('right');
+    expect(r.worst).toBe(10);
+    expect(r.over).toBeCloseTo(right, 6);
+    expect(r.baseline).toBeCloseTo(baseRight, 6);
+    expect(r.at).toBeGreaterThan(9);
+    expect(r.end).toBeLessThan(11);
+    expect(['right', 'back']).toContain(r.transitionId);
+    // Moving further down only (same edge, further out) is caught at the bottom edge.
+    const lower = longTake(20, { ...low, transitions: [move('down', 9, 10, { y: 0.16 }), move('up', 10, 11, { y: 0.13 })] });
+    const down = offCanvasAdded(lower, meter);
+    expect(down.map((x) => x.edge)).toEqual(['bottom']);
+    // Moving back inside the bottom edge adds nothing anywhere.
+    expect(offCanvasAdded(longTake(20, { ...low, transitions: [move('in', 9, 10, { y: 0.1 }), move('out', 10, 11, { y: 0.13 })] }), meter)).toEqual([]);
   });
 
   it('negative: no meter and nothing added for a phone that is off, inactive, or has errors', () => {
