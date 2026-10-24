@@ -14,9 +14,17 @@
 // A Mac + iPhone take adds the phone layer (shared/phoneLayer): the phone's
 // own video in its device frame, beside the Mac screen (which shrinks to make
 // room) or over a corner of it, drawn after the camera overlay.
+//
+// A 3D phone (project.phone3d, when phone3dActive) is drawn by the WebGL
+// engine (phone3d/, loaded lazily) at the content layer's slot: the screen
+// content goes into the engine's screen texture through the same
+// drawScreenContent, the engine renders the phone and its shadow over the
+// ROI, and the result is copied 1:1. Placement, contentRect, the camera
+// bubble, text, title and captions are exactly as flat; only the hardware
+// frame is not drawn. Until the engine has loaded the preview draws flat.
 import type { Annotation, CaptionCue, Point, Project, Size } from '../../shared/types';
 import { cameraAt, type AutofocusOptions, type FocusSegment } from '../../shared/autofocus';
-import type { DeviceModel, Orientation } from '../../shared/devices';
+import { getFinish, type DeviceModel, type Orientation } from '../../shared/devices';
 import type { ExportPreset } from '../../shared/exportPresets';
 import type { TapSuggestion } from '../../shared/taps';
 import { Timeline } from '../../shared/timeline';
@@ -25,6 +33,7 @@ import {
   clipToScreen,
   continuousRectPath,
   deviceBodyRect,
+  drawCutouts,
   drawDeviceFrame,
   pointScaleFor,
   screenRectFor,
@@ -40,6 +49,19 @@ import { api } from './api';
 import { macContentRect, macFittedRect, overlayRect } from '../../shared/cameraOverlay';
 import { mapRect, placeContent } from '../../shared/contentTransform';
 import { layerOrder, textLayer, type LayerBox, type LayerId } from '../../shared/canvasLayers';
+import { phone3dActive } from '../../shared/phone3d/placement';
+import {
+  bodyHull,
+  canvasToScreenUV,
+  MIN_HIT_FACING,
+  scene3d,
+  screenMap3d,
+  screenUVToCanvas,
+  type Scene3D,
+  type ScreenMap3D,
+} from '../../shared/phone3d/projection';
+import { engineSync, ensurePhone3d } from './phone3d/loader';
+import type { Render3DResult } from './phone3d/view';
 
 // Background images by raw path, shared by every compositor: the editor
 // builds a new compositor on each edit, and reloading the image each time
@@ -83,6 +105,36 @@ export interface FrameInputs {
   /** The phone layer's frame at this output time (Mac + iPhone takes). */
   phoneFrame?: CanvasImageSource;
   keystrokes?: string[]; // recently pressed key names, oldest→newest
+  /**
+   * How to render a 3D phone (export, frames and the paused preview). Absent:
+   * the live preview (one sample, no motion blur, supersample 1).
+   * `quality: 'full'` turns on the 8 jittered anti-aliasing samples and the
+   * adaptive motion-blur count; 'draft' renders one sample. `strict` (export
+   * and frames) never falls back to a flat phone: a missing engine or a lost
+   * GPU sets `error3d` instead.
+   */
+  render3d?: Render3DSettings;
+}
+
+export interface Render3DSettings {
+  ss: 1 | 2 | 3;
+  quality: 'full' | 'draft';
+  motionBlur: { samples: number; shutter: number } | null;
+  fps: number;
+  strict: boolean;
+}
+
+/** The export / frames settings for a project's 3D phone (strict, from phone3d.supersample and motionBlur). */
+export function exportRender3d(project: Project, fps: number, draft = false): Render3DSettings | undefined {
+  const p3 = project.phone3d;
+  if (!p3) return undefined;
+  return {
+    ss: draft ? 1 : p3.supersample,
+    quality: draft ? 'draft' : 'full',
+    motionBlur: p3.motionBlur.on ? { samples: p3.motionBlur.samples, shutter: p3.motionBlur.shutter } : null,
+    fps,
+    strict: true,
+  };
 }
 
 /** Phone setup for a project, resolved once per compositor. */
@@ -105,6 +157,9 @@ export interface ScreenMap {
   source: Rect;
   /** The visible screen / content rect. */
   screen: Rect;
+  /** A 3D phone's screen as drawn (quad, facing, homography), with the flat
+   *  screen rect `source` was placed against; absent when flat. */
+  phone3d?: { map: ScreenMap3D; flat: Rect };
 }
 
 export class CanvasCompositor {
@@ -134,6 +189,12 @@ export class CanvasCompositor {
   phoneBase: Rect | null = null;
   /** Every layer drawn at the last render, bottom to top (shared/canvasLayers). */
   layers: LayerBox[] = [];
+  /** Set by a strict render (export, frames) that could not draw the 3D phone; the caller aborts. */
+  error3d: string | null = null;
+  /** The 3D phone's scene when phone3dActive (else null): placement, pose sampler, body data. */
+  private scene3d: Scene3D | null;
+  /** Whether the last render drew the phone in 3D. */
+  drew3d = false;
 
   constructor(
     private project: Project,
@@ -152,6 +213,23 @@ export class CanvasCompositor {
     const size = project.recording.phoneSize;
     this.phoneLayer =
       phoneLayerOn(project) && size ? { ...phoneDevice(size, project.phoneOverlay), aspect: phoneAspect(size, project.phoneOverlay) } : null;
+    this.scene3d = phone3dActive(project).active ? scene3d(project, canvasSize) : null;
+  }
+
+  /** Whether this project draws a 3D phone (phone3dActive and a framed phone on this canvas). */
+  get has3d(): boolean {
+    return this.scene3d !== null;
+  }
+
+  /** Resolves once the 3D engine is loaded (at once for a flat project). Export and frames await it before frame 0. */
+  async prepare3d(): Promise<void> {
+    if (this.scene3d) await ensurePhone3d();
+  }
+
+  /** After a strict render lost the GPU: waits up to `ms` for the context to come back. True when it did. */
+  async recover3d(ms = 3000): Promise<boolean> {
+    const engine = engineSync();
+    return engine ? engine.waitForRestore(ms) : false;
   }
 
   /** The phone layout on this canvas (safe zone, title rect), when a preset places it. */
@@ -165,6 +243,15 @@ export class CanvasCompositor {
     const m = this.screenMap;
     if (!m) return null;
     const { screen: s, source: v } = m;
+    if (m.phone3d) {
+      // Through the turned screen (an exact homography), back to where the flat screen would be.
+      const uv = canvasToScreenUV(m.phone3d.map, px, py);
+      if (!uv) return null;
+      const f = m.phone3d.flat;
+      const fx = f.x + uv.x * f.w;
+      const fy = f.y + uv.y * f.h;
+      return { x: (fx - v.x) / v.w, y: (fy - v.y) / v.h };
+    }
     if (px < s.x || py < s.y || px > s.x + s.w || py > s.y + s.h) return null;
     return { x: (px - v.x) / v.w, y: (py - v.y) / v.h };
   }
@@ -172,7 +259,12 @@ export class CanvasCompositor {
   /** Normalized full-source coords → canvas px, using the last render. */
   sourceToCanvas(p: Point): Point | null {
     const m = this.screenMap;
-    return m ? { x: m.source.x + p.x * m.source.w, y: m.source.y + p.y * m.source.h } : null;
+    if (!m) return null;
+    const flat = { x: m.source.x + p.x * m.source.w, y: m.source.y + p.y * m.source.h };
+    if (!m.phone3d) return flat;
+    const { map, flat: f } = m.phone3d;
+    if (map.facing < MIN_HIT_FACING) return null;
+    return screenUVToCanvas(map, (flat.x - f.x) / f.w, (flat.y - f.y) / f.h);
   }
 
   /** Draw the frame at output time `time`. Zoom, captions and annotations
@@ -186,11 +278,29 @@ export class CanvasCompositor {
     const fullH = this.project.recording.sourceSize.height;
     const layout = phone?.layout ?? null;
 
+    // The 3D phone draws only when its engine is loaded (the preview draws flat until then).
+    this.error3d = null;
+    this.drew3d = false;
+    const strict3d = !!input.render3d?.strict;
+    const engine = this.scene3d ? engineSync() : null;
+    if (this.scene3d && !engine) {
+      if (strict3d) this.error3d = 'the 3D renderer is not loaded';
+      ensurePhone3d().catch(() => {});
+    }
+
     // 1. Background.
     if (phone && this.project.layout.background === 'blurred') {
       drawBlurredBackground(ctx, input.frame, { width: fullW, height: fullH }, { width: W, height: H });
     } else {
       this.drawBackground(W, H);
+    }
+    // A 3D phone's depth of field can soften the backdrop too (dof.background).
+    const p3 = this.scene3d?.p3;
+    if (engine && p3?.dof.on && p3.dof.background > 0) {
+      ctx.save();
+      ctx.filter = `blur(${p3.dof.background * 0.012 * H}px)`;
+      ctx.drawImage(canvas, 0, 0);
+      ctx.restore();
     }
 
     // 2. Where the screen goes, and how to clip to it. The layout fits it
@@ -294,26 +404,12 @@ export class CanvasCompositor {
       }
     }
 
-    // Effective source rect = user crop (normalized → px) or full source.
-    const crop = style.cropRect;
-    const srcRect = crop
-      ? { x: crop.x * fullW, y: crop.y * fullH, w: crop.w * fullW, h: crop.h * fullH }
-      : { x: 0, y: 0, w: fullW, h: fullH };
-
     const cam = this.zoomOn
       ? cameraAt(time, this.focusSegments, this.autofocusOpts)
       : { center: { x: 0.5, y: 0.5 }, scale: 1 };
 
-    // Camera crop: camera center is normalized over the FULL source —
-    // remap into effective-source space, then apply zoom scale.
-    const cropW = srcRect.w / cam.scale;
-    const cropH = srcRect.h / cam.scale;
-    const cx = cam.center.x * fullW - srcRect.x;
-    const cy = cam.center.y * fullH - srcRect.y;
-    const sx = srcRect.x + Math.max(0, Math.min(srcRect.w - cropW, cx - cropW / 2));
-    const sy = srcRect.y + Math.max(0, Math.min(srcRect.h - cropH, cy - cropH / 2));
-
     // The whole source frame as the camera places it (for taps and clicks).
+    const { sx, sy, cropW, cropH } = sourceCrop(style.cropRect, fullW, fullH, cam);
     const kx = rect.w / cropW;
     const ky = rect.h / cropH;
     const source = { x: rect.x - sx * kx, y: rect.y - sy * ky, w: fullW * kx, h: fullH * ky };
@@ -322,71 +418,56 @@ export class CanvasCompositor {
     // Overlays sit on the part of the screen that is on the canvas.
     const visible = this.screenMap.screen;
 
+    // A 3D phone: plan it now (ROI, samples, screen texture, shadow); its tiles render and copy at the content slot.
+    let phone3dOut: Extract<Render3DResult, { draw: unknown }> | null = null;
+    const s3 = this.scene3d;
+    if (engine && s3 && phone && frameBody) {
+      const body = frameBody;
+      const q = input.render3d;
+      const out = engine.render({
+        scene: s3,
+        time,
+        look: { hex: getFinish(phone.device, this.project.device.finishId).hex, back: s3.p3.back, glass: s3.p3.glass },
+        bgMean: this.backgroundMean(),
+        quality: {
+          ss: q?.ss ?? 1,
+          full: q?.quality === 'full',
+          motion: q?.motionBlur ?? null,
+          fps: q?.fps ?? this.project.outputFPS,
+        },
+        drawScreen: (tctx, dst, pxScale) => {
+          // The screen content, clipped to the screen rect, then the island or notch on top.
+          const clipDst = () => {
+            tctx.beginPath();
+            tctx.rect(dst.x, dst.y, dst.w, dst.h);
+            tctx.clip();
+          };
+          this.drawScreenContent(tctx, dst, time, input, cam, { clip: clipDst, cursorOutsideClip: false, pxScale });
+          drawCutouts(tctx, mapRect(body, rect, dst), phone.device, { orientation: phone.orientation });
+        },
+      });
+      if ('lost' in out) {
+        if (strict3d) this.error3d = '3D renderer lost the GPU';
+      } else {
+        this.drew3d = true;
+        if ('draw' in out) phone3dOut = out;
+        const map = screenMap3d(s3, time);
+        if (map) this.screenMap = { ...this.screenMap, phone3d: { map, flat: rect } };
+      }
+    }
+    const use3d = this.drew3d;
+
     // The recording's own layer: the video, its touch indicators, cursor and ripples.
     const drawContent = () => {
-      shadow?.();
-      ctx.save();
-      clip();
-      ctx.drawImage(input.frame, sx, sy, cropW, cropH, rect.x, rect.y, rect.w, rect.h);
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-      // Touch indicators ride the camera: same clip, same zoom as the video.
-      if (phone && this.project.tapStyle.show && phone.taps.length) {
-        const ts = this.project.tapStyle;
-        drawTouchIndicators(ctx, phone.taps, time, source, pointScaleFor(rect, phone.device) * cam.scale, {
-          style: ts.style,
-          color: ts.color === 'accent' ? ACCENT_TOUCH_COLOR : '#FFFFFF',
-          sizePt: ts.sizePt,
-        });
-      }
-      ctx.restore();
-
-      // 3. Cursor (full-source normalized → crop-relative → rect pixels).
-      const dot = (px: number, py: number, d: number, fill: string) => {
-        ctx.fillStyle = fill;
-        ctx.beginPath();
-        ctx.ellipse(px, py, d / 2, d / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
-      };
-      const toPx = (p: Point) => ({
-        x: rect.x + ((p.x * fullW - sx) / cropW) * rect.w,
-        y: rect.y + ((p.y * fullH - sy) / cropH) * rect.h,
-      });
-      const d = H * style.cursorSize;
-      const showCursor = style.cursorShow !== false;
-      const op = Math.min(1, Math.max(0, style.cursorOpacity ?? 0.85));
-      const alphaHex = (a: number) => Math.round(255 * a).toString(16).padStart(2, '0');
-      if (showCursor && input.cursorTrail?.length) {
-        const n = input.cursorTrail.length;
-        for (let i = 0; i < n; i++) {
-          const t = (i + 1) / n; // fade oldest→newest
-          const { x, y } = toPx(input.cursorTrail[i]);
-          dot(x, y, d * (0.4 + 0.6 * t), `${style.cursorHex}${alphaHex(Math.min(1, 0.4 * t * (op / 0.85)))}`);
+      if (use3d) {
+        // Tile by tile, each core 1:1 at integer coordinates (the output pass already did any supersample downsample).
+        if (phone3dOut && !phone3dOut.draw((src, w, h, x, y) => ctx.drawImage(src, 0, 0, w, h, x, y, w, h)) && strict3d) {
+          this.error3d = '3D renderer lost the GPU';
         }
+        return;
       }
-      if (showCursor && input.cursor) {
-        const { x, y } = toPx(input.cursor);
-        dot(x, y, d, `${style.cursorHex}${alphaHex(op)}`);
-      }
-
-      // 4. Click ripples — same full-source→crop-relative mapping.
-      for (const r of input.ripples) {
-        const rx = rect.x + ((r.position.x * fullW - sx) / cropW) * rect.w;
-        const ry = rect.y + ((r.position.y * fullH - sy) / cropH) * rect.h;
-        const maxR = H * 0.055;
-        const rad = maxR * (0.25 + 0.75 * r.progress);
-        const alpha = Math.max(0, 0.75 * (1 - r.progress));
-        ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-        ctx.lineWidth = Math.max(1.5, H * 0.002);
-        ctx.beginPath();
-        ctx.ellipse(rx, ry, rad, rad, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.fillStyle = `rgba(255,255,255,${alpha * 0.35})`;
-        ctx.beginPath();
-        ctx.ellipse(rx, ry, rad * 0.45, rad * 0.45, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
+      shadow?.();
+      this.drawScreenContent(ctx, rect, time, input, cam, { clip, cursorOutsideClip: true, pxScale: 1 });
     };
 
     // 5. Every layer, in the project's order (shared/canvasLayers). Each
@@ -396,7 +477,15 @@ export class CanvasCompositor {
     this.cameraRect = overlay.enabled ? overlayRect(overlay, visible, canvasSize, this.cameraBasis) : null;
     const boxes = new Map<LayerId, LayerBox>();
     const draws = new Map<LayerId, () => void>([['content', drawContent]]);
-    if (this.contentRect && this.contentBase) boxes.set('content', { id: 'content', rect: this.contentRect, base: this.contentBase });
+    if (this.contentRect && this.contentBase) {
+      const box: LayerBox = { id: 'content', rect: this.contentRect, base: this.contentBase };
+      // A 3D phone keeps rect/base (move and resize math, D20); hit-testing and the outline use its drawn hull.
+      if (use3d && s3) {
+        const hull = bodyHull(s3, time);
+        if (hull && hull.length >= 3) box.hull = hull;
+      }
+      boxes.set('content', box);
+    }
     if (this.cameraRect && this.project.recording.cameraVideoFile) {
       boxes.set('camera', { id: 'camera', rect: this.cameraRect, round: overlay.circular, basis: this.cameraBasis });
     }
@@ -433,7 +522,7 @@ export class CanvasCompositor {
     // and the device hardware drawn over the screen's edge.
     const decor = () => {
       if (input.keystrokes?.length) this.drawKeystrokes(input.keystrokes, visible, H);
-      if (phone && frameBody) drawDeviceFrame(ctx, frameBody, phone.device, this.project.device.finishId, { orientation: phone.orientation });
+      if (phone && frameBody && !use3d) drawDeviceFrame(ctx, frameBody, phone.device, this.project.device.finishId, { orientation: phone.orientation });
     };
     const cue = this.project.captions.find((c) => c.start <= time && time <= c.end);
     const captions = () => {
@@ -452,6 +541,103 @@ export class CanvasCompositor {
       if (box) this.layers.push(box);
     }
     if (custom) captions();
+  }
+
+  /**
+   * The recording's screen content drawn into `dst`: the video (cropped and
+   * zoomed by `cam`), its touch indicators, the cursor (trail and dot) and
+   * click ripples. The flat path draws it on the canvas at the screen rect;
+   * the 3D path draws it into the screen texture, with `dst` the screen rect
+   * in texture space. Overlay sizes that follow the canvas height (cursor,
+   * ripples) are multiplied by `pxScale`, the texture's texels per canvas px
+   * (1 on the canvas), so they come out the same size once mapped back.
+   * `clip` sets the screen clip; the cursor and ripples are drawn outside it
+   * when `cursorOutsideClip` (the flat path, as it always has), else inside.
+   */
+  private drawScreenContent(
+    ctx: CanvasRenderingContext2D,
+    dst: Rect,
+    time: number,
+    input: FrameInputs,
+    cam: { center: Point; scale: number },
+    opts: { clip: () => void; cursorOutsideClip: boolean; pxScale: number },
+  ): void {
+    const { phone } = this;
+    const H = this.canvas.height;
+    const style = this.project.style;
+    const fullW = this.project.recording.sourceSize.width;
+    const fullH = this.project.recording.sourceSize.height;
+    const { pxScale } = opts;
+    // Camera crop: camera center is normalized over the FULL source —
+    // remapped into effective-source space, then the zoom scale applied.
+    const { sx, sy, cropW, cropH } = sourceCrop(style.cropRect, fullW, fullH, cam);
+    // The whole source frame as the camera places it in `dst`.
+    const kx = dst.w / cropW;
+    const ky = dst.h / cropH;
+    const source = { x: dst.x - sx * kx, y: dst.y - sy * ky, w: fullW * kx, h: fullH * ky };
+
+    ctx.save();
+    opts.clip();
+    ctx.drawImage(input.frame, sx, sy, cropW, cropH, dst.x, dst.y, dst.w, dst.h);
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    // Touch indicators ride the camera: same clip, same zoom as the video.
+    if (phone && this.project.tapStyle.show && phone.taps.length) {
+      const ts = this.project.tapStyle;
+      drawTouchIndicators(ctx, phone.taps, time, source, pointScaleFor(dst, phone.device) * cam.scale, {
+        style: ts.style,
+        color: ts.color === 'accent' ? ACCENT_TOUCH_COLOR : '#FFFFFF',
+        sizePt: ts.sizePt,
+      });
+    }
+    if (opts.cursorOutsideClip) ctx.restore();
+
+    // 3. Cursor (full-source normalized → crop-relative → dst pixels).
+    const dot = (px: number, py: number, d: number, fill: string) => {
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.ellipse(px, py, d / 2, d / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    const toPx = (p: Point) => ({
+      x: dst.x + ((p.x * fullW - sx) / cropW) * dst.w,
+      y: dst.y + ((p.y * fullH - sy) / cropH) * dst.h,
+    });
+    const d = H * style.cursorSize * pxScale;
+    const showCursor = style.cursorShow !== false;
+    const op = Math.min(1, Math.max(0, style.cursorOpacity ?? 0.85));
+    const alphaHex = (a: number) => Math.round(255 * a).toString(16).padStart(2, '0');
+    if (showCursor && input.cursorTrail?.length) {
+      const n = input.cursorTrail.length;
+      for (let i = 0; i < n; i++) {
+        const t = (i + 1) / n; // fade oldest→newest
+        const { x, y } = toPx(input.cursorTrail[i]);
+        dot(x, y, d * (0.4 + 0.6 * t), `${style.cursorHex}${alphaHex(Math.min(1, 0.4 * t * (op / 0.85)))}`);
+      }
+    }
+    if (showCursor && input.cursor) {
+      const { x, y } = toPx(input.cursor);
+      dot(x, y, d, `${style.cursorHex}${alphaHex(op)}`);
+    }
+
+    // 4. Click ripples — same full-source→crop-relative mapping.
+    for (const r of input.ripples) {
+      const rx = dst.x + ((r.position.x * fullW - sx) / cropW) * dst.w;
+      const ry = dst.y + ((r.position.y * fullH - sy) / cropH) * dst.h;
+      const maxR = H * 0.055 * pxScale;
+      const rad = maxR * (0.25 + 0.75 * r.progress);
+      const alpha = Math.max(0, 0.75 * (1 - r.progress));
+      ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+      ctx.lineWidth = Math.max(1.5, H * 0.002) * pxScale;
+      ctx.beginPath();
+      ctx.ellipse(rx, ry, rad, rad, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255,255,255,${alpha * 0.35})`;
+      ctx.beginPath();
+      ctx.ellipse(rx, ry, rad * 0.45, rad * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (!opts.cursorOutsideClip) ctx.restore();
   }
 
   /** The camera bubble's video in its square: a round or soft-cornered cut of the frame. */
@@ -526,6 +712,37 @@ export class CanvasCompositor {
     if (frame) ctx.drawImage(frame, screen.x, screen.y, screen.w, screen.h);
     ctx.restore();
     if (o.frame) drawDeviceFrame(ctx, box, layer.device, o.finishId, { ...opts, shadow: o.shadow });
+  }
+
+  /** The backdrop's mean colour, linear RGB (the 3D environment's floor bounce). A pure function of the
+   *  project's background: colour backdrops are painted small and averaged; an image or the blurred
+   *  recording (which change with the media) count as a neutral grey. */
+  private backgroundMean(): readonly [number, number, number] {
+    const bg = this.project.style.background;
+    if (this.project.layout.background === 'blurred' || !isColourBackground(bg)) return NEUTRAL_BG;
+    const key = JSON.stringify(bg);
+    let mean = bgMeans.get(key);
+    if (!mean) {
+      mean = NEUTRAL_BG;
+      try {
+        const c = document.createElement('canvas');
+        c.width = 16;
+        c.height = 16;
+        const sctx = c.getContext('2d', { willReadFrequently: true });
+        if (sctx) {
+          paintBackdrop(sctx, bg, 16, 16);
+          const d = sctx.getImageData(0, 0, 16, 16).data;
+          const acc = [0, 0, 0];
+          for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) acc[k] += srgbToLinear(d[i + k] / 255);
+          const n = d.length / 4;
+          mean = [acc[0] / n, acc[1] / n, acc[2] / n];
+        }
+      } catch {
+        mean = NEUTRAL_BG;
+      }
+      bgMeans.set(key, mean);
+    }
+    return mean;
   }
 
   private drawBackground(W: number, H: number) {
@@ -678,6 +895,11 @@ function keyLabel(key: string): string {
   return key.length === 1 ? key.toUpperCase() : key;
 }
 
+const NEUTRAL_BG = [0.18, 0.18, 0.18] as const;
+/** Backdrop means by background (JSON), shared by every compositor. */
+const bgMeans = new Map<string, readonly [number, number, number]>();
+const srgbToLinear = (v: number) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+
 /** Phone recordings: device, placement and taps for this project. */
 function phoneSetup(project: Project): PhoneSetup | null {
   if (!isPhoneProject(project)) return null;
@@ -719,6 +941,29 @@ function fitAspect(into: Rect, aspect: number): Rect {
     r.y = into.y + (into.h - r.h) / 2;
   }
   return r;
+}
+
+/** The part of the source the camera shows: the user crop (normalized →
+ *  px) or the full frame, zoomed by `cam` (centre normalized over the FULL
+ *  source) and kept inside the crop. */
+function sourceCrop(
+  cropRect: Project['style']['cropRect'],
+  fullW: number,
+  fullH: number,
+  cam: { center: Point; scale: number },
+): { sx: number; sy: number; cropW: number; cropH: number } {
+  // Effective source rect = user crop (normalized → px) or full source.
+  const crop = cropRect;
+  const srcRect = crop
+    ? { x: crop.x * fullW, y: crop.y * fullH, w: crop.w * fullW, h: crop.h * fullH }
+    : { x: 0, y: 0, w: fullW, h: fullH };
+  const cropW = srcRect.w / cam.scale;
+  const cropH = srcRect.h / cam.scale;
+  const cx = cam.center.x * fullW - srcRect.x;
+  const cy = cam.center.y * fullH - srcRect.y;
+  const sx = srcRect.x + Math.max(0, Math.min(srcRect.w - cropW, cx - cropW / 2));
+  const sy = srcRect.y + Math.max(0, Math.min(srcRect.h - cropH, cy - cropH / 2));
+  return { sx, sy, cropW, cropH };
 }
 
 function intersect(a: Rect, b: Rect): Rect {
