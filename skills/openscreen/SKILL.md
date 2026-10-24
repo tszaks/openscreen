@@ -79,13 +79,17 @@ Run these in order. Each step is done when its check holds.
    more between taps, place one yourself: convert the taps to output seconds
    with `info.clips`, add a `hero-layback` `shot` in that gap, and check it
    with `apply --dry-run` (`warnings: []`).
-   The rest pose after Auto 3D is the End of its moves: to rest a few
-   degrees off front, edit the intro's End
-   (`{"op":"setPose","index":0,"end":"to","turn":-8,"tilt":5}`) **before**
-   adding shots by hand (a shot returns to the pose it starts from), or
-   `setPose {at: <a time in that hold>}` for a later hold. A
-   `target:"base"` edit shows nowhere once the first move has its own Start
-   (Auto 3D's spin-in does); its output note says so.
+   The rest pose after Auto 3D is the End of the intro **and of every
+   planned shot that returns to rest**. To rest a few degrees off front for
+   the whole video: use `--style bold` (rests at -8°/5°), or edit the
+   intro's End (`{"op":"setPose","index":0,"end":"to","turn":-8,"tilt":5}`)
+   and read its note in `changes`: when later moves still hold the old
+   pose, it ends with `For one rest pose, apply: [...]`. Apply that list as
+   it is, or the phone goes back to front after the first planned shot.
+   Re-running `direct` resets the rest (it sets the base itself). Do this
+   **before** adding shots by hand (a shot returns to the pose it starts
+   from). A `target:"base"` edit shows nowhere once the first move has its
+   own Start (Auto 3D's spin-in does); its output note says so.
 6. `<cli> frames <bundle> --moves --sheet --draft` — **open `sheet.png`**
    and judge it against the checklist below. Each file's `facing` must be
    near 1 at every tap time.

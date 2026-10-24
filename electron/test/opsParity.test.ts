@@ -147,6 +147,43 @@ describe('ops parity: AGENTS.md names every op and every editor field', () => {
   });
 });
 
+describe('ops parity: the rest pose after Auto 3D and the worked example', () => {
+  const SKILL = readFileSync(join(E, '..', 'skills', 'openscreen', 'SKILL.md'), 'utf8');
+  /** The note setPose gives when later moves still hold the old rest pose (restPose.test.ts runs the recipe). */
+  function restNote(): string {
+    const p = applyOps(defaultProject({ screenVideoFile: 'screen.mov', sourceKind: 'iosDevice', sourceSize: { width: 1206, height: 2622 }, duration: 20 }), [
+      { op: 'phone3d', enabled: true },
+      { op: 'shot', recipe: 'spin-in', at: 0 },
+      { op: 'shot', recipe: 'hero-layback', at: 6 },
+    ]).project;
+    return applyOps(p, [{ op: 'setPose', index: 0, end: 'to', turn: -8, tilt: 5 }]).notes[0];
+  }
+
+  it('AGENTS.md and the skill tell the agent to apply the ops the setPose note lists, in the words the note uses', () => {
+    const phrase = restNote().match(/(For one rest pose, apply:)/)?.[1];
+    expect(phrase, 'the note ends with the ops to apply').toBeDefined();
+    const flat = (md: string) => md.replace(/\s+/g, ' ');
+    expect(flat(AGENTS)).toContain(phrase!);
+    expect(flat(SKILL)).toContain(phrase!);
+    // Both say a planned shot after the intro holds the rest pose too (the old text said the intro alone).
+    expect(AGENTS).toMatch(/every planned\s+shot\s+that\s+returns\s+to\s+rest/);
+    expect(SKILL).toMatch(/every\s+planned shot that returns to rest/);
+    expect(AGENTS).not.toMatch(/rest pose is the End of the intro \(and of each later move\), so\s+edit that End/);
+  });
+
+  it('the worked example checks its fixes with --dry-run before it applies them, and uses no turn-to-back', () => {
+    const ex = section(AGENTS, '### Example: "make this world class" (an iPhone take)');
+    const dry = ex.indexOf('apply "$B" fixes.json --dry-run');
+    const real = ex.search(/apply "\$B" fixes\.json\s+#/);
+    expect(dry, 'a dry run of fixes.json').toBeGreaterThan(-1);
+    expect(real, 'the real apply').toBeGreaterThan(dry);
+    const fixes = JSON.parse(ex.match(/```json\n([\s\S]*?)```/)![1]);
+    // Every op in it is a real op, and its shots are laybacks placed in the gaps the text names.
+    for (const o of fixes) expect(OP_NAMES as readonly string[]).toContain(o.op);
+    expect(fixes.filter((o: { op: string }) => o.op === 'shot').map((o: { recipe: string }) => o.recipe)).toEqual(['hero-layback', 'hero-layback']);
+  });
+});
+
 describe('ops parity: the 3D numbers in AGENTS.md match the code', () => {
   it('every warning code is in the warnings table', () => {
     const table = section(P3D, '### Warnings');

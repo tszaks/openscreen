@@ -351,13 +351,31 @@ The output note says what was edited (`setPose edited End of m2`).
 
 After `direct`, the base pose shows nowhere: Auto 3D's intro (`spin-in`,
 `settle`) has its own Start, and the phone holds each move's End after it.
-To change the pose the video rests at, edit the End of the move before that
-moment (`setPose {index:0, end:"to", …}` for the rest after the intro, or
-`setPose {at}` in a later hold). Do it before adding shots: a `shot` returns
-to the pose it starts from, so a shot added first returns to the old pose. A base edit that shows nowhere says so in
-its note (`…which shows nowhere: the first move m1 has its own Start…`).
-With no shots planned, set the base before placing shots by hand: a `shot`
-starts from it.
+Auto 3D also writes the rest pose into the End of **every planned shot that
+returns to rest** (and, for `bold`'s turns, into an explicit Start). So to
+change the pose the whole video rests at, pick one:
+
+1. `direct --style bold` when its rest (turn -8°, tilt 5°) is what you want:
+   every planned move is built around it. Bold also plans `turn-to-back` in
+   long waits.
+2. Edit the intro's End, `setPose {index:0, end:"to", …}`, and read its
+   note. When later moves still hold the old pose, the note names them and
+   ends with the ops that give them the new one:
+   `setPose edited End of m1; End of m3 (index 2) still holds the old pose
+   (turn 0, tilt 0), so the phone goes back to it there. For one rest pose,
+   apply: [{"op":"setPose","index":2,"end":"to","turn":-8,"tilt":5}]`.
+   Apply that list as it is (a pose whole turns away keeps its whole turns).
+   Without it, the phone rests at the new pose only until the first planned
+   shot, then at the old one for the rest of the video.
+
+Re-running `direct` after a base edit does not keep it: the planner sets the
+base itself (front for `subtle` and `hero`, -8°/5° for `bold`).
+`setPose {at}` in one hold changes that hold only. Set the rest before adding
+shots by hand: a `shot` returns to the pose it starts from, so a shot added
+first returns to the old pose. A base edit that shows nowhere says so in its
+note (`…which shows nowhere: the first move m1 has its own Start…`). With no
+shots planned, set the base before placing shots by hand: a `shot` starts
+from it.
 
 ### Ops
 
@@ -519,37 +537,51 @@ osa review "$B"   # LOOK at review/sheet-*.png: what is the story, which source 
 ```
 
 Keep only the best moments (source seconds; a 637 s take becomes a 15–30 s
-social video), then polish and direct:
+social video), then polish and direct. The numbers below are this take's
+own, from a real run; on another take, pick yours from `info` and `review`:
 
 ```sh
 osa() { node /abs/path/electron/scripts/openscreen-agent.mjs "$@"; }
 B=/abs/path/rec-1792855925414.openscreen
-osa apply "$B" '[{"op":"trim","start":0,"end":62},{"op":"cut","ranges":[{"start":20,"end":44}]}]'
-osa polish "$B" --style clean --title "Your money, answered" --subtitle "Ask Vero"   # outputDuration inside 15–30 s?
-osa direct "$B" --style hero              # shots + reasons; warnings: []
+osa apply "$B" '[{"op":"trim","start":2,"end":56},{"op":"cut","ranges":[{"start":24,"end":48}]}]'   # 30 s of source
+osa polish "$B" --style clean --title "Your money, answered" --subtitle "Ask Vero"   # outputDuration {before: 30, after: 26.2}: inside 15–30 s
+osa direct "$B" --style hero              # shots: spin-in 0–1.6 only; warnings: []
+osa info "$B"                             # taps in output seconds (via clips): …12.93, 14.06 | 17.19, 17.73, 18.59, 20.66 | 23.59…
 osa frames "$B" --moves --sheet --draft   # LOOK at sheet.png
 ```
 
-Then fix what the sheet shows, in one `apply` (times are output seconds,
-after the cuts):
+`direct` planned no shot after the intro, but the video has two gaps of
+2.4 s or more between taps (14.06–17.19 and 20.66–23.59 output seconds).
+Fix what the sheet shows and fill those gaps, in one `fixes.json` (times are
+output seconds, after the cuts):
 
 ```json
 [
   {"op": "editTransition", "index": 0, "end": 1.4},
   {"op": "setPose", "index": 0, "end": "to", "turn": -8, "tilt": 5, "size": 0.92},
-  {"op": "shot", "recipe": "turn-to-back", "at": 9.2, "direction": -1},
+  {"op": "shot", "recipe": "hero-layback", "at": 15.0},
+  {"op": "shot", "recipe": "hero-layback", "at": 21.4, "direction": -1},
   {"op": "phone3d", "light": {"preset": "contrast"}, "dof": {"background": 0.3}}
 ]
 ```
 
-The second op makes the phone rest a little off front and smaller: after
-`direct`, the rest pose is the End of the intro (and of each later move), so
-edit that End. A `setPose {target:"base"}` here would show nowhere (see
-"Which keyframe a pose edit changes").
+The second op makes the phone rest a little off front and smaller. After
+`direct`, the rest pose is the End of the intro **and of every planned shot
+that returns to rest**, so edit those Ends. Here `direct` planned only the
+intro, so one edit is enough, and the two shots after it start from the new
+rest and return to it (ops run in order). When `direct` did plan later shots,
+the `setPose` note names each one that still holds the old pose and gives the
+ops to apply (see "Which keyframe a pose edit changes"). A
+`setPose {target:"base"}` here would show nowhere.
+
+Check the edits with `--dry-run` before you apply them. Times copied from
+another take, or from before a cut, put moves on top of taps; the dry run
+says so (`tap-back`, `tap-angle`, `over-zoom`) and changes nothing:
 
 ```sh
 osa() { node /abs/path/electron/scripts/openscreen-agent.mjs "$@"; }
 B=/abs/path/rec-1792855925414.openscreen
+osa apply "$B" fixes.json --dry-run       # warnings: [] (on this take); else move the shot into a gap and retry
 osa apply "$B" fixes.json                 # read `changes` and `warnings` in the output
 osa validate "$B"                         # problems: [] — warnings: [] (or apply each `fix`)
 osa frames "$B" --moves --sheet           # full quality: LOOK again
