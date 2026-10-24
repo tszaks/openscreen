@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultProject, fileSafeName, projectName, resetProject, type Project } from '../src/shared/types';
+import { defaultPhone3D } from '../src/shared/phone3d/model';
 
 const phone = () =>
   defaultProject({ screenVideoFile: 'screen.mov', sourceKind: 'iosDevice', sourceSize: { width: 1206, height: 2622 }, duration: 12 });
@@ -76,5 +77,10 @@ describe('project name', () => {
     const p = phone();
     p.name = 'Vero demo';
     expect(resetProject(p).name).toBe('Vero demo');
+  });
+
+  it('drops the 3D phone (phone3d is not in the defaults)', () => {
+    const p = { ...edited(phone()), phone3d: { ...defaultPhone3D(), enabled: true } };
+    expect('phone3d' in resetProject(p)).toBe(false);
   });
 });

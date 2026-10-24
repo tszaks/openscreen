@@ -4,9 +4,11 @@ import {
   defaultLayerOrder,
   hideLayer,
   hitLayer,
+  inConvex,
   layerOrder,
   layerTransform,
   nudgeLayer,
+  overLayer,
   placeLayer,
   resetLayer,
   resizeLimits,
@@ -22,6 +24,9 @@ import { OVERLAY_SIZES, overlayRect } from '../src/shared/cameraOverlay';
 import { previewCursor, previewTarget, type PreviewState } from '../src/shared/previewPointer';
 import { applyOp, applyOps, validateProject, OP_NAMES } from '../src/shared/agentOps';
 import { defaultCameraOverlay, defaultProject, type Annotation, type Project, type Size } from '../src/shared/types';
+import { bodyHull, scene3d } from '../src/shared/phone3d/projection';
+import { FRONT as FRONT3D } from '../src/shared/phone3d/model';
+import { phoneProject as phone3dProject, with3d as with3dPhone } from './helpers/phone3dFixtures';
 
 const canvas: Size = { width: 1920, height: 1080 };
 
@@ -303,5 +308,77 @@ describe('the layer ops', () => {
     expect(() => applyOp(p, { op: 'phone', scale: 9 })).toThrow(/scale/);
     expect(validateProject({ ...p, layerOrder: ['content', 'bogus'] }).join()).toMatch(/layerOrder/);
     expect(validateProject({ ...p, annotations: [annotation('a1', { transform: { scale: 0 } })] }).join()).toMatch(/annotations\[0\]\.transform/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A turned 3D phone (D20): the content box keeps rect = the placed home body
+// and base = where the layout fits it; `hull` (the projected body) is only for
+// hit-testing and the outline.
+
+describe('a turned 3D phone as a layer (hull)', () => {
+  const turned = (t?: Project['style']['contentTransform']) => {
+    const p = with3dPhone(phone3dProject(), { pose: { ...FRONT3D, turn: 40, tilt: 12 } });
+    if (t) p.style.contentTransform = t;
+    const s = scene3d(p)!;
+    const box: LayerBox = { id: 'content', rect: s.home.body, base: s.home.base, hull: bodyHull(s, 0)! };
+    return { p, s, box, canvas: s.canvas };
+  };
+
+  it('a ⌘-drag move keeps contentTransform.scale (rect is the home body, not the turned bbox)', () => {
+    const { p, box, canvas } = turned({ x: 0.5, y: 0.5, scale: 0.9 });
+    const press = { x: box.rect.x + box.rect.w / 2 + 10, y: box.rect.y + box.rect.h / 2 + 5 };
+    const dx = press.x - (box.rect.x + box.rect.w / 2);
+    const dy = press.y - (box.rect.y + box.rect.h / 2);
+    const to = { x: press.x + 60, y: press.y - 40 };
+    const { w, h } = box.rect;
+    const moved = placeLayer(p, box, { x: to.x - dx - w / 2, y: to.y - dy - h / 2, w, h }, canvas);
+    expect(moved.style.contentTransform!.scale).toBeCloseTo(0.9, 12);
+    expect(moved.style.contentTransform!.x).toBeCloseTo(0.5 + 60 / canvas.width, 9);
+    // From no transform: the first drag gives scale exactly 1.
+    const fresh = turned();
+    const m2 = placeLayer(fresh.p, fresh.box, { ...fresh.box.rect, x: fresh.box.rect.x + 25 }, fresh.canvas);
+    expect(m2.style.contentTransform!.scale).toBe(1);
+  });
+
+  it('a 0-px move gives the same contentTransform', () => {
+    const t = { x: 0.47, y: 0.52, scale: 0.85 };
+    const { p, box, canvas } = turned(t);
+    const same = placeLayer(p, box, { ...box.rect }, canvas).style.contentTransform!;
+    expect(same.x).toBeCloseTo(t.x, 12);
+    expect(same.y).toBeCloseTo(t.y, 12);
+    expect(same.scale).toBeCloseTo(t.scale, 12);
+  });
+
+  it('a corner resize scales from the home body; an arrow nudge moves by exactly the step', () => {
+    const { p, box, canvas } = turned();
+    const lim = resizeLimits(box, 0);
+    expect(lim.snapW!.at).toBe(box.base!.w);
+    const resized = placeLayer(p, box, { x: box.rect.x, y: box.rect.y, w: box.rect.w * 1.2, h: box.rect.h * 1.2 }, canvas);
+    expect(resized.style.contentTransform!.scale).toBeCloseTo(1.2, 12);
+    const n = nudgeLayer(p, box, 10, 0, canvas);
+    const c0 = (box.base!.x + box.base!.w / 2) / canvas.width;
+    expect(n.style.contentTransform!.x).toBeCloseTo(c0 + 10 / canvas.width, 12);
+    expect(n.style.contentTransform!.scale).toBe(1);
+  });
+
+  it('a point inside rect but outside hull misses; a point inside the hull hits', () => {
+    const { box } = turned();
+    const centre = { x: box.rect.x + box.rect.w / 2, y: box.rect.y + box.rect.h / 2 };
+    expect(overLayer(box, centre)).toBe(true);
+    // The turned phone is narrower than its home rect: the rect's corner area is empty.
+    const corner = { x: box.rect.x + 2, y: box.rect.y + 2 };
+    expect(overLayer({ ...box, hull: undefined }, corner)).toBe(true);
+    expect(overLayer(box, corner)).toBe(false);
+    expect(hitLayer([box], corner)).toBeNull();
+  });
+
+  it('inConvex works for either winding and rejects outside points', () => {
+    const sq = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+    expect(inConvex(sq, { x: 5, y: 5 })).toBe(true);
+    expect(inConvex([...sq].reverse(), { x: 5, y: 5 })).toBe(true);
+    expect(inConvex(sq, { x: 10, y: 5 })).toBe(true); // on the edge
+    expect(inConvex(sq, { x: 11, y: 5 })).toBe(false);
+    expect(inConvex(sq.slice(0, 2), { x: 5, y: 0 })).toBe(false);
   });
 });

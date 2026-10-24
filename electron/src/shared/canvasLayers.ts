@@ -31,6 +31,10 @@ export interface LayerBox {
   round?: boolean;
   /** The camera: what its size is measured against. */
   basis?: Rect;
+  /** The drawn outline when it is not the rect, e.g. a turned 3D phone: a
+   *  convex polygon (canvas px). Only hit-testing and the selection outline
+   *  use it; moving, resizing, nudging and snapping keep using `rect`. */
+  hull?: { x: number; y: number }[];
 }
 
 export const textLayer = (annotationId: string): LayerId => `text:${annotationId}`;
@@ -198,8 +202,25 @@ export function hideLayer(p: Project, id: LayerId): Project {
 
 const inRect = (r: Rect, q: { x: number; y: number }) => q.x >= r.x && q.x <= r.x + r.w && q.y >= r.y && q.y <= r.y + r.h;
 
-/** `box` is under `q` (its circle, when round). */
+/** `q` is inside (or on) the convex polygon `poly`, whichever way it winds. */
+export function inConvex(poly: readonly { x: number; y: number }[], q: { x: number; y: number }): boolean {
+  if (poly.length < 3) return false;
+  let sign = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const c = (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x);
+    if (Math.abs(c) < 1e-9) continue;
+    const s = c > 0 ? 1 : -1;
+    if (sign === 0) sign = s;
+    else if (s !== sign) return false;
+  }
+  return true;
+}
+
+/** `box` is under `q`: its hull when it has one, else its circle (round) or rect. */
 export function overLayer(box: LayerBox, q: { x: number; y: number }) {
+  if (box.hull && box.hull.length >= 3) return inConvex(box.hull, q);
   const r = box.rect;
   if (box.round) return Math.hypot(q.x - (r.x + r.w / 2), q.y - (r.y + r.h / 2)) <= r.w / 2;
   return inRect(r, q);

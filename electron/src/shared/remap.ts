@@ -8,6 +8,7 @@ import type { FocusSegment } from './autofocus';
 import type { Annotation, CaptionCue, Chapter, Project, TranscriptWord } from './types';
 import type { Timeline } from './timeline';
 import { clipSpans } from './playback';
+import { compareTransitions, MIN_TRANSITION, type PoseTransition } from './phone3d/model';
 
 type Bias = 'start' | 'end';
 
@@ -137,6 +138,24 @@ export function remapZooms(list: FocusSegment[], oldTl: Timeline, newTl: Timelin
     .sort((a, b) => a.inStart - b.inStart);
 }
 
+/**
+ * A 3D move follows the moment it lands on (its End keyframe); its duration
+ * stays. Anchoring on the end keeps every move landing before the tap it
+ * serves; when the end's footage is gone the move falls back to its start.
+ * A move squeezed below MIN_TRANSITION by the start of the timeline is dropped.
+ */
+export function remapTransitions(list: PoseTransition[], oldTl: Timeline, newTl: Timeline): PoseTransition[] {
+  return list
+    .flatMap((tr) => {
+      const end = remapTime(tr.end, oldTl, newTl, 'end') ?? remapTime(tr.start, oldTl, newTl, 'start');
+      if (end === null) return [];
+      const len = tr.end - tr.start;
+      const start = Math.max(0, end - len);
+      return end - start < MIN_TRANSITION ? [] : [{ ...tr, start, end }];
+    })
+    .sort(compareTransitions);
+}
+
 /** Apply a clip edit to the project: new clips, and everything stored in
  *  output time moved to match. */
 export function remapProject(p: Project, oldTl: Timeline, newTl: Timeline): Project {
@@ -147,5 +166,7 @@ export function remapProject(p: Project, oldTl: Timeline, newTl: Timeline): Proj
     annotations: remapAnnotations(p.annotations, oldTl, newTl),
     chapters: remapChapters(p.chapters, oldTl, newTl),
     manualZooms: remapZooms(p.manualZooms, oldTl, newTl),
+    // Only a project that has 3D gets the key (old projects stay byte-equal).
+    ...(p.phone3d ? { phone3d: { ...p.phone3d, transitions: remapTransitions(p.phone3d.transitions, oldTl, newTl) } } : {}),
   };
 }

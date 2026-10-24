@@ -15,176 +15,32 @@
 // `rect` is the body's bounding box. The body is fitted inside it keeping the
 // real aspect ratio; side buttons protrude ~0.5 mm beyond it.
 
-import {
-  getFinish,
-  screenMm,
-  screenPoints,
-  type DeviceFinish,
-  type DeviceModel,
-  type Orientation,
-} from '../../../shared/devices';
+import { getFinish, type DeviceFinish, type DeviceModel } from '../../../shared/devices';
+import { DEFAULT_FRAME_SHADOW, frameGeometry, type DeviceFrameOptions, type FrameGeometry, type Rect } from '../../../shared/deviceGeometry';
+import { continuousRectCommands } from '../../../shared/phone3d/outline';
 
-export interface Rect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface FrameShadow {
-  /** Ambient shadow blur, as a fraction of the body's long side. */
-  blur: number;
-  /** Downward offset, fraction of the body's long side. */
-  offsetY: number;
-  /** 0..1 */
-  opacity: number;
-}
-
-export interface DeviceFrameOptions {
-  /** Defaults to the rect's aspect (wider than tall = landscape). */
-  orientation?: Orientation;
-  /** Landscape only: which side the top of the phone (the island) faces. Default 'left'. */
-  landscapeTop?: 'left' | 'right';
-  /** Soft floating shadow. `true` = the default look; `false` = none. Default true. */
-  shadow?: boolean | Partial<FrameShadow>;
-  /** Draw side buttons. Default true. */
-  buttons?: boolean;
-  /** Faint glass reflection on the bezel. Default true. */
-  glare?: boolean;
-}
-
-export const DEFAULT_FRAME_SHADOW: FrameShadow = { blur: 0.085, offsetY: 0.04, opacity: 0.38 };
-
-// ---------------------------------------------------------------------------
-// Geometry (pure; no canvas needed)
-
-export interface FrameGeometry {
-  orientation: Orientation;
-  /** Rotation applied to the portrait drawing, radians. */
-  rotation: number;
-  /** Body centre in canvas space. */
-  cx: number;
-  cy: number;
-  /** Portrait-space body size (canvas px). */
-  bodyW: number;
-  bodyH: number;
-  /** Canvas px per millimetre. */
-  pxPerMm: number;
-  bodyRadius: number;
-  rim: number;
-  /** Portrait-space screen size and corner radius (canvas px). */
-  screenW: number;
-  screenH: number;
-  screenRadius: number;
-  /** Canvas px per device point. */
-  pxPerPoint: number;
-}
-
-function orientationOf(rect: Rect, o?: Orientation): Orientation {
-  return o ?? (rect.w > rect.h ? 'landscape' : 'portrait');
-}
-
-export function frameGeometry(
-  rect: Rect,
-  device: DeviceModel,
-  opts: Pick<DeviceFrameOptions, 'orientation' | 'landscapeTop'> = {},
-): FrameGeometry {
-  const orientation = orientationOf(rect, opts.orientation);
-  const landscape = orientation === 'landscape';
-  const { width: mmW, height: mmH } = device.bodyMm;
-  // Fit the (possibly rotated) body inside rect.
-  const boxW = landscape ? mmH : mmW;
-  const boxH = landscape ? mmW : mmH;
-  const pxPerMm = Math.min(rect.w / boxW, rect.h / boxH);
-  const bodyW = mmW * pxPerMm;
-  const bodyH = mmH * pxPerMm;
-  const smm = screenMm(device);
-  const screenW = smm.width * pxPerMm;
-  const screenH = smm.height * pxPerMm;
-  const pxPerPoint = screenW / screenPoints(device).width;
-  const screenRadius = device.cornerRadiusPt * pxPerPoint;
-  const border = (bodyW - screenW) / 2;
-  // Concentric corners: body radius grows by the border width. Home-button
-  // phones and iPads have a flat-edged screen but a rounded body.
-  const bodyRadius =
-    device.homeButton ? 10.5 * pxPerMm : screenRadius + border * (device.family === 'ipad' ? 0.9 : 1.05);
-  const rotation = landscape ? (opts.landscapeTop === 'right' ? Math.PI / 2 : -Math.PI / 2) : 0;
-  return {
-    orientation,
-    rotation,
-    cx: rect.x + rect.w / 2,
-    cy: rect.y + rect.h / 2,
-    bodyW,
-    bodyH,
-    pxPerMm,
-    bodyRadius,
-    rim: Math.max(0.75, device.rimMm * pxPerMm),
-    screenW,
-    screenH,
-    screenRadius,
-    pxPerPoint,
-  };
-}
-
-/** Where the body sits inside `rect` (canvas space, after rotation). */
-export function deviceBodyRect(rect: Rect, device: DeviceModel, opts: DeviceFrameOptions = {}): Rect {
-  const g = frameGeometry(rect, device, opts);
-  const w = g.orientation === 'landscape' ? g.bodyH : g.bodyW;
-  const h = g.orientation === 'landscape' ? g.bodyW : g.bodyH;
-  return { x: g.cx - w / 2, y: g.cy - h / 2, w, h };
-}
-
-/** Where to draw the video inside the frame (canvas space). */
-export function screenRectFor(rect: Rect, device: DeviceModel, opts: DeviceFrameOptions = {}): Rect {
-  const g = frameGeometry(rect, device, opts);
-  const w = g.orientation === 'landscape' ? g.screenH : g.screenW;
-  const h = g.orientation === 'landscape' ? g.screenW : g.screenH;
-  return { x: g.cx - w / 2, y: g.cy - h / 2, w, h };
-}
-
-/** Screen corner radius in canvas px for a frame drawn in `rect`. */
-export function screenCornerRadius(rect: Rect, device: DeviceModel, opts: DeviceFrameOptions = {}): number {
-  return frameGeometry(rect, device, opts).screenRadius;
-}
-
-/**
- * Inverse of screenRectFor: the body rect that puts the screen exactly on
- * `screen`. Lets the compositor keep its existing video rect and wrap a
- * frame around it.
- */
-export function frameRectForScreen(screen: Rect, device: DeviceModel, orientation?: Orientation): Rect {
-  const o = orientationOf(screen, orientation);
-  const smm = screenMm(device);
-  const screenLong = o === 'landscape' ? screen.w : screen.h;
-  const pxPerMm = screenLong / smm.height;
-  const w = (o === 'landscape' ? device.bodyMm.height : device.bodyMm.width) * pxPerMm;
-  const h = (o === 'landscape' ? device.bodyMm.width : device.bodyMm.height) * pxPerMm;
-  return { x: screen.x + screen.w / 2 - w / 2, y: screen.y + screen.h / 2 - h / 2, w, h };
-}
-
-/** Canvas px per device point, for sizing touch indicators in real finger units. */
-export function pointScaleFor(screen: Rect, device: DeviceModel): number {
-  return Math.min(screen.w, screen.h) / screenPoints(device).width;
-}
+// The pure geometry lives in shared/deviceGeometry.ts (the CLI build and the
+// 3D phone need it); it is re-exported here so importers are unchanged.
+export {
+  DEFAULT_FRAME_SHADOW,
+  deviceBodyRect,
+  frameGeometry,
+  frameRectForScreen,
+  pointScaleFor,
+  screenCornerRadius,
+  screenRectFor,
+  type DeviceFrameOptions,
+  type FrameGeometry,
+  type FrameShadow,
+  type Rect,
+} from '../../../shared/deviceGeometry';
 
 // ---------------------------------------------------------------------------
 // Paths
 
-// Apple's continuous ("squircle") corner, as a fraction of the nominal radius:
-// the curve starts 1.5287r from the corner and has no curvature jump where it
-// meets the straight edge, unlike arcTo. Points for one corner, listed from
-// the edge that runs toward the corner to the edge that leaves it; each entry
-// is [along-first-edge-inset, along-second-edge-inset].
-const CORNER: Array<['M' | 'L' | 'C', ...number[]]> = [
-  ['L', 1.52866483, 0],
-  ['C', 1.08849323, 0, 0.86840689, 0, 0.66993427, 0.06549600],
-  ['L', 0.63149399, 0.07491100],
-  ['C', 0.37282392, 0.16905899, 0.16905899, 0.37282392, 0.07491100, 0.63149399],
-  ['L', 0.06549600, 0.66993427],
-  ['C', 0, 0.86840689, 0, 1.08849323, 0, 1.52866483],
-];
-
-/** Appends a continuous-corner rounded rect to the current path. */
+/** Appends a continuous-corner rounded rect to the current path. The corner
+ *  table is shared/phone3d/outline.ts CONTINUOUS_CORNER, which the 3D phone
+ *  samples too. */
 export function continuousRectPath(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -193,38 +49,17 @@ export function continuousRectPath(
   h: number,
   radius: number,
 ): void {
-  const r = Math.max(0, Math.min(radius, Math.min(w, h) / 2 / 1.52866483));
-  if (r <= 0) {
+  const cmds = continuousRectCommands(x, y, w, h, radius);
+  if (!cmds) {
     ctx.rect(x, y, w, h);
     return;
   }
-  // Each corner: origin + two unit axes (into the first edge, into the second).
-  const corners: Array<[number, number, number, number, number, number]> = [
-    [x + w, y, -1, 0, 0, 1], // top-right: along top edge (inset leftward), then down
-    [x + w, y + h, 0, -1, -1, 0], // bottom-right
-    [x, y + h, 1, 0, 0, -1], // bottom-left
-    [x, y, 0, 1, 1, 0], // top-left
-  ];
-  const pt = (c: (typeof corners)[number], a: number, b: number): [number, number] => [
-    c[0] + (c[2] * a + c[4] * b) * r,
-    c[1] + (c[3] * a + c[5] * b) * r,
-  ];
-  const start = pt(corners[3], 0, 1.52866483);
-  ctx.moveTo(start[0], start[1]);
-  for (const c of corners) {
-    for (const [op, ...n] of CORNER) {
-      if (op === 'C') {
-        const p1 = pt(c, n[0], n[1]);
-        const p2 = pt(c, n[2], n[3]);
-        const p3 = pt(c, n[4], n[5]);
-        ctx.bezierCurveTo(p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]);
-      } else {
-        const p = pt(c, n[0], n[1]);
-        ctx.lineTo(p[0], p[1]);
-      }
-    }
+  for (const c of cmds) {
+    if (c.op === 'M') ctx.moveTo(c.p[0], c.p[1]);
+    else if (c.op === 'L') ctx.lineTo(c.p[0], c.p[1]);
+    else if (c.op === 'C') ctx.bezierCurveTo(c.c1[0], c.c1[1], c.c2[0], c.c2[1], c.p[0], c.p[1]);
+    else ctx.closePath();
   }
-  ctx.closePath();
 }
 
 function capsulePath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
@@ -326,15 +161,7 @@ export function drawDeviceFrame(
   applyTransform(ctx, g);
 
   // Light comes from the top of the canvas, slightly left, whatever the rotation.
-  const lightDir = rotateVec(-0.35, -1, -g.rotation);
-  const half = Math.hypot(W, H) / 2;
-  const lightGradient = (stops: Array<[number, string]>) => {
-    const grad = ctx.createLinearGradient(
-      lightDir[0] * half, lightDir[1] * half, -lightDir[0] * half, -lightDir[1] * half,
-    );
-    for (const [o, c] of stops) grad.addColorStop(o, c);
-    return grad;
-  };
+  const lightGradient = frameLight(ctx, g);
 
   // 1. Floating shadow, clipped to outside the body so it never darkens the screen.
   if (opts.shadow !== false) {
@@ -473,6 +300,36 @@ export function drawDeviceFrame(
   }
 
   // 5. Cutout / front hardware, on top of the content.
+  drawFrontHardware(ctx, g, device, lightGradient);
+
+  ctx.restore();
+}
+
+type LightGradient = (stops: Array<[number, string]>) => CanvasGradient;
+
+/** The light gradient every frame part uses: from the top of the canvas,
+ *  slightly left, whatever the rotation. Call inside applyTransform. */
+function frameLight(ctx: CanvasRenderingContext2D, g: FrameGeometry): LightGradient {
+  const lightDir = rotateVec(-0.35, -1, -g.rotation);
+  const half = Math.hypot(g.bodyW, g.bodyH) / 2;
+  return (stops) => {
+    const grad = ctx.createLinearGradient(
+      lightDir[0] * half, lightDir[1] * half, -lightDir[0] * half, -lightDir[1] * half,
+    );
+    for (const [o, c] of stops) grad.addColorStop(o, c);
+    return grad;
+  };
+}
+
+/** Dynamic Island / notch / home-button and iPad bezel hardware, drawn in
+ *  the frame's portrait space (inside applyTransform). */
+function drawFrontHardware(ctx: CanvasRenderingContext2D, g: FrameGeometry, device: DeviceModel, lightGradient: LightGradient) {
+  const { bodyW: W, bodyH: H, rim } = g;
+  const x0 = -W / 2;
+  const y0 = -H / 2;
+  const sx = -g.screenW / 2;
+  const sy = -g.screenH / 2;
+  const gy = y0 + rim;
   const pt = g.pxPerPoint;
   const cut = device.cutout;
   if (cut.kind === 'island') {
@@ -543,6 +400,19 @@ export function drawDeviceFrame(
     else drawLens(ctx, (sx + g.screenW + x0 + W - rim) / 2, 0, r);
   }
 
+}
+
+/**
+ * Only the front hardware of the frame in `rect`: the Dynamic Island or notch
+ * on the screen (and, on home-button phones and iPads, the bezel camera,
+ * earpiece and home button), exactly as drawDeviceFrame draws them. The 3D
+ * phone bakes these into its screen texture, so at FRONT it matches 2D.
+ */
+export function drawCutouts(ctx: CanvasRenderingContext2D, rect: Rect, device: DeviceModel, opts: DeviceFrameOptions = {}): void {
+  const g = frameGeometry(rect, device, opts);
+  ctx.save();
+  applyTransform(ctx, g);
+  drawFrontHardware(ctx, g, device, frameLight(ctx, g));
   ctx.restore();
 }
 

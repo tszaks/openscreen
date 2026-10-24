@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Timeline } from '../src/shared/timeline';
-import { remapProject, remapRange, remapTime } from '../src/shared/remap';
+import { remapProject, remapRange, remapTime, remapTransitions } from '../src/shared/remap';
+import { defaultPhone3D, type PoseTransition } from '../src/shared/phone3d/model';
 import { defaultProject, type Project } from '../src/shared/types';
 
 const clip = (id: string, sourceStart: number, sourceEnd: number, speed = 1) => ({
@@ -93,5 +94,49 @@ describe('remap on clip edits (BH-07)', () => {
     for (const t of [0, 2.5, 5, 7, 12]) {
       expect(remapTime(t, oldTl, newTl, 'start') ?? 12).toBeCloseTo(t);
     }
+  });
+});
+
+describe('remapTransitions (3D moves follow the moment they land on)', () => {
+  const tr = (id: string, start: number, end: number): PoseTransition => ({
+    id, start, end, to: { turn: 90, tilt: 0, rotate: 0, size: 1, x: 0, y: 0, light: 0, focus: 1 }, easing: { kind: 'smooth' },
+  });
+  const oldTl = new Timeline(12, [clip('a', 0, 12)]);
+
+  it('anchors on the End and keeps the duration', () => {
+    // Cut 2..4: a move ending at 6 now ends at 4, still 1.5 s long.
+    const newTl = new Timeline(12, [clip('a', 0, 2), clip('b', 4, 12)]);
+    expect(remapTransitions([tr('m', 4.5, 6)], oldTl, newTl)).toEqual([tr('m', 2.5, 4)]);
+  });
+
+  it('a lost End snaps to the nearest surviving moment; a move with no footage at or before its End is dropped', () => {
+    // Trim to 0..5: a move 4..7 loses its end; it lands where its start's footage is.
+    const trimmed = new Timeline(12, [clip('a', 0, 5)]);
+    const [m] = remapTransitions([tr('m', 4, 7)], oldTl, trimmed);
+    expect(m.end).toBe(5);
+    expect(m.end - m.start).toBeCloseTo(3, 12);
+    // A move entirely in removed footage snaps to the nearest surviving moment (remapTime), keeping its length.
+    expect(remapTransitions([tr('late', 8, 9)], oldTl, trimmed)).toEqual([tr('late', 4, 5)]);
+    // Cut the head 0..5: a move 1..4 has nothing at or before its End; its Start falls to 0 and it is too short.
+    expect(remapTransitions([tr('head', 1, 4)], oldTl, new Timeline(12, [clip('a', 5, 12)]))).toEqual([]);
+  });
+
+  it('clamps start at 0 (dropping a move squeezed below MIN_TRANSITION) and sorts by (start, id)', () => {
+    const cutHead = new Timeline(12, [clip('a', 3, 12)]);
+    const out = remapTransitions([tr('late', 5, 6), tr('b', 3.05, 3.1), tr('a', 2, 3.5)], oldTl, cutHead);
+    expect(out.map((t) => t.id)).toEqual(['a', 'late']);
+    expect(out[0].start).toBe(0);
+    expect(out[0].end).toBeCloseTo(0.5, 12);
+  });
+
+  it('remapProject carries phone3d.transitions and never creates the key', () => {
+    const p = project([clip('a', 0, 12)]);
+    const newTl = new Timeline(12, [clip('a', 0, 2), clip('b', 4, 12)]);
+    const flat = remapProject(p, oldTl, newTl);
+    expect('phone3d' in flat).toBe(false);
+    const with3d = { ...p, phone3d: { ...defaultPhone3D(), transitions: [tr('m', 4.5, 6)] } };
+    const moved = remapProject(with3d, oldTl, newTl);
+    expect(moved.phone3d!.transitions).toEqual([tr('m', 2.5, 4)]);
+    expect(moved.phone3d!.pose).toEqual(with3d.phone3d.pose);
   });
 });
