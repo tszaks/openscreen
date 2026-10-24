@@ -294,26 +294,12 @@ export class CanvasCompositor {
       }
     }
 
-    // Effective source rect = user crop (normalized → px) or full source.
-    const crop = style.cropRect;
-    const srcRect = crop
-      ? { x: crop.x * fullW, y: crop.y * fullH, w: crop.w * fullW, h: crop.h * fullH }
-      : { x: 0, y: 0, w: fullW, h: fullH };
-
     const cam = this.zoomOn
       ? cameraAt(time, this.focusSegments, this.autofocusOpts)
       : { center: { x: 0.5, y: 0.5 }, scale: 1 };
 
-    // Camera crop: camera center is normalized over the FULL source —
-    // remap into effective-source space, then apply zoom scale.
-    const cropW = srcRect.w / cam.scale;
-    const cropH = srcRect.h / cam.scale;
-    const cx = cam.center.x * fullW - srcRect.x;
-    const cy = cam.center.y * fullH - srcRect.y;
-    const sx = srcRect.x + Math.max(0, Math.min(srcRect.w - cropW, cx - cropW / 2));
-    const sy = srcRect.y + Math.max(0, Math.min(srcRect.h - cropH, cy - cropH / 2));
-
     // The whole source frame as the camera places it (for taps and clicks).
+    const { sx, sy, cropW, cropH } = sourceCrop(style.cropRect, fullW, fullH, cam);
     const kx = rect.w / cropW;
     const ky = rect.h / cropH;
     const source = { x: rect.x - sx * kx, y: rect.y - sy * ky, w: fullW * kx, h: fullH * ky };
@@ -325,68 +311,7 @@ export class CanvasCompositor {
     // The recording's own layer: the video, its touch indicators, cursor and ripples.
     const drawContent = () => {
       shadow?.();
-      ctx.save();
-      clip();
-      ctx.drawImage(input.frame, sx, sy, cropW, cropH, rect.x, rect.y, rect.w, rect.h);
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-      // Touch indicators ride the camera: same clip, same zoom as the video.
-      if (phone && this.project.tapStyle.show && phone.taps.length) {
-        const ts = this.project.tapStyle;
-        drawTouchIndicators(ctx, phone.taps, time, source, pointScaleFor(rect, phone.device) * cam.scale, {
-          style: ts.style,
-          color: ts.color === 'accent' ? ACCENT_TOUCH_COLOR : '#FFFFFF',
-          sizePt: ts.sizePt,
-        });
-      }
-      ctx.restore();
-
-      // 3. Cursor (full-source normalized → crop-relative → rect pixels).
-      const dot = (px: number, py: number, d: number, fill: string) => {
-        ctx.fillStyle = fill;
-        ctx.beginPath();
-        ctx.ellipse(px, py, d / 2, d / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
-      };
-      const toPx = (p: Point) => ({
-        x: rect.x + ((p.x * fullW - sx) / cropW) * rect.w,
-        y: rect.y + ((p.y * fullH - sy) / cropH) * rect.h,
-      });
-      const d = H * style.cursorSize;
-      const showCursor = style.cursorShow !== false;
-      const op = Math.min(1, Math.max(0, style.cursorOpacity ?? 0.85));
-      const alphaHex = (a: number) => Math.round(255 * a).toString(16).padStart(2, '0');
-      if (showCursor && input.cursorTrail?.length) {
-        const n = input.cursorTrail.length;
-        for (let i = 0; i < n; i++) {
-          const t = (i + 1) / n; // fade oldest→newest
-          const { x, y } = toPx(input.cursorTrail[i]);
-          dot(x, y, d * (0.4 + 0.6 * t), `${style.cursorHex}${alphaHex(Math.min(1, 0.4 * t * (op / 0.85)))}`);
-        }
-      }
-      if (showCursor && input.cursor) {
-        const { x, y } = toPx(input.cursor);
-        dot(x, y, d, `${style.cursorHex}${alphaHex(op)}`);
-      }
-
-      // 4. Click ripples — same full-source→crop-relative mapping.
-      for (const r of input.ripples) {
-        const rx = rect.x + ((r.position.x * fullW - sx) / cropW) * rect.w;
-        const ry = rect.y + ((r.position.y * fullH - sy) / cropH) * rect.h;
-        const maxR = H * 0.055;
-        const rad = maxR * (0.25 + 0.75 * r.progress);
-        const alpha = Math.max(0, 0.75 * (1 - r.progress));
-        ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-        ctx.lineWidth = Math.max(1.5, H * 0.002);
-        ctx.beginPath();
-        ctx.ellipse(rx, ry, rad, rad, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.fillStyle = `rgba(255,255,255,${alpha * 0.35})`;
-        ctx.beginPath();
-        ctx.ellipse(rx, ry, rad * 0.45, rad * 0.45, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
+      this.drawScreenContent(ctx, rect, time, input, cam, { clip, cursorOutsideClip: true, pxScale: 1 });
     };
 
     // 5. Every layer, in the project's order (shared/canvasLayers). Each
@@ -452,6 +377,103 @@ export class CanvasCompositor {
       if (box) this.layers.push(box);
     }
     if (custom) captions();
+  }
+
+  /**
+   * The recording's screen content drawn into `dst`: the video (cropped and
+   * zoomed by `cam`), its touch indicators, the cursor (trail and dot) and
+   * click ripples. The flat path draws it on the canvas at the screen rect;
+   * the 3D path draws it into the screen texture, with `dst` the screen rect
+   * in texture space. Overlay sizes that follow the canvas height (cursor,
+   * ripples) are multiplied by `pxScale`, the texture's texels per canvas px
+   * (1 on the canvas), so they come out the same size once mapped back.
+   * `clip` sets the screen clip; the cursor and ripples are drawn outside it
+   * when `cursorOutsideClip` (the flat path, as it always has), else inside.
+   */
+  private drawScreenContent(
+    ctx: CanvasRenderingContext2D,
+    dst: Rect,
+    time: number,
+    input: FrameInputs,
+    cam: { center: Point; scale: number },
+    opts: { clip: () => void; cursorOutsideClip: boolean; pxScale: number },
+  ): void {
+    const { phone } = this;
+    const H = this.canvas.height;
+    const style = this.project.style;
+    const fullW = this.project.recording.sourceSize.width;
+    const fullH = this.project.recording.sourceSize.height;
+    const { pxScale } = opts;
+    // Camera crop: camera center is normalized over the FULL source —
+    // remapped into effective-source space, then the zoom scale applied.
+    const { sx, sy, cropW, cropH } = sourceCrop(style.cropRect, fullW, fullH, cam);
+    // The whole source frame as the camera places it in `dst`.
+    const kx = dst.w / cropW;
+    const ky = dst.h / cropH;
+    const source = { x: dst.x - sx * kx, y: dst.y - sy * ky, w: fullW * kx, h: fullH * ky };
+
+    ctx.save();
+    opts.clip();
+    ctx.drawImage(input.frame, sx, sy, cropW, cropH, dst.x, dst.y, dst.w, dst.h);
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    // Touch indicators ride the camera: same clip, same zoom as the video.
+    if (phone && this.project.tapStyle.show && phone.taps.length) {
+      const ts = this.project.tapStyle;
+      drawTouchIndicators(ctx, phone.taps, time, source, pointScaleFor(dst, phone.device) * cam.scale, {
+        style: ts.style,
+        color: ts.color === 'accent' ? ACCENT_TOUCH_COLOR : '#FFFFFF',
+        sizePt: ts.sizePt,
+      });
+    }
+    if (opts.cursorOutsideClip) ctx.restore();
+
+    // 3. Cursor (full-source normalized → crop-relative → dst pixels).
+    const dot = (px: number, py: number, d: number, fill: string) => {
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.ellipse(px, py, d / 2, d / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    const toPx = (p: Point) => ({
+      x: dst.x + ((p.x * fullW - sx) / cropW) * dst.w,
+      y: dst.y + ((p.y * fullH - sy) / cropH) * dst.h,
+    });
+    const d = H * style.cursorSize * pxScale;
+    const showCursor = style.cursorShow !== false;
+    const op = Math.min(1, Math.max(0, style.cursorOpacity ?? 0.85));
+    const alphaHex = (a: number) => Math.round(255 * a).toString(16).padStart(2, '0');
+    if (showCursor && input.cursorTrail?.length) {
+      const n = input.cursorTrail.length;
+      for (let i = 0; i < n; i++) {
+        const t = (i + 1) / n; // fade oldest→newest
+        const { x, y } = toPx(input.cursorTrail[i]);
+        dot(x, y, d * (0.4 + 0.6 * t), `${style.cursorHex}${alphaHex(Math.min(1, 0.4 * t * (op / 0.85)))}`);
+      }
+    }
+    if (showCursor && input.cursor) {
+      const { x, y } = toPx(input.cursor);
+      dot(x, y, d, `${style.cursorHex}${alphaHex(op)}`);
+    }
+
+    // 4. Click ripples — same full-source→crop-relative mapping.
+    for (const r of input.ripples) {
+      const rx = dst.x + ((r.position.x * fullW - sx) / cropW) * dst.w;
+      const ry = dst.y + ((r.position.y * fullH - sy) / cropH) * dst.h;
+      const maxR = H * 0.055 * pxScale;
+      const rad = maxR * (0.25 + 0.75 * r.progress);
+      const alpha = Math.max(0, 0.75 * (1 - r.progress));
+      ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+      ctx.lineWidth = Math.max(1.5, H * 0.002) * pxScale;
+      ctx.beginPath();
+      ctx.ellipse(rx, ry, rad, rad, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255,255,255,${alpha * 0.35})`;
+      ctx.beginPath();
+      ctx.ellipse(rx, ry, rad * 0.45, rad * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (!opts.cursorOutsideClip) ctx.restore();
   }
 
   /** The camera bubble's video in its square: a round or soft-cornered cut of the frame. */
@@ -719,6 +741,29 @@ function fitAspect(into: Rect, aspect: number): Rect {
     r.y = into.y + (into.h - r.h) / 2;
   }
   return r;
+}
+
+/** The part of the source the camera shows: the user crop (normalized →
+ *  px) or the full frame, zoomed by `cam` (centre normalized over the FULL
+ *  source) and kept inside the crop. */
+function sourceCrop(
+  cropRect: Project['style']['cropRect'],
+  fullW: number,
+  fullH: number,
+  cam: { center: Point; scale: number },
+): { sx: number; sy: number; cropW: number; cropH: number } {
+  // Effective source rect = user crop (normalized → px) or full source.
+  const crop = cropRect;
+  const srcRect = crop
+    ? { x: crop.x * fullW, y: crop.y * fullH, w: crop.w * fullW, h: crop.h * fullH }
+    : { x: 0, y: 0, w: fullW, h: fullH };
+  const cropW = srcRect.w / cam.scale;
+  const cropH = srcRect.h / cam.scale;
+  const cx = cam.center.x * fullW - srcRect.x;
+  const cy = cam.center.y * fullH - srcRect.y;
+  const sx = srcRect.x + Math.max(0, Math.min(srcRect.w - cropW, cx - cropW / 2));
+  const sy = srcRect.y + Math.max(0, Math.min(srcRect.h - cropH, cy - cropH / 2));
+  return { sx, sy, cropW, cropH };
 }
 
 function intersect(a: Rect, b: Rect): Rect {
