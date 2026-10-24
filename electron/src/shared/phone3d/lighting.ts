@@ -11,7 +11,7 @@
 import type { LightPreset } from './model';
 
 /** Elevation of the key light, degrees. The shadow (projection.ts shadowHull, the renderer's shadow camera) uses it. */
-export const KEY_ELEVATION = 55;
+export const KEY_ELEVATION = 32;
 
 export interface SoftBox {
   /** Degrees, offset from the key azimuth. */
@@ -43,7 +43,7 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
   // Clean product light: a big key, a thin rim strip opposite, a soft top fill.
   studio: {
     boxes: [
-      { azimuth: 0, elevation: 35, w: 1.2, h: 0.8, intensity: 1, color: '#ffffff' },
+      { azimuth: 0, elevation: KEY_ELEVATION, w: 1.2, h: 0.8, intensity: 1, color: '#ffffff' },
       { azimuth: 150, elevation: 15, w: 0.22, h: 1.6, intensity: 0.75, color: '#ffffff' },
       { azimuth: 60, elevation: 70, w: 1.6, h: 0.5, intensity: 0.3, color: '#f4f6ff' },
     ],
@@ -53,7 +53,7 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
   // Large, low-contrast sources: gentle gradients, quiet reflections.
   soft: {
     boxes: [
-      { azimuth: 0, elevation: 30, w: 2, h: 1.4, intensity: 0.8, color: '#ffffff' },
+      { azimuth: 0, elevation: KEY_ELEVATION, w: 2, h: 1.4, intensity: 0.8, color: '#ffffff' },
       { azimuth: 120, elevation: 25, w: 1.4, h: 1.4, intensity: 0.45, color: '#ffffff' },
     ],
     ambient: 0.06,
@@ -62,7 +62,7 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
   // One hard key and a strong rim: deep shadows, bright edge lines.
   contrast: {
     boxes: [
-      { azimuth: 0, elevation: 40, w: 0.7, h: 0.5, intensity: 1.3, color: '#ffffff' },
+      { azimuth: 0, elevation: KEY_ELEVATION, w: 0.7, h: 0.5, intensity: 1.3, color: '#ffffff' },
       { azimuth: 165, elevation: 10, w: 0.15, h: 1.8, intensity: 1.1, color: '#ffffff' },
     ],
     ambient: 0.02,
@@ -71,7 +71,7 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
   // Golden-hour key against a cool rim.
   warm: {
     boxes: [
-      { azimuth: 0, elevation: 25, w: 1.3, h: 0.8, intensity: 1, color: '#ffd9b0' },
+      { azimuth: 0, elevation: KEY_ELEVATION, w: 1.3, h: 0.8, intensity: 1, color: '#ffd9b0' },
       { azimuth: 150, elevation: 20, w: 0.25, h: 1.5, intensity: 0.6, color: '#cfe0ff' },
       { azimuth: 70, elevation: 65, w: 1.4, h: 0.5, intensity: 0.25, color: '#ffe9d2' },
     ],
@@ -81,7 +81,7 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
   // Dim, cool and edge-lit: the phone reads by its rims.
   night: {
     boxes: [
-      { azimuth: 0, elevation: 30, w: 0.9, h: 0.6, intensity: 0.45, color: '#c8d6ff' },
+      { azimuth: 0, elevation: KEY_ELEVATION, w: 0.9, h: 0.6, intensity: 0.45, color: '#c8d6ff' },
       { azimuth: 155, elevation: 15, w: 0.2, h: 1.8, intensity: 0.9, color: '#9fb8ff' },
       { azimuth: -155, elevation: 15, w: 0.2, h: 1.8, intensity: 0.5, color: '#b9a6ff' },
     ],

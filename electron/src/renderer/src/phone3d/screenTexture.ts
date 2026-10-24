@@ -6,8 +6,9 @@
 // Size: one texel per render pixel. The texture covers the projected screen
 // at render resolution (× supersample), so a FRONT phone is a 1:1 copy and an
 // oblique one is minified at most by the hysteresis slack (the −0.5 LOD bias
-// keeps that on mip 0); from ss 2 an oblique screen stops at the FRONT
-// density (obliqueScaleCap). At an axis-aligned pose the content starts at the
+// keeps that on mip 0). An oblique screen gets the density it needs at every
+// supersample (a turning phone's near edge projects up to about 1.5× FRONT),
+// only ever clamped to the GPU's texture limit. At an axis-aligned pose the content starts at the
 // integer render pixel under the screen's top-left and keeps the flat rect's
 // sub-pixel phase, so the 2D draw onto the texture is the same resample as
 // the flat draw onto the canvas, and every render pixel then reads exactly
@@ -89,27 +90,13 @@ export interface ScreenLayout {
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 
 /**
- * The most texels per canvas px an oblique screen gets (planScreenTexture's
- * `obliqueCap`): unlimited at ss 1; from ss 2 the FRONT density of the
- * project's largest pose, ss × max size. A turning phone's near edge
- * projects up to about 12% larger than FRONT; at ss 1 its texture grows with
- * it (so a held three-quarter view is not soft at the near edge), but at
- * ss ≥ 2 that edge still gets ≥ ss / 1.12 ≈ 1.8 texels per output pixel after
- * the supersample downsample, so growing the texture there buys nothing
- * visible and costs about 25% more screen memory (§3.9: 4K ss 2 ≤ 440 MB).
- */
-export function obliqueScaleCap(ss: number, sizes: readonly number[]): number {
-  return ss >= 2 ? ss * Math.max(1, ...sizes) : Infinity;
-}
-
-/**
  * How big the texture is and where the content goes, from the projected
  * screen quad (canvas px, corners in the flat rect's TL, TR, BR, BL order),
- * the flat screen rect, the supersample factor, the texture size limit and
- * the oblique cap (obliqueScaleCap; an axis-aligned screen is never capped,
- * so FRONT stays 1:1 at every ss).
+ * the flat screen rect, the supersample factor and the texture size limit
+ * (textureLimit: the GPU's MAX_TEXTURE_SIZE and MAX_SCREEN_TEXTURE, the only
+ * clamp). FRONT is 1:1 at every ss.
  */
-export function planScreenTexture(quad: Quad, flat: Rect, ss: number, maxSize = MAX_SCREEN_TEXTURE, obliqueCap = Infinity): ScreenLayout {
+export function planScreenTexture(quad: Quad, flat: Rect, ss: number, maxSize = MAX_SCREEN_TEXTURE): ScreenLayout {
   const [q0, q1, q2, q3] = quad;
   const eps = 1e-6;
   const aligned =
@@ -119,7 +106,6 @@ export function planScreenTexture(quad: Quad, flat: Rect, ss: number, maxSize = 
   let scale = ss * Math.max(across, down);
   // A FRONT phone at size 1 projects onto the flat rect up to float noise: use exactly ss.
   if (Math.abs(scale / ss - 1) < 1e-6) scale = ss;
-  if (!aligned) scale = Math.min(scale, obliqueCap);
   const limit = Math.max(16, Math.floor(maxSize)) - 2;
   scale = Math.min(scale, limit / flat.w, limit / flat.h);
   const minX = Math.min(q0.x, q1.x, q2.x, q3.x);
@@ -154,15 +140,17 @@ export function screenUvMatrix(dst: Rect, texW: number, texH: number, landscape:
 /**
  * The texture size a project's screen needs at most, in normal use: the flat
  * screen × supersample × the largest pose size anywhere in the project (base
- * pose, every keyframe, float), × 1.12 at ss 1 (perspective: a near edge
- * projects larger). Frames that need more still get it (their own rung). At
- * ss ≥ 2 no frame needs more than the FRONT size (obliqueScaleCap), so the
- * room is exactly that, plus one texel for a FRONT screen's sub-pixel phase.
+ * pose, every keyframe), × 1.12 (perspective: a near edge projects larger).
+ * Frames that need more still get it (their own rung).
  */
 export function screenRoom(flat: Rect, ss: number, sizes: readonly number[]): { w: number; h: number } {
-  const front = ss * Math.max(1, ...sizes);
-  if (ss >= 2) return { w: Math.ceil(flat.w * front) + 1, h: Math.ceil(flat.h * front) + 1 };
-  return { w: Math.ceil(flat.w * front * 1.12), h: Math.ceil(flat.h * front * 1.12) };
+  const k = ss * Math.max(1, ...sizes) * 1.12;
+  return { w: Math.ceil(flat.w * k), h: Math.ceil(flat.h * k) };
+}
+
+/** The largest screen texture side: the GPU's MAX_TEXTURE_SIZE and MAX_SCREEN_TEXTURE, whichever is smaller. */
+export function textureLimit(gpuMaxTextureSize: number): number {
+  return Math.min(MAX_SCREEN_TEXTURE, Math.floor(gpuMaxTextureSize));
 }
 
 /**

@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { grownSize, Passes } from '../src/renderer/src/phone3d/passes';
 import { ShadowPass, SHADOW_SLOTS } from '../src/renderer/src/phone3d/shadow';
-import { MAX_SCREEN_TEXTURE, obliqueScaleCap, planBands, planScreenTexture, SCREEN_BAND_PX, ScreenTexture, screenCanvasSize, screenRoom, textureSide } from '../src/renderer/src/phone3d/screenTexture';
+import { MAX_SCREEN_TEXTURE, planBands, planScreenTexture, SCREEN_BAND_PX, ScreenTexture, screenCanvasSize, screenRoom, textureLimit, textureSide } from '../src/renderer/src/phone3d/screenTexture';
 import { planShadowSlots, renderPhone3D, type Blit3D, type Render3DArgs, type Render3DQuality } from '../src/renderer/src/phone3d/view';
 import type { Engine } from '../src/renderer/src/phone3d/engine';
 import { scene3d, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
@@ -40,6 +40,7 @@ function fakeEngine(maxSide = 8192) {
   let target: THREE.WebGLRenderTarget | null = null;
   const scene = new THREE.Scene();
   const renderer = {
+    capabilities: { maxTextureSize: maxSide },
     getContext: () => ({ isContextLost: () => false }),
     initTexture: () => undefined,
     copyTextureToTexture: (src: THREE.Texture, dst: THREE.DataTexture, region: unknown, at: THREE.Vector2) => {
@@ -418,44 +419,45 @@ describe('screen texture bands (§3.6, §3.9)', () => {
   });
 });
 
-describe('oblique cap from ss 2 (§3.6, §3.9)', () => {
-  it('FRONT is never capped (1:1 at every ss); an oblique screen is capped at ss × the largest size from ss 2 only', () => {
-    expect(obliqueScaleCap(1, [1, 2])).toBe(Infinity);
-    expect(obliqueScaleCap(2, [0.8, 1.3])).toBeCloseTo(2.6, 12);
+describe('oblique density (§3.6, owner decision 11)', () => {
+  it('FRONT is 1:1 at every ss; an oblique screen gets the density it needs at every ss, clamped only by the texture limit', () => {
+    expect(textureLimit(16384)).toBe(MAX_SCREEN_TEXTURE);
+    expect(textureLimit(4096)).toBe(4096);
     for (const ss of [1, 2, 3] as const) {
       const front = sceneFor({ supersample: ss }, true);
       const fq = screenQuadAt(front, 0.5).quad;
-      const capped = planScreenTexture(fq, front.home.screen, ss, 8192, obliqueScaleCap(ss, [1]));
-      expect(capped.aligned).toBe(true);
-      expect(capped).toEqual(planScreenTexture(fq, front.home.screen, ss, 8192));
-      if (ss <= 2) expect(capped.scale).toBe(ss); // (at ss 3 the 4K screen hits the 8192 texture limit first)
-      // A turned phone whose near edge projects larger than FRONT.
+      const f = planScreenTexture(fq, front.home.screen, ss, 8192);
+      expect(f.aligned).toBe(true);
+      if (ss <= 2) expect(f.scale).toBe(ss); // (at ss 3 the 4K screen hits the 8192 texture limit first)
+      // A turned phone whose near edge projects larger than FRONT gets more than ss texels per canvas px.
       const s = sceneFor({ supersample: ss, ...moving() }, true);
       let grew = 0;
+      let most = 0;
       for (let i = 30; i <= 90; i++) {
         const q = screenQuadAt(s, i / 30).quad;
         const free = planScreenTexture(q, s.home.screen, ss, 8192);
-        const cap = planScreenTexture(q, s.home.screen, ss, 8192, obliqueScaleCap(ss, [1]));
         if (free.aligned) continue;
-        if (ss === 1) expect(cap).toEqual(free);
-        else expect(cap.scale).toBe(Math.min(free.scale, ss));
         if (free.scale > ss * 1.02) grew++;
+        most = Math.max(most, free.scale / ss);
+        // The only clamp: a 4096 GPU limit caps the texture side, never anything else.
+        const small = planScreenTexture(q, s.home.screen, ss, 4096);
+        expect(Math.max(small.w, small.h)).toBeLessThanOrEqual(4096);
+        if (Math.max(free.w, free.h) <= 4094) expect(small).toEqual(free);
       }
-      if (ss <= 2) expect(grew).toBeGreaterThan(0); // the turn really has frames the cap acts on
+      // This fixture's turn peaks at about 1.07× FRONT at its near edge; nothing holds it back to 1.0.
+      if (ss <= 2) expect(grew).toBeGreaterThan(0);
+      if (ss <= 2) expect(most).toBeGreaterThan(1.05);
     }
   });
 
-  it('from ss 2 the room holds every frame of a turn: the texture is made once', () => {
-    for (const ss of [2, 3] as const) {
+  it('the room (FRONT × ss × largest size × 1.12) holds most frames of a turn: the texture is made at most twice', () => {
+    for (const ss of [1, 2] as const) {
       const s = sceneFor({ supersample: ss, ...moving() }, true);
       const { engine, screen } = fakeEngine();
       for (let i = 0; i <= 120; i += 2) frame(engine, args(s, i / 30));
-      expect(screen.reallocs).toBe(1);
-      // And it is the FRONT need's rung (the room has no perspective allowance from ss 2), within the GPU limit.
-      // (At 4K, ss 3 steps down to 2: the ROI's long side × 3 is over 8192.)
-      const eff = 2;
+      expect(screen.reallocs).toBeLessThanOrEqual(2);
       const f = s.home.screen;
-      expect(screen.size).toEqual({ w: textureSide(Math.ceil(f.w * eff) + 1), h: textureSide(Math.ceil(f.h * eff) + 1) });
+      expect(screen.size!.w).toBeGreaterThanOrEqual(Math.ceil(f.w * ss * 1.12));
     }
   });
 });

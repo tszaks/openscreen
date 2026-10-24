@@ -35,7 +35,7 @@ import {
 } from '../../../shared/phone3d/projection';
 import type { Engine, PhoneLook } from './engine';
 import { planSamples, planTiles, Passes, type SamplePlan } from './passes';
-import { obliqueScaleCap, planScreenTexture, screenRoom } from './screenTexture';
+import { planScreenTexture, screenRoom, textureLimit } from './screenTexture';
 import { catcherFrame, SHADOW_SLOTS, type CatcherFrame } from './shadow';
 
 const DEG = Math.PI / 180;
@@ -259,9 +259,10 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   const { quad } = screenQuadAt(s, t, camT);
   const p3t = p3.transitions;
   const sizes = [p3.pose.size, ...p3t.map((tr) => tr.to.size), ...p3t.map((tr) => tr.from?.size ?? 0)];
-  const layout = planScreenTexture(quad, s.home.screen, ss, maxSide, obliqueScaleCap(ss, sizes));
+  const texMax = textureLimit(engine.renderer.capabilities.maxTextureSize);
+  const layout = planScreenTexture(quad, s.home.screen, ss, texMax);
   // Drawn and uploaded now, once (not inside the first sample's draw), in bands when the screen is big.
-  const tex = engine.screen.update(layout, camT.landscape, (tctx) => a.drawScreen(tctx, layout.dst, layout.scale), maxSide, screenRoom(s.home.screen, ss, sizes));
+  const tex = engine.screen.update(layout, camT.landscape, (tctx) => a.drawScreen(tctx, layout.dst, layout.scale), texMax, screenRoom(s.home.screen, ss, sizes));
   if (phone.screen.material.map !== tex) {
     phone.screen.material.map = tex;
     phone.screen.material.needsUpdate = true;
