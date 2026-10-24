@@ -196,13 +196,21 @@ interface Run {
   over: number;
 }
 
-/** How far the body pokes out of the canvas at each sample time (px; ≤ 0 = inside). */
-function overflowAt(s: Scene3D, t: number): number {
-  const b = bodyBounds(s, t);
-  if (!b) return 0;
+/** Bounds per pose: the phone holds still most of the time, so most samples repeat a pose. */
+type BoundsCache = Map<string, number>;
+
+/** How far the body pokes out of the canvas at t (px; ≤ 0 = inside). */
+function overflowAt(s: Scene3D, t: number, cache: BoundsCache = new Map()): number {
+  const pose = s.poseAt(t);
+  const key = `${pose.turn},${pose.tilt},${pose.rotate},${pose.size},${pose.x},${pose.y}`;
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  const b = bodyBounds({ ...s, poseAt: () => pose }, t);
   const W = s.canvas.width;
   const H = s.canvas.height;
-  return Math.max(-b.x, -b.y, b.x + b.w - W, b.y + b.h - H);
+  const over = b ? Math.max(-b.x, -b.y, b.x + b.w - W, b.y + b.h - H) : 0;
+  cache.set(key, over);
+  return over;
 }
 
 function offCanvasTimes(c: Ctx): number[] {
@@ -216,8 +224,9 @@ function offCanvasRuns(c: Ctx, times = offCanvasTimes(c)): Run[] {
   const margin = OFF_CANVAS_FRACTION * Math.min(c.scene.canvas.width, c.scene.canvas.height);
   const runs: Run[] = [];
   let cur: Run | null = null;
+  const cache: BoundsCache = new Map();
   for (const t of times) {
-    const over = overflowAt(c.scene, t);
+    const over = overflowAt(c.scene, t, cache);
     if (over > margin) {
       if (!cur) cur = { at: t, end: t, worst: t, over };
       cur.end = t;
@@ -272,8 +281,9 @@ function offCanvasFixes(c: Ctx, w: Found): EditOp[][] {
     if (!fc) return [];
     let worst = -Infinity;
     let wt = run.worst;
+    const cache: BoundsCache = new Map();
     for (const t of times) {
-      const o = overflowAt(fc.scene, t);
+      const o = overflowAt(fc.scene, t, cache);
       if (o > worst) {
         worst = o;
         wt = t;
