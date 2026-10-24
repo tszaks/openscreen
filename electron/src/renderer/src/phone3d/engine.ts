@@ -282,7 +282,8 @@ export class Engine {
   private restoreWaiters: (() => void)[] = [];
   private readonly gpu: string;
 
-  constructor() {
+  /** `reversedDepth: false` forces the classic depth buffer (the z-fight gate renders both ways). */
+  constructor(opts: { reversedDepth?: boolean } = {}) {
     this.canvas = document.createElement('canvas');
     this.canvas.width = 1;
     this.canvas.height = 1;
@@ -297,7 +298,7 @@ export class Engine {
       depth: false,
       stencil: false,
       powerPreference: 'high-performance',
-      reversedDepthBuffer: true,
+      reversedDepthBuffer: opts.reversedDepth !== false,
     });
     const r = this.renderer;
     r.setPixelRatio(1);
