@@ -16,7 +16,7 @@
 //   node scripts/golden/makeFixtures.mjs [--out DIR] [--only a,b] [--ffmpeg PATH]
 // Prints one JSON object: { ok, out, bundles: [{ name, bundle, files }] }.
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -118,7 +118,21 @@ function flag(args, name) {
   return v;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * True when this file is the script node was started with. Compares real paths:
+ * import.meta.url is already the real path, but argv[1] may go through a symlink
+ * (on macOS /tmp is a link to /private/tmp), and path.resolve does not follow links.
+ */
+function runAsScript() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (runAsScript()) {
   const args = process.argv.slice(2);
   try {
     const out = resolve(flag(args, '--out') ?? DEFAULT_OUT);

@@ -35,7 +35,7 @@
 // Prints one JSON object: { ok, identical, work, fixtures: [...] }. Exit 0 when every
 // fixture is identical, 1 when any differs or fails, 2 on bad usage.
 import { spawn, execFile } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -244,7 +244,21 @@ export async function flatIdentity({ main, branch = REPO_DIR, out, only, jobs = 
   return result;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * True when this file is the script node was started with. Compares real paths:
+ * import.meta.url is already the real path, but argv[1] may go through a symlink
+ * (on macOS /tmp is a link to /private/tmp), and path.resolve does not follow links.
+ */
+function runAsScript() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (runAsScript()) {
   const args = process.argv.slice(2);
   try {
     if (args.includes('--help') || args.includes('-h')) {

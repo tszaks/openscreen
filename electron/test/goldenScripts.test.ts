@@ -7,11 +7,12 @@
 // all do.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const SCRIPT = join(__dirname, '..', 'scripts', 'golden', 'flatIdentity.mjs');
+const SCRIPTS_DIR = join(__dirname, '..', 'scripts', 'golden');
+const SCRIPT = join(SCRIPTS_DIR, 'flatIdentity.mjs');
 
 const FAKE_AGENT = `#!/usr/bin/env node
 import { copyFileSync } from 'node:fs';
@@ -23,19 +24,21 @@ copyFileSync(join(bundle, 'screen.mp4'), out);
 process.stdout.write(JSON.stringify({ ok: true, out }) + '\\n');
 `;
 
-/** Runs the CLI; resolves with exit code and parsed stdout (never rejects on a non-zero exit). */
-function run(args: string[]): Promise<{ code: number; result: Record<string, unknown> }> {
+/** Runs a script; resolves with exit code and parsed stdout (never rejects on a non-zero exit). */
+function runScript(script: string, args: string[]): Promise<{ code: number; result: Record<string, unknown> }> {
   return new Promise((resolveP, reject) => {
-    execFile(process.execPath, [SCRIPT, ...args], { maxBuffer: 1 << 24 }, (e, stdout) => {
+    execFile(process.execPath, [script, ...args], { maxBuffer: 1 << 24 }, (e, stdout) => {
       const code = e ? (typeof e.code === 'number' ? e.code : -1) : 0;
       try {
         resolveP({ code, result: JSON.parse(String(stdout).trim()) });
       } catch {
-        reject(new Error(`flatIdentity printed no JSON (exit ${code}): ${String(stdout).slice(0, 500)} ${e?.message ?? ''}`));
+        reject(new Error(`${script} printed no JSON (exit ${code}): ${String(stdout).slice(0, 500)} ${e?.message ?? ''}`));
       }
     });
   });
 }
+
+const run = (args: string[]) => runScript(SCRIPT, args);
 
 let root: string;
 let fake: string;
@@ -104,5 +107,40 @@ describe('flatIdentity --out', () => {
     expect(String(r.result.error)).toContain('not a folder');
     expect(statSync(file).isFile()).toBe(true);
     expect(readFileSync(file, 'utf8')).toBe('precious');
+  }, 30_000);
+});
+
+// Checkouts and scratch often live under a symlink (on macOS /tmp is a link to
+// /private/tmp). Node reports import.meta.url as the real path, so a
+// run-as-script guard that does not resolve links would skip the CLI and exit 0
+// with no output, and a gate checked only by exit code would look like a pass.
+describe('golden scripts run through a symlinked path', () => {
+  let linked: string;
+  beforeAll(() => {
+    linked = join(root, 'linked-golden');
+    symlinkSync(SCRIPTS_DIR, linked, 'dir');
+  });
+
+  it('flatIdentity --help prints its JSON usage', async () => {
+    const r = await runScript(join(linked, 'flatIdentity.mjs'), ['--help']);
+    expect(r.code).toBe(0);
+    expect(r.result.ok).toBe(true);
+    expect(String(r.result.usage)).toContain('flatIdentity.mjs --main');
+  }, 30_000);
+
+  it('flatIdentity --main /nonexistent fails with exit 2', async () => {
+    const r = await runScript(join(linked, 'flatIdentity.mjs'), ['--main', '/nonexistent']);
+    expect(r.code).toBe(2);
+    expect(r.result.ok).toBe(false);
+    expect(String(r.result.error)).toContain('not an OpenScreen checkout');
+  }, 30_000);
+
+  it('makeFixtures --only <unknown> fails with exit 1 and writes nothing', async () => {
+    const out = join(root, 'linked-fixtures-out');
+    const r = await runScript(join(linked, 'makeFixtures.mjs'), ['--only', 'nope', '--out', out]);
+    expect(r.code).toBe(1);
+    expect(r.result.ok).toBe(false);
+    expect(String(r.result.error)).toContain('unknown fixture(s): nope');
+    expect(existsSync(out)).toBe(false);
   }, 30_000);
 });
