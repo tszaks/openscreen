@@ -26,12 +26,18 @@
 // sides, now deterministic, so any difference left is in the rendered pixels.
 // --threaded-x264 turns the wrapper off (to see the encoder noise).
 //
-// Prints one JSON object: { ok, identical, fixtures: [...] }. Exit 0 when every
+// --out DIR is a parent folder (default <tmp>/openscreen-golden). Each run
+// works in a new folder inside it, DIR/flat-identity-XXXXXX (the `work` field
+// of the result), and never writes or deletes anything else in DIR, so DIR can
+// be a shared scratch folder. When every fixture is identical and --keep is not
+// set, the run folder keeps only result.json and the ffmpeg wrapper.
+//
+// Prints one JSON object: { ok, identical, work, fixtures: [...] }. Exit 0 when every
 // fixture is identical, 1 when any differs or fails, 2 on bad usage.
 import { spawn, execFile } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ELECTRON_DIR, findFfmpeg, fixtureNames, makeFixtures } from './makeFixtures.mjs';
 
@@ -169,12 +175,24 @@ async function pool(tasks, jobs) {
   return results;
 }
 
+/**
+ * A new, empty folder for this run: `<parent>/flat-identity-XXXXXX`, made with
+ * mkdtemp so it never existed before. `parent` is --out (default
+ * <tmp>/openscreen-golden), which may be a shared scratch folder, so the gate
+ * never deletes anything in it: everything it writes, and everything it later
+ * cleans up, is inside the run folder.
+ */
+export function freshRunDir(parent) {
+  const base = resolve(parent ?? join(tmpdir(), 'openscreen-golden'));
+  if (existsSync(base) && !statSync(base).isDirectory()) throw new UsageError(`--out: ${base} exists and is not a folder`);
+  mkdirSync(base, { recursive: true });
+  return mkdtempSync(join(base, 'flat-identity-'));
+}
+
 export async function flatIdentity({ main, branch = REPO_DIR, out, only, jobs = 2, timeout, keep = false, threadedX264 = false, log = () => {} }) {
   const sides = { main: agentScript(main, '--main'), branch: agentScript(branch, '--branch') };
-  const work = resolve(out ?? join(tmpdir(), 'openscreen-golden', `flat-identity-${process.pid}`));
   const ffmpeg = findFfmpeg();
-  rmSync(work, { recursive: true, force: true });
-  mkdirSync(work, { recursive: true });
+  const work = freshRunDir(out);
   log({ stage: 'fixtures', out: work });
   const manifest = makeFixtures({ out: join(work, 'fixtures'), only });
   const recordings = join(work, 'recordings');
