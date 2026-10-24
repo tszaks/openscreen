@@ -17,14 +17,18 @@ import { isFillerWord, planSmartCuts, type TimeRange } from './editcuts';
 import { PRESETS } from './exportPresets';
 import { BACKDROPS } from './backdrops';
 import { DEVICES } from './devices';
-import { pendingWaits, speedUpRanges, waitCore, LAYOUT_CHOICES } from './mobileProject';
+import { isPhoneProject, pendingWaits, speedUpRanges, waitCore, LAYOUT_CHOICES } from './mobileProject';
 import { remapProject } from './remap';
 import { addItem, fitToVideo, newAudioItem, segmentLength, trackProblems, withMusicTrack } from './audioTracks';
 import { Timeline } from './timeline';
 import type { TapSuggestion } from './taps';
 import { MAX_CONTENT_SCALE, MIN_CONTENT_SCALE } from './contentTransform';
+import { compareTransitions } from './phone3d/model';
+import { allowOnly, applyPhone3dOp, NOT_IPHONE, Phone3dOpError, PHONE3D_OP_NAMES } from './phone3d/ops';
+import { DIRECT_STYLES, planDirect, type DirectStyle } from './phone3d/direct';
+import { phone3dProblems } from './phone3d/validate';
 import { canHide, defaultLayerOrder, hideLayer, layerOrder, resetLayer, restack, textLayer, withLayerTransform, type LayerId, type Restack } from './canvasLayers';
-import type { Annotation, AudioItem, Background, CaptionCue, Chapter, Clip, ContentTransform, Project, TranscriptWord, WaitRange } from './types';
+import type { Annotation, AudioItem, Background, CaptionCue, Chapter, Clip, ContentTransform, CursorSample, Project, TranscriptWord, WaitRange } from './types';
 
 export interface TranscriptSegment {
   start: number;
@@ -46,6 +50,11 @@ export interface ApplyContext {
   /** Sound files referenced by addAudio {file}: the copy the CLI makes in the
    *  bundle (bundle-relative), its display name and length in seconds. */
   audioFiles?: Record<string, { file: string; name: string; duration: number }>;
+  /** Scene changes, SOURCE seconds (the `direct` op, unless it says scenes:false). The CLI reads
+   *  src/node/scenes.ts sceneTimes; the editor's Auto 3D calls analyze:scenes. */
+  scenes?: number[];
+  /** cursor.json samples (D5): autofocus zooms are busy time for `direct`. */
+  cursor?: CursorSample[];
   /** Fixed id generator (tests). */
   newId?: () => string;
 }
@@ -282,6 +291,8 @@ export function validateProject(p: Project): string[] {
     if (ph.enabled && !p.recording?.phoneVideoFile) errs.push('phoneOverlay is enabled but the recording has no phone video');
   }
   errs.push(...trackProblems(p.tracks ?? []));
+  // 3D phone: structural problems only; angles, overlap and past-the-end are warnings (phone3d/warnings.ts).
+  if (p.phone3d !== undefined) errs.push(...phone3dProblems(p));
   if (out <= 0) errs.push('the timeline has no footage');
   return errs;
 }
@@ -388,6 +399,7 @@ export const OP_NAMES = [
   'speedUpWaits', 'cutWaits', 'setWaits',
   'layout', 'titleCard', 'layer', 'exportSettings',
   'addAudio', 'moveAudio', 'trimAudio', 'editAudio', 'fitAudio', 'removeAudio', 'audioTrack',
+  ...PHONE3D_OP_NAMES, 'direct',
   'set',
 ] as const;
 
@@ -929,11 +941,58 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
       return { project: { ...p, tracks: tracks.map((t, i) => (i === index ? { ...t, ...patch } : t)) }, note: `audio track ${index} ${JSON.stringify(patch)}` };
     }
 
-    case 'set':
-      return { project: setPointer(p, str(o, 'path'), o.value), note: `set ${o.path} = ${JSON.stringify(o.value)}` };
+    // --- 3D phone (output seconds; phone3d/ops.ts) ---------------------------
+    case 'phone3d':
+    case 'setPose':
+    case 'addTransition':
+    case 'editTransition':
+    case 'removeTransition':
+    case 'clearTransitions':
+    case 'shot':
+      return run3d(p, o, id);
+    case 'direct': {
+      // Auto 3D: the editor's button and the CLI's `direct` command plan the same way (phone3d/direct.ts).
+      if (!isPhoneProject(p)) throw new OpError(`direct: ${NOT_IPHONE}`);
+      try {
+        allowOnly(o);
+      } catch (e) {
+        throw new OpError((e as Error).message);
+      }
+      const style = (optStr(o, 'style') ?? 'hero') as DirectStyle;
+      if (!DIRECT_STYLES.includes(style)) throw new OpError(`direct: style must be ${DIRECT_STYLES.join('|')}`);
+      const replace = optBool(o, 'replace') ?? true;
+      const useScenes = optBool(o, 'scenes') ?? true;
+      const plan = planDirect(p, { style, replace, scenes: useScenes ? ctx.scenes : undefined, cursor: ctx.cursor });
+      let project = p;
+      for (const step of plan.ops) project = run3d(project, step, id).project;
+      const shots = plan.shots.map((s) => `${s.recipe} ${s.start.toFixed(2)}–${s.end.toFixed(2)} s`).join(', ');
+      const scenes = !useScenes ? 'scene changes off' : ctx.scenes ? `${ctx.scenes.length} scene change${ctx.scenes.length === 1 ? '' : 's'}` : 'scene changes not analysed';
+      return { project, note: `Auto 3D (${style}${replace ? '' : ', kept moves'}; ${scenes}): ${shots || 'no shot fits'}` };
+    }
+
+    case 'set': {
+      let project = setPointer(p, str(o, 'path'), o.value);
+      // Keep 3D moves in timeline order (everything that samples them assumes it). Values are not
+      // clamped here: validation refuses a bad one, as for any other field.
+      const t3 = project.phone3d?.transitions as unknown;
+      if (/^\/phone3d(\/|$)/.test(String(o.path)) && Array.isArray(t3) && t3.every((t) => t && typeof t === 'object' && typeof t.start === 'number' && typeof t.id === 'string')) {
+        project = { ...project, phone3d: { ...project.phone3d!, transitions: [...project.phone3d!.transitions].sort(compareTransitions) } };
+      }
+      return { project, note: `set ${o.path} = ${JSON.stringify(o.value)}` };
+    }
 
     default:
       throw new OpError(`unknown op "${o.op}". Known ops: ${OP_NAMES.join(', ')}`);
+  }
+}
+
+/** A 3D op (phone3d/ops.ts), its refusals as OpErrors. */
+function run3d(p: Project, o: EditOp, id: () => string): OpResult {
+  try {
+    return applyPhone3dOp(p, o, id);
+  } catch (e) {
+    if (e instanceof Phone3dOpError) throw new OpError(e.message);
+    throw e;
   }
 }
 
@@ -961,6 +1020,10 @@ function audioPatch(o: EditOp, item: AudioItem): AudioItem {
 export const needsSilences = (ops: EditOp[]) => ops.some((o) => o.op === 'cutSilences' || o.op === 'smartCut');
 export const needsTapAnalysis = (ops: EditOp[]) => ops.some((o) => o.op === 'analyzeTaps');
 export const needsTranscript = (ops: EditOp[]) => ops.some((o) => o.op === 'captionsFromTranscript');
+/** A `direct` op that uses scene changes (the CLI fills ApplyContext.scenes). */
+export const needsScenes = (ops: EditOp[]) => ops.some((o) => o && o.op === 'direct' && o.scenes !== false);
+/** A `direct` op (the CLI fills ApplyContext.cursor from cursor.json; missing file = []). */
+export const needsCursor = (ops: EditOp[]) => ops.some((o) => o && o.op === 'direct');
 /** Sound files addAudio ops bring in (the CLI copies each into the bundle). */
 export const audioImports = (ops: EditOp[]) => [...new Set(ops.filter((o) => o.op === 'addAudio' && typeof o.file === 'string').map((o) => o.file as string))];
 
@@ -982,4 +1045,17 @@ export function applyOps(p: Project, ops: EditOp[], ctx: ApplyContext = {}): { p
   const errs = validateProject(cur);
   if (errs.length) throw new OpError(`the edited project is invalid: ${errs.join('; ')}`);
   return { project: cur, notes };
+}
+
+/**
+ * The editor's apply path (SPEC §5.1): exactly applyOps (every op, then
+ * validateProject), with a refusal returned instead of thrown, so the editor
+ * can never store a project the CLI would refuse.
+ */
+export function applyOps3d(p: Project, ops: EditOp[], ctx: ApplyContext = {}): { project: Project; notes: string[] } | { error: string } {
+  try {
+    return applyOps(p, ops, ctx);
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
 }
