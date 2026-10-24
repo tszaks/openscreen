@@ -36,7 +36,8 @@ const LADDER: number[] = (() => {
   return out;
 })();
 
-/** The canvas side that holds `n` texels: the smallest ladder rung ≥ n, never above `cap` (the GPU's limit) unless n is. */
+/** The canvas side that holds `n` texels: the smallest ladder rung ≥ n, never above `cap` (the GPU's limit) unless n is
+ *  (callers keep n ≤ cap: planScreenTexture limits the need, screenCanvasSize the room). */
 export function textureSide(n: number, cap = MAX_SCREEN_TEXTURE): number {
   const need = Math.ceil(n);
   for (const v of LADDER) if (v >= need) return Math.max(need, Math.min(v, cap));
@@ -114,6 +115,20 @@ export function screenRoom(flat: Rect, ss: number, sizes: readonly number[]): { 
   return { w: Math.ceil(flat.w * k), h: Math.ceil(flat.h * k) };
 }
 
+/**
+ * The texture canvas size for a frame: the ladder rung that holds both the
+ * frame's need and the project's room, never above `cap` on either side. The
+ * need is already within the cap (planScreenTexture); the room is clamped to
+ * it here, so a big pose size or supersample can never make a canvas the GPU
+ * would scale down on upload (which would end the FRONT screen's 1:1 texels)
+ * or that blows the memory budget.
+ */
+export function screenCanvasSize(needW: number, needH: number, cap = MAX_SCREEN_TEXTURE, room?: { w: number; h: number }): { w: number; h: number } {
+  const c = Math.min(MAX_SCREEN_TEXTURE, Math.floor(cap));
+  const fit = (need: number, r: number | undefined) => textureSide(Math.max(need, Math.min(r ?? 0, c)), c);
+  return { w: fit(needW, room?.w), h: fit(needH, room?.h) };
+}
+
 /** The offscreen canvas and its texture. One per engine. */
 export class ScreenTexture {
   canvas: HTMLCanvasElement | null = null;
@@ -128,15 +143,15 @@ export class ScreenTexture {
   /**
    * Makes the canvas textureSide(w) × textureSide(h) (re-created only when
    * that changes), clears it to black, and returns the 2D context to draw
-   * into, with an identity transform. `room` is a size the canvas should hold
+   * into, with an identity transform (screenCanvasSize: never above `cap`).
+   * `room` is a size the canvas should hold
    * anyway (screenRoom: the project's largest screen), so a turning phone
    * does not re-create the canvas as its projected size crosses rungs; it is a
    * pure function of the project, so the size stays a pure function of the
    * frame.
    */
   begin(needW: number, needH: number, cap = MAX_SCREEN_TEXTURE, room?: { w: number; h: number }): CanvasRenderingContext2D {
-    const w = textureSide(Math.max(needW, room?.w ?? 0), cap);
-    const h = textureSide(Math.max(needH, room?.h ?? 0), cap);
+    const { w, h } = screenCanvasSize(needW, needH, cap, room);
     if (!this.size || this.size.w !== w || this.size.h !== h || !this.canvas || !this.ctx) {
       this.texture?.dispose();
       const canvas = document.createElement('canvas');

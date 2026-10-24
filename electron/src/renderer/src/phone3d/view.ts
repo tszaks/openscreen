@@ -5,11 +5,14 @@
 //      pixels (shared renderRoi). Only the phone's area is rendered.
 //   2. the sample plan (planSamples): times and jitter, from pose only
 //   3. the screen texture, drawn by the compositor at 1:1 render resolution
-//   4. per tile, per sample: shadow masks (once when the phone is still),
-//      depth range, jittered view offset, the scene into the 2-attachment
-//      MSAA target, added into the accumulation target
-//   5. DoF on both attachments, when it would show
-//   6. the output pass into the engine canvas's top-left roi.w × roi.h
+//   4. the shadow masks, once per frame (§3.7 step 8: per frame, not per
+//      tile): one slot when the phone is still, up to SHADOW_SLOTS poses over
+//      the shutter while it moves
+//   5. per tile, per sample: the catcher at the sample's shadow slot, depth
+//      range, jittered view offset, the scene into the 2-attachment target,
+//      added into the accumulation target
+//   6. DoF on both attachments, when it would show
+//   7. the output pass into the engine canvas's top-left roi.w × roi.h
 // Returns the engine canvas and the ROI; the compositor copies that area
 // 1:1 at integer coordinates, so drawImage never resamples the phone.
 import * as THREE from 'three';
@@ -28,7 +31,7 @@ import {
 import type { Engine, PhoneLook } from './engine';
 import { planSamples, planTiles, Passes, type SamplePlan } from './passes';
 import { planScreenTexture, screenRoom } from './screenTexture';
-import { catcherFrame } from './shadow';
+import { catcherFrame, SHADOW_SLOTS, type CatcherFrame } from './shadow';
 
 const DEG = Math.PI / 180;
 
@@ -64,8 +67,26 @@ export type Render3DResult =
   | { lost: true }
   | { empty: true; roi: Rect };
 
-/** Most distinct shadow poses per frame while the phone moves. */
-export const SHADOW_SAMPLES = 6;
+/**
+ * A frame's shadow slots (§3.7 steps 5 and 8): a still phone has one, cast at
+ * sample 0; a moving one follows min(SHADOW_SLOTS, N) poses spread evenly over
+ * the shutter (the shadow is soft; a silhouette and four blurs for every one
+ * of up to 64 samples would cost more than the scene). `at[i]` is the sample
+ * whose pose slot i is cast from (the middle of the samples it serves); `of[k]`
+ * is sample k's slot. Pure: from the sample plan only.
+ */
+export function planShadowSlots(plan: Pick<SamplePlan, 'n' | 'nMotion'>): { count: number; at: number[]; of: number[] } {
+  const N = plan.n;
+  const count = plan.nMotion > 1 ? Math.min(SHADOW_SLOTS, N) : 1;
+  const of = Array.from({ length: N }, (_, k) => (count === 1 ? 0 : Math.floor((k * count) / N)));
+  // The middle of each slot's own run of samples (first..last with of[k] = i).
+  const at = Array.from({ length: count }, (_, i) => {
+    if (count === 1) return 0;
+    const first = of.indexOf(i);
+    return Math.floor((first + of.lastIndexOf(i)) / 2);
+  });
+  return { count, at, of };
+}
 /** DoF below this largest blur (render px) is invisible and skipped. */
 export const DOF_MIN_PX = 0.5;
 /** Vogel taps for the DoF gather: the most, and taps per px² of the gather disc (a 1 px blur needs few). */
@@ -240,6 +261,21 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   engine.shadow.catcher.visible = shadowOn;
   const N = plan.n;
 
+  // 4. Shadow masks, once per frame: every slot before any tile (each slot keeps its own masks, so no tile renders
+  // them again). A slot's masks are reused as they are while nothing they depend on changes (a paused preview).
+  const shadowSlots = planShadowSlots(plan);
+  const catchers: CatcherFrame[] = [];
+  if (shadowOn) {
+    for (let i = 0; i < shadowSlots.count; i++) {
+      const sc = camFor(shadowSlots.at[i]);
+      applyPose(engine, s, sc);
+      engine.poseGroup.updateMatrixWorld(true);
+      catchers[i] = catcherFrame(s, sc);
+      engine.shadow.render(engine.poseGroup, catchers[i], phoneKey, i);
+    }
+    mark('shadow');
+  }
+
   for (const tile of tiles) {
     if (N > 1) passes.clearAccum(tile.pw, tile.ph);
     let range = { near: 1, far: 2 };
@@ -250,20 +286,10 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
       const tk = plan.times[k];
       applyPose(engine, s, cam);
       engine.poseGroup.updateMatrixWorld(true);
-      // The shadow follows at most SHADOW_SAMPLES poses over the shutter (it is soft; every sample's would cost
-      // a silhouette and four blurs each); a still phone renders it once.
-      const slot = plan.nMotion > 1 ? Math.floor((k * Math.min(SHADOW_SAMPLES, N)) / N) : 0;
+      const slot = shadowSlots.of[k];
       if (shadowOn && slot !== shadowSlot) {
         shadowSlot = slot;
-        const ks = plan.nMotion > 1 ? Math.min(N - 1, Math.floor(((slot + 0.5) * N) / Math.min(SHADOW_SAMPLES, N))) : 0;
-        const sc = camFor(ks);
-        applyPose(engine, s, sc);
-        engine.poseGroup.updateMatrixWorld(true);
-        // Reused as is while nothing it depends on changes (every tile of a still frame, a paused preview).
-        engine.shadow.render(engine.poseGroup, catcherFrame(s, sc), p3.shadow.opacity, phoneKey);
-        applyPose(engine, s, cam);
-        engine.poseGroup.updateMatrixWorld(true);
-        mark('shadow');
+        engine.shadow.use(slot, catchers[slot], p3.shadow.opacity);
       }
       const [jx, jy] = plan.jitter[k];
       range = applyCamera(engine, s, cam, tk, ss, {

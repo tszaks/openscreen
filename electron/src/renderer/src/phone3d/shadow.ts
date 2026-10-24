@@ -17,6 +17,15 @@
 // (4× MSAA), the contact blur at 1024², the ambient blur at 512² (its σ is
 // ~35 texels at 1024; at half size the kernel is half as long and the
 // 2 × 2 average on the way down is free).
+//
+// Slots (§3.7 step 8: the shadow targets are per frame, not per tile): a
+// moving frame's shadow follows up to SHADOW_SLOTS poses over the shutter.
+// Each pose's blurred contact and ambient masks live in their own slot, so
+// view.ts renders every slot once per frame, before the tile loop, and each
+// tile's samples only point the catcher at the matching slot (use()). The
+// silhouette and the two intermediate blur targets are scratch, shared by
+// all slots. Slot 0 is made up front (a still phone needs only it); the
+// others on the first moving frame.
 import * as THREE from 'three';
 import {
   keyLightDir,
@@ -29,6 +38,8 @@ import {
 
 export const SILHOUETTE_SIZE = 1024;
 export const AMBIENT_SIZE = 512;
+/** Most shadow poses (mask slots) per frame while the phone moves. */
+export const SHADOW_SLOTS = 6;
 /** Longest blur kernel half-width in taps; wider blurs step over texels (bilinear), deterministically. */
 const MAX_HALF_TAPS = 64;
 
@@ -215,9 +226,11 @@ export class ShadowPass {
   readonly catcher: THREE.Mesh;
   private readonly sil = r16(SILHOUETTE_SIZE, 4);
   private readonly tc = r16(SILHOUETTE_SIZE);
-  private readonly contact = r16(SILHOUETTE_SIZE);
   private readonly ta = r16(AMBIENT_SIZE);
-  private readonly ambient = r16(AMBIENT_SIZE);
+  /** Blurred masks per slot, and what each was last rendered for (equal inputs give equal masks: reused). */
+  private readonly slots: { contact: THREE.WebGLRenderTarget; ambient: THREE.WebGLRenderTarget; key: string }[] = [];
+  /** Mask renders (silhouette + 4 blurs) so far; stats and tests. */
+  maskRenders = 0;
   private readonly silMat: THREE.ShaderMaterial;
   private readonly blurMat: THREE.ShaderMaterial;
   private readonly catcherMat: THREE.ShaderMaterial;
@@ -263,8 +276,8 @@ export class ShadowPass {
       vertexShader: CATCHER_VERT,
       fragmentShader: CATCHER_FRAG,
       uniforms: {
-        uAmbient: { value: this.ambient.texture },
-        uContact: { value: this.contact.texture },
+        uAmbient: { value: null },
+        uContact: { value: null },
         uOpAmbient: { value: 0.4 },
         uOpContact: { value: 0.28 },
         uAxisU: { value: new THREE.Vector3(1, 0, 0) },
@@ -289,25 +302,31 @@ export class ShadowPass {
     this.catcher.frustumCulled = false;
     this.catcher.renderOrder = -10;
     this.catcher.matrixAutoUpdate = false;
+    this.slot(0);
   }
 
-  /** What the masks were last rendered for; equal inputs give equal masks, so they are reused. */
-  private lastKey = '';
+  /** Slot `i`'s targets, made on first use. */
+  private slot(i: number): { contact: THREE.WebGLRenderTarget; ambient: THREE.WebGLRenderTarget; key: string } {
+    if (!Number.isInteger(i) || i < 0 || i >= SHADOW_SLOTS) throw new Error(`phone3d: shadow slot ${i} out of range`);
+    while (this.slots.length <= i) this.slots.push({ contact: r16(SILHOUETTE_SIZE), ambient: r16(AMBIENT_SIZE), key: '' });
+    return this.slots[i];
+  }
 
   /**
-   * Renders the masks for `frame` from the phone (`phone` is moved into the
-   * silhouette scene for the pass and put back), then places the catcher
-   * quad. `opacity` is phone3d.shadow.opacity. `modelKey` names the phone
-   * model; with the same model, catcher, light and pose (the phone's world
-   * matrix) as last time the masks are reused as they are (a still phone, the
-   * paused preview, playback without moves).
+   * Renders slot `slot`'s masks for `frame` from the phone (`phone` is moved
+   * into the silhouette scene for the pass and put back). `modelKey` names the
+   * phone model; with the same model, catcher, light and pose (the phone's
+   * world matrix) as that slot last had, its masks are reused as they are (a
+   * still phone, the paused preview, playback without moves). Does not place
+   * the catcher: use() does, per sample.
    */
-  render(phone: THREE.Object3D, frame: CatcherFrame, opacity: number, modelKey: string): void {
+  render(phone: THREE.Object3D, frame: CatcherFrame, modelKey: string, slot = 0): void {
     const r = this.renderer;
+    const target = this.slot(slot);
     const key = [modelKey, phone.matrixWorld.elements.join(','), frame.shadowMatrix.elements.join(','), frame.u0, frame.u1, frame.v0, frame.v1, frame.sigma.ambient, frame.sigma.contact].join('|');
-    this.placeCatcher(frame, opacity);
-    if (key === this.lastKey) return;
-    this.lastKey = key;
+    if (key === target.key) return;
+    target.key = key;
+    this.maskRenders++;
     const parent = phone.parent;
     // Silhouette: an orthographic camera looking straight at the catcher area.
     const P = frame.normal.clone().multiplyScalar(frame.plane + 10);
@@ -351,16 +370,24 @@ export class ShadowPass {
     };
     const S = SILHOUETTE_SIZE;
     blur(this.sil.texture, S, this.tc, 'u', frame.sigma.contact);
-    blur(this.tc.texture, S, this.contact, 'v', frame.sigma.contact);
+    blur(this.tc.texture, S, target.contact, 'v', frame.sigma.contact);
     // The ambient blur reads the 1024 silhouette at 512-texel centres: a free 2 × 2 average.
     blur(this.sil.texture, S, this.ta, 'u', frame.sigma.ambient);
-    blur(this.ta.texture, AMBIENT_SIZE, this.ambient, 'v', frame.sigma.ambient);
+    blur(this.ta.texture, AMBIENT_SIZE, target.ambient, 'v', frame.sigma.ambient);
+  }
 
+  /** Places the catcher for `frame` (the pose slot `slot` was rendered at) and points it at that slot's masks. */
+  use(slot: number, frame: CatcherFrame, opacity: number): void {
+    const target = this.slot(slot);
+    const u = this.catcherMat.uniforms;
+    u.uContact.value = target.contact.texture;
+    u.uAmbient.value = target.ambient.texture;
+    this.placeCatcher(frame, opacity);
   }
 
   /** Forget the cached masks (their targets were re-created, or the context was lost). */
   invalidate(): void {
-    this.lastKey = '';
+    for (const t of this.slots) t.key = '';
   }
 
   /** The catcher quad in world space, its mask mapping and its opacity. */
@@ -377,15 +404,22 @@ export class ShadowPass {
     u.uOpContact.value = Math.min(1, Math.max(0, opacity * SHADOW_CONTACT.opacity));
   }
 
+  /** Slots made so far (1 until the first moving frame, then up to SHADOW_SLOTS). */
+  get slotCount(): number {
+    return this.slots.length;
+  }
+
   bytes(): number {
     const S = SILHOUETTE_SIZE * SILHOUETTE_SIZE;
     const A = AMBIENT_SIZE * AMBIENT_SIZE;
-    // silhouette: 4 MSAA samples + resolve; contact: 2 targets; ambient: 2 targets; all 2 B per texel.
-    return S * 2 * 5 + S * 2 * 2 + A * 2 * 2;
+    // Scratch: silhouette (4 MSAA samples + resolve), contact and ambient intermediates; per slot: contact and
+    // ambient masks; all 2 B per texel.
+    return S * 2 * 5 + S * 2 + A * 2 + this.slots.length * (S * 2 + A * 2);
   }
 
   dispose(): void {
-    for (const t of [this.sil, this.tc, this.contact, this.ta, this.ambient]) t.dispose();
+    for (const t of [this.sil, this.tc, this.ta, ...this.slots.flatMap((x) => [x.contact, x.ambient])]) t.dispose();
+    this.slots.length = 0;
     this.silMat.dispose();
     this.blurMat.dispose();
     this.catcherMat.dispose();
