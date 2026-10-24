@@ -8,11 +8,18 @@
 //
 // To capture logs (only from main's compositor, never to bless a change):
 //   COMPOSITOR_GOLDEN=write npx vitest run test/compositorGolden.test.ts
-import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHarness, type Harness, type HarnessInputs } from './helpers/compositorHarness';
-import { normalizeProject, type CursorSample, type KeystrokeSample, type Point, type Project } from '../src/shared/types';
+import {
+  createHarness,
+  GOLDEN_DIR,
+  goldenFixtureNames,
+  loadGoldenFixture,
+  type Harness,
+  type HarnessInputs,
+} from './helpers/compositorHarness';
+import type { CursorSample, Point, Project } from '../src/shared/types';
 import { AutofocusPlanner, defaultAutofocus, dwellFocusEvents, type FocusSegment } from '../src/shared/autofocus';
 import { planTapZoom } from '../src/shared/autozoomTaps';
 import { Timeline, toOutputTime } from '../src/shared/timeline';
@@ -21,37 +28,13 @@ import { clickEvents, ripplesAt } from '../src/shared/ripples';
 import { keysAt } from '../src/shared/keystrokes';
 import { phoneLayerOn } from '../src/shared/phoneLayer';
 
-const ROOT = join(__dirname, 'fixtures', '3d-golden');
 const WRITE = process.env.COMPOSITOR_GOLDEN === 'write';
 
 /** Output times drawn for every fixture, in this order on one compositor (as
  *  an export does): before any zoom, taps and clicks, glides, holds, the end. */
-export const GOLDEN_TIMES = [0.25, 1.3, 1.75, 2.4, 3.1, 4.25, 5.7, 6.95];
+const GOLDEN_TIMES = [0.25, 1.3, 1.75, 2.4, 3.1, 4.25, 5.7, 6.95];
 
-/** The fixtures, by folder name. */
-export const GOLDEN_FIXTURES = readdirSync(ROOT, { withFileTypes: true })
-  .filter((d) => d.isDirectory() && existsSync(join(ROOT, d.name, 'project.json')))
-  .map((d) => d.name)
-  .sort();
-
-interface Fixture {
-  project: Project;
-  cursor: CursorSample[];
-  keys: KeystrokeSample[];
-}
-
-function readJson<T>(file: string, fallback: T): T {
-  return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as T) : fallback;
-}
-
-export function loadFixture(name: string): Fixture {
-  const dir = join(ROOT, name);
-  return {
-    project: normalizeProject(readJson(join(dir, 'project.json'), null as unknown as Project)),
-    cursor: readJson<{ samples?: CursorSample[] }>(join(dir, 'cursor.json'), {}).samples ?? [],
-    keys: readJson<{ keys?: KeystrokeSample[] }>(join(dir, 'keystrokes.json'), {}).keys ?? [],
-  };
-}
+const GOLDEN_FIXTURES = goldenFixtureNames();
 
 /** The Editor's `segments` memo as it is at 3dea11b (Editor.tsx:459-478),
  *  frozen here so the golden depends on the compositor, not on the memo's
@@ -93,8 +76,8 @@ function cursorAt(samples: CursorSample[], t: number): Point | null {
 }
 
 /** Draws fixture `name` at every golden time and returns the log. */
-export async function goldenLog(name: string, edit?: (p: Project) => Project): Promise<string[]> {
-  const fx = loadFixture(name);
+async function goldenLog(name: string, edit?: (p: Project) => Project): Promise<string[]> {
+  const fx = loadGoldenFixture(name);
   const project = edit ? edit(fx.project) : fx.project;
   const h: Harness = await createHarness();
   try {
@@ -129,7 +112,7 @@ export async function goldenLog(name: string, edit?: (p: Project) => Project): P
   }
 }
 
-const logFile = (name: string) => join(ROOT, name, 'compositor.log');
+const logFile = (name: string) => join(GOLDEN_DIR, name, 'compositor.log');
 
 /** The first line where two logs differ, with a little context. */
 function firstDifference(actual: string[], expected: string[]): string | null {
@@ -167,14 +150,12 @@ describe('compositor golden: flat draw calls equal main 3dea11b', () => {
 });
 
 describe('compositor golden: the gate can fail', () => {
-  afterEach(() => undefined);
-
   it('every fixture draws all its renders and its recording', async () => {
     for (const name of GOLDEN_FIXTURES) {
       const log = await goldenLog(name);
       const renders = log.filter((l) => l.startsWith('# render')).length;
       const expectedRenders = GOLDEN_TIMES.filter((t) => {
-        const p = loadFixture(name).project;
+        const p = loadGoldenFixture(name).project;
         return new Timeline(p.recording.duration, p.clips).sourceTime(t) !== null;
       }).length;
       expect(renders, name).toBe(expectedRenders);

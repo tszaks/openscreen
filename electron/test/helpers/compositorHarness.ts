@@ -30,9 +30,11 @@
 // Numbers print at full precision (shortest round-trip form), so the log
 // proves the exact same geometry, not just a similar one.
 import { vi } from 'vitest';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { CanvasCompositor, FrameInputs } from '../../src/renderer/src/compositor';
 import type { FocusSegment, AutofocusOptions } from '../../src/shared/autofocus';
-import type { Project, Size } from '../../src/shared/types';
+import { normalizeProject, type CursorSample, type KeystrokeSample, type Project, type Size } from '../../src/shared/types';
 import { mockCanvas, MockGradient, MockImageData, MockPattern } from './mockCanvas';
 
 vi.mock('../../src/renderer/src/api', () => ({ api: { prepareBackground: async (p: string) => p } }));
@@ -242,5 +244,41 @@ export async function createHarness(): Promise<Harness> {
       }
       release();
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The golden fixtures (test/fixtures/3d-golden/<name>): handmade projects that
+// scripts/golden/makeFixtures.mjs also turns into real bundles for exports.
+
+export const GOLDEN_DIR = join(__dirname, '..', 'fixtures', '3d-golden');
+
+/** Golden fixture names, sorted. */
+export function goldenFixtureNames(): string[] {
+  return readdirSync(GOLDEN_DIR, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && existsSync(join(GOLDEN_DIR, d.name, 'project.json')))
+    .map((d) => d.name)
+    .sort();
+}
+
+export interface GoldenFixture {
+  /** project.json as the app loads it (normalizeProject). */
+  project: Project;
+  /** cursor.json samples (empty for iPhone takes). */
+  cursor: CursorSample[];
+  /** keystrokes.json keys. */
+  keys: KeystrokeSample[];
+}
+
+const readJson = <T>(file: string, fallback: T): T => (existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as T) : fallback);
+
+/** One golden fixture, loaded the way the app loads a bundle. */
+export function loadGoldenFixture(name: string): GoldenFixture {
+  const dir = join(GOLDEN_DIR, name);
+  if (!existsSync(join(dir, 'project.json'))) throw new Error(`no golden fixture "${name}" (have: ${goldenFixtureNames().join(', ')})`);
+  return {
+    project: normalizeProject(JSON.parse(readFileSync(join(dir, 'project.json'), 'utf8')) as Project),
+    cursor: readJson<{ samples?: CursorSample[] }>(join(dir, 'cursor.json'), {}).samples ?? [],
+    keys: readJson<{ keys?: KeystrokeSample[] }>(join(dir, 'keystrokes.json'), {}).keys ?? [],
   };
 }
