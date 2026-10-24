@@ -20,6 +20,15 @@
 // render window visible (debugging); --probe renders a chrome and a grey
 // ball in the same studio instead of the phone (to see the lighting itself). One sheet-<model>.png per model: rows
 // are finishes, columns the angles.
+//
+// Sign-off (spec §7 WP4a, last box; §6.2 golden protocol): these stills are
+// signed off by WP6, Tyler and the model judges in the review harness
+// (scripts/review3d.mjs). Until then the box is OPEN and WP4b must not
+// render or commit golden PNGs. A model has no finish of some colours: the
+// "black" slot is the darkest finish and the "orange" slot the most
+// saturated, so e.g. the 17 Pro's black is Deep Blue and the 16's orange is
+// Ultramarine. index.html names the slot, the finish and its swatch on each
+// row so judges see every stand-in.
 // Writes only under --out (default: <tmp>/openscreen-turntable). Never
 // touches recordings or the installed app.
 
@@ -365,7 +374,11 @@ app.whenReady().then(async () => {
 });
 `;
 
-/** "black, silver, orange": the darkest, the lightest and the most saturated finish of a model. */
+/**
+ * "black, silver, orange": the darkest, the lightest and the most saturated
+ * finish of a model, each tagged with the slot(s) it fills (a model without
+ * a black or orange finish gets its nearest stand-in, shown in index.html).
+ */
 function autoFinishes(finishes) {
   const lin = (hex) => {
     const n = parseInt(hex.slice(1), 16);
@@ -380,8 +393,17 @@ function autoFinishes(finishes) {
     return Math.max(...c) - Math.min(...c);
   };
   const by = (f) => [...finishes].sort((a, b) => f(a.hex) - f(b.hex));
-  const out = [by(lum)[0], by(lum).at(-1), by(sat).at(-1)];
-  return [...new Map(out.map((f) => [f.id, f])).values()];
+  const picks = [
+    ['black', by(lum)[0]],
+    ['silver', by(lum).at(-1)],
+    ['orange', by(sat).at(-1)],
+  ];
+  const out = new Map();
+  for (const [slot, f] of picks) {
+    const prev = out.get(f.id);
+    out.set(f.id, prev ? { ...prev, slots: [...prev.slots, slot] } : { ...f, slots: [slot] });
+  }
+  return [...out.values()];
 }
 
 async function main() {
@@ -407,10 +429,13 @@ async function main() {
   // Finish names come from devices.ts (read through the bundle is overkill; parse the source table).
   const { DEVICES } = await loadDevices(build, esbuild);
   const jobs = [];
+  /** model → finish id → { name, hex, slots } for index.html. */
+  const finishInfo = new Map();
   for (const id of o.models) {
     const d = DEVICES.find((x) => x.id === id);
     if (!d) throw new Error(`unknown model ${id}`);
     const fins = o.finishes === 'all' ? d.finishes : o.finishes === 'auto' ? autoFinishes(d.finishes) : d.finishes.filter((f) => o.finishes.split(',').includes(f.id));
+    finishInfo.set(id, new Map(fins.map((f) => [f.id, { name: f.name, hex: f.hex, slots: f.slots ?? [] }])));
     for (const f of fins) {
       for (const angle of o.angles) {
         jobs.push({
@@ -436,7 +461,7 @@ async function main() {
   if (!existsSync(resultFile)) throw new Error(`electron exited ${code} without a result`);
   const result = JSON.parse(readFileSync(resultFile, 'utf8'));
   if (!result.ok) throw new Error(result.error);
-  writeIndex(o, result);
+  writeIndex(o, result, finishInfo);
   process.stdout.write(JSON.stringify({ ok: true, out: o.out, index: join(o.out, 'index.html'), gpu: result.gpu, stills: result.results.filter((x) => !x.sheet).length, sheets: result.results.filter((x) => x.sheet).map((x) => x.file) }) + '\n');
 }
 
@@ -447,7 +472,7 @@ async function loadDevices(build, esbuild) {
   return import(pathToFileURL(file).href + `?t=${Date.now()}`);
 }
 
-function writeIndex(o, result) {
+function writeIndex(o, result, finishInfo) {
   const byModel = new Map();
   for (const r of result.results.filter((x) => !x.sheet)) {
     const list = byModel.get(r.model) ?? [];
@@ -462,12 +487,22 @@ function writeIndex(o, result) {
       row.push(r);
       rows.set(r.finish, row);
     }
-    return `<h2>${model}</h2>` + [...rows].map(([fin, row]) => `<div class="row"><span>${fin}</span>${row.map((r) => `<img src="${rel(r.file)}" title="${r.angle}">`).join('')}</div>`).join('');
+    const label = (fin) => {
+      const f = finishInfo.get(model)?.get(fin);
+      if (!f) return fin;
+      const slot = f.slots.length ? `<b>${f.slots.join(' + ')}</b><br>` : '';
+      return `${slot}${f.name}<br><i style="background:${f.hex}"></i>${f.hex}`;
+    };
+    return `<h2>${model}</h2>` + [...rows].map(([fin, row]) => `<div class="row"><span>${label(fin)}</span>${row.map((r) => `<img src="${rel(r.file)}" title="${r.angle}">`).join('')}</div>`).join('');
   });
+  const status =
+    '<p class="status"><b>Sign-off: OPEN.</b> Spec §7 WP4a: WP6, Tyler and the model judges sign these stills off in the review harness; ' +
+    'that sign-off releases the golden protocol (§6.2). Until then WP4b renders and commits no golden PNGs. ' +
+    'Each row names the slot it fills (black = darkest finish, silver = lightest, orange = most saturated); where a model has no such colour the row shows the stand-in.</p>';
   const ref = o.ref ? `<h2>reference</h2><div class="row"><img src="${pathToFileURL(o.ref).href}" style="height:300px"></div>` : '';
   writeFileSync(
     join(o.out, 'index.html'),
-    `<!doctype html><meta charset="utf-8"><title>3D phone turntable</title><style>body{background:#161618;color:#ddd;font:14px -apple-system,system-ui;margin:24px}img{height:300px;margin:0 6px 6px 0;border-radius:6px}.row{display:flex;align-items:center}.row span{width:110px}</style><p>GPU: ${result.gpu}</p>${ref}${sections.join('')}`,
+    `<!doctype html><meta charset="utf-8"><title>3D phone turntable</title><style>body{background:#161618;color:#ddd;font:14px -apple-system,system-ui;margin:24px}img{height:300px;margin:0 6px 6px 0;border-radius:6px}.row{display:flex;align-items:center}.row span{width:150px;font-size:12px;line-height:1.5}.row i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}.status{max-width:900px;line-height:1.5}</style>${status}<p>GPU: ${result.gpu}</p>${ref}${sections.join('')}`,
   );
 }
 
