@@ -21,6 +21,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -82,17 +83,70 @@ export function sourceToOutput(clips, t) {
 }
 
 /**
- * A source window of `len` seconds with no tap in it (taps padded by 0.5 s), inside [lo, hi]; the one that sits
- * most inside a wait wins, then the earliest. Falls back to `lo` when none is free.
+ * A source window of `len` seconds with no gesture in it, inside [lo, hi]. `taps` are times or `{t, duration}`
+ * (a swipe or long press covers t..t+duration); each is padded by 0.5 s on both sides. A window may start right
+ * at a padded gesture's end. Of the free windows, the one that sits most inside a wait wins, then the earliest.
+ * Falls back to `lo` (free: false) when none is free.
  */
 export function quietWindow(taps, waits, len, lo, hi) {
   const pad = 0.5;
-  const ts = taps.map((t) => t).sort((a, b) => a - b);
-  const cands = [lo, ...ts.map((t) => t + pad), ...waits.map((w) => w.start)].filter((s) => s >= lo && s + len <= hi + 1e-9);
-  const free = (s) => ts.every((t) => t < s - pad || t > s + len + pad);
+  const eps = 1e-9;
+  const spans = taps
+    .map((x) => (typeof x === 'number' ? { t: x, duration: 0 } : { t: x.t, duration: Math.max(0, x.duration ?? 0) }))
+    .map(({ t, duration }) => ({ a: t - pad, b: t + duration + pad }))
+    .sort((x, y) => x.a - y.a);
+  const cands = [lo, ...spans.map((g) => g.b), ...waits.map((w) => w.start)].filter((s) => s >= lo - eps && s + len <= hi + eps);
+  const free = (s) => spans.every((g) => g.b <= s + eps || g.a >= s + len - eps);
   const inWait = (s) => waits.reduce((m, w) => m + Math.max(0, Math.min(w.end, s + len) - Math.max(w.start, s)), 0);
   const ok = [...new Set(cands)].filter(free).sort((a, b) => inWait(b) - inWait(a) || a - b);
   return { start: ok[0] ?? lo, free: ok.length > 0 };
+}
+
+/** Every tap of a bundle, from project.json (info lists at most 100), as {t, duration} in source seconds. */
+export function bundleTaps(projectJson, infoItems = []) {
+  const all = Array.isArray(projectJson?.taps) ? projectJson.taps : infoItems;
+  return all.filter((x) => Number.isFinite(x?.t)).map((x) => ({ t: x.t, duration: Number.isFinite(x.duration) ? x.duration : 0 }));
+}
+
+/** Sides whose shapes (width / height) differ by at most this share are centre-cropped to one shape; more is padded. */
+export const CROP_LIMIT = 0.12;
+/** Width of every placed pair file. */
+export const PAIR_WIDTH = 1080;
+
+/**
+ * The one canvas both sides of a blinded pair are re-encoded to, so neither the container, the size nor the
+ * shape tells the sides apart. Shapes within CROP_LIMIT: both are centre-cropped to the narrower shape (no bars).
+ * Further apart: both are fitted and padded to the narrower shape, and `leak` is true (the bars show which side
+ * had the other shape: crop the reference to the shape of ours before judging).
+ */
+export function pairCanvas(a, b, width = PAIR_WIDTH) {
+  const ra = a.w / a.h;
+  const rb = b.w / b.h;
+  const aspect = Math.min(ra, rb);
+  const diff = Math.abs(ra - rb) / Math.max(ra, rb);
+  const h = 2 * Math.round(width / aspect / 2);
+  const mode = diff <= CROP_LIMIT ? 'crop' : 'pad';
+  return { w: width, h, aspect, diff: Math.round(diff * 1000) / 1000, mode, leak: mode === 'pad' };
+}
+
+/** The ffmpeg filter that puts one side on the pair canvas. */
+export function pairFilter(c) {
+  const fit = c.mode === 'crop'
+    ? `crop='min(iw,ih*${c.aspect.toFixed(6)})':'min(ih,iw/${c.aspect.toFixed(6)})',scale=${c.w}:${c.h}:flags=lanczos`
+    : `scale=${c.w}:${c.h}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${c.w}:${c.h}:(ow-iw)/2:(oh-ih)/2:color=0x101010`;
+  return `${fit},setsar=1`;
+}
+
+/** The layout preset (all of them draw the 3D phone) whose canvas shape is nearest a reference's. */
+export const SHAPE_PRESETS = [
+  { id: 'social-9x16', aspect: 9 / 16 },
+  { id: 'feed-4x5', aspect: 4 / 5 },
+  { id: 'square', aspect: 1 },
+  { id: 'landscape-16x9', aspect: 16 / 9 },
+];
+export function nearestShapePreset(size) {
+  const r = size.w / size.h;
+  return SHAPE_PRESETS.reduce((best, p) => (Math.abs(Math.log(p.aspect / r)) < Math.abs(Math.log(best.aspect / r)) ? p : best)).id;
 }
 
 /** Stills to compare flat vs 3D: each shot's start, middle and end, then taps, at most `max`, sorted, 0.05 s apart. */
@@ -338,6 +392,33 @@ function cloneBundle(src, dst) {
   });
 }
 
+/** The ffmpeg the app bundles (ffmpeg-static), unless OPENSCREEN_FFMPEG says otherwise; else the one on PATH. */
+function ffmpegBin() {
+  if (process.env.OPENSCREEN_FFMPEG) return process.env.OPENSCREEN_FFMPEG;
+  try {
+    const p = createRequire(import.meta.url)('ffmpeg-static');
+    if (typeof p === 'string' && existsSync(p)) return p;
+  } catch {
+    // not installed: fall through to PATH
+  }
+  return 'ffmpeg';
+}
+
+function ffmpeg(args) {
+  return new Promise((res) => {
+    execFile(ffmpegBin(), ['-hide_banner', ...args], { maxBuffer: 1 << 24 }, (e, _out, err) => res({ ok: !e, stderr: String(err ?? '') }));
+  });
+}
+
+/** A still's or a clip's display size (a 90° rotation tag swaps it, as ffmpeg's decoder does), or null. */
+export async function mediaSize(file) {
+  const { stderr } = await ffmpeg(['-i', file]);
+  const m = stderr.match(/Stream #\d+:\d+.*Video:.*?\b(\d{1,5})x(\d{1,5})\b/);
+  if (!m) return null;
+  const turned = Math.abs(Number(stderr.match(/rotation of (-?[\d.]+) degrees/)?.[1] ?? 0)) % 180 === 90;
+  return turned ? { w: Number(m[2]), h: Number(m[1]) } : { w: Number(m[1]), h: Number(m[2]) };
+}
+
 const stamp = (d = new Date()) => {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
@@ -418,7 +499,7 @@ export async function build(opts) {
   const warnings = validate3.json?.warnings ?? direct.json?.warnings ?? [];
 
   // One short take per recipe.
-  const srcTaps = (info.taps?.items ?? []).map((t) => t.t);
+  const srcTaps = bundleTaps(JSON.parse(readFileSync(join(src, 'project.json'), 'utf8')), info.taps?.items ?? []);
   const srcWaits = info.waits ?? [];
   const lo = info.clips?.[0]?.sourceStart ?? 0;
   const hi = info.clips?.length ? info.clips[info.clips.length - 1].sourceEnd : info.source.duration;
@@ -430,7 +511,7 @@ export async function build(opts) {
     const b = await clone(`recipe-${r}`);
     const ops = [{ op: 'trim', start: win.start, end: win.start + len }, { op: 'phone3d', enabled: true }, r === 'float' ? { op: 'shot', recipe: 'float' } : { op: 'shot', recipe: r, at: 0.3 }];
     const ap = await step(`${r}: set up`, ['apply', b, JSON.stringify(ops)]);
-    const entry = { recipe: r, window: { start: win.start, end: win.start + len, quiet: win.free }, warnings: ap.json?.warnings ?? [], strip: null, files: [], clip: null };
+    const entry = { recipe: r, ops, len, ok: ap.ok, window: { start: win.start, end: win.start + len, quiet: win.free }, warnings: ap.json?.warnings ?? [], strip: null, files: [], clip: null };
     if (ap.ok) {
       const fr = await step(`${r}: frames`, ['frames', b, '--every', String(Math.round((len / 12) * 1000) / 1000), '--sheet', '--out', join(out, 'recipes', r), ...draft]);
       entry.strip = fr.json?.sheet ?? null;
@@ -446,18 +527,44 @@ export async function build(opts) {
     recipes.push(entry);
   }
 
-  // Blinded pairs against the reference captures.
+  // Blinded pairs against the reference captures. Ours is rendered again for each pair, on the layout preset
+  // whose shape is nearest the reference's, at export quality, so the two sides can be put on one canvas.
   let pairsOut = [];
   let sheets = {};
   if (opts.refs) {
     const refs = mediaIn(opts.refs);
-    const matched = matchRefs(refs, RECIPES.filter((r) => recipes.find((e) => e.recipe === r && (e.clip || e.files.length))));
-    const items = matched.map(({ ref, recipe }) => {
+    const matched = matchRefs(refs, RECIPES.filter((r) => recipes.find((e) => e.recipe === r && e.ok)));
+    const items = [];
+    for (const [i, { ref, recipe }] of matched.entries()) {
       const e = recipes.find((x) => x.recipe === recipe);
+      // Step labels show on the page: no file names in them.
+      const label = `reference ${i + 1}`;
       const isVideo = VIDEO.has(extname(ref).toLowerCase());
-      const ours = isVideo && e.clip ? e.clip : e.files[Math.floor(e.files.length / 2)]?.path;
-      return { a: { label: 'ref', file: ref }, b: { label: 'ours', file: ours }, note: `${basename(ref)} vs ${recipe}`, kind: isVideo ? 'video' : 'image' };
-    }).filter((it) => it.b.file);
+      if (isVideo && !opts.clips) {
+        failures.push({ step: label, error: 'the reference is a clip but --no-clips makes stills of ours: a clip and a still cannot be blinded' });
+        continue;
+      }
+      const size = await mediaSize(ref);
+      if (!size) {
+        failures.push({ step: label, error: 'ffmpeg could not read it' });
+        continue;
+      }
+      const preset = nearestShapePreset(size);
+      const b = await clone(`pair-${i + 1}-${recipe}`);
+      const ap = await step(`${label}: ${recipe} on ${preset}`, ['apply', b, JSON.stringify([{ op: 'layout', presetId: preset }, ...e.ops])]);
+      if (!ap.ok) continue;
+      let ours = null;
+      if (isVideo) {
+        const dst = join(work, `pair-${i + 1}.mp4`);
+        const ex = await step(`${label}: clip`, ['export', b, '--out', dst]);
+        ours = ex.ok ? (ex.json.probe?.file ?? dst) : null;
+      } else {
+        const t = e.files[Math.floor(e.files.length / 2)]?.t ?? Math.round((e.len / 2) * 1000) / 1000;
+        const fr = await step(`${label}: still`, ['frames', b, '--at', String(t), '--out', join(work, `pair-${i + 1}`)]);
+        ours = (fr.json?.files ?? []).find((f) => f.path)?.path ?? null;
+      }
+      if (ours) items.push({ a: { label: 'ref', file: ref }, b: { label: 'ours', file: ours }, note: `${basename(ref)} vs ${recipe} on ${preset}`, kind: isVideo ? 'video' : 'image' });
+    }
     const blind = blindPairs(items, opts.seed);
     pairsOut = await placePairs(out, blind.pairs);
     sheets = await pairSheets(agent, pairsOut, env, out);
@@ -492,23 +599,42 @@ ${bench ? `<h2 style="margin-top:14px">Bench (${esc(opts.bench)})</h2><table><tr
 
   const html = page(`3D review · ${name}`, `${esc(src)} · ${new Date().toISOString().slice(0, 16).replace('T', ' ')} · GPU ${esc(gpuName ?? 'unknown')} · ${failures.length ? `<span class="dot r"></span>${failures.length} step(s) failed` : '<span class="dot g"></span>all steps ran'}`, sec.join('\n'), rub?.js ?? '');
   writeFileSync(join(out, 'index.html'), html);
-  const result = { ok: failures.length === 0, out, page: join(out, 'index.html'), bundle: src, style: opts.style, shots, compare: compare.length, recipes: recipes.map((e) => ({ recipe: e.recipe, frames: e.files.length, strip: e.strip, clip: e.clip, warnings: e.warnings.length })), warnings: warnings.length, gpu: gpuName, pairs: pairsOut.length, key: pairsOut.length ? join(out, 'key.json') : null, failures, timings };
+  const result = { ok: failures.length === 0, out, page: join(out, 'index.html'), bundle: src, style: opts.style, shots, compare: compare.length, recipes: recipes.map((e) => ({ recipe: e.recipe, frames: e.files.length, strip: e.strip, clip: e.clip, warnings: e.warnings.length })), warnings: warnings.length, gpu: gpuName, pairs: pairsOut.length, pairShapes: pairsOut.map((p) => ({ id: p.id, ...p.canvas })), key: pairsOut.length ? join(out, 'key.json') : null, failures, timings };
   writeFileSync(join(out, 'review.json'), JSON.stringify(result, null, 1));
   return result;
 }
 
-/** Copies each pair's media into pairs/ under names that do not give the side away. */
+/**
+ * Re-encodes both sides of each pair into pairs/ as one container (PNG for stills, H.264 mp4 for clips, no
+ * sound, no metadata) at one size and shape (pairCanvas), under names that do not give the side away.
+ * A still paired with a clip is refused: the kind alone would tell the sides apart.
+ */
 async function placePairs(out, pairs) {
   const dir = join(out, 'pairs');
   mkdirSync(dir, { recursive: true });
-  return pairs.map((p) => {
-    const put = (f, side) => {
-      const dst = join(dir, `${p.id}-${side}${extname(f).toLowerCase()}`);
-      copyFileSync(f, dst);
+  const placed = [];
+  for (const p of pairs) {
+    const video = [p.L, p.R].map((f) => VIDEO.has(extname(f).toLowerCase()));
+    if (video[0] !== video[1]) throw new Usage(`${p.id}: one side is a clip and the other a still, so judges could tell them apart; pair clips with clips and stills with stills`);
+    const [sl, sr] = await Promise.all([mediaSize(p.L), mediaSize(p.R)]);
+    if (!sl || !sr) throw new Error(`${p.id}: ffmpeg could not read ${!sl ? p.L : p.R}`);
+    const canvas = pairCanvas(sl, sr);
+    const vf = pairFilter(canvas);
+    const put = async (f, side) => {
+      const dst = join(dir, `${p.id}-${side}${video[0] ? '.mp4' : '.png'}`);
+      const enc = video[0]
+        ? ['-vf', `${vf},format=yuv420p`, '-an', '-r', '30', '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-movflags', '+faststart']
+        : ['-vf', `${vf},format=rgb24`, '-frames:v', '1', '-update', '1'];
+      const r = await ffmpeg(['-loglevel', 'error', '-y', '-i', f, ...enc, '-map_metadata', '-1', '-fflags', '+bitexact', dst]);
+      if (!r.ok) throw new Error(`${p.id}: ffmpeg could not re-encode ${f}: ${r.stderr.trim().slice(-300)}`);
       return dst;
     };
-    return { ...p, L: put(p.L, 'L'), R: put(p.R, 'R') };
-  });
+    const L = await put(p.L, 'L');
+    const R = await put(p.R, 'R');
+    if (canvas.leak) log({ warning: 'pair-shape', pair: p.id, message: `the two sides differ in shape by ${Math.round(canvas.diff * 100)}%: padding shows which is which; crop the reference to the other's shape` });
+    placed.push({ ...p, L, R, canvas });
+  }
+  return placed;
 }
 
 async function pairSheets(agent, pairs, env, out) {
@@ -537,7 +663,7 @@ export async function pairsCmd(opts) {
   judgeFiles(out, placed, sheets, 'Each pair is two edits of the same recording, made for the brief "Make a 15 s world-class 3D promo of this recording". Judge the finished video: the 3D phone, the motion, how readable the screen is at each tap, and whether you would ship it.');
   const rub = rubricSection(placed.map((p) => ({ ...p, L: relative(out, p.L), R: relative(out, p.R) })), `review3d:${out}`);
   writeFileSync(join(out, 'index.html'), page('Blinded comparison', `${placed.length} pair(s) · seed ${opts.seed}`, rub.html, rub.js));
-  return { ok: true, out, page: join(out, 'index.html'), pairs: placed.length, key: join(out, 'key.json'), note: 'move key.json out of this folder before any judge sees it; put it back for tally' };
+  return { ok: true, out, page: join(out, 'index.html'), pairs: placed.length, pairShapes: placed.map((p) => ({ id: p.id, ...p.canvas })), key: join(out, 'key.json'), note: 'move key.json out of this folder before any judge sees it; put it back for tally' };
 }
 
 // ---------------------------------------------------------------------------

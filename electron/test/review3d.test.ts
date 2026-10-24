@@ -7,9 +7,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
+import { createRequire } from 'node:module';
 // @ts-expect-error plain .mjs script without types
-import { AXES, blindPairs, compareTimes, esc, matchRefs, parseArgs, planSvg, prng, quietWindow, sourceToOutput, tallyEqual, tallyLook } from '../scripts/review3d.mjs';
+import { AXES, blindPairs, bundleTaps, compareTimes, esc, matchRefs, mediaSize, nearestShapePreset, pairCanvas, pairFilter, parseArgs, planSvg, prng, quietWindow, sourceToOutput, tallyEqual, tallyLook } from '../scripts/review3d.mjs';
 
 const SCRIPT = join(__dirname, '..', 'scripts', 'review3d.mjs');
 
@@ -66,6 +67,29 @@ describe('review3d: time and windows', () => {
     expect(quietWindow([0.5, 2, 3.5, 5], [], 3, 0, 6)).toEqual({ start: 0, free: false });
   });
 
+  it('quietWindow accepts a window that starts right after a padded tap (no wait needed)', () => {
+    // 0.7..3.7 and 10.5..13.5 are tap-free; the earliest wins.
+    expect(quietWindow([0.2, 10], [], 3, 0, 20)).toEqual({ start: 0.7, free: true });
+    expect(quietWindow([1, 10], [], 3, 0, 20)).toEqual({ start: 1.5, free: true });
+    // Exactly one free start, right after the second tap's pad.
+    expect(quietWindow([0.4, 2], [], 3, 0, 5.5)).toEqual({ start: 2.5, free: true });
+  });
+
+  it('quietWindow counts a swipe or long press for its whole duration', () => {
+    // A 4 s long press at 1 s covers 0.5..5.5: the window starts after it, not at 1.5.
+    expect(quietWindow([{ t: 1, duration: 4 }], [], 3, 0, 20)).toEqual({ start: 5.5, free: true });
+    expect(quietWindow([{ t: 1, duration: 4 }], [], 3, 0, 8)).toEqual({ start: 0, free: false });
+  });
+
+  it('bundleTaps reads every tap from project.json (info lists at most 100), with durations', () => {
+    const many = Array.from({ length: 150 }, (_, i) => ({ t: i, kind: 'tap', ...(i === 3 ? { duration: 2 } : {}) }));
+    const taps = bundleTaps({ taps: many }, many.slice(0, 100));
+    expect(taps).toHaveLength(150);
+    expect(taps[3]).toEqual({ t: 3, duration: 2 });
+    expect(taps[149]).toEqual({ t: 149, duration: 0 });
+    expect(bundleTaps({}, [{ t: 4 }])).toEqual([{ t: 4, duration: 0 }]);
+  });
+
   it('compareTimes: shot start/middle/end then taps, deduped, capped, inside the video', () => {
     const t = compareTimes([{ start: 1, end: 2 }], [1.02, 3, 50], 10, 12);
     expect(t).toEqual([1, 1.5, 2, 3]);
@@ -78,6 +102,26 @@ describe('review3d: time and windows', () => {
       { ref: '/x/a.jpg', recipe: 'spin-in' },
       { ref: '/x/b.jpg', recipe: 'turn-to-back' },
     ]);
+  });
+});
+
+describe('review3d: the pair canvas', () => {
+  it('near shapes are centre-cropped to the narrower one; far shapes are padded and flagged as a leak', () => {
+    expect(pairCanvas({ w: 1100, h: 1093 }, { w: 1080, h: 1080 })).toEqual({ w: 1080, h: 1080, aspect: 1, diff: 0.006, mode: 'crop', leak: false });
+    const far = pairCanvas({ w: 1100, h: 1093 }, { w: 1080, h: 1920 });
+    expect(far).toMatchObject({ w: 1080, h: 1920, mode: 'pad', leak: true });
+    // Both orders give the same canvas (the side does not change it).
+    expect(pairCanvas({ w: 1080, h: 1920 }, { w: 1100, h: 1093 })).toEqual(far);
+    expect(pairCanvas({ w: 1080, h: 1920 }, { w: 720, h: 1280 })).toMatchObject({ w: 1080, h: 1920, diff: 0, mode: 'crop' });
+    expect(pairFilter(far)).toContain('pad=1080:1920');
+    expect(pairFilter(pairCanvas({ w: 100, h: 100 }, { w: 100, h: 104 }))).toMatch(/^crop=.*scale=1080:1124/);
+  });
+
+  it('nearestShapePreset picks the 3D layout preset nearest a reference shape', () => {
+    expect(nearestShapePreset({ w: 1100, h: 1093 })).toBe('square');
+    expect(nearestShapePreset({ w: 1080, h: 1920 })).toBe('social-9x16');
+    expect(nearestShapePreset({ w: 1080, h: 1350 })).toBe('feed-4x5');
+    expect(nearestShapePreset({ w: 1920, h: 1080 })).toBe('landscape-16x9');
   });
 });
 
@@ -151,7 +195,7 @@ describe('review3d: page parts and arguments', () => {
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000154a24f5b0000000049454e44ae426082', 'hex');
 
 const FAKE_AGENT = `#!/usr/bin/env node
-import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 const PNG = Buffer.from('${PNG.toString('hex')}', 'hex');
 const [cmd, ...a] = process.argv.slice(2);
@@ -169,10 +213,10 @@ else if (cmd === 'validate') out({ ok: true, problems: [], warnings: [{ code: 'o
 else if (cmd === 'frames') {
   const dir = flag('--out'); mkdirSync(dir, { recursive: true });
   const ts = flag('--at') ? flag('--at').split(',').map(Number) : Array.from({ length: 12 }, (_, i) => i * Number(flag('--every')));
-  const files = ts.map((t) => { const p = join(dir, 'f-' + t.toFixed(3) + '.png'); writeFileSync(p, PNG); return { t, path: p, facing: 1 }; });
+  const files = ts.map((t) => { const p = join(dir, 'f-' + t.toFixed(3) + '.png'); copyFileSync(process.env.FAKE_PNG, p); return { t, path: p, facing: 1 }; });
   let sheet = null; if (a.includes('--sheet')) { sheet = join(dir, 'sheet.png'); writeFileSync(sheet, PNG); }
   out({ ok: true, files, sheet, gpu: 'Fake GPU' });
-} else if (cmd === 'export') { const f = flag('--out'); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, 'mp4'); out({ ok: true, wallSeconds: 1, probe: { file: f } }); }
+} else if (cmd === 'export') { const f = flag('--out'); mkdirSync(dirname(f), { recursive: true }); copyFileSync(process.env.FAKE_MP4, f); out({ ok: true, wallSeconds: 1, probe: { file: f } }); }
 else if (cmd === 'review') { const d = a[0] + '.review'; mkdirSync(d, { recursive: true }); writeFileSync(join(d, 'sheet-01.png'), PNG); out({ ok: true, sheets: [{ path: join(d, 'sheet-01.png') }] }); }
 else { out({ ok: false, error: 'fake: unknown ' + cmd }); process.exit(1); }
 `;
@@ -182,8 +226,21 @@ let agent: string;
 let bundle: string;
 let logFile: string;
 
+// Real media (ffmpeg-static, as the app bundles it): our frames are 108x192 PNGs and our clips 108x192 mp4s;
+// the references are a 110x109 JPEG (a near-square capture) and other shapes, so the pair files must be re-encoded.
+const FFMPEG: string = createRequire(__filename)('ffmpeg-static');
+function makeMedia(file: string, w: number, h: number, video = false) {
+  const src = ['-f', 'lavfi', '-i', `testsrc=size=${w}x${h}:rate=30:duration=${video ? 0.5 : 0.04}`];
+  const enc = video ? ['-c:v', 'libx264', '-pix_fmt', 'yuv420p'] : ['-frames:v', '1'];
+  const r = spawnSync(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', ...src, ...enc, file]);
+  if (r.status !== 0) throw new Error(`ffmpeg could not make ${file}: ${r.stderr}`);
+  return file;
+}
+let fakePng: string;
+let fakeMp4: string;
+
 function run(args: string[], env: Record<string, string> = {}) {
-  const r = spawnSync(process.execPath, [SCRIPT, ...args], { env: { ...process.env, FAKE_LOG: logFile, ...env }, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [SCRIPT, ...args], { env: { ...process.env, FAKE_LOG: logFile, FAKE_PNG: fakePng, FAKE_MP4: fakeMp4, ...env }, encoding: 'utf8' });
   return { code: r.status ?? -1, out: JSON.parse(r.stdout), stderr: r.stderr };
 }
 
@@ -195,14 +252,28 @@ beforeAll(() => {
   bundle = join(root, 'src', 'take.openscreen');
   mkdirSync(bundle, { recursive: true });
   writeFileSync(join(bundle, 'project.json'), '{"name":"take"}');
+  fakePng = makeMedia(join(root, 'ours.png'), 108, 192);
+  fakeMp4 = makeMedia(join(root, 'ours.mp4'), 108, 192, true);
   mkdirSync(join(root, 'refs'));
-  for (const f of ['a.jpg', 'spin-in-rotato.png']) writeFileSync(join(root, 'refs', f), PNG);
+  makeMedia(join(root, 'refs', 'a.jpg'), 110, 109);
+  makeMedia(join(root, 'refs', 'spin-in-rotato.png'), 90, 160);
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
+/** Both sides of every pair: one extension, one pixel size, and nothing else (a judge cannot tell them apart by the file). */
+async function expectSameShape(dir: string, ids: string[]) {
+  for (const id of ids) {
+    const [L, R] = ['L', 'R'].map((side) => readdirSync(dir).find((f) => f.startsWith(`${id}-${side}.`) && !f.endsWith('.review'))!);
+    expect(extname(L), id).toBe(extname(R));
+    const [sl, sr] = await Promise.all([mediaSize(join(dir, L)), mediaSize(join(dir, R))]);
+    expect(sl, id).not.toBeNull();
+    expect(sl, id).toEqual(sr);
+  }
+}
+
 // Each build spawns ~25 child processes: on a busy machine that takes far longer than vitest's 5 s default.
 describe('review3d: commands (fake agent)', { timeout: 120_000 }, () => {
-  it('build: works on clones only, writes the page, the key and the judge files; never renders the original', () => {
+  it('build: works on clones only, writes the page, the key and the judge files; never renders the original', async () => {
     writeFileSync(logFile, '');
     const out = join(root, 'run1');
     const { code, out: r } = run([bundle, '--out', out, '--agent', agent, '--refs', join(root, 'refs'), '--seed', '5', '--draft']);
@@ -217,15 +288,23 @@ describe('review3d: commands (fake agent)', { timeout: 120_000 }, () => {
     // Recipe takes: a tap-free window inside the wait, the shot at 0.3 s, frames at --draft.
     const setup = calls.find((c) => c[0] === 'apply' && c[2].includes('"recipe":"hero-layback"'));
     expect(JSON.parse(setup[2])[0]).toEqual({ op: 'trim', start: 12, end: 15 });
-    expect(calls.filter((c) => c[0] === 'frames').every((c) => c.includes('--draft'))).toBe(true);
+    // --draft is for the review stills; the blinded pairs are always at export quality (checked below).
+    expect(calls.filter((c) => c[0] === 'frames' && !c[1].includes('/pair-')).every((c) => c.includes('--draft'))).toBe(true);
     const html = readFileSync(join(out, 'index.html'), 'utf8');
     for (const s of ['Flat vs 3D', 'Auto 3D plan over the taps', 'Recipes', 'Warnings', 'Timings', 'Blinded pairs', 'middle; quiet wait', '&lt;zoom&gt;', 'data-theme']) expect(html).toContain(s);
     expect(html).not.toMatch(/\bours\b|refs\/|rotato/); // nothing in the page gives the sides away
     const key = JSON.parse(readFileSync(join(out, 'key.json'), 'utf8'));
     expect(Object.keys(key.pairs)).toEqual(['pair-01', 'pair-02']);
     const placed = readdirSync(join(out, 'pairs')).filter((f) => !f.endsWith('.review'));
-    expect(placed).toHaveLength(4);
-    for (const f of placed) expect(f).toMatch(/^pair-0[12]-[LR]\.(jpg|png)$/);
+    expect(placed.sort()).toEqual(['pair-01-L.png', 'pair-01-R.png', 'pair-02-L.png', 'pair-02-R.png']);
+    // Ours is rendered again per pair, on the 3D layout preset nearest the reference's shape, at export quality.
+    const pairSetups = calls.filter((c) => c[0] === 'apply' && c[2].startsWith('[{"op":"layout"'));
+    expect(pairSetups.map((c) => JSON.parse(c[2])[0].presetId).sort()).toEqual(['social-9x16', 'square']);
+    const pairStills = calls.filter((c) => c[0] === 'frames' && c.includes('--at') && c[1].includes('/pair-'));
+    expect(pairStills).toHaveLength(2);
+    for (const c of pairStills) expect(c).not.toContain('--draft');
+    await expectSameShape(join(out, 'pairs'), ['pair-01', 'pair-02']);
+    expect(r.pairShapes.map((x: any) => x.id)).toEqual(['pair-01', 'pair-02']);
     const tpl = JSON.parse(readFileSync(join(out, 'judge-template.json'), 'utf8'));
     expect(Object.keys(tpl.pairs)).toEqual(['pair-01', 'pair-02']);
     expect(readFileSync(join(out, 'judge-brief.md'), 'utf8')).toContain('pairs/pair-01-L');
@@ -236,14 +315,17 @@ describe('review3d: commands (fake agent)', { timeout: 120_000 }, () => {
     expect(run([join(root, 'refs'), '--out', join(root, 'run3'), '--agent', agent]).code).toBe(2);
   });
 
-  it('pairs + tally --equal: the equal test end to end', () => {
+  it('pairs + tally --equal: the equal test end to end', async () => {
     const out = join(root, 'equal');
     mkdirSync(join(root, 'person'));
     mkdirSync(join(root, 'agentclip'));
-    writeFileSync(join(root, 'person', 'out.mp4'), 'p');
-    writeFileSync(join(root, 'agentclip', 'out.mp4'), 'a');
+    makeMedia(join(root, 'person', 'out.mp4'), 108, 192, true);
+    makeMedia(join(root, 'agentclip', 'out.mp4'), 72, 128, true);
     const made = run(['pairs', '--a', join(root, 'person', 'out.mp4'), '--b', join(root, 'agentclip', 'out.mp4'), '--labels', 'person,agent', '--out', out, '--seed', '1', '--agent', agent]);
     expect(made.code, JSON.stringify(made.out)).toBe(0);
+    expect(readdirSync(join(out, 'pairs')).filter((f) => !f.endsWith('.review')).sort()).toEqual(['pair-01-L.mp4', 'pair-01-R.mp4']);
+    await expectSameShape(join(out, 'pairs'), ['pair-01']);
+    expect(made.out.pairShapes[0]).toMatchObject({ w: 1080, h: 1920, mode: 'crop', leak: false });
     const key = JSON.parse(readFileSync(join(out, 'key.json'), 'utf8'));
     const side = key.pairs['pair-01'].L === 'agent' ? 'L' : 'R';
     const other = side === 'L' ? 'R' : 'L';
@@ -258,6 +340,29 @@ describe('review3d: commands (fake agent)', { timeout: 120_000 }, () => {
     expect(t.out).toMatchObject({ ok: true, judges: 2, mean: { person: 4, agent: 3.5 }, difference: -0.5, pass: true });
     writeFileSync(join(out, 'votes', 'j3.json'), JSON.stringify({ judge: 'j3', pairs: { 'pair-01': { pick: other, scores: { [side]: allAxes(1), [other]: allAxes(5) } } } }));
     expect(run(['tally', out, '--equal', 'person,agent']).out.pass).toBe(false);
+  });
+
+  it('pairs refuses a clip paired with a still (the kind alone gives the side away)', () => {
+    mkdirSync(join(root, 'mixA'));
+    mkdirSync(join(root, 'mixB'));
+    makeMedia(join(root, 'mixA', 'x.mp4'), 108, 192, true);
+    makeMedia(join(root, 'mixB', 'x.png'), 108, 192);
+    const r = run(['pairs', '--a', join(root, 'mixA'), '--b', join(root, 'mixB'), '--out', join(root, 'mix'), '--seed', '1', '--agent', agent]);
+    expect(r.code).toBe(2);
+    expect(r.out.error).toMatch(/one side is a clip and the other a still/);
+  });
+
+  it('build with a clip reference and --no-clips reports it and leaves that pair out', () => {
+    const refs = join(root, 'cliprefs');
+    mkdirSync(refs);
+    makeMedia(join(refs, 'turn-to-back-rotato.mp4'), 108, 192, true);
+    makeMedia(join(refs, 'b.jpg'), 108, 192);
+    const out = join(root, 'run5');
+    const r = run([bundle, '--out', out, '--agent', agent, '--refs', refs, '--no-clips', '--seed', '2']);
+    expect(r.code).toBe(1);
+    expect(r.out.pairs).toBe(1);
+    expect(r.out.failures.map((f: any) => f.error).join(' ')).toMatch(/a clip and a still cannot be blinded/);
+    expect(readdirSync(join(out, 'pairs')).filter((f) => !f.endsWith('.review')).sort()).toEqual(['pair-01-L.png', 'pair-01-R.png']);
   });
 
   it('a failing CLI step is reported (exit 1), and the page still gets written', () => {
