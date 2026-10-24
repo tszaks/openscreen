@@ -139,6 +139,93 @@ export function project(pt: Vec3, cam: Cam3D): [number, number, number] {
 }
 
 // ---------------------------------------------------------------------------
+// Clipping against the view
+//
+// projectWorld divides by the view depth, so a point at or behind the eye
+// (depth ≤ 0) lands on the wrong side of the canvas. Anything that bounds,
+// hulls or takes depths from geometry that can reach the camera (the floor
+// catcher grown by the blur, a big tilted phone at a wide fov) clips first.
+
+/** Clipped geometry keeps at least this view depth, px (the smallest near plane depthRange returns). */
+export const NEAR_CLIP_PX = 1;
+
+/** A world point in view space: [x right, y up, depth along the camera axis]. */
+function toView(w: Vec3, cam: Cam3D): Vec3 {
+  const c = mtv(cam.rot, sub(w, cam.eye));
+  return [c[0], c[1], -c[2]];
+}
+
+/** A view-space point (depth > 0) → canvas. */
+function viewToCanvas(v: Vec3, cam: Cam3D): Point {
+  const W = cam.canvas.width;
+  const H = cam.canvas.height;
+  return { x: (((cam.focal / (W / H)) * v[0]) / v[2] + 1) * (W / 2), y: (1 - (cam.focal * v[1]) / v[2]) * (H / 2) };
+}
+
+type ClipPlane = (v: Vec3) => number;
+
+/** The near plane at NEAR_CLIP_PX (≥ 0 = kept). */
+const nearPlane: ClipPlane = (v) => v[2] - NEAR_CLIP_PX;
+
+/** The canvas frustum: the near plane plus the 4 side planes through the canvas edges. Linear in view space, so
+ *  clipping by them and interpolating in world space agree. */
+function frustumPlanes(cam: Cam3D): ClipPlane[] {
+  const fx = cam.focal / (cam.canvas.width / cam.canvas.height);
+  const fy = cam.focal;
+  return [nearPlane, (v) => v[2] - fx * v[0], (v) => v[2] + fx * v[0], (v) => v[2] - fy * v[1], (v) => v[2] + fy * v[1]];
+}
+
+/** Sutherland–Hodgman: a convex polygon (view space, in order) clipped by each plane in turn. May be empty. */
+function clipPolygon(poly: readonly Vec3[], planes: readonly ClipPlane[]): Vec3[] {
+  let out = [...poly];
+  for (const plane of planes) {
+    const src = out;
+    out = [];
+    for (let i = 0; i < src.length; i++) {
+      const a = src[i];
+      const b = src[(i + 1) % src.length];
+      const da = plane(a);
+      const db = plane(b);
+      if (da >= 0) out.push(a);
+      if ((da >= 0) !== (db >= 0)) {
+        const k = da / (da - db);
+        out.push([a[0] + k * (b[0] - a[0]), a[1] + k * (b[1] - a[1]), a[2] + k * (b[2] - a[2])]);
+      }
+    }
+    if (!out.length) break;
+  }
+  return out;
+}
+
+/**
+ * The part of the convex hull of `pts` (view space) at depth ≥ NEAR_CLIP_PX, as a point set with the same convex
+ * hull: the points in front, plus where every segment between a point in front and one behind crosses the near
+ * plane (that includes every hull edge that crosses it). Unchanged when nothing reaches the near plane.
+ */
+function clipCloudToNear(pts: readonly Vec3[]): Vec3[] {
+  const front = pts.filter((v) => nearPlane(v) >= 0);
+  if (front.length === pts.length) return [...pts];
+  const out = [...front];
+  for (const a of front) {
+    for (const b of pts) {
+      const db = nearPlane(b);
+      if (db >= 0) continue;
+      const da = nearPlane(a);
+      const k = da / (da - db);
+      out.push([a[0] + k * (b[0] - a[0]), a[1] + k * (b[1] - a[1]), NEAR_CLIP_PX]);
+    }
+  }
+  return out;
+}
+
+/** The canvas outline of the visible part of a convex solid or planar shape given by its extreme world points:
+ *  clipped to the near plane, then projected and hulled. Exact (a perspective view maps a convex set in front of
+ *  the eye to a convex set), and may extend past the canvas. Empty when all of it is behind the camera. */
+function projectedConvex(world: readonly Vec3[], cam: Cam3D): Point[] {
+  return convexHull(clipCloudToNear(world.map((w) => toView(w, cam))).map((v) => viewToCanvas(v, cam)));
+}
+
+// ---------------------------------------------------------------------------
 // The scene for one project
 
 /** What a project's 3D phone needs, resolved once (cheap to keep per render). */
@@ -362,14 +449,14 @@ export function convexHull(points: readonly Point[]): Point[] {
   return [...lower.slice(0, -1), ...upper.slice(0, -1)];
 }
 
+/** The body's canvas outline: its extreme points, clipped to the near plane when a big phone at a wide fov reaches
+ *  the camera, projected and hulled. */
 function projectedHull(s: Scene3D, cam: Cam3D, buttons: boolean): Point[] {
-  return convexHull(bodyPointsMm(s, buttons).map((p) => {
-    const [x, y] = project(p, cam);
-    return { x, y };
-  }));
+  return projectedConvex(bodyPointsMm(s, buttons).map((p) => modelToWorld(p, cam)), cam);
 }
 
-/** The convex hull of the projected body (8 corners + plateau top) at t, canvas px. */
+/** The convex hull of the projected body (8 corners + plateau top) at t, canvas px (only the part in front of the
+ *  camera; empty if none of it is). */
 export function bodyHull(p: SceneSource, t: number, canvas?: Size): Point[] | null {
   const s = asScene(p, canvas);
   return s ? projectedHull(s, camAt(s, t), false) : null;
@@ -470,7 +557,8 @@ export function shadowSigma(s: Pick<Scene3D, 'p3' | 'bodyMm'>, cam: Pick<Cam3D, 
 /**
  * The 4 world corners of the catcher area that holds the whole blurred shadow at this pose: the shadow points'
  * bounding box in the catcher plane (wall: x, y; floor: x, z), grown by SHADOW_SUPPORT_SIGMAS · ambient σ on each
- * side. The renderer's catcher quad, renderRoi and depthRange all use it, so they agree by construction.
+ * side. The renderer draws exactly this quad; renderRoi, depthRange, maxCocPx and shadowBlurPx use its visible part
+ * (catcherInView), so they agree by construction.
  */
 export function shadowCatcherCorners(s: Scene3D, cam: Cam3D, light?: { azimuth: number }): Vec3[] {
   const pts = shadowPointsWorld(s, cam, light);
@@ -490,21 +578,35 @@ export function shadowCatcherCorners(s: Scene3D, cam: Cam3D, light?: { azimuth: 
 export function shadowHull(p: SceneSource, t: number, light?: { azimuth: number }, canvas?: Size): Point[] | null {
   const s = asScene(p, canvas);
   if (!s) return null;
-  const pose = s.poseAt(t);
-  const cam = camAt(s, t, pose);
-  return convexHull(shadowPointsWorld(s, cam, light).map((w) => {
-    const [x, y] = projectWorld(w, cam);
-    return { x, y };
-  }));
+  const cam = camAt(s, t);
+  return projectedConvex(shadowPointsWorld(s, cam, light), cam);
 }
 
-/** The ambient shadow's full support (SHADOW_SUPPORT_SIGMAS · σ) in canvas px at t, measured where the catcher
- *  is nearest the camera (the largest it can look on the canvas). 0 with the shadow off. */
+/**
+ * The part of the catcher area (shadowCatcherCorners) the camera can see: the quad clipped to the canvas frustum
+ * (NEAR_CLIP_PX near plane and the 4 side planes), as world points in order. Empty when none of it is on the canvas.
+ * Grown by 3σ, the floor quad can reach past the camera (its near corners then sit behind the eye and would project
+ * to the wrong side), so renderRoi, depthRange, maxCocPx and shadowBlurPx all use this, never the raw corners. The
+ * renderer still draws the whole quad: the GPU clips it the same way.
+ */
+export function catcherInView(s: Scene3D, cam: Cam3D, light?: { azimuth: number }): Vec3[] {
+  const view = clipPolygon(shadowCatcherCorners(s, cam, light).map((w) => toView(w, cam)), frustumPlanes(cam));
+  return view.map((v) => {
+    const c = mv(cam.rot, [v[0], v[1], -v[2]]);
+    return [cam.eye[0] + c[0], cam.eye[1] + c[1], cam.eye[2] + c[2]] as Vec3;
+  });
+}
+
+/** The ambient shadow's full support (SHADOW_SUPPORT_SIGMAS · σ) in canvas px at t, measured where the visible
+ *  catcher (catcherInView) is nearest the camera (the largest it can look on the canvas). Finite and ≥ 0; 0 with
+ *  the shadow off or the catcher off the canvas. */
 export function shadowBlurPx(p: SceneSource, t: number, canvas?: Size): number {
   const s = asScene(p, canvas);
   if (!s || !s.p3.shadow.on) return 0;
   const cam = camAt(s, t);
-  const nearest = Math.min(...shadowCatcherCorners(s, cam).map((w) => projectWorld(w, cam)[2]));
+  const seen = catcherInView(s, cam);
+  if (!seen.length) return 0;
+  const nearest = Math.max(NEAR_CLIP_PX, Math.min(...seen.map((w) => toView(w, cam)[2])));
   return SHADOW_SUPPORT_SIGMAS * shadowSigma(s, cam).ambient * (cam.focal * cam.canvas.height) / (2 * nearest);
 }
 
@@ -520,9 +622,11 @@ export function maxCocPx(s: Scene3D, t: number): number {
   if (!s.p3.dof.on || pose.focus <= 0) return 0;
   const cam = camAt(s, t, pose);
   const zf = projectWorld(localToWorld([0, 0, s.body3d.depthMm / 2], cam), cam)[2];
-  const world = [...bodyPointsMm(s, true).map((q) => modelToWorld(q, cam)), ...(s.p3.shadow.on ? shadowCatcherCorners(s, cam) : [])];
+  // Depths of what can be seen: the body clipped to the near plane, and the catcher clipped to the canvas frustum.
+  const body = clipCloudToNear(bodyPointsMm(s, true).map((q) => toView(modelToWorld(q, cam), cam)));
+  const catcher = s.p3.shadow.on ? catcherInView(s, cam).map((w) => toView(w, cam)) : [];
   let m = 0;
-  for (const w of world) m = Math.max(m, cocPx(s.p3, pose.focus, s.canvas.height, zf, projectWorld(w, cam)[2]));
+  for (const v of [...body, ...catcher]) m = Math.max(m, cocPx(s.p3, pose.focus, s.canvas.height, zf, v[2]));
   return m;
 }
 
@@ -533,13 +637,14 @@ export interface RoiOptions {
 
 /**
  * The canvas region the 3D pass must render: the body hull (with buttons)
- * and the catcher area that holds the whole blurred shadow
- * (shadowCatcherCorners, projected), unioned over `times`, each dilated by
+ * and the visible part of the catcher area that holds the whole blurred
+ * shadow (catcherInView, projected), unioned over `times`, each dilated by
  * the max DoF circle of confusion + 2 px, clamped to the canvas, then
  * snapped OUTWARD to whole canvas pixels (integer x/y keep the FRONT screen
  * texel-aligned, so drawImage never resamples the phone). Only the shadow
  * is grown by its blur, so the blur does not inflate the phone's part.
- * May be empty (w or h 0) when the phone is entirely off the canvas.
+ * May be empty (w or h 0) when the phone is entirely off the canvas; x/y
+ * always lie on the canvas (0..W, 0..H).
  */
 export function renderRoi(p: SceneSource, t: number, times?: readonly number[], opts: RoiOptions & { canvas?: Size } = {}): Rect | null {
   const s = asScene(p, opts.canvas);
@@ -550,22 +655,23 @@ export function renderRoi(p: SceneSource, t: number, times?: readonly number[], 
   for (const tt of times?.length ? times : [t]) {
     const pose = s.poseAt(tt);
     const cam = camAt(s, tt, pose);
-    r = unionRect(r, bboxOf(projectedHull(s, cam, true)));
+    const body = projectedHull(s, cam, true);
+    if (body.length) r = unionRect(r, bboxOf(body));
     if (shadow) {
-      r = unionRect(r, bboxOf(shadowCatcherCorners(s, cam).map((w) => {
-        const [x, y] = projectWorld(w, cam);
-        return { x, y };
-      })));
+      const seen = catcherInView(s, cam).map((w) => viewToCanvas(toView(w, cam), cam));
+      if (seen.length) r = unionRect(r, bboxOf(seen));
     }
     coc = Math.max(coc, maxCocPx(s, tt));
   }
+  if (!r) return { x: 0, y: 0, w: 0, h: 0 };
   const pad = coc + 2 + (opts.extraPx ?? 0);
   const W = s.canvas.width;
   const H = s.canvas.height;
-  const x0 = Math.max(0, Math.floor(r!.x - pad));
-  const y0 = Math.max(0, Math.floor(r!.y - pad));
-  const x1 = Math.min(W, Math.ceil(r!.x + r!.w + pad));
-  const y1 = Math.min(H, Math.ceil(r!.y + r!.h + pad));
+  const clamp = (v: number, hi: number) => Math.min(hi, Math.max(0, v));
+  const x0 = clamp(Math.floor(r.x - pad), W);
+  const y0 = clamp(Math.floor(r.y - pad), H);
+  const x1 = clamp(Math.ceil(r.x + r.w + pad), W);
+  const y1 = clamp(Math.ceil(r.y + r.h + pad), H);
   return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
 }
 
@@ -573,10 +679,13 @@ export function renderRoi(p: SceneSource, t: number, times?: readonly number[], 
  * Near/far planes that hold the whole body and its shadow catcher at t.
  * With zc the body centre's depth along the camera axis and R the body's
  * bounding radius in px (buttons, plateau and lens glass included):
- * near = max(1, min(zc − R, nearest catcher corner)) and
- * far = max(zc + R, farthest catcher corner) + 1 px (the catcher area of
- * shadowCatcherCorners, only with the shadow on). Depths are along the view
- * axis, the way the planes clip.
+ * near = max(1, min(zc − R, nearest visible catcher point)) and
+ * far = max(zc + R, farthest visible catcher point) + 1 px, where the
+ * visible catcher is catcherInView (the catcher area clipped to the canvas
+ * frustum; only with the shadow on). Parts of the catcher off the canvas or
+ * behind the eye are not drawn, so they do not pull near down to 1 px (the
+ * shimmer §3.7 step 2 is about). Depths are along the view axis, the way
+ * the planes clip.
  */
 export function depthRange(p: SceneSource, t: number, cam?: Cam3D, canvas?: Size): { near: number; far: number } | null {
   const s = asScene(p, canvas);
@@ -592,8 +701,8 @@ export function depthRange(p: SceneSource, t: number, cam?: Cam3D, canvas?: Size
   let lo = zc - R;
   let hi = zc + R;
   if (s.p3.shadow.on) {
-    for (const w of shadowCatcherCorners(s, c)) {
-      const z = projectWorld(w, c)[2];
+    for (const w of catcherInView(s, c)) {
+      const z = toView(w, c)[2];
       lo = Math.min(lo, z);
       hi = Math.max(hi, z);
     }
