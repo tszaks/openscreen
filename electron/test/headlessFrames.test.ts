@@ -2,7 +2,7 @@
 // write rule main enforces, the contact sheet grid, and the renderer loop
 // (runFrames) driven with a fake compositor.
 import { afterEach, describe, expect, it } from 'vitest';
-import { frameFileName, framesOutputPath, MAX_FRAMES, parseHeadlessArgs, sheetLayout } from '../src/shared/headless';
+import { exportFrameCount, frameFileName, framesOutputPath, MAX_FRAMES, parseHeadlessArgs, sheetLayout, snapToExportFrame } from '../src/shared/headless';
 import { render3dFor, runFrames, type FramesCompositor, type FramesRun } from '../src/renderer/src/headlessFrames';
 import { mockCanvas } from './helpers/mockCanvas';
 import { phoneProject, with3d } from './helpers/phone3dFixtures';
@@ -167,6 +167,8 @@ function fakeRun(over: Partial<FramesRun> = {}) {
   const seeks: number[] = [];
   const run: FramesRun = {
     times: [0, 2, 9],
+    fps: 30,
+    outputDuration: 8,
     scale: 1,
     sheet: false,
     outDir: '/out',
@@ -181,6 +183,34 @@ function fakeRun(over: Partial<FramesRun> = {}) {
   };
   return { run, written, seeks };
 }
+
+describe('snapToExportFrame (the export frame grid)', () => {
+  it('is frame round(t·fps) at frame / fps, the double the export draws with', () => {
+    expect(snapToExportFrame(4.25, 30, 8)).toEqual({ frame: 128, at: 128 / 30 });
+    expect(snapToExportFrame(4.733, 30, 8)).toEqual({ frame: 142, at: 142 / 30 });
+    expect(snapToExportFrame(4.7, 30, 8)).toEqual({ frame: 141, at: 141 / 30 });
+    expect(snapToExportFrame(0, 60, 8)).toEqual({ frame: 0, at: 0 });
+  });
+
+  it('is idempotent on frame times, so the app re-snapping what the CLI sent changes nothing', () => {
+    for (const fps of [24, 30, 60]) {
+      for (let i = 0; i < exportFrameCount(8, fps); i++) {
+        const g = snapToExportFrame(Number(String(i / fps)), fps, 8);
+        expect(g, `${fps}:${i}`).toEqual({ frame: i, at: i / fps });
+      }
+    }
+  });
+
+  it('matches the export frame count: the last frame for a time just before the end; null at or past the end', () => {
+    expect(exportFrameCount(8, 30)).toBe(240);
+    expect(exportFrameCount(7.5, 30)).toBe(225);
+    expect(snapToExportFrame(7.99, 30, 8)).toEqual({ frame: 239, at: 239 / 30 });
+    expect(snapToExportFrame(8, 30, 8)).toBeNull();
+    expect(snapToExportFrame(99, 30, 8)).toBeNull();
+    expect(snapToExportFrame(0, 30, 0)).toBeNull();
+    expect(snapToExportFrame(-1, 30, 8)).toBeNull();
+  });
+});
 
 describe('runFrames', () => {
   it('seeks, renders and writes each time in order; past the end is reported, not drawn', async () => {
@@ -199,11 +229,33 @@ describe('runFrames', () => {
       ok: true,
       out: '/out',
       frames: 2,
-      stills: [{ t: 0, path: '/out/f-0000.000.png' }, { t: 2, path: '/out/f-0002.000.png' }, { t: 9, error: 'past the end' }],
+      stills: [
+        { t: 0, frame: 0, at: 0, path: '/out/f-0000.000.png' },
+        { t: 2, frame: 60, at: 2, path: '/out/f-0002.000.png' },
+        { t: 9, error: 'past the end' },
+      ],
       size: { w: 1080, h: 1920 },
       gpu: null,
     });
     expect(progress).toEqual([1, 2]);
+  });
+
+  it('draws each time at its export frame (round(t·fps) / fps), once per frame, so a still is never a picture between frames', async () => {
+    const { comp, renders } = fakeComp();
+    // 4.25 and 4.26 s are both frame 128 at 30 fps (4.2667 s); 7.99 s is the last frame, 239.
+    const { run, written, seeks } = fakeRun({ times: [4.25, 4.26, 7.99, 8] });
+    const r = await runFrames(comp, run);
+    expect(renders.map((x) => x.t)).toEqual([128 / 30, 239 / 30]);
+    expect(renders.map((x) => (x.input as { keystrokes: string[] }).keystrokes[0])).toEqual([`${128 / 30}/${128 / 30 + 1}`, `${239 / 30}/${239 / 30 + 1}`]);
+    expect(seeks).toEqual([128 / 30 + 1, 239 / 30 + 1]);
+    expect(written.map((w) => w.name)).toEqual(['f-0004.267.png', 'f-0007.967.png']);
+    expect(r.frames).toBe(2);
+    expect(r.stills).toEqual([
+      { t: 4.25, frame: 128, at: 128 / 30, path: '/out/f-0004.267.png' },
+      { t: 4.26, frame: 128, at: 128 / 30, path: '/out/f-0004.267.png' },
+      { t: 7.99, frame: 239, at: 239 / 30, path: '/out/f-0007.967.png' },
+      { t: 8, error: 'past the end' },
+    ]);
   });
 
   it('awaits ready() before frame 0 and reports the GPU', async () => {

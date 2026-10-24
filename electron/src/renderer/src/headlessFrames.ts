@@ -4,7 +4,7 @@
 // hand it to main. No ffmpeg, no audio, no project writes. Optionally a
 // labelled contact sheet of every frame.
 
-import { frameFileName, sheetLabel, sheetLayout, type HeadlessFrame, type HeadlessResult } from '../../shared/headless';
+import { frameFileName, sheetLabel, sheetLayout, snapToExportFrame, type HeadlessFrame, type HeadlessResult } from '../../shared/headless';
 import { phone3dActive } from '../../shared/phone3d/placement';
 import type { Project } from '../../shared/types';
 import type { FrameInputs } from './compositor';
@@ -41,8 +41,11 @@ export function render3dFor(p: Project, opts: { draft: boolean; fps: number; str
 
 /** What a frames run draws with; the Editor supplies it from its own export plumbing. */
 export interface FramesRun {
-  /** Output seconds, ascending. */
+  /** Output seconds, ascending. Each is drawn at its export frame (snapToExportFrame). */
   times: number[];
+  /** The export's frame rate and output length: the frame grid the stills snap to. */
+  fps: number;
+  outputDuration: number;
   /** PNG scale against the canvas, 0 < scale ≤ 1. */
   scale: number;
   sheet: boolean;
@@ -90,9 +93,12 @@ function canvas2d(w: number, h: number): { canvas: HTMLCanvasElement; ctx: Canva
 
 /**
  * Render every time in `run.times` through `comp` and write
- * `f-<time>.png` (plus `sheet.png` with `run.sheet`). A time past the end is
- * reported as `{ t, error: "past the end" }`. Throws on a failed encode,
- * write or render error; main turns that into `{ ok: false }`.
+ * `f-<time>.png` (plus `sheet.png` with `run.sheet`). Each time is drawn at
+ * its export frame (index round(t · fps), output time frame / fps), so a
+ * still is exactly the export's frame; times on the same frame share one PNG.
+ * A time past the end is reported as `{ t, error: "past the end" }`. Throws
+ * on a failed encode, write or render error; main turns that into
+ * `{ ok: false }`.
  */
 export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise<HeadlessResult> {
   await run.ready?.();
@@ -100,24 +106,39 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
   const w = Math.max(1, Math.round(W * run.scale));
   const h = Math.max(1, Math.round(H * run.scale));
   const scaled = run.scale === 1 ? null : canvas2d(w, h);
-  const drawable = run.times.filter((t) => run.sourceTime(t) !== null);
-  const layout = run.sheet && drawable.length ? sheetLayout(drawable.length, w, h) : null;
+  // Each requested time → its export frame, or null past the end.
+  const snaps = run.times.map((t) => {
+    const g = snapToExportFrame(t, run.fps, run.outputDuration);
+    const srcT = g ? run.sourceTime(g.at) : null;
+    return g && srcT !== null ? { ...g, srcT } : null;
+  });
+  const drawable = new Set(snaps.flatMap((g) => (g ? [g.frame] : []))).size;
+  const layout = run.sheet && drawable ? sheetLayout(drawable, w, h) : null;
   const sheet = layout ? canvas2d(layout.width, layout.height) : null;
   if (sheet && layout) {
     sheet.ctx.fillStyle = '#202020';
     sheet.ctx.fillRect(0, 0, layout.width, layout.height);
   }
   const stills: HeadlessFrame[] = [];
+  const written = new Map<number, string>();
   let tile = 0;
   for (let i = 0; i < run.times.length; i++) {
     const t = run.times[i];
-    const srcT = run.sourceTime(t);
-    if (srcT === null) {
+    const g = snaps[i];
+    if (!g) {
       stills.push({ t, error: 'past the end' });
       continue;
     }
+    const { frame: index, at, srcT } = g;
+    const done = written.get(index);
+    if (done) {
+      stills.push({ t, frame: index, at, path: done });
+      run.progress?.(i + 1, run.times.length);
+      continue;
+    }
     await run.seek(srcT);
-    comp.render(t, run.inputsAt(t, srcT));
+    // The export draws frame i at output time i / fps (Editor.renderFrames).
+    comp.render(at, run.inputsAt(at, srcT));
     const failed = run.renderError?.();
     if (failed) throw new Error(failed);
     let frame = comp.canvas;
@@ -126,15 +147,16 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
       scaled.ctx.drawImage(comp.canvas, 0, 0, W, H, 0, 0, w, h);
       frame = scaled.canvas;
     }
-    const path = await run.writePng(frameFileName(t), await pngBytes(frame));
-    stills.push({ t, path });
+    const path = await run.writePng(frameFileName(at), await pngBytes(frame));
+    written.set(index, path);
+    stills.push({ t, frame: index, at, path });
     if (sheet && layout) {
       const { x, y } = layout.cell(tile++);
       sheet.ctx.drawImage(frame, 0, 0, w, h, x, y, layout.tileW, layout.tileH);
       const size = Math.max(10, Math.round(layout.tileH / 14));
       sheet.ctx.font = `600 ${size}px -apple-system, system-ui, sans-serif`;
       sheet.ctx.textBaseline = 'top';
-      const label = sheetLabel(t);
+      const label = sheetLabel(at);
       const pad = Math.round(size * 0.3);
       const tw = sheet.ctx.measureText(label).width;
       sheet.ctx.fillStyle = 'rgba(0,0,0,0.65)';
@@ -148,7 +170,7 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
   return {
     ok: true,
     out: run.outDir,
-    frames: stills.filter((s) => s.path).length,
+    frames: written.size,
     stills,
     size: { w, h },
     ...(sheetPath ? { sheet: sheetPath } : {}),

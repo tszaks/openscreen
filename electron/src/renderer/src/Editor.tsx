@@ -1372,8 +1372,9 @@ export function Editor({
   };
 
   /** A headless frames run (the CLI's `frames`): a PNG per output time
-   *  through the export's compositor, inputs and seeking (so each still is
-   *  the export's frame at that time), at export quality unless `draft`. */
+   *  through the export's compositor, inputs and seeking, at the export's
+   *  frame for that time (so each still is that export frame), at export
+   *  quality unless `draft`. */
   const exportStills = async (job: NonNullable<typeof headless>): Promise<HeadlessResult> => {
     const video = videoRef.current;
     if (!video || !job.frames) return { ok: false, error: 'the recording is not loaded' };
@@ -1385,6 +1386,9 @@ export function Editor({
     try {
       return await runFrames(compositor, {
         times: [...job.frames].sort((a, b) => a - b),
+        // The grid exportVideo renders on: frame i at i / fps, floor(duration · fps) frames.
+        fps,
+        outputDuration: timeline.outputDuration || duration,
         scale: job.scale ?? 1,
         sheet: !!job.sheet,
         outDir: job.out,

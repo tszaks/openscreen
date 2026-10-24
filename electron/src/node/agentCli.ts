@@ -873,7 +873,7 @@ const HELP = {
     apply: 'apply <bundle> <edits.json|-|inline-json> [--dry-run]',
     polish: 'polish <bundle> [--style clean|bold] [--title T] [--subtitle S] [--reanalyze] [--dry-run]',
     direct: 'direct <bundle> [--style subtle|hero|bold] [--keep] [--no-scenes] [--dry-run]  plan and apply 3D phone shots around taps, waits and scene changes (the editor\'s Auto 3D)',
-    frames: 'frames <bundle> (--at 0.5,2 | --every 0.5 | --moves) [--out dir] [--scale 0.5] [--sheet] [--draft] [--timeout s]  render still PNGs at output seconds with the real app (default: <tmp>/openscreen-frames/…)',
+    frames: 'frames <bundle> (--at 0.5,2 | --every 0.5 | --moves) [--out dir] [--scale 0.5] [--sheet] [--draft] [--timeout s]  render still PNGs at output seconds with the real app, each the export frame round(t·fps) (default: <tmp>/openscreen-frames/…)',
     undo: 'undo <bundle>  swap project.json with project.json.bak',
     export: 'export <bundle> [--out file.mp4|.gif|folder] [--gif] [--preset id,id] [--app OpenScreen.app] [--timeout s]',
     open: 'open <bundle> [--app OpenScreen.app]  open it in the editor for a human (a new app process)',

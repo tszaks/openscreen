@@ -2,7 +2,9 @@
 // [--scale 0.5] [--sheet] [--draft] [--timeout s] [--app OpenScreen.app]`:
 // render still PNGs at OUTPUT seconds with the real app, headless, through
 // the same compositor and inputs as an export (SPEC §4.2). An agent looks at
-// these (and sheet.png) before paying for a full export.
+// these (and sheet.png) before paying for a full export. Every time snaps to
+// the export's frame grid (frame round(t·fps), drawn at frame/fps), so each
+// still is a frame the export writes, also mid-zoom and mid-move.
 //
 // The default quality is the export's (3D: supersampling, jittered
 // anti-aliasing and motion blur); --draft renders one 3D sample at 1×.
@@ -12,7 +14,8 @@
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { MAX_FRAMES, type HeadlessFrame } from '../shared/headless';
+import { MAX_FRAMES, snapToExportFrame, type HeadlessFrame } from '../shared/headless';
+import { layoutPresetOf } from '../shared/exportJobs';
 import { tapsToOutput } from '../shared/mobileProject';
 import { phone3dActive } from '../shared/phone3d/placement';
 import { poseAtWithFloat } from '../shared/phone3d/pose';
@@ -73,15 +76,29 @@ export function parseFramesArgs(argv: string[]): FramesArgs {
   return { bundle, select, ...(outArg !== undefined ? { out: outArg } : {}), scale, sheet, draft, ...(timeout !== undefined ? { timeout } : {}), ...(app !== undefined ? { app } : {}) };
 }
 
-const ms = (t: number) => Math.round(t * 1000) / 1000;
+/** The frame rate the project exports at (Editor.exportVideo): its layout preset's, else `outputFPS`. */
+export const exportFps = (p: Project) => layoutPresetOf(p)?.fps ?? p.outputFPS;
+
+/** A still to render: the time asked for and the export frame that shows it. */
+export interface PlannedFrame {
+  /** Output seconds asked for (the first, when several land on one frame). */
+  t: number;
+  /** Export frame index, round(t · fps). */
+  frame: number;
+  /** Its output time, frame / fps: what the export draws, and what is rendered. */
+  at: number;
+}
 
 /**
- * The output times to render, ascending and unique to the millisecond, and
- * the ones past the end of the edited timeline (reported, not rendered).
+ * The stills to render, one per export frame, in time order, and the times
+ * at or past the end of the edited timeline (reported, not rendered). Every
+ * time snaps to the export's frame grid (snapToExportFrame at exportFps), so
+ * each PNG is a frame the export writes; times on one frame render once.
  * --moves: the start, middle and end of every 3D move, plus every tap.
  */
-export function planFrameTimes(p: Project, select: FrameSelection): { times: number[]; past: number[] } {
+export function planFrameTimes(p: Project, select: FrameSelection): { frames: PlannedFrame[]; past: number[]; fps: number } {
   const tl = new Timeline(p.recording.duration, p.clips);
+  const fps = exportFps(p);
   const D = tl.outputDuration;
   let wanted: number[];
   if (select.kind === 'at') wanted = select.times;
@@ -94,9 +111,15 @@ export function planFrameTimes(p: Project, select: FrameSelection): { times: num
     wanted = [...moves, ...tapsToOutput(p.taps, tl).map((t) => t.t)];
     if (!wanted.length) throw new CliError('--moves: this project has no 3D moves and no taps; use --at or --every', 2);
   }
-  const unique = [...new Set(wanted.map(ms))].sort((a, b) => a - b);
-  if (unique.length > MAX_FRAMES) throw new CliError(`${unique.length} frames requested; at most ${MAX_FRAMES}`, 2);
-  return { times: unique.filter((t) => tl.sourceTime(t) !== null), past: unique.filter((t) => tl.sourceTime(t) === null) };
+  const byFrame = new Map<number, PlannedFrame>();
+  const past = new Set<number>();
+  for (const t of [...wanted].sort((a, b) => a - b)) {
+    const g = snapToExportFrame(t, fps, D);
+    if (!g || tl.sourceTime(g.at) === null) past.add(t);
+    else if (!byFrame.has(g.frame)) byFrame.set(g.frame, { t, ...g });
+  }
+  if (byFrame.size > MAX_FRAMES) throw new CliError(`${byFrame.size} frames requested; at most ${MAX_FRAMES}`, 2);
+  return { frames: [...byFrame.values()].sort((a, b) => a.frame - b.frame), past: [...past], fps };
 }
 
 /** <tmp>/openscreen-frames/<bundle name>-<YYYYMMDD-HHMMSS>, with -2, -3… when taken. */
@@ -110,6 +133,7 @@ export function defaultFramesDir(bundle: string, now = new Date(), root = join(t
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
+const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
 const roundPose = (pose: Pose): Pose => Object.fromEntries(Object.entries(pose).map(([k, v]) => [k, round3(v)])) as unknown as Pose;
 
 /** The 3D pose drawn at `t` and how squarely the screen faces the camera (1 = straight on), when 3D is active. */
@@ -131,7 +155,7 @@ export async function framesCmd(argv: string[], deps: FramesDeps) {
   const errs = validateProject(p);
   if (errs.length) throw new CliError(`project is invalid, fix it before rendering frames: ${errs.join('; ')}`);
   warnProgress(projectWarnings(p, { cursor: readCursorSamples(dir) }));
-  const { times, past } = planFrameTimes(p, a.select);
+  const { frames: planned, past, fps } = planFrameTimes(p, a.select);
   const outDir = resolve(a.out ?? defaultFramesDir(dir));
   if (existsSync(outDir) && !statSync(outDir).isDirectory()) throw new CliError(`--out must be a folder: ${outDir} is a file`);
   mkdirSync(outDir, { recursive: true });
@@ -141,11 +165,12 @@ export async function framesCmd(argv: string[], deps: FramesDeps) {
   let size: unknown = null;
   let sheet: string | null = null;
   let gpu: unknown = null;
-  if (times.length) {
+  if (planned.length) {
     const app = appCommand(a.app);
     const argvApp = [
       '--export', dir,
-      '--frames', times.join(','),
+      // Exact frame times (String keeps every digit of i / fps, so the app draws the export's double).
+      '--frames', planned.map((f) => String(f.at)).join(','),
       '--out', outDir,
       ...(a.scale !== 1 ? ['--scale', String(a.scale)] : []),
       ...(a.sheet ? ['--sheet'] : []),
@@ -159,8 +184,15 @@ export async function framesCmd(argv: string[], deps: FramesDeps) {
     sheet = typeof result.sheet === 'string' ? result.sheet : null;
     gpu = result.gpu ?? null;
   }
+  // The app reports each still by the time it was sent (f.at) and the frame it drew.
+  const sent = new Map(planned.map((f) => [f.at, f]));
   const files = [
-    ...stills.map((s) => (s.path ? { t: s.t, path: s.path, ...poseInfo(p, s.t) } : { t: s.t, error: s.error ?? 'not rendered' })),
+    ...stills.map((s) => {
+      const asked = sent.get(s.t)?.t ?? s.t;
+      if (!s.path) return { t: asked, error: s.error ?? 'not rendered' };
+      const at = s.at ?? s.t;
+      return { t: asked, frame: s.frame ?? null, at: r6(at), path: s.path, ...poseInfo(p, at) };
+    }),
     ...past.map((t) => ({ t, error: 'past the end' })),
   ].sort((x, y) => x.t - y.t);
   const tl = new Timeline(p.recording.duration, p.clips);
@@ -171,6 +203,7 @@ export async function framesCmd(argv: string[], deps: FramesDeps) {
     size,
     quality: a.draft ? 'draft' : 'full',
     scale: a.scale,
+    fps,
     outputDuration: r2(tl.outputDuration),
     phone3d: active,
     files,

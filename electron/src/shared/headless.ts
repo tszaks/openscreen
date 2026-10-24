@@ -26,8 +26,11 @@ export interface HeadlessJob {
 
 /** One rendered still in frames mode. */
 export interface HeadlessFrame {
-  /** Output seconds. */
+  /** The output seconds asked for. */
   t: number;
+  /** The export frame drawn (snapToExportFrame): index and its output time (frame / fps). */
+  frame?: number;
+  at?: number;
   /** The PNG, when it was written. */
   path?: string;
   /** Why there is no PNG (e.g. "past the end"). */
@@ -110,6 +113,28 @@ export function parseHeadlessArgs(argv: string[]): HeadlessJob | { error: string
   if (gif && presets?.length) return { error: '--gif and --preset cannot be combined' };
   if (!presets?.length && !/\.(mp4|gif)$/i.test(out)) return { error: '--out must end in .mp4 or .gif (or pass --preset with a folder)' };
   return { bundleDir, out, gif, ...(presets?.length ? { presets } : {}), timeoutSec: t };
+}
+
+/**
+ * How many frames an export of `outputDuration` output seconds at `fps`
+ * writes: frame i is drawn at output time i / fps for i = 0 … count − 1
+ * (the Editor's renderFrames: `Math.floor(duration * fps)` frames).
+ */
+export const exportFrameCount = (outputDuration: number, fps: number) => Math.floor(outputDuration * fps);
+
+/**
+ * The export frame a still at output time `t` shows: index round(t · fps)
+ * (the last frame for a time between it and the end) and its exact output
+ * time `frame / fps`, the double renderFrames draws with. Null when `t` is at
+ * or past the output end, or the export has no frames. A still drawn at `at`
+ * is the export's frame, pixel for pixel; a time between frames would show a
+ * picture no export contains (moving zooms and 3D moves).
+ */
+export function snapToExportFrame(t: number, fps: number, outputDuration: number): { frame: number; at: number } | null {
+  const count = exportFrameCount(outputDuration, fps);
+  if (!(fps > 0) || count < 1 || !(t >= 0) || !(t < outputDuration)) return null;
+  const frame = Math.min(Math.round(t * fps), count - 1);
+  return { frame, at: frame / fps };
 }
 
 /** The file name of the still at output time `t`: `f-0002.000.png` (sorts by time). */
