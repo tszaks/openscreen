@@ -1,0 +1,256 @@
+{
+  "name": "Launch demo",
+  "recording": {
+    "screenVideoFile": "screen.webm",
+    "cameraVideoFile": "camera.webm",
+    "audioFile": "audio.webm",
+    "sourceKind": "window",
+    "sourceSize": {
+      "width": 1600,
+      "height": 1000
+    },
+    "duration": 64.25,
+    "cameraOffset": -0.2,
+    "phoneVideoFile": "phone.mov",
+    "phoneOffset": 1.75,
+    "phoneSize": {
+      "width": 1206,
+      "height": 2622
+    },
+    "phoneDuration": 60.1
+  },
+  "clips": [
+    {
+      "id": "c1",
+      "sourceStart": 0,
+      "sourceEnd": 20,
+      "speed": 1
+    },
+    {
+      "id": "c2",
+      "sourceStart": 24,
+      "sourceEnd": 64.25,
+      "speed": 1.25
+    }
+  ],
+  "zoomKeyframes": [],
+  "manualZooms": [
+    {
+      "holdStart": 10,
+      "holdEnd": 12,
+      "inStart": 9.4,
+      "outEnd": 12.6,
+      "center": {
+        "x": 0.3,
+        "y": 0.3
+      },
+      "scale": 2
+    },
+    {
+      "holdStart": 30,
+      "holdEnd": 31,
+      "inStart": 29.5,
+      "outEnd": 31.5,
+      "center": {
+        "x": 0.7,
+        "y": 0.6
+      },
+      "scale": 1.5
+    }
+  ],
+  "zoom": {
+    "autofocus": true,
+    "dwell": true,
+    "depth": 2,
+    "motionEvents": [],
+    "fromTaps": true
+  },
+  "audio": {
+    "clickSounds": false,
+    "voiceCleanup": true
+  },
+  "style": {
+    "paddingFraction": 0.1,
+    "cornerRadius": 18,
+    "shadowRadius": 50,
+    "shadowOpacity": 0.4,
+    "cropRect": {
+      "x": 0,
+      "y": 0.05,
+      "w": 1,
+      "h": 0.9
+    },
+    "background": {
+      "kind": "mesh",
+      "baseHex": "#0b1020",
+      "blobs": [
+        {
+          "x": 0.1,
+          "y": 0.2,
+          "r": 0.5,
+          "hex": "#ff6b6b"
+        }
+      ],
+      "grain": 0.05
+    },
+    "deviceFrame": "none",
+    "cursorSize": 0.014,
+    "cursorTrail": false,
+    "cursorHex": "#ffffff",
+    "cursorShow": true,
+    "cursorOpacity": 0.7,
+    "contentTransform": {
+      "x": 0.45,
+      "y": 0.5,
+      "scale": 0.95
+    }
+  },
+  "cameraOverlay": {
+    "enabled": true,
+    "corner": "bottomLeft",
+    "position": {
+      "x": 0.1,
+      "y": 0.85
+    },
+    "sizeFraction": 0.25,
+    "circular": false
+  },
+  "phoneOverlay": {
+    "enabled": true,
+    "layout": "corner",
+    "corner": "topRight",
+    "size": 0.6,
+    "frame": true,
+    "modelId": "iphone-16-pro",
+    "finishId": "desert-titanium",
+    "shadow": true,
+    "sound": true,
+    "transform": {
+      "x": 0.8,
+      "y": 0.3,
+      "scale": 1.1
+    }
+  },
+  "captions": [
+    {
+      "id": "k1",
+      "start": 0.5,
+      "end": 2,
+      "text": "Welcome",
+      "words": [
+        {
+          "start": 0.5,
+          "end": 1,
+          "text": "Wel"
+        },
+        {
+          "start": 1,
+          "end": 2,
+          "text": "come"
+        }
+      ]
+    },
+    {
+      "id": "k2",
+      "start": 40,
+      "end": 44,
+      "text": "Bye"
+    }
+  ],
+  "chapters": [
+    {
+      "id": "h1",
+      "start": 0,
+      "title": "Intro"
+    },
+    {
+      "id": "h2",
+      "start": 25,
+      "title": "Demo"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "a1",
+      "start": 5,
+      "end": 9,
+      "text": "New!",
+      "band": 0,
+      "hex": "#ffcc00",
+      "transform": {
+        "x": 0.2,
+        "y": 0.1,
+        "scale": 1.5
+      }
+    },
+    {
+      "id": "a2",
+      "start": 12,
+      "end": 14,
+      "text": "Hidden",
+      "band": 1,
+      "hex": "#ffffff",
+      "hidden": true
+    }
+  ],
+  "exportPreset": "original",
+  "outputFPS": 60,
+  "device": {
+    "frame": false
+  },
+  "taps": [],
+  "tapStyle": {
+    "show": true,
+    "style": "ripple",
+    "color": "white",
+    "sizePt": 52
+  },
+  "waits": [],
+  "tapsAnalyzed": false,
+  "layout": {
+    "presetId": "none",
+    "background": "style",
+    "titleCard": {
+      "title": "Launch",
+      "subtitle": "v2",
+      "transform": {
+        "x": 0.5,
+        "y": 0.9,
+        "scale": 1
+      },
+      "hidden": true
+    }
+  },
+  "tracks": [
+    {
+      "id": "track-1",
+      "kind": "audio",
+      "name": "Music",
+      "muted": false,
+      "volume": 0.8,
+      "duck": true,
+      "items": [
+        {
+          "id": "m1",
+          "file": "audio/m1.mp3",
+          "name": "theme.mp3",
+          "fileDuration": 120,
+          "start": 0,
+          "sourceIn": 5,
+          "sourceOut": 65,
+          "gain": 0.6,
+          "fadeIn": 1,
+          "fadeOut": 2,
+          "loop": false
+        }
+      ]
+    }
+  ],
+  "layerOrder": [
+    "content",
+    "phone",
+    "camera",
+    "text:a1",
+    "text:a2"
+  ]
+}

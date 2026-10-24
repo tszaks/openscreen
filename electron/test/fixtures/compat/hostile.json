@@ -1,0 +1,94 @@
+{
+  "recording": {
+    "screenVideoFile": "screen.webm",
+    "sourceKind": "display",
+    "sourceSize": {
+      "width": 1920,
+      "height": 1080
+    },
+    "duration": 10,
+    "phoneVideoFile": "../../etc/passwd"
+  },
+  "clips": [
+    {
+      "id": "c1",
+      "sourceStart": 0,
+      "sourceEnd": 10,
+      "speed": 1
+    }
+  ],
+  "zoomKeyframes": [],
+  "zoom": {
+    "autofocus": "yes",
+    "depth": 99
+  },
+  "style": {
+    "paddingFraction": 0.08,
+    "cornerRadius": 24,
+    "shadowRadius": 60,
+    "shadowOpacity": 0.35,
+    "cropRect": null,
+    "background": {
+      "kind": "gradient",
+      "startHex": "#000000",
+      "endHex": "#ffffff",
+      "angle": 0
+    },
+    "cursorSize": 0.012,
+    "cursorTrail": false,
+    "cursorHex": "#ffffff"
+  },
+  "cameraOverlay": {
+    "enabled": false,
+    "corner": "bottomRight",
+    "sizeFraction": 0.325,
+    "circular": true
+  },
+  "phoneOverlay": {
+    "enabled": true,
+    "layout": "sideways",
+    "corner": "middle",
+    "size": "big",
+    "frame": 1,
+    "sound": "yes",
+    "modelId": 42
+  },
+  "captions": [],
+  "exportPreset": "p1080",
+  "outputFPS": 60,
+  "tapStyle": {
+    "sizePt": 80
+  },
+  "layout": {
+    "presetId": "no-such-preset"
+  },
+  "tracks": [
+    {
+      "id": "t",
+      "kind": "video"
+    },
+    {
+      "kind": "audio",
+      "volume": 7,
+      "items": [
+        {
+          "file": "/abs/path.mp3",
+          "start": 1
+        },
+        {
+          "file": "audio/ok.mp3",
+          "start": -4,
+          "gain": "loud",
+          "sourceIn": 3,
+          "sourceOut": 1
+        },
+        null
+      ]
+    },
+    "junk"
+  ],
+  "layerOrder": [
+    "content",
+    "bogus"
+  ]
+}

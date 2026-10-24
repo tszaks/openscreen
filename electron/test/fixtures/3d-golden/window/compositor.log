@@ -1,0 +1,679 @@
+# fixture window canvas 1440x1080
+canvas#0 = createElement(canvas)
+canvas#0.width = 1440
+canvas#0.height = 1080
+# render t=0.25
+canvas#0.fillStyle = "#101828"
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(288,270,0,288,270,864)
+gradient#0<radial(288,270,0,288,270,864)>.addColorStop(0,"rgba(124,58,237,1)")
+gradient#0.addColorStop(0.25,"rgba(124,58,237,0.85)")
+gradient#0.addColorStop(0.5,"rgba(124,58,237,0.5)")
+gradient#0.addColorStop(0.75,"rgba(124,58,237,0.16)")
+gradient#0.addColorStop(1,"rgba(124,58,237,0)")
+canvas#0.fillStyle = gradient#0
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(1224,864,0,1224,864,720)
+gradient#1<radial(1224,864,0,1224,864,720)>.addColorStop(0,"rgba(6,182,212,1)")
+gradient#1.addColorStop(0.25,"rgba(6,182,212,0.85)")
+gradient#1.addColorStop(0.5,"rgba(6,182,212,0.5)")
+gradient#1.addColorStop(0.75,"rgba(6,182,212,0.16)")
+gradient#1.addColorStop(1,"rgba(6,182,212,0)")
+canvas#0.fillStyle = gradient#1
+canvas#0.fillRect(0,0,1440,1080)
+canvas#1 = createElement(canvas)
+canvas#1.width = 256
+canvas#1.height = 256
+canvas#1.createImageData(256,256)
+canvas#1.putImageData(imageData<256x256,fnv1a:496e28a8>,0,0)
+canvas#0.createPattern(canvas#1,"repeat")
+canvas#0.save()
+canvas#0.globalAlpha = 0.08
+canvas#0.fillStyle = pattern#0<canvas#1,"repeat">
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.restore()
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 44
+canvas#0.beginPath()
+canvas#0.moveTo(173.41714285714284,184.03200000000004)
+canvas#0.arcTo(1216.182857142857,184.03200000000004,1216.182857142857,939.168,36)
+canvas#0.arcTo(1216.182857142857,939.168,137.41714285714284,939.168,36)
+canvas#0.arcTo(137.41714285714284,939.168,137.41714285714284,184.03200000000004,36)
+canvas#0.arcTo(137.41714285714284,184.03200000000004,1216.182857142857,184.03200000000004,36)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,48,57.6,864,604.8,137.41714285714284,184.03200000000004,1078.7657142857142,755.136)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffffffd9"
+canvas#0.beginPath()
+canvas#0.ellipse(339.68571428571425,437.36214857142863,6.48,6.48,0,0,6.283185307179586)
+canvas#0.fill()
+# state {contentRect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},contentBase:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},screenMap:{source:{x:77.48571428571427,y:112.11428571428574,w:1198.6285714285714,h:898.9714285714286},screen:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136}},cameraRect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},cameraBasis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},base:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}},{id:"camera",rect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},round:false,basis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}}]}
+# render t=1.3
+canvas#0.fillStyle = "#101828"
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(288,270,0,288,270,864)
+gradient#2<radial(288,270,0,288,270,864)>.addColorStop(0,"rgba(124,58,237,1)")
+gradient#2.addColorStop(0.25,"rgba(124,58,237,0.85)")
+gradient#2.addColorStop(0.5,"rgba(124,58,237,0.5)")
+gradient#2.addColorStop(0.75,"rgba(124,58,237,0.16)")
+gradient#2.addColorStop(1,"rgba(124,58,237,0)")
+canvas#0.fillStyle = gradient#2
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(1224,864,0,1224,864,720)
+gradient#3<radial(1224,864,0,1224,864,720)>.addColorStop(0,"rgba(6,182,212,1)")
+gradient#3.addColorStop(0.25,"rgba(6,182,212,0.85)")
+gradient#3.addColorStop(0.5,"rgba(6,182,212,0.5)")
+gradient#3.addColorStop(0.75,"rgba(6,182,212,0.16)")
+gradient#3.addColorStop(1,"rgba(6,182,212,0)")
+canvas#0.fillStyle = gradient#3
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createPattern(canvas#1,"repeat")
+canvas#0.save()
+canvas#0.globalAlpha = 0.08
+canvas#0.fillStyle = pattern#1<canvas#1,"repeat">
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.restore()
+canvas#0.font = "800 59.4px -apple-system, sans-serif"
+canvas#0.measureText("Moved by hand")
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 44
+canvas#0.beginPath()
+canvas#0.moveTo(173.41714285714284,184.03200000000004)
+canvas#0.arcTo(1216.182857142857,184.03200000000004,1216.182857142857,939.168,36)
+canvas#0.arcTo(1216.182857142857,939.168,137.41714285714284,939.168,36)
+canvas#0.arcTo(137.41714285714284,939.168,137.41714285714284,184.03200000000004,36)
+canvas#0.arcTo(137.41714285714284,184.03200000000004,1216.182857142857,184.03200000000004,36)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,50.12573446497976,60.471036205485895,856.6669310700404,599.6668517490282,137.41714285714284,184.03200000000004,1078.7657142857142,755.136)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffffffd9"
+canvas#0.beginPath()
+canvas#0.ellipse(433.94027809536,598.2992682463089,6.48,6.48,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "800 77.22px -apple-system, sans-serif"
+canvas#0.textBaseline = "middle"
+canvas#0.lineWidth = 9.266399999999999
+canvas#0.strokeStyle = "rgba(0,0,0,0.55)"
+canvas#0.strokeText("Moved by hand",469.035,129.6)
+canvas#0.fillStyle = "#fde047"
+canvas#0.fillText("Moved by hand",469.035,129.6)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 17.6
+canvas#0.shadowOffsetY = 4.924799999999999
+canvas#0.fillStyle = "#000"
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.restore()
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:camera,80,0,480,480,136.07999999999998,719.28,246.23999999999998,246.23999999999998)
+canvas#0.restore()
+# state {contentRect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},contentBase:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},screenMap:{source:{x:74.29585057535999,y:107.88329132470882,w:1208.888832,h:906.6666240000002},screen:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136}},cameraRect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},cameraBasis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},base:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}},{id:"text:ann-1",rect:{x:469.035,y:83.268,w:501.92999999999995,h:92.664},base:{x:483.75,y:767.60352,w:386.09999999999997,h:71.28}},{id:"camera",rect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},round:false,basis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}}]}
+# render t=1.75
+canvas#0.fillStyle = "#101828"
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(288,270,0,288,270,864)
+gradient#4<radial(288,270,0,288,270,864)>.addColorStop(0,"rgba(124,58,237,1)")
+gradient#4.addColorStop(0.25,"rgba(124,58,237,0.85)")
+gradient#4.addColorStop(0.5,"rgba(124,58,237,0.5)")
+gradient#4.addColorStop(0.75,"rgba(124,58,237,0.16)")
+gradient#4.addColorStop(1,"rgba(124,58,237,0)")
+canvas#0.fillStyle = gradient#4
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(1224,864,0,1224,864,720)
+gradient#5<radial(1224,864,0,1224,864,720)>.addColorStop(0,"rgba(6,182,212,1)")
+gradient#5.addColorStop(0.25,"rgba(6,182,212,0.85)")
+gradient#5.addColorStop(0.5,"rgba(6,182,212,0.5)")
+gradient#5.addColorStop(0.75,"rgba(6,182,212,0.16)")
+gradient#5.addColorStop(1,"rgba(6,182,212,0)")
+canvas#0.fillStyle = gradient#5
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createPattern(canvas#1,"repeat")
+canvas#0.save()
+canvas#0.globalAlpha = 0.08
+canvas#0.fillStyle = pattern#2<canvas#1,"repeat">
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.restore()
+canvas#0.font = "800 59.4px -apple-system, sans-serif"
+canvas#0.measureText("Moved by hand")
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 44
+canvas#0.beginPath()
+canvas#0.moveTo(173.41714285714284,184.03200000000004)
+canvas#0.arcTo(1216.182857142857,184.03200000000004,1216.182857142857,939.168,36)
+canvas#0.arcTo(1216.182857142857,939.168,137.41714285714284,939.168,36)
+canvas#0.arcTo(137.41714285714284,939.168,137.41714285714284,184.03200000000004,36)
+canvas#0.arcTo(137.41714285714284,184.03200000000004,1216.182857142857,184.03200000000004,36)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,84,244.36799999999997,432,302.4,137.41714285714284,184.03200000000004,1078.7657142857142,755.136)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffffffd9"
+canvas#0.beginPath()
+canvas#0.ellipse(721.7485714285716,554.9476114285717,6.48,6.48,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.strokeStyle = "rgba(255,255,255,0.4821428571428571)"
+canvas#0.lineWidth = 2.16
+canvas#0.beginPath()
+canvas#0.ellipse(676.8,561.6000000000001,30.760714285714283,30.760714285714283,0,0,6.283185307179586)
+canvas#0.stroke()
+canvas#0.fillStyle = "rgba(255,255,255,0.16874999999999998)"
+canvas#0.beginPath()
+canvas#0.ellipse(676.8,561.6000000000001,13.842321428571427,13.842321428571427,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "800 77.22px -apple-system, sans-serif"
+canvas#0.textBaseline = "middle"
+canvas#0.lineWidth = 9.266399999999999
+canvas#0.strokeStyle = "rgba(0,0,0,0.55)"
+canvas#0.strokeText("Moved by hand",469.035,129.6)
+canvas#0.fillStyle = "#fde047"
+canvas#0.fillText("Moved by hand",469.035,129.6)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 17.6
+canvas#0.shadowOffsetY = 4.924799999999999
+canvas#0.fillStyle = "#000"
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.restore()
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:camera,80,0,480,480,136.07999999999998,719.28,246.23999999999998,246.23999999999998)
+canvas#0.restore()
+# state {contentRect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},contentBase:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},screenMap:{source:{x:-72.34285714285716,y:-426.1898057142856,w:2397.2571428571428,h:1797.9428571428573},screen:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136}},cameraRect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},cameraBasis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},base:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}},{id:"text:ann-1",rect:{x:469.035,y:83.268,w:501.92999999999995,h:92.664},base:{x:483.75,y:767.60352,w:386.09999999999997,h:71.28}},{id:"camera",rect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},round:false,basis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}}]}
+# render t=2.4
+canvas#0.fillStyle = "#101828"
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(288,270,0,288,270,864)
+gradient#6<radial(288,270,0,288,270,864)>.addColorStop(0,"rgba(124,58,237,1)")
+gradient#6.addColorStop(0.25,"rgba(124,58,237,0.85)")
+gradient#6.addColorStop(0.5,"rgba(124,58,237,0.5)")
+gradient#6.addColorStop(0.75,"rgba(124,58,237,0.16)")
+gradient#6.addColorStop(1,"rgba(124,58,237,0)")
+canvas#0.fillStyle = gradient#6
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(1224,864,0,1224,864,720)
+gradient#7<radial(1224,864,0,1224,864,720)>.addColorStop(0,"rgba(6,182,212,1)")
+gradient#7.addColorStop(0.25,"rgba(6,182,212,0.85)")
+gradient#7.addColorStop(0.5,"rgba(6,182,212,0.5)")
+gradient#7.addColorStop(0.75,"rgba(6,182,212,0.16)")
+gradient#7.addColorStop(1,"rgba(6,182,212,0)")
+canvas#0.fillStyle = gradient#7
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createPattern(canvas#1,"repeat")
+canvas#0.save()
+canvas#0.globalAlpha = 0.08
+canvas#0.fillStyle = pattern#3<canvas#1,"repeat">
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.restore()
+canvas#0.font = "800 59.4px -apple-system, sans-serif"
+canvas#0.measureText("Moved by hand")
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 44
+canvas#0.beginPath()
+canvas#0.moveTo(173.41714285714284,184.03200000000004)
+canvas#0.arcTo(1216.182857142857,184.03200000000004,1216.182857142857,939.168,36)
+canvas#0.arcTo(1216.182857142857,939.168,137.41714285714284,939.168,36)
+canvas#0.arcTo(137.41714285714284,939.168,137.41714285714284,184.03200000000004,36)
+canvas#0.arcTo(137.41714285714284,184.03200000000004,1216.182857142857,184.03200000000004,36)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,84,244.36799999999997,432,302.4,137.41714285714284,184.03200000000004,1078.7657142857142,755.136)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffffffd9"
+canvas#0.beginPath()
+canvas#0.ellipse(838.6148571428571,416.8656000000001,6.48,6.48,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "800 77.22px -apple-system, sans-serif"
+canvas#0.textBaseline = "middle"
+canvas#0.lineWidth = 9.266399999999999
+canvas#0.strokeStyle = "rgba(0,0,0,0.55)"
+canvas#0.strokeText("Moved by hand",469.035,129.6)
+canvas#0.fillStyle = "#fde047"
+canvas#0.fillText("Moved by hand",469.035,129.6)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 17.6
+canvas#0.shadowOffsetY = 4.924799999999999
+canvas#0.fillStyle = "#000"
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.restore()
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:camera,80,0,480,480,136.07999999999998,719.28,246.23999999999998,246.23999999999998)
+canvas#0.restore()
+# state {contentRect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},contentBase:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},screenMap:{source:{x:-72.34285714285716,y:-426.1898057142856,w:2397.2571428571428,h:1797.9428571428573},screen:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136}},cameraRect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},cameraBasis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},base:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}},{id:"text:ann-1",rect:{x:469.035,y:83.268,w:501.92999999999995,h:92.664},base:{x:483.75,y:767.60352,w:386.09999999999997,h:71.28}},{id:"camera",rect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},round:false,basis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}}]}
+# render t=3.1
+canvas#0.fillStyle = "#101828"
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(288,270,0,288,270,864)
+gradient#8<radial(288,270,0,288,270,864)>.addColorStop(0,"rgba(124,58,237,1)")
+gradient#8.addColorStop(0.25,"rgba(124,58,237,0.85)")
+gradient#8.addColorStop(0.5,"rgba(124,58,237,0.5)")
+gradient#8.addColorStop(0.75,"rgba(124,58,237,0.16)")
+gradient#8.addColorStop(1,"rgba(124,58,237,0)")
+canvas#0.fillStyle = gradient#8
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(1224,864,0,1224,864,720)
+gradient#9<radial(1224,864,0,1224,864,720)>.addColorStop(0,"rgba(6,182,212,1)")
+gradient#9.addColorStop(0.25,"rgba(6,182,212,0.85)")
+gradient#9.addColorStop(0.5,"rgba(6,182,212,0.5)")
+gradient#9.addColorStop(0.75,"rgba(6,182,212,0.16)")
+gradient#9.addColorStop(1,"rgba(6,182,212,0)")
+canvas#0.fillStyle = gradient#9
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createPattern(canvas#1,"repeat")
+canvas#0.save()
+canvas#0.globalAlpha = 0.08
+canvas#0.fillStyle = pattern#4<canvas#1,"repeat">
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.restore()
+canvas#0.font = "800 59.4px -apple-system, sans-serif"
+canvas#0.measureText("Moved by hand")
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 44
+canvas#0.beginPath()
+canvas#0.moveTo(173.41714285714284,184.03200000000004)
+canvas#0.arcTo(1216.182857142857,184.03200000000004,1216.182857142857,939.168,36)
+canvas#0.arcTo(1216.182857142857,939.168,137.41714285714284,939.168,36)
+canvas#0.arcTo(137.41714285714284,939.168,137.41714285714284,184.03200000000004,36)
+canvas#0.arcTo(137.41714285714284,184.03200000000004,1216.182857142857,184.03200000000004,36)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,48,57.6,864,604.8,137.41714285714284,184.03200000000004,1078.7657142857142,755.136)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffffffd9"
+canvas#0.beginPath()
+canvas#0.ellipse(595.8925714285714,391.1550171428572,6.48,6.48,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "800 77.22px -apple-system, sans-serif"
+canvas#0.textBaseline = "middle"
+canvas#0.lineWidth = 9.266399999999999
+canvas#0.strokeStyle = "rgba(0,0,0,0.55)"
+canvas#0.strokeText("Moved by hand",469.035,129.6)
+canvas#0.fillStyle = "#fde047"
+canvas#0.fillText("Moved by hand",469.035,129.6)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 17.6
+canvas#0.shadowOffsetY = 4.924799999999999
+canvas#0.fillStyle = "#000"
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.restore()
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:camera,80,0,480,480,136.07999999999998,719.28,246.23999999999998,246.23999999999998)
+canvas#0.restore()
+# state {contentRect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},contentBase:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},screenMap:{source:{x:77.48571428571427,y:112.11428571428574,w:1198.6285714285714,h:898.9714285714286},screen:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136}},cameraRect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},cameraBasis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},base:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}},{id:"text:ann-1",rect:{x:469.035,y:83.268,w:501.92999999999995,h:92.664},base:{x:483.75,y:767.60352,w:386.09999999999997,h:71.28}},{id:"camera",rect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},round:false,basis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}}]}
+# render t=4.25
+canvas#0.fillStyle = "#101828"
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(288,270,0,288,270,864)
+gradient#10<radial(288,270,0,288,270,864)>.addColorStop(0,"rgba(124,58,237,1)")
+gradient#10.addColorStop(0.25,"rgba(124,58,237,0.85)")
+gradient#10.addColorStop(0.5,"rgba(124,58,237,0.5)")
+gradient#10.addColorStop(0.75,"rgba(124,58,237,0.16)")
+gradient#10.addColorStop(1,"rgba(124,58,237,0)")
+canvas#0.fillStyle = gradient#10
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(1224,864,0,1224,864,720)
+gradient#11<radial(1224,864,0,1224,864,720)>.addColorStop(0,"rgba(6,182,212,1)")
+gradient#11.addColorStop(0.25,"rgba(6,182,212,0.85)")
+gradient#11.addColorStop(0.5,"rgba(6,182,212,0.5)")
+gradient#11.addColorStop(0.75,"rgba(6,182,212,0.16)")
+gradient#11.addColorStop(1,"rgba(6,182,212,0)")
+canvas#0.fillStyle = gradient#11
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createPattern(canvas#1,"repeat")
+canvas#0.save()
+canvas#0.globalAlpha = 0.08
+canvas#0.fillStyle = pattern#5<canvas#1,"repeat">
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.restore()
+canvas#0.font = "800 59.4px -apple-system, sans-serif"
+canvas#0.measureText("Moved by hand")
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 44
+canvas#0.beginPath()
+canvas#0.moveTo(173.41714285714284,184.03200000000004)
+canvas#0.arcTo(1216.182857142857,184.03200000000004,1216.182857142857,939.168,36)
+canvas#0.arcTo(1216.182857142857,939.168,137.41714285714284,939.168,36)
+canvas#0.arcTo(137.41714285714284,939.168,137.41714285714284,184.03200000000004,36)
+canvas#0.arcTo(137.41714285714284,184.03200000000004,1216.182857142857,184.03200000000004,36)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,99.7605852465187,343.41365967256297,416.2288295069628,291.36018065487394,137.41714285714284,184.03200000000004,1078.7657142857142,755.136)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffffffd9"
+canvas#0.beginPath()
+canvas#0.ellipse(1169.5585906808033,-563.1666770641739,6.48,6.48,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "800 77.22px -apple-system, sans-serif"
+canvas#0.textBaseline = "middle"
+canvas#0.lineWidth = 9.266399999999999
+canvas#0.strokeStyle = "rgba(0,0,0,0.55)"
+canvas#0.strokeText("Moved by hand",469.035,129.6)
+canvas#0.fillStyle = "#fde047"
+canvas#0.fillText("Moved by hand",469.035,129.6)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 17.6
+canvas#0.shadowOffsetY = 4.924799999999999
+canvas#0.fillStyle = "#000"
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.restore()
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:camera,80,0,480,480,136.07999999999998,719.28,246.23999999999998,246.23999999999998)
+canvas#0.restore()
+# state {contentRect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},contentBase:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},screenMap:{source:{x:-121.13846735491086,y:-706.0141851981024,w:2488.0907142857136,h:1866.0680357142855},screen:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136}},cameraRect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},cameraBasis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},base:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}},{id:"text:ann-1",rect:{x:469.035,y:83.268,w:501.92999999999995,h:92.664},base:{x:483.75,y:767.60352,w:386.09999999999997,h:71.28}},{id:"camera",rect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},round:false,basis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}}]}
+# render t=5.7
+canvas#0.fillStyle = "#101828"
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(288,270,0,288,270,864)
+gradient#12<radial(288,270,0,288,270,864)>.addColorStop(0,"rgba(124,58,237,1)")
+gradient#12.addColorStop(0.25,"rgba(124,58,237,0.85)")
+gradient#12.addColorStop(0.5,"rgba(124,58,237,0.5)")
+gradient#12.addColorStop(0.75,"rgba(124,58,237,0.16)")
+gradient#12.addColorStop(1,"rgba(124,58,237,0)")
+canvas#0.fillStyle = gradient#12
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(1224,864,0,1224,864,720)
+gradient#13<radial(1224,864,0,1224,864,720)>.addColorStop(0,"rgba(6,182,212,1)")
+gradient#13.addColorStop(0.25,"rgba(6,182,212,0.85)")
+gradient#13.addColorStop(0.5,"rgba(6,182,212,0.5)")
+gradient#13.addColorStop(0.75,"rgba(6,182,212,0.16)")
+gradient#13.addColorStop(1,"rgba(6,182,212,0)")
+canvas#0.fillStyle = gradient#13
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createPattern(canvas#1,"repeat")
+canvas#0.save()
+canvas#0.globalAlpha = 0.08
+canvas#0.fillStyle = pattern#6<canvas#1,"repeat">
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.restore()
+canvas#0.font = "800 59.4px -apple-system, sans-serif"
+canvas#0.measureText("Moved by hand")
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 44
+canvas#0.beginPath()
+canvas#0.moveTo(173.41714285714284,184.03200000000004)
+canvas#0.arcTo(1216.182857142857,184.03200000000004,1216.182857142857,939.168,36)
+canvas#0.arcTo(1216.182857142857,939.168,137.41714285714284,939.168,36)
+canvas#0.arcTo(137.41714285714284,939.168,137.41714285714284,184.03200000000004,36)
+canvas#0.arcTo(137.41714285714284,184.03200000000004,1216.182857142857,184.03200000000004,36)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,100.88218521124918,350.23304816639313,393.9985925404644,275.79901477832504,137.41714285714284,184.03200000000004,1078.7657142857142,755.136)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffffffd9"
+canvas#0.beginPath()
+canvas#0.ellipse(1510.5698239597625,-454.9529172805218,6.48,6.48,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.strokeStyle = "rgba(255,255,255,0.21428571428571427)"
+canvas#0.lineWidth = 2.16
+canvas#0.beginPath()
+canvas#0.ellipse(1412.0020461819847,-618.969699502744,46.67142857142857,46.67142857142857,0,0,6.283185307179586)
+canvas#0.stroke()
+canvas#0.fillStyle = "rgba(255,255,255,0.075)"
+canvas#0.beginPath()
+canvas#0.ellipse(1412.0020461819847,-618.969699502744,21.002142857142857,21.002142857142857,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "800 77.22px -apple-system, sans-serif"
+canvas#0.textBaseline = "middle"
+canvas#0.lineWidth = 9.266399999999999
+canvas#0.strokeStyle = "rgba(0,0,0,0.55)"
+canvas#0.strokeText("Moved by hand",469.035,129.6)
+canvas#0.fillStyle = "#fde047"
+canvas#0.fillText("Moved by hand",469.035,129.6)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 17.6
+canvas#0.shadowOffsetY = 4.924799999999999
+canvas#0.fillStyle = "#000"
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.restore()
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:camera,80,0,480,480,136.07999999999998,719.28,246.23999999999998,246.23999999999998)
+canvas#0.restore()
+canvas#0.font = "600 34.56px -apple-system, sans-serif"
+canvas#0.measureText("Captions ride")
+canvas#0.measureText("Captions ride on")
+canvas#0.measureText("Captions ride on the")
+canvas#0.measureText("Captions ride on the recording")
+canvas#0.measureText("Captions ride on the recording")
+canvas#0.fillStyle = "rgba(0,0,0,0.65)"
+canvas#0.beginPath()
+canvas#0.moveTo(416.39039999999994,842.4864)
+canvas#0.arcTo(953.28,842.4864,953.28,906.768,16.070400000000003)
+canvas#0.arcTo(953.28,906.768,400.31999999999994,906.768,16.070400000000003)
+canvas#0.arcTo(400.31999999999994,906.768,400.31999999999994,842.4864,16.070400000000003)
+canvas#0.arcTo(400.31999999999994,842.4864,953.28,842.4864,16.070400000000003)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.fillStyle = "#fff"
+canvas#0.textBaseline = "middle"
+canvas#0.textAlign = "center"
+canvas#0.fillText("Captions ride on the recording",676.8,874.6272)
+canvas#0.textAlign = "start"
+# state {contentRect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},contentBase:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},screenMap:{source:{x:-138.79765752171915,y:-774.9039239471886,w:2628.4740740740745,h:1971.355555555556},screen:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136}},cameraRect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},cameraBasis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},base:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}},{id:"text:ann-1",rect:{x:469.035,y:83.268,w:501.92999999999995,h:92.664},base:{x:483.75,y:767.60352,w:386.09999999999997,h:71.28}},{id:"camera",rect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},round:false,basis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}}]}
+# render t=6.95
+canvas#0.fillStyle = "#101828"
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(288,270,0,288,270,864)
+gradient#14<radial(288,270,0,288,270,864)>.addColorStop(0,"rgba(124,58,237,1)")
+gradient#14.addColorStop(0.25,"rgba(124,58,237,0.85)")
+gradient#14.addColorStop(0.5,"rgba(124,58,237,0.5)")
+gradient#14.addColorStop(0.75,"rgba(124,58,237,0.16)")
+gradient#14.addColorStop(1,"rgba(124,58,237,0)")
+canvas#0.fillStyle = gradient#14
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createRadialGradient(1224,864,0,1224,864,720)
+gradient#15<radial(1224,864,0,1224,864,720)>.addColorStop(0,"rgba(6,182,212,1)")
+gradient#15.addColorStop(0.25,"rgba(6,182,212,0.85)")
+gradient#15.addColorStop(0.5,"rgba(6,182,212,0.5)")
+gradient#15.addColorStop(0.75,"rgba(6,182,212,0.16)")
+gradient#15.addColorStop(1,"rgba(6,182,212,0)")
+canvas#0.fillStyle = gradient#15
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.createPattern(canvas#1,"repeat")
+canvas#0.save()
+canvas#0.globalAlpha = 0.08
+canvas#0.fillStyle = pattern#7<canvas#1,"repeat">
+canvas#0.fillRect(0,0,1440,1080)
+canvas#0.restore()
+canvas#0.font = "800 59.4px -apple-system, sans-serif"
+canvas#0.measureText("Moved by hand")
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 44
+canvas#0.beginPath()
+canvas#0.moveTo(173.41714285714284,184.03200000000004)
+canvas#0.arcTo(1216.182857142857,184.03200000000004,1216.182857142857,939.168,36)
+canvas#0.arcTo(1216.182857142857,939.168,137.41714285714284,939.168,36)
+canvas#0.arcTo(137.41714285714284,939.168,137.41714285714284,184.03200000000004,36)
+canvas#0.arcTo(137.41714285714284,184.03200000000004,1216.182857142857,184.03200000000004,36)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:screen,48,57.6,864,604.8,137.41714285714284,184.03200000000004,1078.7657142857142,755.136)
+canvas#0.shadowColor = "transparent"
+canvas#0.shadowBlur = 0
+canvas#0.restore()
+canvas#0.fillStyle = "#ffffffd9"
+canvas#0.beginPath()
+canvas#0.ellipse(941.9965714285714,520.6069028571428,6.48,6.48,0,0,6.283185307179586)
+canvas#0.fill()
+canvas#0.font = "800 77.22px -apple-system, sans-serif"
+canvas#0.textBaseline = "middle"
+canvas#0.lineWidth = 9.266399999999999
+canvas#0.strokeStyle = "rgba(0,0,0,0.55)"
+canvas#0.strokeText("Moved by hand",469.035,129.6)
+canvas#0.fillStyle = "#fde047"
+canvas#0.fillText("Moved by hand",469.035,129.6)
+canvas#0.save()
+canvas#0.shadowColor = "rgba(0,0,0,0.5)"
+canvas#0.shadowBlur = 17.6
+canvas#0.shadowOffsetY = 4.924799999999999
+canvas#0.fillStyle = "#000"
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.restore()
+canvas#0.save()
+canvas#0.beginPath()
+canvas#0.beginPath()
+canvas#0.moveTo(180.40319999999997,719.28)
+canvas#0.arcTo(382.31999999999994,719.28,382.31999999999994,965.52,44.32319999999999)
+canvas#0.arcTo(382.31999999999994,965.52,136.07999999999998,965.52,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,965.52,136.07999999999998,719.28,44.32319999999999)
+canvas#0.arcTo(136.07999999999998,719.28,382.31999999999994,719.28,44.32319999999999)
+canvas#0.closePath()
+canvas#0.clip()
+canvas#0.drawImage(video:camera,80,0,480,480,136.07999999999998,719.28,246.23999999999998,246.23999999999998)
+canvas#0.restore()
+canvas#0.font = "600 34.56px -apple-system, sans-serif"
+canvas#0.measureText("Captions ride")
+canvas#0.measureText("Captions ride on")
+canvas#0.measureText("Captions ride on the")
+canvas#0.measureText("Captions ride on the recording")
+canvas#0.measureText("Captions ride on the recording")
+canvas#0.fillStyle = "rgba(0,0,0,0.65)"
+canvas#0.beginPath()
+canvas#0.moveTo(416.39039999999994,842.4864)
+canvas#0.arcTo(953.28,842.4864,953.28,906.768,16.070400000000003)
+canvas#0.arcTo(953.28,906.768,400.31999999999994,906.768,16.070400000000003)
+canvas#0.arcTo(400.31999999999994,906.768,400.31999999999994,842.4864,16.070400000000003)
+canvas#0.arcTo(400.31999999999994,842.4864,953.28,842.4864,16.070400000000003)
+canvas#0.closePath()
+canvas#0.fill()
+canvas#0.fillStyle = "#fff"
+canvas#0.textBaseline = "middle"
+canvas#0.textAlign = "center"
+canvas#0.fillText("Captions ride on the recording",676.8,874.6272)
+canvas#0.textAlign = "start"
+# state {contentRect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},contentBase:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},screenMap:{source:{x:77.48571428571427,y:112.11428571428574,w:1198.6285714285714,h:898.9714285714286},screen:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136}},cameraRect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},cameraBasis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8},phoneRect:null,phoneBase:null,phoneLayout:null,layers:[{id:"content",rect:{x:137.41714285714284,y:184.03200000000004,w:1078.7657142857142,h:755.136},base:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}},{id:"text:ann-1",rect:{x:469.035,y:83.268,w:501.92999999999995,h:92.664},base:{x:483.75,y:767.60352,w:386.09999999999997,h:71.28}},{id:"camera",rect:{x:136.07999999999998,y:719.28,w:246.23999999999998,h:246.23999999999998},round:false,basis:{x:133.71428571428575,y:129.6,w:1172.5714285714284,h:820.8}}]}

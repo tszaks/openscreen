@@ -1,0 +1,110 @@
+{
+  "name": "demo",
+  "recording": {
+    "screenVideoFile": "demo.mp4",
+    "sourceKind": "iosDevice",
+    "sourceSize": {
+      "width": 1206,
+      "height": 2622
+    },
+    "duration": 31.4,
+    "imported": true
+  },
+  "clips": [
+    {
+      "id": "c1",
+      "sourceStart": 0,
+      "sourceEnd": 31.4,
+      "speed": 1
+    }
+  ],
+  "zoomKeyframes": [],
+  "manualZooms": [],
+  "zoom": {
+    "autofocus": false,
+    "dwell": false,
+    "depth": 1.6,
+    "motionEvents": [],
+    "fromTaps": true
+  },
+  "audio": {
+    "clickSounds": true,
+    "voiceCleanup": false
+  },
+  "style": {
+    "paddingFraction": 0.08,
+    "cornerRadius": 24,
+    "shadowRadius": 60,
+    "shadowOpacity": 0.35,
+    "cropRect": null,
+    "background": {
+      "kind": "imageFile",
+      "path": "/Users/someone/Pictures/bg.heic",
+      "blur": 12
+    },
+    "deviceFrame": "none",
+    "cursorSize": 0.012,
+    "cursorTrail": false,
+    "cursorHex": "#ffffff",
+    "cursorShow": true,
+    "cursorOpacity": 0.85
+  },
+  "cameraOverlay": {
+    "enabled": false,
+    "corner": "bottomRight",
+    "sizeFraction": 0.325,
+    "circular": true
+  },
+  "phoneOverlay": {
+    "enabled": false,
+    "layout": "side-by-side-right",
+    "corner": "bottomRight",
+    "size": 0.9,
+    "frame": true,
+    "shadow": true,
+    "sound": false
+  },
+  "captions": [],
+  "chapters": [],
+  "annotations": [],
+  "exportPreset": "p1080",
+  "outputFPS": 30,
+  "device": {
+    "frame": true,
+    "modelId": "iphone-17-pro-max",
+    "finishId": "deep-blue"
+  },
+  "taps": [
+    {
+      "id": "t1",
+      "t": 2.5,
+      "x": 0.5,
+      "y": 0.5,
+      "kind": "tap",
+      "confidence": 0.9,
+      "settleT": 3
+    }
+  ],
+  "tapStyle": {
+    "show": false,
+    "style": "pulse",
+    "color": "accent",
+    "sizePt": 60
+  },
+  "waits": [
+    {
+      "start": 10,
+      "end": 14
+    }
+  ],
+  "tapsAnalyzed": true,
+  "layout": {
+    "presetId": "feed-4x5",
+    "background": "style",
+    "titleCard": {
+      "title": "Title",
+      "subtitle": ""
+    }
+  },
+  "tracks": []
+}
