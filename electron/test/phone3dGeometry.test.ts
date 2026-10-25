@@ -28,6 +28,7 @@ import {
   SEAM_D_MM,
   SEAM_W_MM,
   clearPhoneCache,
+  fullBarRise,
   phoneDims2d,
   phoneModel,
   insetLoop,
@@ -130,7 +131,9 @@ describe('every device builds', () => {
       expect(Math.abs(bb.max.x - d.bodyMm.width / 2)).toBeLessThan(0.05);
       expect(Math.abs(bb.min.y + d.bodyMm.height / 2)).toBeLessThan(0.05);
       expect(Math.abs(bb.max.y - d.bodyMm.height / 2)).toBeLessThan(0.05);
-      expect(Math.abs(bb.min.z + b3.depthMm / 2)).toBeLessThan(0.05);
+      // A full-width plateau is part of the body: the band's back half reaches back to the plateau top.
+      const bar = b3.plateau.kind === 'bar' || (b3.plateau.kind !== 'single' && b3.plateau.w > 0.98);
+      expect(Math.abs(bb.min.z + b3.depthMm / 2 + (bar ? b3.plateau.heightMm : 0))).toBeLessThan(0.05);
       expect(Math.abs(bb.max.z - b3.depthMm / 2)).toBeLessThan(0.05);
 
       // Whole phone: front glass on +depth/2; the back reaches the lens tops exactly
@@ -160,12 +163,16 @@ describe('every device builds', () => {
           expect(Math.abs(tl - 1), `${m.name} tangent ${i}`).toBeLessThan(1e-4);
         }
       }
-      // On the band, the tangent runs along the outline: perpendicular to the normal, in the xy plane.
+      // On the band, the tangent runs along the outline: perpendicular to the normal, in the xy plane (where a
+      // full-width plateau rises, it climbs with the rise).
       const n = attr(band.geometry, 'normal');
       const t = attr(band.geometry, 'tangent');
+      const bandPos = attr(band.geometry, 'position');
+      const rise = bar ? fullBarRise(d.bodyMm.height, b3.plateau) : null;
       for (let i = 0; i < n.count; i++) {
         expect(Math.abs(n.getX(i) * t.getX(i) + n.getY(i) * t.getY(i) + n.getZ(i) * t.getZ(i))).toBeLessThan(1e-4);
-        expect(Math.abs(t.getZ(i))).toBeLessThan(1e-9);
+        const inRise = rise && bandPos.getY(i) > rise.y0 && bandPos.getY(i) < rise.y1 && bandPos.getZ(i) < 0;
+        if (!inRise) expect(Math.abs(t.getZ(i))).toBeLessThan(1e-9);
       }
 
       // Parts: only known parts, no logo; seams, glass, screen, plateau and lens barrels present.
@@ -403,6 +410,70 @@ describe('front, screen and back', () => {
       // body sides, a little steeper. Round 1's wall was 90° along the whole edge.
       expect(steepest, id).toBeLessThan(62);
       expect(corner, id).toBeLessThan(80);
+    }
+  });
+
+  it('a full-width plateau grows out of the band: its sides are the band, its rise meets the band with no crack', () => {
+    for (const id of ['iphone-17-pro', 'iphone-17-pro-max', 'iphone-air']) {
+      const d = dev(id);
+      const b3 = body3dFor(d);
+      const { group, dims } = build(d);
+      const W = d.bodyMm.width;
+      const H = d.bodyMm.height;
+      const d2 = dims.depth / 2;
+      const h = b3.plateau.heightMm;
+      const rise = fullBarRise(H, b3.plateau);
+      const band = part(group, 'band')[0];
+      const bp = attr(band.geometry, 'position');
+      // Above the rise the band's back half reaches the plateau top; below it, the back. Never past the body sides.
+      let topZ = 0;
+      let lowZ = 0;
+      for (let i = 0; i < bp.count; i++) {
+        const y = bp.getY(i);
+        if (y > rise.y1 - 1e-4 && y < H / 2 - 20) topZ = Math.min(topZ, bp.getZ(i));
+        if (y < rise.y0 + 1e-4 && y > -H / 2 + 20) lowZ = Math.min(lowZ, bp.getZ(i));
+        expect(Math.abs(bp.getX(i)), id).toBeLessThanOrEqual(W / 2 + 1e-6);
+      }
+      expect(topZ, id).toBeCloseTo(-(d2 + h), 4);
+      expect(lowZ, id).toBeCloseTo(-d2, 4);
+      // The plateau surfaces stay inside the band's lip: nothing overhangs the sides (round 2: 9 px at turn 150).
+      const surf = [...part(group, 'plateau'), ...part(group, 'back')];
+      for (const m of surf) {
+        const p = attr(m.geometry, 'position');
+        for (let i = 0; i < p.count; i++) expect(Math.abs(p.getX(i)), id).toBeLessThan(W / 2 - dims.rim + SEAM_W_MM + 1e-4);
+      }
+      // No crack: every band vertex on the back's edge inside the rise (the lip on the unibody, the glass edge's
+      // inner ring on a glass back) has a back or plateau vertex at the same point.
+      const key = (x: number, y: number, z: number) => `${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}`;
+      const surfPts = new Set<string>();
+      for (const m of surf) {
+        const p = attr(m.geometry, 'position');
+        for (let i = 0; i < p.count; i++) surfPts.add(key(p.getX(i), p.getY(i), p.getZ(i)));
+      }
+      const edgeX = W / 2 - (dims.unibody ? dims.rim - SEAM_W_MM : dims.rim + 0.25);
+      const edgeSrc = dims.unibody ? [band] : part(group, 'back');
+      let checked = 0;
+      for (const m of edgeSrc) {
+        const p = attr(m.geometry, 'position');
+        for (let i = 0; i < p.count; i++) {
+          const y = p.getY(i);
+          if (y < rise.y0 - 1e-4 || y > rise.y1 + 1e-4 || Math.abs(Math.abs(p.getX(i)) - edgeX) > 1e-4) continue;
+          if (Math.abs(p.getZ(i) + d2 + rise.at(y).dz) > 1e-4) continue;
+          expect(surfPts.has(key(p.getX(i), y, p.getZ(i))), `${id} edge vertex at y ${y.toFixed(3)}`).toBe(true);
+          checked++;
+        }
+      }
+      expect(checked, id).toBeGreaterThanOrEqual(2 * 21);
+      let prev = -Infinity;
+      for (const y of rise.rows) {
+        const r = rise.at(y);
+        expect(r.dz).toBeGreaterThanOrEqual(prev);
+        prev = r.dz;
+        expect(r.dzdy).toBeGreaterThanOrEqual(0);
+      }
+      expect(rise.at(rise.y0).dzdy).toBeCloseTo(0, 12);
+      expect(rise.at(rise.y1).dzdy).toBeCloseTo(0, 12);
+      expect(rise.at(rise.y1).dz).toBeCloseTo(h, 9);
     }
   });
 
