@@ -481,9 +481,11 @@ function floatCarries(c: Ctx, g: OffCanvas, times: readonly number[]): boolean {
 }
 
 /**
- * Float first: when the keyframes alone stay inside the margin, the float is what carries the phone out (a move that
- * only brings it near the edge is not named: lowering the float clears it without touching the moves). Then a move
- * that adds overflow; else the pose the phone rests at (the base pose or a kept hold).
+ * Float first: when the keyframes alone stay inside the margin, the float is what carries the phone out, even when a
+ * move brought the phone near the edge (both are then needed to poke out, so both "add" overflow). Lowering the float
+ * clears it without touching the moves, and Auto 3D's own float must not get a kept move blamed (owner decision 19
+ * keeps direct.test's "the float is part of the style" case, which is exactly this shape; a move-first order fails
+ * it). Then a move that adds overflow (offCanvasMove); else the pose the phone rests at (the base pose or a kept hold).
  */
 function offCanvasCause(c: Ctx, g: OffCanvas, times: readonly number[]): OffCanvasCause {
   if (floatCarries(c, g, times)) return { kind: 'float' };

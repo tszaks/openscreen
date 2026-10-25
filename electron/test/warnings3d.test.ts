@@ -243,6 +243,29 @@ describe('off-canvas: one warning per cause, and fast on long takes', () => {
     for (const x of ws) expect(x.transitionId).toBeUndefined();
   });
 
+  it('culprit order (owner decision 19): when a move and the float are both needed to push it out, the float is named', () => {
+    // A kept move parks the phone near the top edge; the float bobs it past the margin. Neither alone pokes out, so
+    // both "add" overflow. The float is named (no transitionId) and its fix lowers the float: this is the same shape
+    // as direct.test's "the float is part of the style" case, which decision 19 keeps. A move is named when the
+    // keyframes alone (float off) poke out and that move adds the overflow.
+    const float = { on: true, amount: 1, period: 2 };
+    const both = longTake(35, { float, transitions: [move('k', 1, 2, { y: 0.11 })] });
+    expect(only(longTake(35, { float, transitions: [] }), 'off-canvas'), 'float alone').toEqual([]);
+    expect(only(longTake(35, { float: { ...float, on: false }, transitions: [move('k', 1, 2, { y: 0.11 })] }), 'off-canvas'), 'move alone').toEqual([]);
+    const [w, ...rest] = only(both, 'off-canvas');
+    expect(rest).toEqual([]);
+    expect(w.transitionId).toBeUndefined();
+    expect(w.message).toMatch(/\(the idle float carries it past the edge\)$/);
+    expect(w.fix).toEqual([{ op: 'phone3d', float: { amount: expect.any(Number) } }]);
+    expect(only(applyFix(both, w), 'off-canvas')).toEqual([]);
+    // The move pushes it out on its own (the float on as well): the move is named, and its fix is a setPose.
+    const out = longTake(35, { float, transitions: [move('k', 1, 2, { y: 0.14 })] });
+    const named = only(out, 'off-canvas');
+    expect(named.map((x) => x.transitionId)).toEqual(['k']);
+    expect(named[0].message).not.toMatch(/float/);
+    expect(named[0].fix).toEqual([expect.objectContaining({ op: 'setPose' })]);
+  });
+
   it('two keyframes that each push it out are two warnings, each with a fix that clears it', () => {
     const p = take({ transitions: [move('a', 4, 5, { x: 0.6 }), move('b', 6, 7, { x: 0 }), move('c', 10, 11, { x: -0.6 }), move('d', 12, 13, { x: 0 })] });
     const ws = only(p, 'off-canvas');
