@@ -17,6 +17,11 @@ import {
   durationBase,
   durationDragOps,
   durationOps,
+  durationsMixed,
+  durationStepOps,
+  beginDuration,
+  beginMultiPose,
+  multiPoseStepOps,
   easeCaption,
   easingOps,
   fovForMm,
@@ -354,6 +359,108 @@ describe('a mixed Duration drag', () => {
     const p = drag(mk(), ['a', 'b'], [-0.4, -0.8, 0], true);
     expect(lens(p)).toEqual([0.6, 1.2]);
     expect(lens(drag(mk(), ['a', 'b'], [-0.8], true))).toEqual([0.1, 0.4]);
+  });
+});
+
+describe('a many-move drag that makes every value match part-way', () => {
+  // Mirrors MultiView and Track exactly: every pointermove is a new render, so
+  // the project, the shown value and the "–" state are read again each step;
+  // Track's delta is v minus the value shown at the first change, and
+  // ScrubField clamps v to the field's own min and max.
+  const two = (a: Partial<PoseTransition>, b: Partial<PoseTransition>) =>
+    phoneProject({
+      transitions: [
+        { id: 'a', start: 1, end: 2, to: { ...FRONT }, easing: { kind: 'smooth' }, ...a },
+        { id: 'b', start: 5, end: 6, to: { ...FRONT }, easing: { kind: 'smooth' }, ...b },
+      ],
+    });
+  const apply = (p: Project, ops: ReturnType<typeof durationOps>) => {
+    const r = applyOps3d(p, ops);
+    if (!('project' in r)) throw new Error('refused');
+    return r.project;
+  };
+  const ids = ['a', 'b'];
+
+  function poseDrag(p: Project, key: 'tilt' | 'size', vs: number[], refix: boolean) {
+    const [lo, hi] = key === 'tilt' ? [-85, 85] : [0.2, 3];
+    let start: number | null = null;
+    let g: ReturnType<typeof beginMultiPose> | null = null;
+    const seen: boolean[] = [];
+    for (const raw of vs) {
+      const v = Math.min(hi, Math.max(lo, raw));
+      const p3 = p.phone3d!;
+      const shown = keyPoses(p3, ids, 'to')[0][key];
+      if (start === null) start = shown;
+      // `refix` re-reads the gesture on every render: the old bug.
+      if (!g || refix) g = beginMultiPose(p3, ids, 'to');
+      seen.push(mixedChannels(keyPoses(p3, ids, 'to')).has(key));
+      p = apply(p, multiPoseStepOps(p3, ids, 'to', g, key, v, { delta: v - start, typed: false }));
+    }
+    return { p, seen };
+  }
+  const tilts = (p: Project) => p.phone3d!.transitions.map((m) => m.to.tilt);
+
+  it('keeps adding to each Pose value after a range end makes them match, so dragging back restores them', () => {
+    const { p, seen } = poseDrag(two({ to: { ...FRONT, tilt: 60 } }, { to: { ...FRONT, tilt: 80 } }), 'tilt', [65, 70, 75, 80, 85, 80, 70, 60], false);
+    expect(seen).toContain(false); // the values did match part-way (both at 85)
+    expect(tilts(p)).toEqual([60, 80]);
+  });
+
+  it('would lose the per-move values if "–" were read again on every render (guards the gesture)', () => {
+    const { p } = poseDrag(two({ to: { ...FRONT, tilt: 60 } }, { to: { ...FRONT, tilt: 80 } }), 'tilt', [65, 70, 75, 80, 85, 80, 70, 60], true);
+    expect(tilts(p)).toEqual([60, 60]);
+  });
+
+  it('does the same at the bottom of the Size range', () => {
+    const { p, seen } = poseDrag(two({ to: { ...FRONT, size: 1.2 } }, { to: { ...FRONT, size: 0.6 } }), 'size', [1, 0.6, 0.3, 0.2, 0.6, 1.2], false);
+    expect(seen).toContain(false); // both at 20 %
+    expect(p.phone3d!.transitions.map((m) => +m.to.size.toFixed(6))).toEqual([1.2, 0.6]);
+  });
+
+  it('a typed value sets every move even while the field shows "–"', () => {
+    const p = two({ to: { ...FRONT, tilt: 60 } }, { to: { ...FRONT, tilt: 80 } });
+    const g = beginMultiPose(p.phone3d!, ids, 'to');
+    expect(tilts(apply(p, multiPoseStepOps(p.phone3d!, ids, 'to', g, 'tilt', 10, { delta: -50, typed: true })))).toEqual([10, 10]);
+  });
+
+  function durDrag(p: Project, vs: number[], refix: boolean) {
+    let start: number | null = null;
+    let g: ReturnType<typeof beginDuration> | null = null;
+    const seen: boolean[] = [];
+    for (const raw of vs) {
+      const v = Math.min(60, Math.max(0.1, raw));
+      const moves = p.phone3d!.transitions;
+      const shown = +(moves[0].end - moves[0].start).toFixed(2);
+      if (start === null) start = shown;
+      if (!g || refix) g = beginDuration(moves, ids);
+      seen.push(durationsMixed(moves, ids));
+      p = apply(p, durationStepOps(moves, ids, g, v, { delta: v - start, typed: false }));
+    }
+    return { p, seen };
+  }
+  const lens = (p: Project) => p.phone3d!.transitions.map((m) => +(m.end - m.start).toFixed(4));
+  const down = [0.45, 0.4, 0.3, 0.2, 0.15, 0.1, 0.2, 0.3, 0.4, 0.5];
+
+  it('keeps adding to each Duration after the 0.1 s floor makes them match, so dragging back restores them', () => {
+    const { p, seen } = durDrag(two({ end: 1.5 }, { end: 5.3 }), down, false);
+    expect(seen).toContain(false);
+    expect(lens(p)).toEqual([0.5, 0.3]);
+    expect(p.phone3d!.transitions.map((m) => m.start)).toEqual([1, 5]);
+  });
+
+  it('would give every move the same Duration if "–" were read again on every render (guards the gesture)', () => {
+    expect(lens(durDrag(two({ end: 1.5 }, { end: 5.3 }), down, true).p)).toEqual([0.5, 0.5]);
+  });
+
+  it('is the only way the many-move view changes Pose, Angle and Duration', () => {
+    const src = readFileSync(join(__dirname, '../src/renderer/src/phone3d/Phone3DPanel.tsx'), 'utf8');
+    const multi = src.slice(src.indexOf('function MultiView('));
+    expect(multi).not.toMatch(/multiPoseOps\s*\(|durationDragOps\s*\(|mixed\.has\(\s*k\s*\)|mixedDur\s*&&/);
+    expect(multi.match(/multiPoseStepOps\(/g)?.length).toBe(1);
+    expect(multi.match(/durationStepOps\(/g)?.length).toBe(1);
+    // Angle (light) uses the same pose gesture, and its commit clears it.
+    expect(multi).toMatch(/poseStep\('light'/);
+    expect(multi.match(/onCommit=\{endPose\}/g)?.length).toBe(2);
   });
 });
 

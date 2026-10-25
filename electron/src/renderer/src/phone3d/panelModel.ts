@@ -414,6 +414,34 @@ export function multiPoseOps(p3: P3, ids: readonly string[], which: 'from' | 'to
   return chosen.map((m, i) => ({ op: 'setPose', id: m.id, end: which, [key]: clampTo(key, mode === 'set' ? value : poses[i][key] + value) }));
 }
 
+/**
+ * A gesture on a many-move pose field, fixed at its first change: the poses
+ * then, and which fields showed "–". Each later step reads this, never the
+ * newest render: once a drag pushes every move to a range end the values
+ * match, but the drag stays an "add" from these poses, so dragging back gives
+ * each move its own value again.
+ */
+export interface MultiPoseGesture {
+  readonly base: readonly Pose[];
+  readonly mixed: ReadonlySet<PoseKey>;
+}
+
+export function beginMultiPose(p3: P3, ids: readonly string[], which: 'from' | 'to'): MultiPoseGesture {
+  const base = keyPoses(p3, ids, which);
+  return { base, mixed: mixedChannels(base) };
+}
+
+/**
+ * One step of that gesture. `value` is the field's value in pose units (for
+ * the light, the offset from the base azimuth); `delta` is the change since
+ * the gesture began. Typing, or a field that matched at the start, sets every
+ * move; dragging a "–" field adds `delta` to each move's starting value.
+ */
+export function multiPoseStepOps(p3: P3, ids: readonly string[], which: 'from' | 'to', g: MultiPoseGesture, key: PoseKey, value: number, info: { delta: number; typed: boolean }): EditOp[] {
+  const add = !info.typed && g.mixed.has(key);
+  return multiPoseOps(p3, ids, which, key, add ? info.delta : value, add ? 'add' : 'set', g.base);
+}
+
 /** An easing for every selected move (with `fit`, a spring's length becomes its settle time). */
 export function easingOps(ids: readonly string[], e: Easing, fit = false): EditOp[] {
   return ids.map((id) => ({ op: 'editTransition', id, easing: { ...e }, ...(fit && e.kind === 'spring' ? { fitDuration: true } : {}) }));
@@ -442,6 +470,31 @@ export function durationBase(list: readonly PoseTransition[], ids: readonly stri
  */
 export function durationDragOps(base: DurationBase, delta: number): EditOp[] {
   return base.map((m) => ({ op: 'editTransition', id: m.id, end: m.start + Math.max(MIN_TRANSITION, m.len + delta) }));
+}
+
+/** True when the selected moves' lengths differ (the Duration field shows "–"). */
+export function durationsMixed(list: readonly PoseTransition[], ids: readonly string[]): boolean {
+  const lens = list.filter((m) => ids.includes(m.id)).map((m) => m.end - m.start);
+  return !lens.every((d) => Math.abs(d - lens[0]) < 0.005);
+}
+
+/** A Duration gesture on many moves, fixed at its first change (see `MultiPoseGesture`). */
+export interface DurationGesture {
+  readonly base: DurationBase;
+  readonly mixed: boolean;
+}
+
+export function beginDuration(list: readonly PoseTransition[], ids: readonly string[]): DurationGesture {
+  return { base: durationBase(list, ids), mixed: durationsMixed(list, ids) };
+}
+
+/**
+ * One step of a Duration gesture: dragging a field that was "–" at the start
+ * adds `delta` to each move's starting length; typing, or a field that matched
+ * at the start, sets every length to `value`.
+ */
+export function durationStepOps(list: readonly PoseTransition[], ids: readonly string[], g: DurationGesture, value: number, info: { delta: number; typed: boolean }): EditOp[] {
+  return g.mixed && !info.typed ? durationDragOps(g.base, info.delta) : durationOps(list, ids, value);
 }
 
 /** What one press of ⌫ removes, first match wins. */

@@ -40,9 +40,11 @@ import {
   bezierFrom,
   chipFor,
   clock,
-  durationBase,
-  durationDragOps,
+  beginDuration,
+  beginMultiPose,
   durationOps,
+  durationsMixed,
+  durationStepOps,
   EASE_LABEL,
   EASE_MENU,
   EASE_PRESET,
@@ -58,7 +60,7 @@ import {
   minus,
   mixedChannels,
   moveName,
-  multiPoseOps,
+  multiPoseStepOps,
   nextKey,
   parseTime,
   phone3dAsOps,
@@ -70,7 +72,8 @@ import {
   shotLine,
   warningText,
   type Chip,
-  type DurationBase,
+  type DurationGesture,
+  type MultiPoseGesture,
   type PoseLock,
 } from './panelModel';
 import type { MenuItem, MenuSpec } from './PopupMenu';
@@ -1110,10 +1113,22 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
   const kinds = new Set(list.map((m) => m.easing.kind));
   const mixedEase = kinds.size > 1;
   const durs = list.map((m) => m.end - m.start);
-  const mixedDur = !durs.every((d) => Math.abs(d - durs[0]) < 0.005);
+  const mixedDur = durationsMixed(moves, ids);
   const popupBtn = useRef<HTMLButtonElement>(null);
-  const base = useRef<ReturnType<typeof keyPoses> | null>(null);
-  const durBase = useRef<DurationBase | null>(null);
+  // Fixed at a gesture's first change and read by every later step, so a drag
+  // that makes the values match part-way keeps adding (panelModel).
+  const poseGesture = useRef<MultiPoseGesture | null>(null);
+  const durGesture = useRef<DurationGesture | null>(null);
+  const beginPose = () => {
+    hold();
+    poseGesture.current = beginMultiPose(p3, ids, which);
+  };
+  const endPose = () => {
+    seal();
+    poseGesture.current = null;
+  };
+  const poseStep = (k: PoseKey, value: number, info: { delta: number; typed: boolean }) =>
+    apply3d(multiPoseStepOps(p3, ids, which, poseGesture.current ?? beginMultiPose(p3, ids, which), k, value, info));
   const names = [...new Set(list.map((m) => moveName(moves, m.id)))];
   const all = samePart(moves, list[0].id);
   const sub =
@@ -1182,15 +1197,13 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
                 title="Typing sets every move's duration; Start stays put."
                 onBegin={() => {
                   hold();
-                  durBase.current = durationBase(moves, ids);
+                  durGesture.current = beginDuration(moves, ids);
                 }}
                 onCommit={() => {
                   seal();
-                  durBase.current = null;
+                  durGesture.current = null;
                 }}
-                onChange={(v, info) =>
-                  apply3d(mixedDur && !info.typed ? durationDragOps(durBase.current ?? durationBase(moves, ids), info.delta) : durationOps(moves, ids, v))
-                }
+                onChange={(v, info) => apply3d(durationStepOps(moves, ids, durGesture.current ?? beginDuration(moves, ids), v, info))}
               />
               <button
                 ref={popupBtn}
@@ -1219,18 +1232,9 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
           <PoseRows
             pose={poses[0]}
             mixed={mixed}
-            onBegin={() => {
-              hold();
-              base.current = keyPoses(p3, ids, which);
-            }}
-            onCommit={() => {
-              seal();
-              base.current = null;
-            }}
-            onChange={(k, v, info) => {
-              const typed = info.typed || !mixed.has(k);
-              apply3d(multiPoseOps(p3, ids, which, k, typed ? v : info.delta, typed ? 'set' : 'add', base.current ?? undefined));
-            }}
+            onBegin={beginPose}
+            onCommit={endPose}
+            onChange={poseStep}
           />
           {!isStart && (
             <div className="p3-under">
@@ -1259,15 +1263,9 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
                   soft={[-180, 180]}
                   origin={az}
                   mixed={mixed.has('light')}
-                  onBegin={() => {
-                    hold();
-                    base.current = keyPoses(p3, ids, which);
-                  }}
-                  onCommit={seal}
-                  onChange={(v, info) => {
-                    const typed = info.typed || !mixed.has('light');
-                    apply3d(multiPoseOps(p3, ids, which, 'light', typed ? v - az : info.delta, typed ? 'set' : 'add', base.current ?? undefined));
-                  }}
+                  onBegin={beginPose}
+                  onCommit={endPose}
+                  onChange={(v, info) => poseStep('light', v - az, info)}
                 />
               </div>
             )}
