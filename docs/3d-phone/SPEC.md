@@ -510,6 +510,26 @@ One reflection lobe per real surface: real cover glass is one AR-coated surface,
 - Tap mark on the 3D screen: 0.75 × the size, a light fill, a faint hairline and a soft shadow, and kept inside the screen (`TouchIndicatorOptions.inside`); flat projects unchanged.
 - Shots. `turn-to-back` with `return: stay` has its own keys (1.8 s): one ease to 3% past the three-quarter back, a soft settle onto it; it lands, so leave about 0.5 s after it. Every turn-to-back eases the phone back 10% (size) as it turns and returns to the base size on the front.
 
+- Budgets (owner decision 10, median of 3, measured on the final look round 4 code with the WP4b GPU harness's budgets and memory suites; Apple M4 Max, not measured on 8 GB). Round 4 is faster than round 3 (one budgets run of round 3's last commit a504979: 4K moving p95 975 ms, 1080 moving p95 123 ms) because six of the twelve boxes are painted into the set; it still FAILS the 4K moving budget (701 ms against 200), 1080 moving (93 against 45), 4K still (62.5 against 60), preview without DoF (7.1 against 4) and 4K ss 2 still memory (610 MiB against 560). The cost is the six RectAreaLights evaluated per sample (up to 64 adaptive samples at 4K). Open for the owner: fewer lights or fewer samples trade look for speed.
+
+| Measure | runs 1 / 2 / 3 | median | budget | result |
+|---|---|---|---|---|
+| Preview 1080, 3D pass p95 (ms) | 7.1 / 6.7 / 7.1 | 7.1 | <= 4 | FAIL |
+| Preview 1080 with DoF, 3D pass p95 (ms) | 6.6 / 6.7 / 7.3 | 6.7 | <= 7 | PASS |
+| Export 1080 still, 3D pass p50 (ms) | 14.5 / 14.8 / 14.1 | 14.5 | <= 20 | PASS |
+| Export 1080 moving, 3D pass p95 (ms) | 95.1 / 93.0 / 86.0 | 93.0 | <= 45 | FAIL |
+| Export 4K still, 3D pass p50 (ms) | 78.2 / 62.5 / 61.6 | 62.5 | <= 60 | FAIL |
+| Export 4K moving, 3D pass p95, all frames (ms) | 848.7 / 633.1 / 700.9 | 700.9 | <= 200 (decision 10) | FAIL |
+| Export 4K moving, adaptive-N frames, max (ms) | 1460.2 / 1118.7 / 1342.7 | 1342.7 | <= 400 | FAIL |
+| Export 4K moving, 3D pass CPU p50 (ms) | 232 / 196.8 / 212.9 | 212.9 | (info) | PASS |
+| Export 4K still, 3D pass CPU p50 (ms) | 143.5 / 126.9 / 93 | 126.9 | (info) | PASS |
+| GPU memory 4K ss1, measured, still (MiB) | 389.5 / 387.1 / 388.7 | 388.7 | <= 400 | PASS |
+| GPU memory 4K ss1, measured, moving (MiB) | 351.6 / 348.7 / 358.2 | 351.6 | <= 400 | PASS |
+| GPU memory 4K ss2, measured, still (MiB) | 609.6 / 587.9 / 615 | 609.6 | <= 560 | FAIL |
+| GPU memory 4K ss2, measured, moving (MiB) | 393.5 / 409 / 375.8 | 393.5 | <= 560 | PASS |
+
+GPU: ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Max, Unspecified Version). Not measured on 8 GB (no M1 8 GB here). Memory = macOS `footprint` of the GPU process, 3D at 4K (phone filling the 2160x3840 canvas) minus the same canvas drawn flat, in MiB (2^20 B); "still" is after the first 3 frames, "moving" after a 121-frame 200-degree turn. Times: GPU timer queries per 3D pass.
+
 ### 3.5 Colour management (D3)
 - `renderer.toneMapping = NoToneMapping`. Inside render targets three writes working-space linear and skips tone mapping anyway (D3).
 - Texture `colorSpace = SRGBColorSpace`.
