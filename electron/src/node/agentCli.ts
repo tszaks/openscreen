@@ -24,6 +24,8 @@ import { randomUUID } from 'node:crypto';
 import { itemSpan } from '../shared/audioTracks';
 import { phoneDevice, phoneLayerOn } from '../shared/phoneLayer';
 import { layerOrder } from '../shared/canvasLayers';
+import { focusSegmentsFor } from '../shared/focusSegments';
+import type { CursorSample } from '../shared/types';
 import { importVideoFile } from './importVideo';
 import { readCursorSamples } from './bundleFiles';
 import { appCommand, bool, CliError, flag, out, progress, r2, runHeadless, seconds, warnProgress } from './cliKit';
@@ -152,6 +154,30 @@ function transitionsSummary(p: Project) {
   }));
 }
 
+/** Where an `info.zooms` span comes from: autofocus (clicks, dwells, touches), a tap zoom, or a manual zoom. */
+export type ZoomSource = 'auto' | 'tap' | 'manual';
+
+/**
+ * Every zoom the project plays, in OUTPUT seconds (owner decision 22): exactly
+ * focusSegmentsFor's list (the editor, the compositor and the zoom-angle
+ * warning use it), each with where it comes from. `start` = the glide in
+ * starts (inStart), `focus` = the camera is at the zoom (holdStart), `end` =
+ * the glide out ends (outEnd); `x`/`y` = the zoom centre (0..1 of the
+ * recording). [] on an App Store preset. focusSegmentsFor lists autofocus,
+ * then tap, then manual zooms, stably sorted by start, so the same three
+ * lists merged the same way give the same order.
+ */
+export function zoomSpans(p: Project, cursor: readonly CursorSample[]): { start: number; focus: number; end: number; source: ZoomSource; x: number; y: number }[] {
+  const auto = focusSegmentsFor({ ...p, zoom: { ...p.zoom, fromTaps: false }, manualZooms: [] }, cursor);
+  const taps = focusSegmentsFor({ ...p, zoom: { ...p.zoom, autofocus: false }, manualZooms: [] }, cursor);
+  const manual = focusSegmentsFor({ ...p, zoom: { ...p.zoom, autofocus: false, fromTaps: false } }, cursor);
+  const tagged = [...auto.map((z) => ({ z, source: 'auto' as const })), ...taps.map((z) => ({ z, source: 'tap' as const })), ...manual.map((z) => ({ z, source: 'manual' as const }))];
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  return tagged
+    .sort((a, b) => a.z.inStart - b.z.inStart)
+    .map(({ z, source }) => ({ start: r2(z.inStart), focus: r2(z.holdStart), end: r2(z.outEnd), source, x: r3(z.center.x), y: r3(z.center.y) }));
+}
+
 function summarize(dir: string, p: Project) {
   const cursor = readCursorSamples(dir);
   const tl = new Timeline(p.recording.duration, p.clips);
@@ -183,6 +209,8 @@ function summarize(dir: string, p: Project) {
     annotations: p.annotations,
     manualZooms: p.manualZooms.map((z, i) => ({ index: i, at: r2(z.inStart), holdEnd: r2(z.holdEnd), center: z.center, scale: z.scale })),
     zoom: { autofocus: p.zoom.autofocus, dwell: p.zoom.dwell, depth: p.zoom.depth, fromTaps: p.zoom.fromTaps },
+    // Every zoom that plays (auto, tap, manual), in output seconds: in 3D each pushes the camera in (decision 20).
+    zooms: zoomSpans(p, cursor),
     taps: { count: p.taps.length, analyzed: p.tapsAnalyzed, items: p.taps.slice(0, 100).map((t, i) => ({ index: i, id: t.id, t: r2(t.t), x: r2(t.x), y: r2(t.y), kind: t.kind, confidence: r2(t.confidence) })) },
     tapStyle: p.tapStyle,
     waits: p.waits.map((w) => ({ start: r2(w.start), end: r2(w.end), ...(w.edge ? { edge: w.edge } : {}) })),

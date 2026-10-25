@@ -60,13 +60,13 @@ osa undo latest                     # swap project.json <-> project.json.bak
 | `record stop` | Finishes the take (the helper's normal finalize; the movie is fragmented, so even a crash keeps what was recorded), then writes `project.json` with the same defaults the app gives an iPhone take. |
 | `import <file> [--name N]` | Imports a video (mp4, mov, m4v, webm, mkv) as a new bundle `<name>.openscreen` in the recordings folder, named after the file (`Name 2`, `Name 3`… when taken), exactly as **File → Import Video…** and dropping a file on the app do. The original is only read. A file the editor can't play is converted with the bundled ffmpeg (`converted`: `none`, `audio` = the sound re-encoded to AAC, or `full` = H.264 + AAC). An iPhone or iPad screen size (e.g. 1179×2556, 1206×2622) gets `sourceKind: "iosDevice"`, so the device frame, 9:16 canvas and tap analysis apply; anything else is `display`. Prints `bundle`, `name`, `sourceKind`, `size`, `duration`, `video`, `converted`, `hasAudio`; progress (`{"stage":"copy"\|"convert","progress":0..1}`) on stderr. A failed import leaves nothing behind. |
 | `latest` / `list` | Newest bundle / all bundles in `~/Movies/OpenScreen` (or `$OPENSCREEN_RECORDINGS_DIR`). In the app, **File → Copy Path for Agent** copies the open project's path. |
-| `info <bundle>` | Summary JSON: source size/duration, output duration, canvas, device, clips (with ids, source and output ranges), captions, transcript, chapters, annotations, manual zooms, taps, waits, style, layout, camera, `phone` (Mac + iPhone takes: the phone movie, its size, length, `offset`, detected `model`, whether it is `drawn`, and every `phoneOverlay` field; `null` otherwise), audio, `content` (the recording's hand move and resize, `style.contentTransform`, or `null`), `layers` (the canvas layers bottom to top), tracks (music and voiceover items with their output `start`/`end`, file range, volume, fades, loop, and `missing` when the file is gone), `export` (`preset`; `fps`, the frame rate the export writes: a layout preset's own, else `outputFPS`; and `canvas: {w,h}`, the size the export writes), `phone3d` (`null`, or every 3D setting plus `active`, the `reason` when it renders flat, and the `model` and `finish` it draws), `transitions` (the 3D moves: `index`, `id`, output `start`/`end`, `duration`, `linked`, `from` = the resolved Start, `to`, `easing`, `recipe`), `shotRecipes` (name, default `duration`, `summary`, `use`), `problems`, `warnings`. |
+| `info <bundle>` | Summary JSON: source size/duration, output duration, canvas, device, clips (with ids, source and output ranges), captions, transcript, chapters, annotations, manual zooms, `zooms` (every zoom that plays: tap, auto-focus and manual, with output `start`, `focus` (the camera is at the zoom), `end`, `source` `auto`\|`tap`\|`manual`, and centre `x`/`y`; `[]` on App Store layouts), taps, waits, style, layout, camera, `phone` (Mac + iPhone takes: the phone movie, its size, length, `offset`, detected `model`, whether it is `drawn`, and every `phoneOverlay` field; `null` otherwise), audio, `content` (the recording's hand move and resize, `style.contentTransform`, or `null`), `layers` (the canvas layers bottom to top), tracks (music and voiceover items with their output `start`/`end`, file range, volume, fades, loop, and `missing` when the file is gone), `export` (`preset`; `fps`, the frame rate the export writes: a layout preset's own, else `outputFPS`; and `canvas: {w,h}`, the size the export writes), `phone3d` (`null`, or every 3D setting plus `active`, the `reason` when it renders flat, and the `model` and `finish` it draws), `transitions` (the 3D moves: `index`, `id`, output `start`/`end`, `duration`, `linked`, `from` = the resolved Start, `to`, `easing`, `recipe`), `shotRecipes` (name, default `duration`, `summary`, `use`), `problems`, `warnings`. |
 | `validate <bundle>` | `{"ok":true,"problems":[],"warnings":[]}`. Exit 1 only when there are `problems` (the project is broken; `apply` and `export` refuse it). `warnings` never fail: they are 3D quality issues, each with a `fix` when one exists (see "3D phone"). |
 | `review <bundle\|video> [--every 2s] [--out dir] [--max-sheets 10] [--transcribe] [--no-taps]` | Writes `review/` in the bundle (or `<video>.review/`): `sheet-NN.png` contact sheets (timestamped tiles, 6×2 for portrait, 4×3 for landscape; interval grows so there are at most ~10 sheets), up to 12 `scene-NNN.jpg` keyframes from scene detection, and `review.json` (duration, orientation, device, stills from freezedetect, silences from silencedetect, taps and waits from the editor's own tap analysis, the transcript, every image path with its timestamps). Works on an exported mp4 too. |
 | `apply <bundle> <edits.json\|-\|'[…]'> [--dry-run]` | Applies edit ops in order. All-or-nothing: if any op fails or the result doesn't validate, nothing is written. Writes `project.json.bak` first. |
 | `polish <bundle> [--style clean\|bold] [--title T] [--subtitle S] [--reanalyze] [--dry-run]` | One-shot good defaults (see below). Deterministic; prints the ops it applied. |
-| `direct <bundle> [--style subtle\|hero\|bold] [--keep] [--no-scenes] [--dry-run]` | iPhone takes: plans 3D phone shots around the taps, waits and scene changes (zooms do not play in 3D, so they are not in the way) and applies them (the editor's **Auto 3D**; same plan for the same project). Runs tap analysis first when the take has none, and scene detection unless `--no-scenes` (cached in `analysis/scenes.json`). `--keep` keeps the existing 3D moves and plans around them. Prints `shots` (`recipe`, output `start`/`end`, `reason`), `note` when the style's own moves do not fit (why, and what the phone does instead), the `ops` it applied, `changes`, `warnings` (0 on a fresh plan), `outputDuration`, `backup`. |
-| `frames <bundle> (--at 0.5,2,4.25 \| --every 0.5 \| --moves) [--out dir] [--scale 0.5] [--sheet] [--draft] [--timeout s] [--app …]` | Still PNGs at **output** seconds, drawn by the real app headless with the export's own code, so each PNG is the export frame `round(t·fps)`. `--moves` = the start, middle and end of every 3D move plus every tap. At most 200 stills. Default quality is the export's (3D anti-aliasing and motion blur); `--draft` is one 3D sample, about 3× faster. `--sheet` adds `sheet.png`, a labelled grid. Default folder: `<tmp>/openscreen-frames/<bundle>-<stamp>/` (never the bundle). Prints `out`, `size`, `fps`, `phone3d`, `files` (`t`, `frame`, `at`, `path`, and with 3D the drawn `pose` and `facing`: 1 = screen straight at the camera, below 0 = its back), `sheet`, `seconds`, `gpu`. A time at or past the end gives `{t, error:"past the end"}`. Refuses an invalid project, like `export`. |
+| `direct <bundle> [--style subtle\|hero\|bold] [--keep] [--no-scenes] [--dry-run]` | iPhone takes: plans 3D phone shots around the taps, waits and scene changes (zooms are not busy time, but a `spin-in` or `turn-to-back` never runs during one) and applies them (the editor's **Auto 3D**; same plan for the same project). Runs tap analysis first when the take has none, and scene detection unless `--no-scenes` (cached in `analysis/scenes.json`). `--keep` keeps the existing 3D moves and plans around them. Prints `shots` (`recipe`, output `start`/`end`, `reason`), `note` when the style's own moves do not fit (why, and what the phone does instead) or the take is over 90 s (trim it to its best 15-45 s), the `ops` it applied, `changes`, `warnings` (0 on a fresh plan), `outputDuration`, `backup`. |
+| `frames <bundle> (--at 0.5,2,4.25 \| --every 0.5 \| --moves) [--from s] [--to s] [--out dir] [--scale 0.5] [--sheet] [--draft] [--debug] [--timeout s] [--app …]` | Still PNGs at **output** seconds, drawn by the real app headless with the export's own code, so each PNG is the export frame `round(t·fps)`. `--moves` = the start, middle and end of every 3D move plus every tap. `--from`/`--to` (output s) limit `--moves` and `--every` to a time range. At most 200 stills: `--moves` with more samples them evenly and says so in `note`. `--debug` adds each still's `textBoxes` and `deviceFrame` (layout checks; large). Default quality is the export's (3D anti-aliasing and motion blur); `--draft` is one 3D sample, about 3× faster. `--sheet` adds `sheet.png`, a labelled grid. Default folder: `<tmp>/openscreen-frames/<bundle>-<stamp>/` (never the bundle). Prints `out`, `size`, `fps`, `phone3d`, `files` (`t`, `frame`, `at`, `path`, and with 3D the drawn `pose` and `facing`: 1 = screen straight at the camera, below 0 = its back), `sheet`, `seconds`, `gpu`. A time at or past the end gives `{t, error:"past the end"}`. Refuses an invalid project, like `export`. |
 | `undo <bundle>` | Swaps `project.json` and `project.json.bak` (so a second undo redoes). One level. |
 | `export <bundle> [--out f.mp4\|f.gif\|folder] [--gif] [--preset id[,id…]] [--app /path/OpenScreen.app] [--timeout s] [--force]` | Renders through the real app with no window and no dialogs, then probes the file (`probe`: `file`, `duration`, `width`, `height`, `fps`, `codec`, `hasAudio`, `bytes`). `--preset` writes every listed export preset into a folder. Without `--app` it uses `$OPENSCREEN_APP`, else this checkout's Electron (`electron/`). Refuses an invalid project. A 3D project with a `tap-angle` or `tap-back` warning (a tap the viewer cannot read) is refused (exit 1, the warnings and their `fix` in the output) until it is fixed or `--force` is given; other 3D warnings go to stderr as `{"warning":…}` lines and never block. A 3D project that loses the GPU mid-export fails with "3D renderer lost the GPU"; it never writes a flat file instead. |
 | `open <bundle> [--app …]` | Opens the project in the editor for a human (`OpenScreen --open <bundle>`). Later `apply`s show up live. |
@@ -216,7 +216,7 @@ same code (`applyOps3d`), so the editor refuses what the CLI refuses:
 | Undo | — | `undo` (one level, file-based) |
 | Anything else | any field | `set {path: "/json/pointer", value}` — the value's JSON type must match; `/recording` is read-only |
 
-Zooms (manual, tap and auto-focus) do not play while the 3D phone is on (`phone3d`): the 3D screen always shows the whole recording, 1:1, and the shots frame the phone. They come back as they were when 3D is turned off. Zoom ops still apply, but on a 3D project their `changes` note says the zoom does not play, and `apply`/`validate` list a `zoom-3d` warning per manual zoom. Auto 3D (`direct`) plans shots straight through zooms.
+Zooms (manual, tap and auto-focus) play while the 3D phone is on (`phone3d`): a zoom pushes the 3D camera in toward the zoom centre on the phone's screen, with the same timing and easing as a flat zoom. The phone stays whole and keeps its pose. The zoom ops and the editor's zoom controls are the same as for a flat project. During a zoom the screen must face within 35° of front (`zoom-angle`); `info.zooms` lists when each zoom plays, so keep steep moves off those spans. Auto 3D (`direct`) plans shots through zooms, except a `spin-in` or `turn-to-back` (more than 35° off front).
 
 Not in the editor, so not ops: keystroke overlay and click ripples have no
 switch (they are drawn whenever the recording has keystrokes/clicks); use
@@ -466,8 +466,8 @@ the same plan.
 
 1. **Busy time**: each tap from 0.6 s before it to at least 0.8 s after it
    (longer for a swipe, a long press, or a tap that is still settling), and
-   each typing run. Zooms are not busy: they do not play while the phone is
-   3D, so a shot may run through one.
+   each typing run. Zooms are not busy: a zoom pushes the 3D camera in, so a
+   shot may run through one if it stays within 35° of front.
    Busy spans closer than 1.2 s merge. While busy, the phone stays within 12°
    of straight on.
 2. **Free windows**: the rest, shrunk by 0.15 s next to busy time. A window
@@ -482,12 +482,24 @@ the same plan.
 5. **Outro** (hero, bold): a one-way `hero-layback` ending 0.1 s before the
    end, when the last window is at least 1.5 s.
 6. **Middle** (hero, bold): `turn-to-back` (bold, windows ≥ 4.5 s) or
-   `hero-layback` (windows ≥ 2.4 s); directions alternate; at most one middle
-   shot per 6 s of output; total moving time at most 35% of the output
-   (subtle: 20%; subtle adds no middle shots and ends with `float`). Shots
-   keep at least 1 s apart and end at least 0.25 s before the next busy time.
-7. **Scene-change wipe**: when a scene change falls inside a turn's window,
-   the turn is placed so the phone is edge-on exactly at the cut.
+   `hero-layback` (windows ≥ 2.4 s); windows with a scene change first, then
+   waits; directions alternate; at most one middle shot per 6 s of output;
+   total moving time at most 35% of the output (subtle: 20%; subtle adds no
+   middle shots and ends with `float`). Shots keep at least 1 s apart and end
+   at least 0.25 s before the next busy time.
+   **Restraint**: the big moves (`spin-in`, `turn-to-back`, `hero-layback`,
+   the outro included) are at most one per 20 s (bold) or 30 s (hero,
+   subtle), start to start, never two within 6 s, and at most 3
+   `turn-to-back`s per video (kept moves count). The rest of the time the
+   phone holds its pose. A `spin-in` or `turn-to-back` never runs during a
+   zoom (the screen must stay within 35° of front there).
+7. **Scene changes**: when a scene change falls inside a turn's window,
+   the turn is placed so the phone is edge-on exactly at the cut (a
+   `hero-layback` reaches its angle at the cut). Moves at scene changes are
+   planned before the closing move; a scene change in busy time (right after
+   the tap that caused it) gets its move as soon as the phone is free. A take
+   over 90 s gets a `note` that recommends trimming it to its best 15-45 s,
+   and its middle moves go only to scene changes and waits (when it has any).
 8. **Ops**, in order: `phone3d` (on, the base pose, light `soft` for subtle
    else `studio`, motion blur on), `clearTransitions` (unless `--keep` /
    `replace:false`; kept moves count as busy time), then one `shot` per shot.
@@ -495,16 +507,26 @@ the same plan.
    warning is dropped (a shot that pushes the phone past a canvas edge first
    gets one try leaning the other way), so a fresh plan has 0 warnings.
 10. **Always visible**: on an iPhone take, Auto 3D always gives a visible 3D
-   result. When the style's own moves do not fit (hero: no `spin-in`,
-   `hero-layback` or `turn-to-back`; subtle: no shot at all) and there are
-   no kept moves, the phone rests at `{turn:-8, tilt:5}` (9.4°, inside the
-   12° rule) instead of straight on, and the output has a `note` that says
-   which check refused each move. A plan with no moving shot always has a
-   `note`.
+   result. When the style's own moves do not fit (hero and bold: no
+   `spin-in`, `hero-layback` or `turn-to-back`; subtle: no shot at all), the
+   output has a `note` that says which check refused each move and what the
+   phone does instead. Hero with no kept moves then rests at
+   `{turn:-8, tilt:5}` (9.4°, inside the 12° rule) instead of straight on;
+   bold already rests there. A plan with no moving shot always has a `note`.
 
-`shots[].reason` says why each shot is where it is. On a long take with many
-waits, bold plans a lot of motion: run `polish` first (it speeds up the
-waits), or remove shots you do not want with `removeTransition`.
+`shots[].reason` says why each shot is where it is. On a long take, trim to
+the best 15-45 s first (the `note` says so); `polish` speeds up the waits.
+The waits are the quiet windows Auto 3D puts its big moves in, and polish
+plays them 3x faster, so after polish a short take can be left with no
+window long enough (a `hero-layback` needs 2.4 s, a `turn-to-back` 4.5 s).
+Example: a 15 s trim with one 5.7 s wait gets a bold `turn-to-back` inside
+the wait, but after polish the wait plays in 1.9 s, so bold gets only a
+`settle` and a `note` that no turning shot fits. For a short take that
+should get one big move, set that wait's clip back to normal speed before
+`direct` (`clipSpeed {index, speed: 1}`; `info` lists the clips), or add the
+shot by hand. Do not run `direct` first and polish after: a move keeps its
+length when its footage speeds up, so it no longer fits the wait.
+Remove shots you do not want with `removeTransition`.
 
 ### Warnings
 
@@ -520,13 +542,13 @@ edits list).
 | `inactive` | 3D is on but renders flat (the message gives the reason). It is then the only warning | frame off: `[{"op":"device","frame":true}]`; else none |
 | `tap-angle` | the screen is more than 35° off straight on during a tap (from 0.3 s before it to 0.3 s after it ends) | the first that works of: pull the move's End to 0.3 s before the tap; `setPose {at: tap, turn: <nearest whole turn>, tilt:0}`; both; shift a move that starts during the tap to after it (`editTransition {by}`) |
 | `tap-back` | the phone shows its back during a tap: the tap is invisible | same as `tap-angle` |
-| `off-canvas` | the phone pokes more than 2% of the canvas's short side outside the canvas | `setPose` with smaller `size` or moved `x`/`y` at the worst moment |
+| `zoom-angle` | the screen is more than 35° off straight on during a zoom (manual, tap or auto-focus; from its glide in to its glide out): the zoom pushes the 3D camera in toward the screen, so it must face the viewer | the first that works of: shift the move off the zoom (`editTransition {by}`); pull its End to the zoom's start; `setPose` facing front |
+| `off-canvas` | the phone pokes more than 2% of the canvas's short side outside the canvas. The cause, in this order: the idle float when the keyframes alone (float off) keep the phone inside, even if a move brought it near the edge (the message says so; no `transitionId`); else the move that pushes it further out than the same timeline without that move (`transitionId`); else the pose it rests at (no `transitionId`) | float: a lower `phone3d {float:{amount}}`; else `setPose` with smaller `size` or moved `x`/`y` at the worst moment |
 | `overlap` | a move starts before the one before it ends (the later wins) | `editTransition {id, start: <earlier end>}` (or `{by}` when that would leave it under 0.1 s) |
 | `past-end` | a move ends after the video ends | `editTransition {by: <end of video − end>}` (or `{start:0, end:<end of video>}` when it is longer than the video) |
 | `pose-jump` | a move's explicit Start differs from where the phone is by more than 1° or 0.5% (turn and rotate modulo 360) | `editTransition {id, from:null}` |
 | `too-fast` | a move turns faster than 600°/s (360°/s with motion blur off): it strobes | none: make it longer or smaller (`duration`, `intensity`) |
 | `floor-flat` | a floor shadow with camera height under 4° (invisible) | `phone3d {camera:{elevation:12}}` |
-| `zoom-3d` | a manual zoom on a 3D project: it does not play while the phone is 3D (it plays again with 3D off) | none: remove the zoom, or keep it for the flat version |
 
 ### Look before you export
 

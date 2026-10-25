@@ -15,13 +15,14 @@ let n = 0;
 const ctx = { newId: () => `r${++n}` };
 const apply = (p: Project, ops: EditOp[]) => applyOps(p, ops, ctx);
 
-/** A 40 s take with two long waits: hero plans a layback in each (gaps >= 2.4 s), bold plans turns. */
+/** An 80 s take with two long waits: hero plans a layback after the intro, bold plans turns (one big move per 30 s
+ *  and 20 s: owner decision 18). */
 function planned(style: 'hero' | 'bold'): Project {
-  const p = phoneProject({ duration: 40 });
-  p.taps = [3, 20, 36].map((t, i) => ({ id: `t${i}`, t, x: 0.5, y: 0.5, kind: 'tap' as const, confidence: 1 }));
+  const p = phoneProject({ duration: 80 });
+  p.taps = [3, 40, 76].map((t, i) => ({ id: `t${i}`, t, x: 0.5, y: 0.5, kind: 'tap' as const, confidence: 1 }));
   p.waits = [
-    { start: 5, end: 18 },
-    { start: 22, end: 34 },
+    { start: 5, end: 38 },
+    { start: 42, end: 74 },
   ];
   p.tapsAnalyzed = true;
   return apply(p, [{ op: 'direct', style, scenes: false }]).project;
@@ -40,7 +41,7 @@ function noteOps(note: string): EditOp[] {
 }
 
 const NEW_REST = { turn: -12, tilt: 6, size: 0.9 };
-const times = Array.from({ length: 800 }, (_, i) => i * 0.05);
+const times = Array.from({ length: 1600 }, (_, i) => i * 0.05);
 
 describe('rest pose after Auto 3D', () => {
   for (const style of ['hero', 'bold'] as const) {

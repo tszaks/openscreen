@@ -7,7 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { defaultFramesDir, exportFps, framesCmd, parseFramesArgs, planFrameTimes, poseInfo } from '../src/node/framesCmd';
-import { exportGuard, main, parseDirectArgs } from '../src/node/agentCli';
+import { exportGuard, main, parseDirectArgs, zoomSpans } from '../src/node/agentCli';
+import { focusSegmentsFor } from '../src/shared/focusSegments';
+import { applyOps } from '../src/shared/agentOps';
+import type { CursorSample } from '../src/shared/types';
 import { needsScenes, projectWarnings } from '../src/node/phone3dPlan';
 import { readCursorSamples } from '../src/node/bundleFiles';
 import { CliError } from '../src/node/cliKit';
@@ -43,6 +46,23 @@ describe('frames arguments', () => {
       app: '/A.app',
     });
     expect(parseFramesArgs(['--moves', 'b']).select).toEqual({ kind: 'moves' });
+    // A time range for --moves and --every (owner decision 18), and --debug.
+    expect(parseFramesArgs(['b', '--moves', '--from', '10', '--to', '25.5s']).select).toEqual({ kind: 'moves', from: 10, to: 25.5 });
+    expect(parseFramesArgs(['b', '--every', '1', '--from', '3']).select).toEqual({ kind: 'every', step: 1, from: 3 });
+    expect(parseFramesArgs(['b', '--at', '1', '--debug']).debug).toBe(true);
+    expect(parseFramesArgs(['b', '--at', '1']).debug).toBeUndefined();
+  });
+
+  it('refuses a bad range (exit 2): --from/--to with --at, a negative time, --to not after --from', () => {
+    for (const argv of [
+      ['b', '--at', '1', '--from', '2'],
+      ['b', '--moves', '--from', '-1'],
+      ['b', '--moves', '--to', 'x'],
+      ['b', '--moves', '--from', '5', '--to', '5'],
+      ['b', '--moves', '--from', '6', '--to', '5'],
+    ]) {
+      expect(usage(() => parseFramesArgs(argv)).code, argv.join(' ')).toBe(2);
+    }
   });
 
   it('needs exactly one of --at, --every, --moves (exit 2)', () => {
@@ -137,6 +157,40 @@ describe('frames times', () => {
   it('--moves on a project with no moves and no taps is a usage error', () => {
     expect(usage(() => planFrameTimes(cut(), { kind: 'moves' })).code).toBe(2);
   });
+
+  it('--moves --from/--to: only the moves and taps inside the range; a range with none is a usage error', () => {
+    const p = with3d(cut(), { transitions: [move('m1', 1, 2, { turn: 30 }), move('m2', 5, 7.5, { turn: 0 })] });
+    p.taps = [{ id: 't3', t: 6, x: 0.5, y: 0.5, kind: 'tap', confidence: 1 }] as typeof p.taps; // output 4
+    expect(planFrameTimes(p, { kind: 'moves', from: 3.5, to: 6.5 })).toEqual({ frames: [f(4, 120), f(5, 150), f(6.25, 188)], past: [], fps: 30 });
+    expect(planFrameTimes(p, { kind: 'moves', from: 5 }).frames.map((x) => x.frame)).toEqual([150, 188, 225]);
+    expect(usage(() => planFrameTimes(p, { kind: 'moves', from: 2.5, to: 3.5 })).message).toMatch(/no 3D move or tap between 2\.5 s and 3\.5 s/);
+  });
+
+  it('--every --from/--to: from the range start, inside the range', () => {
+    expect(planFrameTimes(cut(), { kind: 'every', step: 1, from: 2.5, to: 5 }).frames).toEqual([f(2.5, 75), f(3.5, 105), f(4.5, 135)]);
+  });
+
+  it('--moves with more frames than a run renders samples them evenly (first and last kept) and says so, instead of refusing', () => {
+    // A 400 s take with a move every second: 1200 move times + 0 taps, far over MAX_FRAMES.
+    const p = phoneProject({ duration: 400, presetId: 'social-9x16' });
+    const moves = Array.from({ length: 399 }, (_, i) => move(`m${i}`, i + 0.2, i + 0.8, { turn: i % 2 ? 0 : 20 }));
+    const big = with3d(p, { transitions: moves });
+    const r = planFrameTimes(big, { kind: 'moves' });
+    expect(r.frames).toHaveLength(MAX_FRAMES);
+    const all = moves.flatMap((m) => [m.start, (m.start + m.end) / 2, m.end]).map((t) => Math.round(t * 30));
+    expect(r.frames[0].frame).toBe(Math.min(...all));
+    expect(r.frames.at(-1)!.frame).toBe(Math.max(...all));
+    // Evenly spread: the gaps between picked frames differ by at most one source step.
+    const gaps = r.frames.slice(1).map((x, i) => x.frame - r.frames[i].frame);
+    expect(Math.max(...gaps) / Math.min(...gaps)).toBeLessThan(3);
+    expect(r.note).toMatch(new RegExp(`^--moves found ${all.length} frames, more than the ${MAX_FRAMES} a run renders, so it rendered ${MAX_FRAMES} evenly spread`));
+    // A range brings it under the cap: no sampling, no note.
+    const part = planFrameTimes(big, { kind: 'moves', from: 10, to: 40 });
+    expect(part.note).toBeUndefined();
+    expect(part.frames.length).toBe(90);
+    // --every still refuses: its step is the caller's to choose.
+    expect(usage(() => planFrameTimes(big, { kind: 'every', step: 1 })).code).toBe(2);
+  });
 });
 
 describe('framesCmd with a stand-in app', () => {
@@ -172,7 +226,7 @@ console.log(JSON.stringify({ ok: true, out, stills, size: { w: 1080, h: 1920 }, 
     const p = phoneProject({ presetId: 'social-9x16' });
     const dir = join(scratch, 'fc.openscreen');
     mkdirSync(dir, { recursive: true });
-    const r = await framesCmd(['b', '--at', '4.75,4.25,1,99', '--out', join(scratch, 'fc-out'), '--app', app], { resolveBundle: () => ({ dir, project: p }) });
+    const r = await framesCmd(['b', '--at', '4.75,4.25,1,99', '--out', join(scratch, 'fc-out'), '--app', app, '--debug'], { resolveBundle: () => ({ dir, project: p }) });
     const argv = JSON.parse(readFileSync(seen, 'utf8')) as string[];
     // 1 s → frame 30; 4.25 s → frame 128 (4.2667 s); 4.75 s → frame 143 (4.7667 s); every digit of i / 30.
     expect(argv[argv.indexOf('--frames') + 1]).toBe([30 / 30, 128 / 30, 143 / 30].map(String).join(','));
@@ -197,6 +251,10 @@ console.log(JSON.stringify({ ok: true, out, stills, size: { w: 1080, h: 1920 }, 
       { t: 4.75, frame: 143, at: 4.766667, path: join(scratch, 'fc-out', 'f-143.png'), pose: null, facing: null, textBoxes: [], deviceFrame: null },
       { t: 99, error: 'past the end' },
     ]);
+    // Without --debug the same run prints no text boxes and no device frame (the edges are thousands of points).
+    const plain = await framesCmd(['b', '--at', '4.75,4.25,1,99', '--out', join(scratch, 'fc-out'), '--app', app], { resolveBundle: () => ({ dir, project: p }) });
+    expect(plain.files).toEqual((r.files as Record<string, unknown>[]).map(({ textBoxes: _tb, deviceFrame: _df, ...rest }) => rest));
+    expect(JSON.stringify(plain)).not.toMatch(/edges|textBoxes|deviceFrame/);
   });
 });
 
@@ -359,6 +417,60 @@ describe('info.export: the frame rate the export writes', () => {
     expect(onPreset.export.fps).toBe(exportFps(social));
     const plain = { ...phoneProject({ presetId: 'none' }), outputFPS: 60 };
     expect((await info(plain)).export.fps).toBe(60);
+  });
+});
+
+describe('info.zooms (owner decision 22): every zoom that plays, in output seconds, with its source', () => {
+  /** A 30 s take with all three kinds: autofocus from two clicks, tap zooms, and one manual zoom. */
+  function allKinds() {
+    let p = phoneProject({ presetId: 'social-9x16', duration: 30 });
+    p.taps = [5, 12].map((t, i) => ({ id: `t${i}`, t, x: 0.3, y: 0.6, kind: 'tap' as const, confidence: 1 }));
+    p.tapsAnalyzed = true;
+    p = applyOps(p, [{ op: 'zoomSettings', autofocus: true, fromTaps: true }, { op: 'addZoom', at: 20, x: 0.25, y: 0.75, scale: 2 }]).project;
+    const cursor: CursorSample[] = [8.5, 24].map((time) => ({ time, x: 0.7, y: 0.2, kind: 'clickDown' as const }));
+    return { p, cursor };
+  }
+
+  it('is exactly focusSegmentsFor (start = inStart, focus = holdStart, end = outEnd, centre), with each span\'s source', () => {
+    const { p, cursor } = allKinds();
+    const spans = zoomSpans(p, cursor);
+    const segs = focusSegmentsFor(p, cursor);
+    expect(segs.length).toBeGreaterThanOrEqual(4);
+    const r2 = (x: number) => Math.round(x * 100) / 100;
+    const r3 = (x: number) => Math.round(x * 1000) / 1000;
+    expect(spans.map(({ source: _s, ...z }) => z)).toEqual(segs.map((z) => ({ start: r2(z.inStart), focus: r2(z.holdStart), end: r2(z.outEnd), x: r3(z.center.x), y: r3(z.center.y) })));
+    const sources = new Set(spans.map((z) => z.source));
+    expect(sources).toEqual(new Set(['auto', 'tap', 'manual']));
+    expect(spans.filter((z) => z.source === 'manual')).toEqual([expect.objectContaining({ start: 20, x: 0.25, y: 0.75 })]);
+    // Tap and autofocus centres follow their own planners (near the tap / the click), so each kind is near its input.
+    for (const z of spans.filter((x) => x.source === 'tap')) expect(Math.hypot(z.x - 0.3, z.y - 0.6)).toBeLessThan(0.1);
+    for (const z of spans.filter((x) => x.source === 'auto')) expect(Math.hypot(z.x - 0.7, z.y - 0.2)).toBeLessThan(0.1);
+    for (const z of spans) expect(z.start <= z.focus && z.focus <= z.end).toBe(true);
+  });
+
+  it('negative: [] with no zooms, and [] on an App Store preset (no zoom plays there)', () => {
+    const plain = phoneProject({ presetId: 'social-9x16' });
+    plain.zoom = { ...plain.zoom, autofocus: false, fromTaps: false };
+    expect(zoomSpans(plain, [])).toEqual([]);
+    const { p, cursor } = allKinds();
+    expect(zoomSpans({ ...p, layout: { ...p.layout, presetId: 'appstore' } }, cursor)).toEqual([]);
+  });
+
+  it('info prints it, reading the bundle\'s cursor.json', async () => {
+    const { p, cursor } = allKinds();
+    const dir = mkdtempSync(join(scratch, 'zooms-'));
+    writeFileSync(join(dir, 'project.json'), JSON.stringify(p));
+    writeFileSync(join(dir, 'cursor.json'), JSON.stringify({ samples: cursor }));
+    let text = '';
+    const write = process.stdout.write;
+    process.stdout.write = ((s: string) => ((text += s), true)) as typeof process.stdout.write;
+    try {
+      expect(await main(['info', dir])).toBe(0);
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(JSON.parse(text).zooms).toEqual(zoomSpans(p, readCursorSamples(dir)));
+    expect(JSON.parse(text).zooms.some((z: { source: string }) => z.source === 'auto')).toBe(true);
   });
 });
 

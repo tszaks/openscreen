@@ -121,6 +121,9 @@ export interface TitleCardStyle {
   accent?: string;
   maxTitleLines: number;
   fontFamily: string;
+  /** Canvas px per px of the layout preset's own (1080-class) canvas: 2 at uhd4k. The card is laid out at that
+   *  size and scaled, so it is the same layout at every resolution (1 = as before). */
+  scale: number;
 }
 
 export const defaultTitleCardStyle: TitleCardStyle = {
@@ -130,6 +133,7 @@ export const defaultTitleCardStyle: TitleCardStyle = {
   weight: 700,
   maxTitleLines: 2,
   fontFamily: '-apple-system, "SF Pro Display", BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif',
+  scale: 1,
 };
 
 /** Apple's display tracking tightens as size grows: about -2.2% of the size for headlines. */
@@ -205,21 +209,31 @@ export function layoutTitleCard(
   const s = { ...defaultTitleCardStyle, ...style };
   const titleWords = text.title.trim().split(/\s+/).filter(Boolean);
   const subWords = (text.subtitle ?? '').trim().split(/\s+/).filter(Boolean);
+  // Laid out at the 1080-class size (px), then scaled by k: the same font sizes and line breaks at every resolution.
+  const k = s.scale;
+  // Measuring leaves its font and letterSpacing on ctx, and later text (captions, overlays) is drawn with that
+  // letterSpacing (requests.md R5). At k != 1 the state is set once more at the drawn size, so it scales with k.
+  let last: [number, number, (n: number) => number] | null = null;
+  const leave = <T,>(m: T): T => {
+    if (k !== 1 && last) setFont(ctx, last[0], last[1] * k, s.fontFamily, last[2](last[1] * k));
+    return m;
+  };
   const measure = (weight: number, px: number, tr: (n: number) => number) => (str: string) => {
     setFont(ctx, weight, px, s.fontFamily, tr(px));
-    return ctx.measureText(str).width;
+    last = [weight, px, tr];
+    return ctx.measureText(str).width * k;
   };
-  for (let px = Math.floor(rect.h * 0.46); px >= 10; px = Math.floor(px * 0.94)) {
+  for (let px = Math.floor((rect.h / k) * 0.46); px >= 10; px = Math.floor(px * 0.94)) {
     const titleLines = wrapBalanced(titleWords, s.maxTitleLines, rect.w, measure(s.weight, px, titleTracking));
     if (!titleLines) continue;
     const subPx = Math.max(10, Math.round(px * 0.46));
     const subtitleLines = subWords.length ? wrapBalanced(subWords, 2, rect.w, measure(500, subPx, subtitleTracking)) : [];
     if (!subtitleLines) continue;
     const blockHeight =
-      titleLines.length * px * 1.06 + (subtitleLines.length ? px * 0.32 + subtitleLines.length * subPx * 1.3 : 0);
-    if (blockHeight <= rect.h) return { titlePx: px, subtitlePx: subPx, titleLines, subtitleLines, blockHeight };
+      (titleLines.length * px * 1.06 + (subtitleLines.length ? px * 0.32 + subtitleLines.length * subPx * 1.3 : 0)) * k;
+    if (blockHeight <= rect.h) return leave({ titlePx: px * k, subtitlePx: subPx * k, titleLines, subtitleLines, blockHeight });
   }
-  return { titlePx: 10, subtitlePx: 10, titleLines: [text.title], subtitleLines: [], blockHeight: 12 };
+  return leave({ titlePx: 10 * k, subtitlePx: 10 * k, titleLines: [text.title], subtitleLines: [], blockHeight: 12 * k });
 }
 
 /** Headline + optional subtitle in SF Pro-style type with tight tracking. */

@@ -8,6 +8,7 @@
 // again; a fix that would not clear its warning is not offered. Pure and
 // deterministic (no clock, no randomness).
 
+import { focusSegmentsFor } from '../focusSegments';
 import { tapsToOutput } from '../mobileProject';
 import { Timeline } from '../timeline';
 import type { CursorSample, Project } from '../types';
@@ -31,11 +32,14 @@ export interface Warning {
   fix?: EditOp[];
 }
 
-export const WARNING_CODES = ['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat', 'zoom-3d'] as const;
+export const WARNING_CODES = ['inactive', 'tap-angle', 'tap-back', 'zoom-angle', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat'] as const;
 export type WarningCode = (typeof WARNING_CODES)[number];
 
 /** A tap must see the screen within this angle of straight on. */
 export const TAP_ANGLE_DEG = 35;
+/** During a zoom the screen must face within this angle of straight on (owner decision 20: the steep-angle limit,
+ *  the same as a tap's). */
+export const ZOOM_ANGLE_DEG = TAP_ANGLE_DEG;
 /** Seconds checked on each side of a tap (and after a swipe or typing run ends). */
 export const TAP_WINDOW = 0.3;
 /** Samples per second inside a tap window. */
@@ -88,7 +92,7 @@ interface Ctx {
 }
 
 /** A warning plus the identity used to tell whether a fix cleared it. */
-type Found = Warning & { key: string; offCanvas?: OffCanvas };
+type Found = Warning & { key: string; offCanvas?: OffCanvas; offCanvasCause?: OffCanvasCause['kind'] };
 
 function makeCtx(p: Project, cursor: readonly CursorSample[]): Ctx | null {
   if (!p.phone3d) return null;
@@ -181,10 +185,17 @@ function tapWarnings(c: Ctx): Found[] {
 /** Fix candidates for a tap warning, in order of preference. */
 function tapFixes(c: Ctx, w: Found): EditOp[][] {
   const chk = tapChecks(c).find((x) => `tap:${x.tapId}` === w.key);
-  if (!chk) return [];
+  return chk ? windowFixes(c, chk) : [];
+}
+
+/**
+ * Fix candidates for a window the screen must face through ([a, b], worst
+ * moment `worst`, the moment `t` it is about), in order of preference.
+ */
+function windowFixes(c: Ctx, chk: { t: number; a: number; b: number; worst: number }): EditOp[][] {
   const list = c.p3.transitions;
   const tr = culprit(list, chk.worst);
-  // Face front at the tap: the keyframe poseTargetAt edits gets turn = the whole turn nearest the move's
+  // Face front at the moment: the keyframe poseTargetAt edits gets turn = the whole turn nearest the move's
   // other end (so the move does not gain a spin) and tilt 0.
   const target = poseTargetAt(c.p3, chk.t);
   const ref = target.kind === 'to' ? resolveStarts(c.p3)[target.index].turn : target.kind === 'from' ? list[target.index].to.turn : target.pose.turn;
@@ -202,6 +213,69 @@ function tapFixes(c: Ctx, w: Found): EditOp[][] {
     out.push([pull], [face], [pull, face]);
   } else out.push([face]);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Zooms (owner decision 20: a zoom pushes the 3D camera in toward the screen, so the screen must face the viewer)
+
+interface ZoomCheck {
+  key: string;
+  /** The zoom's span (output s) and the moment it is at its focus. */
+  a: number;
+  b: number;
+  t: number;
+  worst: number;
+  minFacing: number;
+}
+
+function zoomChecks(c: Ctx): ZoomCheck[] {
+  const sample = floatSampler(c.p3);
+  const elev = c.p3.camera.elevation;
+  const out: ZoomCheck[] = [];
+  focusSegmentsFor(c.p, c.cursor).forEach((z, i) => {
+    const a = Math.max(0, z.inStart);
+    const b = Math.min(c.D, z.outEnd);
+    if (!(b >= a)) return;
+    const t = Math.min(b, Math.max(a, z.holdStart));
+    const n = Math.max(1, Math.ceil((b - a) * TAP_SAMPLE_HZ));
+    let minFacing = facingOf(sample(t), elev);
+    let worst = t;
+    for (let k = 0; k <= n; k++) {
+      const tt = a + ((b - a) * k) / n;
+      const f = facingOf(sample(tt), elev);
+      if (f < minFacing - 1e-6) {
+        minFacing = f;
+        worst = tt;
+      }
+    }
+    out.push({ key: `zoom:${i}:${r3(z.inStart)}`, a, b, t, worst, minFacing });
+  });
+  return out;
+}
+
+const COS_ZOOM = Math.cos(ZOOM_ANGLE_DEG * DEG);
+
+function zoomAngleWarnings(c: Ctx): Found[] {
+  const out: Found[] = [];
+  for (const chk of zoomChecks(c)) {
+    if (chk.minFacing >= COS_ZOOM) continue;
+    const tr = culprit(c.p3.transitions, chk.worst);
+    const deg = Math.acos(Math.max(-1, Math.min(1, chk.minFacing))) / DEG;
+    out.push({
+      code: 'zoom-angle',
+      key: chk.key,
+      message: `The phone is ${Math.round(deg)}° off front at ${s2(chk.worst)}, during the zoom at ${s2(chk.a)}–${s2(chk.b)} (the screen must face within ${ZOOM_ANGLE_DEG}° while a zoom plays)`,
+      at: r3(chk.a),
+      end: r3(chk.b),
+      ...(tr ? { transitionId: tr.id } : {}),
+    });
+  }
+  return out;
+}
+
+function zoomFixes(c: Ctx, w: Found): EditOp[][] {
+  const chk = zoomChecks(c).find((x) => x.key === w.key);
+  return chk ? windowFixes(c, chk) : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -354,22 +428,87 @@ function offCanvasGroups(c: Ctx, times: readonly number[]): OffCanvas[] {
   return [...groups.values()];
 }
 
-function offCanvasWarnings(c: Ctx): Found[] {
+/** Every sample of `g`'s runs (the off-canvas check's own times inside each run). */
+const runTimes = (times: readonly number[], g: OffCanvas) => g.runs.flatMap((r) => timesIn(times, r.at, r.end));
+
+/**
+ * The move an off-canvas group is named after (advisor ruling 3, owner
+ * decision 19), or undefined. A move is named only when the per-edge
+ * comparison shows it ADDS overflow: at some sample of the group's runs, an
+ * edge is past the margin and more than OFF_CANVAS_ADDED_PX further past it
+ * than on the same timeline without that move. The candidates are the move
+ * active at the worst moment and the moves that lead straight into it (no
+ * hold between them: one shot's lean, drift and return), latest first, so a
+ * drift that only carries on a lean does not hide the lean. A run the
+ * candidates do not push out (the float alone, or a pose the phone already
+ * rests at) names no move.
+ */
+function offCanvasMove(c: Ctx, g: OffCanvas, times: readonly number[]): PoseTransition | undefined {
+  const list = c.p3.transitions;
   const margin = offCanvasMargin(c.scene);
-  return offCanvasGroups(c, offCanvasTimes(c)).map((g) => {
-    const tr = culprit(c.p3.transitions, g.worst);
+  const samples = runTimes(times, g);
+  const cache: BoundsCache = new Map();
+  const mine = samples.map((t) => edgesAt(c.scene, t, cache));
+  let i = activeIndex(list, g.worst);
+  if (i < 0) i = list.length ? 0 : -1;
+  for (; i >= 0; i--) {
+    const tr = list[i];
+    const without = applyFix(c.p, [{ op: 'removeTransition', id: tr.id }]);
+    const wc = without && makeCtx(without, c.cursor);
+    if (!wc) continue;
+    const wcache: BoundsCache = new Map();
+    const adds = samples.some((t, k) => {
+      const base = edgesAt(wc.scene, t, wcache);
+      return mine[k].some((o, e) => o > margin && o > base[e] + OFF_CANVAS_ADDED_PX);
+    });
+    if (adds) return tr;
+    // Only moves that lead straight into this one (no hold between) are part of the same motion.
+    const prev = list[i - 1];
+    if (!prev || prev.end < tr.start - 1e-3) break;
+  }
+  return undefined;
+}
+
+/** What makes an off-canvas group: a move (named), else the idle float, else the pose the phone rests at. */
+type OffCanvasCause = { kind: 'move'; tr: PoseTransition } | { kind: 'float' } | { kind: 'pose' };
+
+/** The float is the cause when it is on and the keyframes alone keep every sample of the group's runs inside. */
+function floatCarries(c: Ctx, g: OffCanvas, times: readonly number[]): boolean {
+  if (!c.p3.float.on) return false;
+  const margin = offCanvasMargin(c.scene);
+  const cache: BoundsCache = new Map();
+  return runTimes(times, g).every((t) => overflowAt(c.scene, t, cache, poseAt(c.p3, t)) <= margin);
+}
+
+/**
+ * Float first: when the keyframes alone stay inside the margin, the float is what carries the phone out, even when a
+ * move brought the phone near the edge (both are then needed to poke out, so both "add" overflow). Lowering the float
+ * clears it without touching the moves, and Auto 3D's own float must not get a kept move blamed (owner decision 19
+ * keeps direct.test's "the float is part of the style" case, which is exactly this shape; a move-first order fails
+ * it). Then a move that adds overflow (offCanvasMove); else the pose the phone rests at (the base pose or a kept hold).
+ */
+function offCanvasCause(c: Ctx, g: OffCanvas, times: readonly number[]): OffCanvasCause {
+  if (floatCarries(c, g, times)) return { kind: 'float' };
+  const tr = offCanvasMove(c, g, times);
+  return tr ? { kind: 'move', tr } : { kind: 'pose' };
+}
+
+function offCanvasWarnings(c: Ctx): Found[] {
+  const times = offCanvasTimes(c);
+  return offCanvasGroups(c, times).map((g) => {
+    const cause = offCanvasCause(c, g, times);
     const n = g.runs.length;
     const span = g.end > g.at ? `from ${s2(g.at)} to ${s2(g.end)}` : `at ${s2(g.at)}`;
-    // The keyframes alone keep it inside: only the idle float carries it out.
-    const floatOnly = c.p3.float.on && overflowAt(c.scene, g.worst, new Map(), poseAt(c.p3, g.worst)) <= margin;
+    const why = cause.kind === 'float' ? ' (the idle float carries it past the edge)' : '';
     return {
       code: 'off-canvas' as const,
       key: `off-canvas:${targetKey(g.target)}`,
-      message: `The phone goes ${Math.round(g.over)} px off the canvas ${n > 1 ? `${n} times ` : ''}${span}${floatOnly ? ' (the idle float carries it past the edge)' : ''}`,
+      message: `The phone goes ${Math.round(g.over)} px off the canvas ${n > 1 ? `${n} times ` : ''}${span}${why}`,
       at: r3(g.at),
       end: r3(g.end),
-      ...(tr ? { transitionId: tr.id } : {}),
+      ...(cause.kind === 'move' ? { transitionId: cause.tr.id } : {}),
       offCanvas: g,
+      offCanvasCause: cause.kind,
     };
   });
 }
@@ -377,8 +516,25 @@ function offCanvasWarnings(c: Ctx): Found[] {
 /** Times a fix for `g` must clear: every sample in its span (keyframe times of `c`'s moves included). */
 const groupTimes = (c: Ctx, g: OffCanvas) => timesIn(offCanvasTimes(c), g.at, g.end);
 
+/** Float amounts a float-caused off-canvas fix tries, as fractions of the current amount (the gentlest first). */
+export const FLOAT_FIX_STEPS = [0.8, 0.6, 0.4, 0.2, 0] as const;
+
+/**
+ * Fixes for an off-canvas warning. When the idle float carries the phone out
+ * (advisor ruling 3), first a lower `float.amount` (the largest that clears
+ * it), then the setPose below. Otherwise only the setPose.
+ */
+function* offCanvasFixes(c: Ctx, w: Found): Iterable<EditOp[]> {
+  if (w.offCanvasCause === 'float') {
+    const amount = c.p3.float.amount;
+    for (const a of new Set(FLOAT_FIX_STEPS.map((f) => Math.round(amount * f * 100) / 100))) if (a < amount) yield [{ op: 'phone3d', float: { amount: a } }];
+  }
+  // Only worked out when no float fix cleared it (each round re-renders the warning's span).
+  yield* offCanvasPoseFixes(c, w);
+}
+
 /** A setPose that pulls the keyframe behind the worst moment back onto the canvas (clamped x/y/size). */
-function offCanvasFixes(c: Ctx, w: Found): EditOp[][] {
+function offCanvasPoseFixes(c: Ctx, w: Found): EditOp[][] {
   const g = w.offCanvas;
   if (!g) return [];
   const W = c.scene.canvas.width;
@@ -658,24 +814,6 @@ function floorFlatWarnings(c: Ctx): Found[] {
   ];
 }
 
-/**
- * Manual zooms do not play while the phone is 3D (compositor.ts: the zoom camera is the identity when the 3D phone
- * draws), so each one is named, or the user and the agent would add zooms that silently do nothing. No fix: the
- * zooms come back unchanged when 3D is off, so removing them is the user's call. Automatic zooms (autofocus, taps)
- * are settings, not marks on the timeline; the editor says they are off in its Zoom panel.
- */
-function zoom3dWarnings(c: Ctx): Found[] {
-  return c.p.manualZooms
-    .filter((z) => z.inStart < c.D)
-    .map((z, i) => ({
-      code: 'zoom-3d' as const,
-      key: `zoom-3d:${i}`,
-      message: `The zoom at ${s2(z.inStart)} does not play while the phone is 3D (the screen always shows the whole recording); it plays again with 3D off`,
-      at: r3(Math.max(0, z.inStart)),
-      end: r3(Math.min(c.D, z.outEnd)),
-    }));
-}
-
 // ---------------------------------------------------------------------------
 // Fixes
 
@@ -698,6 +836,7 @@ type Check = (c: Ctx) => Found[];
 const CHECKS: Partial<Record<WarningCode, Check>> = {
   'tap-angle': tapWarnings,
   'tap-back': tapWarnings,
+  'zoom-angle': zoomAngleWarnings,
   overlap: overlapWarnings,
   'past-end': pastEndWarnings,
   'pose-jump': poseJumpWarnings,
@@ -715,7 +854,7 @@ function cleared(w: Found, fixed: Project, cursor: readonly CursorSample[]): boo
 }
 
 /** Warnings a fix must not add (cheap to re-check; off-canvas has its own fixes). */
-const SIDE_CHECKS: readonly Check[] = [tapWarnings, overlapWarnings, pastEndWarnings, poseJumpWarnings];
+const SIDE_CHECKS: readonly Check[] = [tapWarnings, zoomAngleWarnings, overlapWarnings, pastEndWarnings, poseJumpWarnings];
 
 /**
  * A fix that clears one warning must not make the project worse: no new
@@ -740,7 +879,7 @@ function noWorse(c: Ctx, fixed: Project): boolean {
 }
 
 /** The first candidate fix that clears `w` and makes nothing else worse. */
-function firstFix(c: Ctx, w: Found, candidates: EditOp[][]): EditOp[] | undefined {
+function firstFix(c: Ctx, w: Found, candidates: Iterable<EditOp[]>): EditOp[] | undefined {
   for (const ops of candidates) {
     const fixed = applyFix(c.p, ops);
     if (fixed && cleared(w, fixed, c.cursor) && noWorse(c, fixed)) return ops;
@@ -748,9 +887,10 @@ function firstFix(c: Ctx, w: Found, candidates: EditOp[][]): EditOp[] | undefine
   return undefined;
 }
 
-const FIXERS: Partial<Record<WarningCode, (c: Ctx, w: Found) => EditOp[][]>> = {
+const FIXERS: Partial<Record<WarningCode, (c: Ctx, w: Found) => Iterable<EditOp[]>>> = {
   'tap-angle': tapFixes,
   'tap-back': tapFixes,
+  'zoom-angle': zoomFixes,
   'off-canvas': offCanvasFixes,
   overlap: overlapFixes,
   'past-end': pastEndFixes,
@@ -763,9 +903,8 @@ const codePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 /**
  * Every warning for `p`'s 3D phone, sorted by time. `cursor` is the
  * bundle's cursor.json samples (D5), passed by the CLI and the editor alike.
- * No check reads it since look round 4: zooms do not play on the 3D screen
- * (compositor.ts), so the old over-zoom warning (a move during a zoom) cannot
- * happen; the parameter stays so callers do not change.
+ * zoom-angle reads it: the autofocus zooms come from it (focusSegmentsFor),
+ * and each zoom pushes the 3D camera in, so the screen must face front then.
  * [] when there is no phone3d, it is off, or it has structural errors
  * (those are validateProject's).
  */
@@ -787,15 +926,15 @@ export function projectWarnings(p: Project, opts: { cursor?: readonly CursorSamp
   if (!c) return [];
   const found: Found[] = [
     ...tapWarnings(c),
+    ...zoomAngleWarnings(c),
     ...offCanvasWarnings(c),
     ...overlapWarnings(c),
     ...pastEndWarnings(c),
     ...poseJumpWarnings(c),
     ...tooFastWarnings(c),
     ...floorFlatWarnings(c),
-    ...zoom3dWarnings(c),
   ];
-  const out = found.map(({ key: _key, offCanvas: _oc, ...w }) => w as Warning);
+  const out = found.map(({ key: _key, offCanvas: _oc, offCanvasCause: _cause, ...w }) => w as Warning);
   found.forEach((w, i) => {
     const fixer = FIXERS[w.code];
     if (!fixer) return;

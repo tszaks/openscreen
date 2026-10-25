@@ -1,5 +1,5 @@
-// `frames <bundle|latest> (--at 0.5,2,4.25 | --every 0.5 | --moves) [--out dir]
-// [--scale 0.5] [--sheet] [--draft] [--timeout s] [--app OpenScreen.app]`:
+// `frames <bundle|latest> (--at 0.5,2,4.25 | --every 0.5 | --moves) [--from s] [--to s]
+// [--out dir] [--scale 0.5] [--sheet] [--draft] [--debug] [--timeout s] [--app OpenScreen.app]`:
 // render still PNGs at OUTPUT seconds with the real app, headless, through
 // the same compositor and inputs as an export (SPEC §4.2). An agent looks at
 // these (and sheet.png) before paying for a full export. Every time snaps to
@@ -28,7 +28,8 @@ import { readCursorSamples } from './bundleFiles';
 import { appCommand, bool, CliError, flag, r2, runHeadless, seconds, warnProgress } from './cliKit';
 import { projectWarnings } from './phone3dPlan';
 
-export type FrameSelection = { kind: 'at'; times: number[] } | { kind: 'every'; step: number } | { kind: 'moves' };
+/** `from`/`to`: an output-time range for --every and --moves (owner decision 18). */
+export type FrameSelection = { kind: 'at'; times: number[] } | { kind: 'every'; step: number; from?: number; to?: number } | { kind: 'moves'; from?: number; to?: number };
 
 export interface FramesArgs {
   bundle: string | undefined;
@@ -37,11 +38,13 @@ export interface FramesArgs {
   scale: number;
   sheet: boolean;
   draft: boolean;
+  /** Print each still's textBoxes and deviceFrame (layout checks such as downscale4k; large on long runs). */
+  debug?: true;
   timeout?: number;
   app?: string;
 }
 
-export const FRAMES_USAGE = 'usage: frames <bundle|latest> (--at 0.5,2,4.25 | --every 0.5 | --moves) [--out dir] [--scale 0.5] [--sheet] [--draft] [--timeout s]';
+export const FRAMES_USAGE = 'usage: frames <bundle|latest> (--at 0.5,2,4.25 | --every 0.5 | --moves) [--from s] [--to s] [--out dir] [--scale 0.5] [--sheet] [--draft] [--debug] [--timeout s]';
 
 /** Parse `frames` arguments; exactly one of --at / --every / --moves. Throws CliError(…, 2) on bad usage. */
 export function parseFramesArgs(argv: string[]): FramesArgs {
@@ -55,6 +58,9 @@ export function parseFramesArgs(argv: string[]): FramesArgs {
   const app = flag(args, '--app');
   const sheet = bool(args, '--sheet');
   const draft = bool(args, '--draft');
+  const debug = bool(args, '--debug');
+  const fromArg = flag(args, '--from');
+  const toArg = flag(args, '--to');
   const bundle = args.shift();
   const unknown = args.find((a) => a.startsWith('--'));
   if (unknown) throw new CliError(`frames: unknown option ${unknown}. ${FRAMES_USAGE}`, 2);
@@ -62,18 +68,29 @@ export function parseFramesArgs(argv: string[]): FramesArgs {
   if ([at !== undefined, every !== undefined, moves].filter(Boolean).length !== 1) {
     throw new CliError(`frames needs exactly one of --at, --every or --moves. ${FRAMES_USAGE}`, 2);
   }
+  const time = (name: string, v: string | undefined) => {
+    if (v === undefined) return undefined;
+    const n = Number(v.replace(/s$/, ''));
+    if (!Number.isFinite(n) || n < 0) throw new CliError(`${name} must be output seconds ≥ 0 (got "${v}")`, 2);
+    return n;
+  };
+  const from = time('--from', fromArg);
+  const to = time('--to', toArg);
+  if ((from !== undefined || to !== undefined) && at !== undefined) throw new CliError(`--from/--to go with --moves or --every; --at already names its times. ${FRAMES_USAGE}`, 2);
+  if (from !== undefined && to !== undefined && !(to > from)) throw new CliError(`--to must be after --from (got ${from} to ${to})`, 2);
+  const range = { ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}) };
   let select: FrameSelection;
   if (at !== undefined) {
     const times = at.split(',').map((s) => s.trim()).filter(Boolean).map((s) => Number(s.replace(/s$/, '')));
     if (!times.length || times.some((t) => !Number.isFinite(t) || t < 0)) throw new CliError(`--at must be output seconds ≥ 0, comma-separated (got "${at}")`, 2);
     select = { kind: 'at', times };
-  } else if (every !== undefined) select = { kind: 'every', step: seconds(every) };
-  else select = { kind: 'moves' };
+  } else if (every !== undefined) select = { kind: 'every', step: seconds(every), ...range };
+  else select = { kind: 'moves', ...range };
   const scale = scaleArg === undefined ? 1 : Number(scaleArg);
   if (!(scale > 0 && scale <= 1)) throw new CliError('--scale must be a number in (0, 1]', 2);
   const timeout = timeoutArg === undefined ? undefined : Number(timeoutArg);
   if (timeout !== undefined && !(timeout > 0)) throw new CliError('--timeout must be a positive number of seconds', 2);
-  return { bundle, select, ...(outArg !== undefined ? { out: outArg } : {}), scale, sheet, draft, ...(timeout !== undefined ? { timeout } : {}), ...(app !== undefined ? { app } : {}) };
+  return { bundle, select, ...(outArg !== undefined ? { out: outArg } : {}), scale, sheet, draft, ...(debug ? { debug: true as const } : {}), ...(timeout !== undefined ? { timeout } : {}), ...(app !== undefined ? { app } : {}) };
 }
 
 /** The frame rate the project exports at (Editor.exportVideo): its layout preset's, else `outputFPS`. */
@@ -95,21 +112,33 @@ export interface PlannedFrame {
  * time snaps to the export's frame grid (snapToExportFrame at exportFps), so
  * each PNG is a frame the export writes; times on one frame render once.
  * --moves: the start, middle and end of every 3D move, plus every tap.
+ * --every and --moves take an output range (`from`, `to`; default the whole
+ * take). --moves with more than MAX_FRAMES frames samples them evenly (the
+ * first and last always kept) and says so in `note`, instead of refusing
+ * (owner decision 18: a long take has hundreds of moves and taps).
  */
-export function planFrameTimes(p: Project, select: FrameSelection): { frames: PlannedFrame[]; past: number[]; fps: number } {
+export function planFrameTimes(p: Project, select: FrameSelection): { frames: PlannedFrame[]; past: number[]; fps: number; note?: string } {
   const tl = new Timeline(p.recording.duration, p.clips);
   const fps = exportFps(p);
   const D = tl.outputDuration;
+  const from = select.kind === 'at' ? 0 : (select.from ?? 0);
+  const to = select.kind === 'at' ? Infinity : (select.to ?? Infinity);
+  const inRange = (t: number) => t >= from - 1e-9 && t <= to + 1e-9;
+  const range = select.kind !== 'at' && (select.from !== undefined || select.to !== undefined) ? ` between ${from} s and ${to === Infinity ? 'the end' : `${to} s`}` : '';
   let wanted: number[];
   if (select.kind === 'at') wanted = select.times;
   else if (select.kind === 'every') {
-    const n = Math.ceil(D / select.step - 1e-9);
-    if (n > MAX_FRAMES) throw new CliError(`--every ${select.step} gives ${n} frames; at most ${MAX_FRAMES} (use --every ${Math.ceil((D / MAX_FRAMES) * 100) / 100} or more)`, 2);
-    wanted = Array.from({ length: n }, (_, k) => k * select.step);
+    const end = Math.min(to, D);
+    const n = Math.max(0, Math.ceil((end - from) / select.step - 1e-9));
+    if (n > MAX_FRAMES) throw new CliError(`--every ${select.step} gives ${n} frames${range}; at most ${MAX_FRAMES} (use --every ${Math.ceil(((end - from) / MAX_FRAMES) * 100) / 100} or more, or a shorter --from/--to)`, 2);
+    wanted = Array.from({ length: n }, (_, k) => from + k * select.step);
+    if (!wanted.length) throw new CliError(`--every: nothing to render${range} (the output is ${Math.round(D * 100) / 100} s)`, 2);
   } else {
     const moves = (p.phone3d?.transitions ?? []).flatMap((m) => [m.start, (m.start + m.end) / 2, m.end]);
-    wanted = [...moves, ...tapsToOutput(p.taps, tl).map((t) => t.t)];
-    if (!wanted.length) throw new CliError('--moves: this project has no 3D moves and no taps; use --at or --every', 2);
+    const all = [...moves, ...tapsToOutput(p.taps, tl).map((t) => t.t)];
+    if (!all.length) throw new CliError('--moves: this project has no 3D moves and no taps; use --at or --every', 2);
+    wanted = all.filter(inRange);
+    if (!wanted.length) throw new CliError(`--moves: no 3D move or tap${range}; use another range, --at or --every`, 2);
   }
   const byFrame = new Map<number, PlannedFrame>();
   const past = new Set<number>();
@@ -118,8 +147,16 @@ export function planFrameTimes(p: Project, select: FrameSelection): { frames: Pl
     if (!g || tl.sourceTime(g.at) === null) past.add(t);
     else if (!byFrame.has(g.frame)) byFrame.set(g.frame, { t, ...g });
   }
-  if (byFrame.size > MAX_FRAMES) throw new CliError(`${byFrame.size} frames requested; at most ${MAX_FRAMES}`, 2);
-  return { frames: [...byFrame.values()].sort((a, b) => a.frame - b.frame), past: [...past], fps };
+  let frames = [...byFrame.values()].sort((a, b) => a.frame - b.frame);
+  let note: string | undefined;
+  if (frames.length > MAX_FRAMES) {
+    if (select.kind !== 'moves') throw new CliError(`${frames.length} frames requested; at most ${MAX_FRAMES}`, 2);
+    const n = frames.length;
+    const picked = new Set(Array.from({ length: MAX_FRAMES }, (_, i) => Math.round((i * (n - 1)) / (MAX_FRAMES - 1))));
+    frames = frames.filter((_, i) => picked.has(i));
+    note = `--moves found ${n} frames${range}, more than the ${MAX_FRAMES} a run renders, so it rendered ${frames.length} evenly spread from the first to the last. For every frame, run shorter ranges with --from/--to.`;
+  }
+  return { frames, past: [...past], fps, ...(note ? { note } : {}) };
 }
 
 /** <tmp>/openscreen-frames/<bundle name>-<YYYYMMDD-HHMMSS>, with -2, -3… when taken. */
@@ -155,7 +192,7 @@ export async function framesCmd(argv: string[], deps: FramesDeps) {
   const errs = validateProject(p);
   if (errs.length) throw new CliError(`project is invalid, fix it before rendering frames: ${errs.join('; ')}`);
   warnProgress(projectWarnings(p, { cursor: readCursorSamples(dir) }));
-  const { frames: planned, past, fps } = planFrameTimes(p, a.select);
+  const { frames: planned, past, fps, note } = planFrameTimes(p, a.select);
   const outDir = resolve(a.out ?? defaultFramesDir(dir));
   if (existsSync(outDir) && !statSync(outDir).isDirectory()) throw new CliError(`--out must be a folder: ${outDir} is a file`);
   mkdirSync(outDir, { recursive: true });
@@ -193,6 +230,8 @@ export async function framesCmd(argv: string[], deps: FramesDeps) {
       const at = s.at ?? s.t;
       // The text the still drew and the flat device frame's edges (PNG px), as
       // the app reported them; absent from an app built before they existed.
+      // Only with --debug: the edge polylines are thousands of points per still,
+      // far too much for a normal run's stdout.
       const rect3 = (r: { x: number; y: number; w: number; h: number }) => ({ x: round3(r.x), y: round3(r.y), w: round3(r.w), h: round3(r.h) });
       const textBoxes = s.textBoxes?.map(({ kind, rect: r, text, drawn }) => ({
         kind,
@@ -211,8 +250,8 @@ export async function framesCmd(argv: string[], deps: FramesDeps) {
         at: r6(at),
         path: s.path,
         ...poseInfo(p, at),
-        ...(textBoxes ? { textBoxes } : {}),
-        ...(deviceFrame !== undefined ? { deviceFrame } : {}),
+        ...(a.debug && textBoxes ? { textBoxes } : {}),
+        ...(a.debug && deviceFrame !== undefined ? { deviceFrame } : {}),
       };
     }),
     ...past.map((t) => ({ t, error: 'past the end' })),
@@ -228,6 +267,7 @@ export async function framesCmd(argv: string[], deps: FramesDeps) {
     fps,
     outputDuration: r2(tl.outputDuration),
     phone3d: active,
+    ...(note ? { note } : {}),
     files,
     ...(a.sheet ? { sheet } : {}),
     seconds: r2((Date.now() - started) / 1000),

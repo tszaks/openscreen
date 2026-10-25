@@ -87,6 +87,40 @@ export interface FramesCompositor {
   readonly drew3d: boolean;
 }
 
+/**
+ * The export frame from which the export's canvas renders in software (R2,
+ * measured in this Electron on the flat and 3D golden fixtures). The export
+ * (Editor.renderFrames) draws each frame and reads it back with getImageData
+ * in its own task; after that many draw-and-readback cycles Chromium stops
+ * accelerating the canvas, and every later frame is rasterised in software.
+ * The video and edges then differ by a raster step (49 dB on the flat golden
+ * fixture), so a `frames` still, drawn on a canvas that was never read back,
+ * no longer matched the export from frame 101 on. The export's pixels are the
+ * reference (flat identity), so a frames run puts its canvas through the
+ * same cycles before its first still at or past this frame (exportReadbacks).
+ */
+export const EXPORT_SOFTWARE_FROM = 101;
+
+/**
+ * Draw-and-readback cycles that bring `comp`'s canvas to the state the
+ * export's canvas is in at frame EXPORT_SOFTWARE_FROM: `n` times, draw the
+ * frame (`inputs`, with the 3D pass at draft quality: the cycles only need a
+ * draw, not its quality), read the whole canvas back, then yield the task, as
+ * the export loop does between frames. Measured: readbacks with no frame draw,
+ * or all in one task, do not change the canvas; these do.
+ */
+export async function exportReadbacks(comp: FramesCompositor, at: number, inputs: FrameInputs3d, n: number): Promise<void> {
+  const ctx = comp.canvas.getContext('2d');
+  if (!ctx || n <= 0) return;
+  const { width: W, height: H } = comp.canvasSize;
+  const cheap: FrameInputs3d = inputs.render3d ? { ...inputs, render3d: { ...inputs.render3d, quality: 'draft', ss: 1, motionBlur: null } } : inputs;
+  for (let k = 0; k < n; k++) {
+    comp.render(at, cheap);
+    ctx.getImageData(0, 0, W, H);
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
+
 const pngBytes = (canvas: HTMLCanvasElement) =>
   new Promise<ArrayBuffer>((resolve, reject) =>
     canvas.toBlob((b) => (b ? b.arrayBuffer().then(resolve, reject) : reject(new Error('the frame could not be encoded as PNG'))), 'image/png'),
@@ -148,6 +182,8 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
   // Title lines are measured at their 1080-class size too (titleLineBoxes).
   const refScale = layoutRefScale(run.project, H);
   let tile = 0;
+  // Times are ascending, so every still before the switch is drawn first, on the canvas as the export has it there.
+  let aged = false;
   for (let i = 0; i < run.times.length; i++) {
     const t = run.times[i];
     const g = snaps[i];
@@ -165,6 +201,10 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
     await run.seek(srcT);
     // The export draws frame i at output time i / fps (Editor.renderFrames).
     const inputs = run.inputsAt(at, srcT);
+    if (!aged && index >= EXPORT_SOFTWARE_FROM) {
+      aged = true;
+      await exportReadbacks(comp, at, inputs, EXPORT_SOFTWARE_FROM);
+    }
     comp.render(at, inputs);
     // A lost GPU gets one chance to come back, then the same frame is drawn again (as the export does).
     if (run.renderError?.() && (await run.recover?.())) comp.render(at, inputs);
