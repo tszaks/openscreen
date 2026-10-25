@@ -92,7 +92,10 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
       { azimuth: -65, elevation: 6, halfW: 5, halfH: 42, radiance: 2.0, color: '#ffffff' },
       { azimuth: 185, elevation: 14, halfW: 5, halfH: 34, radiance: 2.0, color: '#ffffff' },
       { azimuth: -115, elevation: 14, halfW: 4, halfH: 34, radiance: 1.5, color: '#ffffff' },
-      { azimuth: 40, elevation: 74, halfW: 70, halfH: 10, radiance: 0.4, color: '#f4f6ff' },
+      { azimuth: 40, elevation: 74, halfW: 70, halfH: 10, radiance: 0.3, color: '#f4f6ff' },
+      // A low wide box under the key: the broad soft highlight that slides across a back turned three-quarters
+      // toward the key (the turn-to-back's end pose), well off the camera axis so FRONT stays clean.
+      { azimuth: -5, elevation: 0, halfW: 10, halfH: 12, radiance: 0.9, color: '#ffffff' },
       // A small soft lamp just above and right of the camera: the round catchlight in the lens elements.
       { azimuth: 50, elevation: 18, halfW: 5, halfH: 5, radiance: 2.5, color: '#ffffff' },
       // A tall strip right of the camera (60° from it): its reflection crosses the screen glass as the phone turns
