@@ -615,6 +615,25 @@ So acceptance item 7 stays open: the owner relaxes the ss 2 budget, takes O5 kno
 - Screen motion blur (decision 15): the screen content blurs exactly as the body (the steadiness hold of rounds 3-4 is removed, `passes.ts screenLookup`).
 - Zoom in 3D (decision 20). A zoom segment (the same `focusSegmentsFor` source, scale, easing and timing as flat, `cameraAt`) pushes the 3D camera in: `projection.ts View2D` is a longer focal length with a lens shift, canvas = s·p + o, applied in every projection (hulls, ROI, depth range, catcher clipping, hit-testing), set per time by the compositor (`Scene3D.viewAt`, `zoomViewAt`): scale s = the flat zoom's, about the centre of what the flat zoom would show (the clamped crop), which lands where the screen's centre was. The renderer draws it with `setViewOffset` of the s-times view shifted by −o, so the phone renders at the zoomed size; the screen texture is planned from the zoomed screen (1:1, sharp) and holds only the part on the canvas (`screenTexture.ts visibleUv`). The screen never crops its own content; flat projects zoom as before. Not done in this track (shared files): the steep-angle warning during a zoom, direct respecting it, and the info/validate/AGENTS.md wording (agentOps still notes "zooms do not play while the phone is 3D").
 
+- Memory and speed (decision 16). The first measurement of this round FAILED 4K ss 1 GPU memory (409.6 / 432.5 / 433.0 MiB against 400): the half-float panorama upload (16.8 MB) and the dense 512 × 256 dome (about 10 MB of vertex buffers while the PMREM is made) were new. Fixed at the root, not by budget: the panorama stays 8-bit RGBE on the GPU and the dome shader decodes and interpolates it (`hdri.ts decodeRadiance`, checked against three's HDRLoader in a test), the set (flags, floor tint, painted boxes) is baked into two 512 × 256 half-float textures so the dome is a 64 × 32 sphere (the look is the same: 73-82 dB PSNR on the turntable against the dense dome), and full-quality tile targets are at most 80 MB (`passes.ts TILE_THRESHOLD_BYTES_FULL`; the MSAA preview keeps 120 MB, a 1080 × 1920 export frame is still one tile). That brought the median of 3 still to 400.1 MiB with the first two changes (389.1 / 400.1 / 418.1: inside the run-to-run noise, not a margin) and to 329.6 with the tile change. The §3.7 step 8 threshold for full-quality frames is therefore 80 MB, not 120 MB.
+
+Look v2 round 1 bench (decision 16; GPU harness budgets and memory suites, median of 3, final code 05f9c82; Apple M4 Max, ANGLE Metal; not measured on 8 GB; memory = macOS `footprint` of the GPU process, 3D 4K minus the same canvas drawn flat, MiB = 2^20 B, "still" after the first 3 frames, "moving" after a 121-frame 200° turn). Every decision 16 budget passes; GPU gates (front, edges, z-fight, motion, ROI, banding, contexts, stills, context loss) 65 / 65 on the same code; flat identity 7 / 7 identical against main 3dea11b (run on a944969, the last commit that touched compositor.ts; the commits after it change only phone3d/ files and tests, which a flat project never loads).
+
+| Measure | runs 1 / 2 / 3 | median | budget (decision 16) | result |
+|---|---|---|---|---|
+| Preview 1080, 3D pass p95 (ms) | 3.32 / 3.4 / 3.25 | 3.32 | <= 8 | PASS |
+| Preview 1080 with DoF, 3D pass p95 (ms) | 3.29 / 3.33 / 3.36 | 3.33 | <= 8 | PASS |
+| Export 1080 still, 3D pass p50 (ms) | 8.45 / 19.99 / 20.27 | 19.99 | <= 20 | PASS |
+| Export 1080 moving, 3D pass p95 (ms) | 81.81 / 80.56 / 94.42 | 81.81 | <= 120 | PASS |
+| Export 4K still, 3D pass p50 (ms) | 66.51 / 63.04 / 37.62 | 63.04 | <= 80 | PASS |
+| Export 4K moving, 3D pass p95, all frames (ms) | 302.11 / 392.44 / 434.36 | 392.44 | <= 800 | PASS |
+| Export 4K moving, adaptive-N frames, max (ms) | 552.96 / 716.77 / 748.17 | 716.77 | <= 1500 | PASS |
+| GPU memory 4K ss 1, measured, still (MiB) | 329.6 / 353.3 / 328.5 | 329.6 | <= 400 | PASS |
+| GPU memory 4K ss 1, measured, moving (MiB) | 283.6 / 290.1 / 294.9 | 290.1 | <= 400 | PASS |
+| GPU memory 4K ss 2, measured, still (MiB) | 569.8 / 591.9 / 593.1 | 591.9 | <= 700 | PASS |
+| GPU memory 4K ss 2, measured, moving (MiB) | 352.7 / 373 / 345.4 | 352.7 | <= 700 | PASS |
+
+
 ### 3.5 Colour management (D3)
 - `renderer.toneMapping = NoToneMapping`. Inside render targets three writes working-space linear and skips tone mapping anyway (D3).
 - Texture `colorSpace = SRGBColorSpace`.
