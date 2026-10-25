@@ -843,7 +843,8 @@ export class Passes {
       this.accum ??= mrtTarget(W, H, 0, false);
       if (this.msaa && px > tileMaxPx(TILE_BYTES_PER_PX.msaa)) this.dropMsaa();
     }
-    this.dofOut ??= mrtTarget(W, H, 0, false);
+    // dofOut is made by the first frame that blurs (dof()): with DoF off it never holds its 2 × 8 B per px (a third
+    // of the tile targets; 4K ss 2: about 36 MB).
   }
 
   /** Bytes the targets hold on the GPU (MSAA renderbuffers + resolve textures + depth), for the memory budget. */
@@ -915,10 +916,11 @@ export class Passes {
     u.uMaxCoc.value = p.maxCoc;
     u.uTaps.value = Math.max(1, Math.min(64, Math.round(p.taps)));
     (u.uSize.value as THREE.Vector2).set(w, h);
-    Passes.view(this.dofOut!, w, h);
-    this.renderer.setRenderTarget(this.dofOut);
+    const out = (this.dofOut ??= mrtTarget(this.size!.w, this.size!.h, 0, false));
+    Passes.view(out, w, h);
+    this.renderer.setRenderTarget(out);
     this.draw(this.dofMat);
-    return this.dofOut!;
+    return out;
   }
 
   /**

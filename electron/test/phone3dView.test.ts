@@ -319,6 +319,18 @@ describe('renderPhone3D frame loop', () => {
     expect(() => b.draw(() => undefined)).toThrow(/once/);
   });
 
+  it('the DoF target exists only once a frame blurs: with DoF off it is never made', () => {
+    for (const k4 of [false, true]) {
+      const { engine, passes } = fakeEngine();
+      const off = { dof: { on: false, amount: 0.35, background: 0 } };
+      frame(engine, args(sceneFor(off, k4), 0.5));
+      frame(engine, args(sceneFor({ ...off, pose: { ...FRONT, turn: 40, tilt: 20 } }, k4), 0.5));
+      expect(passes.dofOut).toBeNull();
+      frame(engine, args(sceneFor({ pose: { ...FRONT, turn: 40, tilt: 20 } }, k4), 0.5));
+      expect(passes.dofOut).not.toBeNull();
+    }
+  });
+
   it('shadow off: no masks at all', () => {
     const s = sceneFor(moving({ shadow: { ...defaultPhone3D().shadow, on: false } }), true);
     const { engine, shadow, calls } = fakeEngine();
