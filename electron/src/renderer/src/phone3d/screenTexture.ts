@@ -36,7 +36,7 @@
 // over its memory budget.
 import * as THREE from 'three';
 import type { Rect } from '../../../shared/deviceGeometry';
-import type { Quad } from '../../../shared/phone3d/projection';
+import { applyHomography, homography, invHomography, type Quad } from '../../../shared/phone3d/projection';
 
 /** Largest texture side used, whatever the GPU allows. */
 export const MAX_SCREEN_TEXTURE = 8192;
@@ -96,7 +96,7 @@ const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.
  * (textureLimit: the GPU's MAX_TEXTURE_SIZE and MAX_SCREEN_TEXTURE, the only
  * clamp). FRONT is 1:1 at every ss.
  */
-export function planScreenTexture(quad: Quad, flat: Rect, ss: number, maxSize = MAX_SCREEN_TEXTURE): ScreenLayout {
+export function planScreenTexture(quad: Quad, flat: Rect, ss: number, maxSize = MAX_SCREEN_TEXTURE, canvas?: { width: number; height: number }): ScreenLayout {
   const [q0, q1, q2, q3] = quad;
   const eps = 1e-6;
   const aligned =
@@ -106,18 +106,69 @@ export function planScreenTexture(quad: Quad, flat: Rect, ss: number, maxSize = 
   let scale = ss * Math.max(across, down);
   // A FRONT phone at size 1 projects onto the flat rect up to float noise: use exactly ss.
   if (Math.abs(scale / ss - 1) < 1e-6) scale = ss;
+  // Only the part of the screen on the canvas is drawn (a zoom push-in runs the screen far past the canvas edges,
+  // owner decision 20): its uv window, from the projected screen clipped to the canvas.
+  const win = canvas ? visibleUv(quad, canvas) : null;
+  const [u0, v0, u1, v1] = win ?? [0, 0, 1, 1];
   const limit = Math.max(16, Math.floor(maxSize)) - 2;
-  scale = Math.min(scale, limit / flat.w, limit / flat.h);
+  scale = Math.min(scale, limit / (flat.w * (u1 - u0)), limit / (flat.h * (v1 - v0)));
   const minX = Math.min(q0.x, q1.x, q2.x, q3.x);
   const minY = Math.min(q0.y, q1.y, q2.y, q3.y);
   const frac = (v: number) => v - Math.floor(v);
+  const full = !win;
   const dst = {
-    x: aligned ? frac(minX * ss) : 0,
-    y: aligned ? frac(minY * ss) : 0,
+    x: full ? (aligned ? frac(minX * ss) : 0) : -Math.floor(u0 * flat.w * scale),
+    y: full ? (aligned ? frac(minY * ss) : 0) : -Math.floor(v0 * flat.h * scale),
     w: flat.w * scale,
     h: flat.h * scale,
   };
-  return { w: Math.ceil(dst.x + dst.w), h: Math.ceil(dst.y + dst.h), dst, scale, aligned };
+  const w = full ? Math.ceil(dst.x + dst.w) : Math.ceil(Math.min(dst.x + dst.w, (u1 - u0) * flat.w * scale + 2));
+  const h = full ? Math.ceil(dst.y + dst.h) : Math.ceil(Math.min(dst.y + dst.h, (v1 - v0) * flat.h * scale + 2));
+  return { w, h, dst, scale, aligned: aligned && full };
+}
+
+/** The share of the screen that is on the canvas, as a uv box [u0, v0, u1, v1] (v down, padded 2%), or null when the
+ *  whole screen is on it (the usual case: nothing changes) or none of it is. */
+export function visibleUv(quad: Quad, canvas: { width: number; height: number }): [number, number, number, number] | null {
+  const W = canvas.width;
+  const H = canvas.height;
+  if (quad.every((q) => q.x >= 0 && q.y >= 0 && q.x <= W && q.y <= H)) return null;
+  // Sutherland–Hodgman against the canvas rect (the quad is convex).
+  let poly = quad.map((q) => ({ x: q.x, y: q.y }));
+  const edges: [(p: { x: number; y: number }) => number][] = [[(p) => p.x], [(p) => W - p.x], [(p) => p.y], [(p) => H - p.y]];
+  for (const [d] of edges) {
+    const out: { x: number; y: number }[] = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i];
+      const b = poly[(i + 1) % poly.length];
+      const da = d(a);
+      const db = d(b);
+      if (da >= 0) out.push(a);
+      if (da >= 0 !== db >= 0) {
+        const k = da / (da - db);
+        out.push({ x: a.x + k * (b.x - a.x), y: a.y + k * (b.y - a.y) });
+      }
+    }
+    poly = out;
+    if (!poly.length) return null;
+  }
+  const inv = invHomography(homography(quad));
+  let u0 = 1;
+  let v0 = 1;
+  let u1 = 0;
+  let v1 = 0;
+  for (const p of poly) {
+    const uv = applyHomography(inv, p.x, p.y);
+    if (!uv) return null;
+    u0 = Math.min(u0, uv.x);
+    v0 = Math.min(v0, uv.y);
+    u1 = Math.max(u1, uv.x);
+    v1 = Math.max(v1, uv.y);
+  }
+  const pad = 0.02;
+  const c = (x: number) => Math.min(1, Math.max(0, x));
+  [u0, v0, u1, v1] = [c(u0 - pad), c(v0 - pad), c(u1 + pad), c(v1 + pad)];
+  return u1 > u0 && v1 > v0 ? [u0, v0, u1, v1] : null;
 }
 
 /**

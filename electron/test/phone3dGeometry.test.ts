@@ -927,13 +927,13 @@ describe('studio environment (owner decision 15: one CC0 studio HDRI, the hero s
   });
 
   it('3D finishes are Apple\'s compare-page swatches; flat keeps devices.ts; iPads fall back', () => {
-    const fin = (id: string, f: string) => getDevice(id).finishes.find((x) => x.id === f)!;
-    expect(finish3dHex(getDevice('iphone-17-pro'), fin('iphone-17-pro', 'deep-blue'))).toBe('#32374A');
-    expect(finish3dHex(getDevice('iphone-17-pro-max'), fin('iphone-17-pro-max', 'cosmic-orange'))).toBe('#F77E2D');
-    expect(finish3dHex(getDevice('iphone-17-pro'), fin('iphone-17-pro', 'silver'))).toBe('#F5F5F5');
-    expect(finish3dHex(getDevice('iphone-16'), fin('iphone-16', 'ultramarine'))).toBe('#9AADF6');
+    const fin = (id: string, f: string) => getDevice(id)!.finishes.find((x) => x.id === f)!;
+    expect(finish3dHex(getDevice('iphone-17-pro')!, fin('iphone-17-pro', 'deep-blue'))).toBe('#32374A');
+    expect(finish3dHex(getDevice('iphone-17-pro-max')!, fin('iphone-17-pro-max', 'cosmic-orange'))).toBe('#F77E2D');
+    expect(finish3dHex(getDevice('iphone-17-pro')!, fin('iphone-17-pro', 'silver'))).toBe('#F5F5F5');
+    expect(finish3dHex(getDevice('iphone-16')!, fin('iphone-16', 'ultramarine'))).toBe('#9AADF6');
     expect(appleFinishKey('productred')).toBe('red');
-    const ipad = getDevice('ipad-pro-11-m4');
+    const ipad = getDevice('ipad-pro-11-m4')!;
     expect(finish3dHex(ipad, ipad.finishes[0])).toBe(ipad.finishes[0].hex);
     // Every iPhone finish in devices.ts has an Apple swatch.
     for (const d of DEVICES.filter((x) => x.family === 'iphone')) {

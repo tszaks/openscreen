@@ -258,7 +258,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   const p3t = p3.transitions;
   const sizes = [p3.pose.size, ...p3t.map((tr) => tr.to.size), ...p3t.map((tr) => tr.from?.size ?? 0)];
   const texMax = textureLimit(engine.renderer.capabilities.maxTextureSize);
-  const layout = planScreenTexture(quad, s.home.screen, ss, texMax);
+  const layout = planScreenTexture(quad, s.home.screen, ss, texMax, s.canvas);
   // Drawn and uploaded now, once (not inside the first sample's draw), in bands when the screen is big.
   const tex = engine.screen.update(layout, camT.landscape, (tctx) => a.drawScreen(tctx, layout.dst, layout.scale), texMax, screenRoom(s.home.screen, ss, sizes));
   if (phone.screen.material.map !== tex) {

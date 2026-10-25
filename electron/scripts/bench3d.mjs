@@ -31,21 +31,21 @@ const E = resolve(HERE, '..');
 const AGENT = join(HERE, 'openscreen-agent.mjs');
 const MiB = 1024 * 1024;
 
-/** The budgets (SPEC §6.5; owner decision 10 for 4K moving and GPU memory). */
+/** The budgets (SPEC §6.5; owner decision 16 replaces decision 10's speed and memory numbers: quality wins). */
 export const BUDGETS = {
   previewFps: 55,
-  previewPassMs: 4,
-  previewPassDofMs: 7,
+  previewPassMs: 8,
+  previewPassDofMs: 8,
   export1080StillMs: 20,
-  export1080MovingP95Ms: 45,
-  export4kStillMs: 60,
-  export4kMovingP95Ms: 200,
-  export4kAdaptiveMaxMs: 400,
+  export1080MovingP95Ms: 120,
+  export4kStillMs: 80,
+  export4kMovingP95Ms: 800,
+  export4kAdaptiveMaxMs: 1500,
   framesColdS: 6,
   framesDraft1080S: 0.25,
   framesFull4kS: 1.5,
   gpu4kMiB: 400,
-  gpu4kSs2MiB: 560,
+  gpu4kSs2MiB: 700,
 };
 
 // ---------------------------------------------------------------------------

@@ -49,7 +49,7 @@ import { FLASH_GROUP, BAND_GROUP, FRONT_GLASS_GROUP, FRONT_GROUP, isUnibody, typ
 export const METAL_F0: Record<FrameMaterial, { f0: [number, number, number]; floor: number }> = {
   titanium: { f0: [0.54, 0.5, 0.45], floor: 0.18 },
   steel: { f0: [0.56, 0.57, 0.58], floor: 0.18 },
-  aluminum: { f0: [0.91, 0.92, 0.92], floor: 0.16 },
+  aluminum: { f0: [0.91, 0.92, 0.92], floor: 0.11 },
 };
 
 /** Rec. 709 luminance of a linear colour. */
@@ -243,7 +243,7 @@ export const CAMERA_CONTROL_TINT = 0.12;
  * rougher (the etched glass spreads each highlight wider and dimmer) under a satin clearcoat (the glass surface's
  * own soft sheen). It differs from the aluminium only by finish, as on the phone.
  */
-export const PANEL = { metalness: 0.3, roughness: 0.4, desaturate: 0.1, lift: 1.0, clearcoat: 0.8, clearcoatRoughness: 0.2 } as const;
+export const PANEL = { metalness: 0.3, roughness: 0.4, desaturate: 0.1, lift: 0.8, clearcoat: 0.8, clearcoatRoughness: 0.2 } as const;
 /** The lens and flash rings: the finish's metal, darker and less saturated (a deeper shade of the body, not a bright bezel). */
 export const LENS_RING = { darken: 0.55, desaturate: 0.4, roughness: 0.3 } as const;
 /** Mix a swatch toward white by `t` in sRGB (how a designer lightens a colour), returned linear. */
