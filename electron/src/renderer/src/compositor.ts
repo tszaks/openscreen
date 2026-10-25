@@ -49,6 +49,7 @@ import { api } from './api';
 import { macContentRect, macFittedRect, overlayRect } from '../../shared/cameraOverlay';
 import { mapRect, placeContent } from '../../shared/contentTransform';
 import { layerOrder, textLayer, type LayerBox, type LayerId } from '../../shared/canvasLayers';
+import type { TextBox } from '../../shared/textBoxes';
 import { phone3dActive } from '../../shared/phone3d/placement';
 import {
   bodyHull,
@@ -124,19 +125,6 @@ export interface Render3DSettings {
   strict: boolean;
 }
 
-/** The export / frames settings for a project's 3D phone (strict, from phone3d.supersample and motionBlur). */
-export function exportRender3d(project: Project, fps: number, draft = false): Render3DSettings | undefined {
-  const p3 = project.phone3d;
-  if (!p3) return undefined;
-  return {
-    ss: draft ? 1 : p3.supersample,
-    quality: draft ? 'draft' : 'full',
-    motionBlur: p3.motionBlur.on ? { samples: p3.motionBlur.samples, shutter: p3.motionBlur.shutter } : null,
-    fps,
-    strict: true,
-  };
-}
-
 /** Phone setup for a project, resolved once per compositor. */
 interface PhoneSetup {
   device: DeviceModel;
@@ -189,6 +177,10 @@ export class CanvasCompositor {
   phoneBase: Rect | null = null;
   /** Every layer drawn at the last render, bottom to top (shared/canvasLayers). */
   layers: LayerBox[] = [];
+  /** Every text box drawn at the last render (captions, keycaps, text
+   *  overlays, the title card), in drawing order, canvas px. Read-only
+   *  reporting: filling it changes no drawing (shared/textBoxes). */
+  textBoxes: TextBox[] = [];
   /** Set by a strict render (export, frames) that could not draw the 3D phone; the caller aborts. */
   error3d: string | null = null;
   /** The 3D phone's scene when phone3dActive (else null): placement, pose sampler, body data. */
@@ -281,6 +273,7 @@ export class CanvasCompositor {
     // The 3D phone draws only when its engine is loaded (the preview draws flat until then).
     this.error3d = null;
     this.drew3d = false;
+    this.textBoxes = [];
     const strict3d = !!input.render3d?.strict;
     const engine = this.scene3d ? engineSync() : null;
     if (this.scene3d && !engine) {
@@ -514,9 +507,12 @@ export class CanvasCompositor {
       const base = layout.title;
       const placed = placeContent(base, title.transform, canvasSize);
       boxes.set('title', { id: 'title', rect: placed, base });
-      draws.set('title', () =>
-        drawTitleCard(ctx, placed, { title: title.title, subtitle: title.subtitle }, { align: layout.titleTextAlign, valign: layout.titleAlign }),
-      );
+      draws.set('title', () => {
+        const align = layout.titleTextAlign;
+        const valign = layout.titleAlign;
+        const m = drawTitleCard(ctx, placed, { title: title.title, subtitle: title.subtitle }, { align, valign });
+        this.textBoxes.push({ kind: 'title', rect: { ...placed }, card: { ...m, align, valign } });
+      });
     }
     // What rides on the recording: keystroke keycaps (bottom-left inside it)
     // and the device hardware drawn over the screen's edge.
@@ -806,6 +802,7 @@ export class CanvasCompositor {
   private drawAnnotation(a: Annotation, at: { rect: Rect; fontSize: number }) {
     const { ctx } = this;
     const { fontSize } = at;
+    this.textBoxes.push({ kind: 'annotation', rect: { ...at.rect } });
     ctx.font = `800 ${fontSize}px -apple-system, sans-serif`;
     const x = at.rect.x;
     const y = at.rect.y + at.rect.h / 2;
@@ -831,6 +828,7 @@ export class CanvasCompositor {
     const ph = lineH * lines.length + padY * 2;
     const px = rect.x + rect.w / 2 - pw / 2;
     const py = rect.y + rect.h - ph - Math.min(H * 0.03, rect.h * 0.06);
+    this.textBoxes.push({ kind: 'caption', rect: { x: px, y: py, w: pw, h: ph } });
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
     roundedPath(ctx, px, py, pw, ph, Math.min(ph, lineH + padY * 2) / 4);
     ctx.fill();
@@ -854,6 +852,7 @@ export class CanvasCompositor {
     for (const key of keys) {
       const label = keyLabel(key);
       const cw = Math.max(ctx.measureText(label).width + padX * 2, capH);
+      this.textBoxes.push({ kind: 'keycap', rect: { x, y, w: cw, h: capH } });
       ctx.fillStyle = 'rgba(0,0,0,0.65)';
       roundedPath(ctx, x, y, cw, capH, capH / 4);
       ctx.fill();

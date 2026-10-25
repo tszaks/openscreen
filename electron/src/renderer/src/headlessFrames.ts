@@ -6,8 +6,12 @@
 
 import { frameFileName, sheetLabel, sheetLayout, snapToExportFrame, type HeadlessFrame, type HeadlessResult } from '../../shared/headless';
 import { phone3dActive } from '../../shared/phone3d/placement';
+import { scaleTextBoxes, type TextBox } from '../../shared/textBoxes';
+import { frameEdges, scaleFrameEdges, type FrameEdges } from '../../shared/frameEdges';
+import type { Rect } from '../../shared/deviceGeometry';
 import type { Project } from '../../shared/types';
 import type { FrameInputs, Render3DSettings } from './compositor';
+import { layoutRefScale, splitTitleCards, type MeasureText } from './titleLineBoxes';
 
 /**
  * How the 3D pass renders a frame (SPEC §3.8 `FrameInputs.render3d`):
@@ -21,28 +25,17 @@ export type Render3dInputs = Render3DSettings;
 /** The frame inputs, 3D quality included (the compositor's FrameInputs carries `render3d`). */
 export type FrameInputs3d = FrameInputs;
 
-/** Export-path 3D settings for `p`, or undefined when the phone draws flat. `draft` = one sample at 1×. */
-export function render3dFor(p: Project, opts: { draft: boolean; fps: number; strict: boolean }): Render3dInputs | undefined {
-  const p3 = p.phone3d;
-  if (!p3 || !phone3dActive(p).active) return undefined;
-  return {
-    ss: opts.draft ? 1 : p3.supersample,
-    quality: opts.draft ? 'draft' : 'full',
-    motionBlur: !opts.draft && p3.motionBlur.on ? { samples: p3.motionBlur.samples, shutter: p3.motionBlur.shutter } : null,
-    fps: opts.fps,
-    strict: opts.strict,
-  };
-}
-
 /**
- * Whether the editor's preview must not draw (§5.5 as WP3 built it): during
- * an export or frames run, and always in a headless run, but only when the
- * phone draws in 3D. Those runs seek the video for every frame on the
- * preview's compositor; a 3D preview redraw would double the GPU work and
- * flip the engine between preview and export quality. A flat project keeps
- * main's redraws on purpose: skipping them changed the exported pixels of the
- * ios-social golden fixture (blurred backdrop, PSNR 56.9 dB against main), and
- * flat exports must stay byte-identical to main (D11).
+ * Whether the editor's preview must not draw (SPEC §5.5 as set by owner
+ * decision 9): during an export or frames run, and always in a headless run,
+ * and ONLY when the phone draws in 3D. Those runs seek the video for every
+ * frame on the preview's compositor; a 3D preview redraw in between would
+ * double the GPU work and flip the engine between preview and export
+ * quality. A flat project keeps today's behaviour exactly: its preview
+ * redraws on every seek as it always has. That is not an oversight: skipping
+ * them changed the exported pixels of the ios-social golden fixture (blurred
+ * backdrop, PSNR 56.9 dB against main), and flat exports must stay
+ * byte-identical to main (D11, proven by scripts/golden/flatIdentity.mjs).
  */
 export function holdPreview(s: { headless: boolean; exporting: boolean; project: Project }): boolean {
   return (s.headless || s.exporting) && phone3dActive(s.project).active;
@@ -50,6 +43,8 @@ export function holdPreview(s: { headless: boolean; exporting: boolean; project:
 
 /** What a frames run draws with; the Editor supplies it from its own export plumbing. */
 export interface FramesRun {
+  /** The project the compositor draws (where its flat device frame is, for HeadlessFrame.deviceFrame). */
+  project: Project;
   /** Output seconds, ascending. Each is drawn at its export frame (snapToExportFrame). */
   times: number[];
   /** The export's frame rate and output length: the frame grid the stills snap to. */
@@ -84,6 +79,12 @@ export interface FramesCompositor {
   readonly canvas: HTMLCanvasElement;
   readonly canvasSize: { width: number; height: number };
   render(t: number, input: FrameInputs): void;
+  /** The text boxes the last render drew, canvas px (CanvasCompositor.textBoxes). */
+  readonly textBoxes: readonly TextBox[];
+  /** The last render's content box (the device body box when a frame is drawn), its screen, and whether the phone drew in 3D. */
+  readonly contentRect: Rect | null;
+  readonly screenMap: { screen: Rect } | null;
+  readonly drew3d: boolean;
 }
 
 const pngBytes = (canvas: HTMLCanvasElement) =>
@@ -100,6 +101,17 @@ function canvas2d(w: number, h: number): { canvas: HTMLCanvasElement; ctx: Canva
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   return { canvas, ctx };
+}
+
+/** A text measurer on its own canvas (never the compositor's, whose calls are the flat-identity log). */
+function canvasMeasurer(): MeasureText {
+  let ctx: CanvasRenderingContext2D | null = null;
+  return (font, letterSpacing, text) => {
+    ctx ??= canvas2d(1, 1).ctx;
+    ctx.font = font;
+    ctx.letterSpacing = letterSpacing;
+    return ctx.measureText(text).width;
+  };
 }
 
 /**
@@ -131,7 +143,10 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
     sheet.ctx.fillRect(0, 0, layout.width, layout.height);
   }
   const stills: HeadlessFrame[] = [];
-  const written = new Map<number, string>();
+  const written = new Map<number, { path: string; textBoxes: TextBox[]; frame: FrameEdges | null }>();
+  const measure = canvasMeasurer();
+  // Title lines are measured at their 1080-class size too (titleLineBoxes).
+  const refScale = layoutRefScale(run.project, H);
   let tile = 0;
   for (let i = 0; i < run.times.length; i++) {
     const t = run.times[i];
@@ -143,7 +158,7 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
     const { frame: index, at, srcT } = g;
     const done = written.get(index);
     if (done) {
-      stills.push({ t, frame: index, at, path: done });
+      stills.push({ t, frame: index, at, path: done.path, textBoxes: done.textBoxes, deviceFrame: done.frame });
       run.progress?.(i + 1, run.times.length);
       continue;
     }
@@ -161,9 +176,15 @@ export async function runFrames(comp: FramesCompositor, run: FramesRun): Promise
       scaled.ctx.drawImage(comp.canvas, 0, 0, W, H, 0, 0, w, h);
       frame = scaled.canvas;
     }
+    // The text the frame drew (title cards as their drawn lines) and the flat
+    // device frame's edges, in the PNG's pixels: the 4K-downscale check masks
+    // and compares them (owner decisions 8 and 14).
+    const textBoxes = scaleTextBoxes(splitTitleCards(comp.textBoxes, measure, refScale), w / W, h / H);
+    const edges = frameEdges(run.project, { contentRect: comp.contentRect, screen: comp.screenMap?.screen ?? null, drew3d: comp.drew3d });
+    const frameAt = edges ? scaleFrameEdges(edges, w / W) : null;
     const path = await run.writePng(frameFileName(at), await pngBytes(frame));
-    written.set(index, path);
-    stills.push({ t, frame: index, at, path });
+    written.set(index, { path, textBoxes, frame: frameAt });
+    stills.push({ t, frame: index, at, path, textBoxes, deviceFrame: frameAt });
     if (sheet && layout) {
       const { x, y } = layout.cell(tile++);
       sheet.ctx.drawImage(frame, 0, 0, w, h, x, y, layout.tileW, layout.tileH);
