@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_FRAME_SHADOW, frameGeometry } from '../src/shared/deviceGeometry';
 import { FRONT, POSE_RANGE, type Pose } from '../src/shared/phone3d/model';
+import { BOLD_BASE, BUSY_FACING_DEG } from '../src/shared/phone3d/direct';
+import { FLOOR_FIX_ELEVATION } from '../src/shared/phone3d/warnings';
+import { FRONT_GLASS_FLAG, FRONT_GLASS_FLAG_SIN } from '../src/renderer/src/phone3d/materials';
 import {
   applyHomography,
   BUTTON_PROUD_MM,
@@ -175,6 +178,35 @@ describe('screenAxisSin (the front glass flag, materials.ts FRONT_GLASS_FLAG)', 
       const n = new THREE.Vector3(0, 0, 1).transformDirection(obj.matrixWorld).transformDirection(camera.matrixWorldInverse);
       expect(screenAxisSin(cam)).toBeCloseTo(Math.hypot(n.x, n.y), 9);
     }
+  });
+});
+
+describe('the front glass flag covers every pose where the screen is read (materials.ts FRONT_GLASS_FLAG)', () => {
+  // Look round 4 fix round 2: a 5° flag left a grey veil on dark UI at bold's resting pose (9.4°) and under the
+  // floor fix's camera elevation (12°). Each of these is inside the clear zone (screen = glass-0 screen), on every layout.
+  const deg = (d: number) => (d * Math.PI) / 180;
+  it('busy-time limit, BOLD_BASE, the spin-in landing and the floor fix elevation are clear; the hero layback is full', () => {
+    const clear: [string, Pose, number][] = [
+      ['BOLD_BASE', BOLD_BASE, 0],
+      ['spin-in landing (turn 4)', { ...FRONT, turn: 4 }, 0],
+      ...[-1, 1].flatMap((k): [string, Pose, number][] => [
+        [`turn ${k * BUSY_FACING_DEG}`, { ...FRONT, turn: k * BUSY_FACING_DEG }, 0],
+        [`tilt ${k * BUSY_FACING_DEG}`, { ...FRONT, tilt: k * BUSY_FACING_DEG }, 0],
+      ]),
+      ['FRONT, floor fix elevation', FRONT, FLOOR_FIX_ELEVATION],
+      ['BOLD_BASE, floor fix elevation', BOLD_BASE, FLOOR_FIX_ELEVATION],
+    ];
+    for (const layout of LAYOUTS) {
+      for (const [name, pose, elevation] of clear) {
+        const s = scene3d(with3d(phoneProject({ presetId: layout }), { camera: { fov: 22, elevation } }))!;
+        expect(screenAxisSin(camAt(s, 0, pose)), `${layout} ${name}`).toBeLessThan(FRONT_GLASS_FLAG_SIN.clear);
+      }
+      const s = scene3d(with3d(phoneProject({ presetId: layout }), {}))!;
+      // The hero layback's lean (shots.ts HERO_LEAN: turn -24, tilt 16, about 28.6°) shows the full sheen.
+      expect(screenAxisSin(camAt(s, 0, { ...FRONT, turn: -24, tilt: 16, rotate: -4 })), layout).toBeGreaterThanOrEqual(FRONT_GLASS_FLAG_SIN.full);
+    }
+    expect(FRONT_GLASS_FLAG.clearDeg).toBeGreaterThan(Math.max(BUSY_FACING_DEG, FLOOR_FIX_ELEVATION));
+    expect(Math.sin(deg(FRONT_GLASS_FLAG.fullDeg))).toBeCloseTo(FRONT_GLASS_FLAG_SIN.full, 12);
   });
 });
 

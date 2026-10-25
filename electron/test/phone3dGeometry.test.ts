@@ -770,8 +770,9 @@ describe('materials (§3.4)', () => {
     const set = materialsFor('#3C3C3D', 'titanium', 'frosted', 0.25);
     const frag = () => ({ fragmentShader: ShaderLib.physical.fragmentShader, vertexShader: '', uniforms: {} }) as never as { fragmentShader: string };
     expect(FRONT_GLASS_FLAG_SIN.clear).toBeCloseTo(Math.sin((FRONT_GLASS_FLAG.clearDeg * Math.PI) / 180), 12);
-    expect(FRONT_GLASS_FLAG.clearDeg).toBeGreaterThanOrEqual(4); // the spin-in lands at turn 4
-    expect(FRONT_GLASS_FLAG.fullDeg).toBeLessThanOrEqual(25); // the hero layback (about 29°) shows the full sheen
+    // The busy-time rule and the floor fix (12°) read the screen; the hero layback (about 28.6°) shows the full sheen.
+    expect(FRONT_GLASS_FLAG.clearDeg).toBeGreaterThan(12);
+    expect(FRONT_GLASS_FLAG.fullDeg).toBeLessThanOrEqual(25);
     for (const m of [set.frontGlass, set.glare]) {
       const s1 = frag();
       m.onBeforeCompile(s1 as never, undefined as never);

@@ -207,9 +207,13 @@ export const FRONT_GLASS_SPECULAR_PER_GLASS = 4;
  * The black flag round the camera lens, as the angle between the screen's normal and the camera's axis: the front
  * glass (border and glare) reflects nothing within `clearDeg` and fully from `fullDeg` (smoothstep between, on the
  * sine; projection.ts screenAxisSin is the same number on the CPU, so a sample inside clearDeg skips the glare draw).
- * 5° keeps the spin-in's landing (turn 4) clean; the hero layback (about 29°) and every turn show the full sheen.
+ * The clear zone covers every angle where the screen must be read: the busy-time rule (direct.ts BUSY_FACING_DEG,
+ * 12°: the phone stays within it for every tap), bold's resting pose (BOLD_BASE, 9.4°), the spin-in's landing
+ * (turn 4) and the floor fix's camera elevation (warnings.ts FLOOR_FIX_ELEVATION, 12°), plus 1° so a pose exactly on
+ * 12° is not on the edge. Fix round 1's 5° left a grey veil on dark UI at BOLD_BASE (18.9 dB) and at elevation 12.
+ * The sheen is full from 25°, below the hero layback (about 29°), so the layback and every turn show all of it.
  */
-export const FRONT_GLASS_FLAG = { clearDeg: 5, fullDeg: 20 } as const;
+export const FRONT_GLASS_FLAG = { clearDeg: 13, fullDeg: 25 } as const;
 export const FRONT_GLASS_FLAG_SIN = {
   clear: Math.sin((FRONT_GLASS_FLAG.clearDeg * Math.PI) / 180),
   full: Math.sin((FRONT_GLASS_FLAG.fullDeg * Math.PI) / 180),
