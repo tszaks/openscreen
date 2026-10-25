@@ -83,6 +83,7 @@ import { DevicePanel } from './mobile/DevicePanel';
 import { LayoutSection } from './mobile/LayoutSection';
 import { AudioTrackLane } from './AudioTrackLane';
 import { phoneLayerOn, phoneTimeForSource } from '../../shared/phoneLayer';
+import { phone3dActive } from '../../shared/phone3d/placement';
 import { CAMERA_CANVASES, cameraDefaults, editorFeatures, isCameraProject, withCameraCanvas, type CameraCanvas } from '../../shared/justMe';
 import {
   MAX_OVERLAY_SIZE,
@@ -304,6 +305,9 @@ export function Editor({
   const isPhone = isPhoneProject(proj);
   // "Just me" and the rest: which tabs, zoom switches and lanes apply.
   const features = editorFeatures(proj);
+  // Zooms do not play while the phone is 3D (compositor.ts): the zoom controls say so and adding a zoom is off, so
+  // nothing in the editor makes a zoom that silently does nothing. The zooms are kept and play again with 3D off.
+  const zoomsOff3d = phone3dActive(proj).active;
   const [selectedTap, setSelectedTap] = useState<string | null>(null);
   // The layers on the preview (shared/canvasLayers): which is selected
   // (accent outline and corner handles) and which hovered (a thin outline),
@@ -1091,8 +1095,8 @@ export function Editor({
 
   const seekTimeline = (e: React.MouseEvent<HTMLDivElement>) => {
     const t = timelineTimeAt(e);
-    // Alt+click: add a manual zoom centered on the cursor at that time.
-    if (e.altKey) addZoomAt(t);
+    // Alt+click: add a manual zoom centered on the cursor at that time (not while the phone is 3D: it would not play).
+    if (e.altKey && !zoomsOff3d) addZoomAt(t);
     else seekOutput(t);
   };
 
@@ -2255,7 +2259,7 @@ export function Editor({
       { id: 'trimEnd', label: 'Trim Clip End to Here', enabled: !!clip, run: () => trimClipAt('end', clip?.id ?? null, t) },
       { id: 'delete', label: 'Delete Clip', enabled: !!clip && proj.clips.length > 1, run: () => deleteClip(clip?.id ?? null) },
       { type: 'separator' },
-      { id: 'zoom', label: 'Add Zoom Here', run: () => addZoomAt(t) },
+      { id: 'zoom', label: zoomsOff3d ? 'Add Zoom Here (zooms do not play in 3D)' : 'Add Zoom Here', enabled: !zoomsOff3d, run: () => addZoomAt(t) },
       ...(isPhone ? [{ id: 'tap', label: 'Add Tap Here', run: () => addTapAt(t) }] : []),
       { id: 'addMusic', label: 'Add Music or Voiceover…', run: () => void addMusic(t) },
       { type: 'separator' },
@@ -2564,7 +2568,19 @@ export function Editor({
     </>
   );
 
-  const zoomPanel = (
+  const zoomPanel = zoomsOff3d ? (
+    <Section title="3D phone">
+      <p className="hint">
+        Zooms do not play while the phone is 3D: the screen always shows the whole recording. Your zooms are kept
+        and play again when you turn 3D off.
+      </p>
+      {manualSegments.length > 0 && (
+        <p className="hint tnum">
+          {`${manualSegments.length} manual zoom${manualSegments.length === 1 ? '' : 's'} kept for 2D`}
+        </p>
+      )}
+    </Section>
+  ) : (
     <>
       {!presetAllowsZoom(preset) && (
         <Section title="Automatic">
@@ -3637,7 +3653,7 @@ export function Editor({
           <span>Clips</span>
           <span className="tl-label-switch">
             Zoom
-            {features.autoZoom && (
+            {features.autoZoom && !zoomsOff3d && (
             <input
               type="checkbox"
               role="switch"
@@ -3724,14 +3740,14 @@ export function Editor({
               );
             })}
           </div>
-          <div className="lane lane-zoom">
+          <div className={`lane lane-zoom${zoomsOff3d ? ' off3d' : ''}`} title={zoomsOff3d ? 'Zooms do not play while the phone is 3D' : undefined}>
             {zoomMarks.map((s, i) => {
               const manual = manualSegments.includes(s);
               return (
                 <div
                   key={i}
                   className={`zoommark${manual ? ' manual' : ''}`}
-                  title={manual ? 'Manual zoom (two-finger click for options)' : 'Auto zoom'}
+                  title={zoomsOff3d ? 'Does not play while the phone is 3D' : manual ? 'Manual zoom (two-finger click for options)' : 'Auto zoom'}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();

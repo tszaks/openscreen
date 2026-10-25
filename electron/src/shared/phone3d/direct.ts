@@ -4,10 +4,11 @@
 // so they make the same plan. Pure: no clock, no randomness.
 //
 // The rule it plans by: while something happens on screen (a tap, a typing
-// run, a zoom) the phone faces the viewer; it only moves in the free time
-// between. All times are OUTPUT seconds on the edited timeline.
+// run) the phone faces the viewer; it only moves in the free time between.
+// Zooms are not busy time: they do not play while the phone is 3D
+// (compositor.ts), so they can never clash with a move. All times are OUTPUT
+// seconds on the edited timeline.
 
-import { focusSegmentsFor } from '../focusSegments';
 import { isPhoneProject, rangesToOutput, tapsToOutput } from '../mobileProject';
 import { Timeline } from '../timeline';
 import type { CursorSample, Project } from '../types';
@@ -28,7 +29,7 @@ export interface DirectOptions {
   scenes?: readonly number[];
   /** true: clear the existing moves first; false: keep them (and plan around them). */
   replace: boolean;
-  /** cursor.json samples (autofocus zooms are busy time, D5). */
+  /** cursor.json samples: the self-check's warnings use them, as the editor's do (D5). */
   cursor?: readonly CursorSample[];
 }
 
@@ -146,7 +147,6 @@ function readInputs(p: Project, opts: DirectOptions): Inputs {
     if (t.kind === 'typing') raw.push({ start: t.t - TAP_BEFORE, end: t.t + dur + TYPING_PAD });
     else raw.push({ start: t.t - TAP_BEFORE, end: Math.max(t.t + TAP_AFTER, t.settleT !== undefined ? t.settleT + SETTLE_PAD : -Infinity, t.t + dur + DURATION_PAD) });
   }
-  for (const z of focusSegmentsFor(p, opts.cursor ?? [])) raw.push({ start: z.inStart, end: z.outEnd });
   if (!opts.replace) for (const tr of p.phone3d?.transitions ?? []) raw.push({ start: tr.start, end: tr.end });
   const busy = mergeBusy(raw, D);
   const waits = rangesToOutput(p.waits ?? [], tl).map((w) => ({ start: w.start, end: w.end }));
@@ -333,9 +333,9 @@ const overlaps = (a: Warning, b: Warning) => (a.at ?? 0) <= (b.end ?? b.at ?? 0)
 const toShot = (d: Draft): PlannedShot => ({ recipe: d.recipe, start: r3(d.start), end: r3(d.start + d.duration), reason: d.reason });
 
 /**
- * The Auto 3D plan for `p` (§2.6): busy time (taps, typing, zooms, and kept
- * moves) → free windows → intro, outro and middle shots within the density
- * caps → a scene-change wipe → ops, in this order: `phone3d` (on, base pose,
+ * The Auto 3D plan for `p` (§2.6): busy time (taps, typing and kept moves;
+ * zooms do not play in 3D, so they are not busy) → free windows → intro,
+ * outro and middle shots within the density caps → a scene-change wipe → ops, in this order: `phone3d` (on, base pose,
  * lighting, motion blur), `clearTransitions` when replacing, one `shot` per
  * shot in time order (float last for subtle). Then a self-check: the ops are
  * applied to a copy and any shot that causes a warning is re-planned without

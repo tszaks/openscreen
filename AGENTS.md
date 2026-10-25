@@ -164,7 +164,7 @@ LayoutSection, TapsLane, ExportPanel) and the op that does the same thing:
 | Undo | — | `undo` (one level, file-based) |
 | Anything else | any field | `set {path: "/json/pointer", value}` — the value's JSON type must match; `/recording` is read-only |
 
-Zooms (manual, tap and auto-focus) do not play while the 3D phone is on (`phone3d`): the 3D screen always shows the whole recording, 1:1, and the shots frame the phone. They come back as they were when 3D is turned off.
+Zooms (manual, tap and auto-focus) do not play while the 3D phone is on (`phone3d`): the 3D screen always shows the whole recording, 1:1, and the shots frame the phone. They come back as they were when 3D is turned off. Zoom ops still apply, but on a 3D project their `changes` note says the zoom does not play, and `apply`/`validate` list a `zoom-3d` warning per manual zoom. Auto 3D (`direct`) plans shots straight through zooms.
 
 Not in the editor, so not ops: keystroke overlay and click ripples have no
 switch (they are drawn whenever the recording has keystrokes/clicks); use

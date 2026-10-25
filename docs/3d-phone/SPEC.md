@@ -305,13 +305,13 @@ Options: `{ style: 'subtle'|'hero'|'bold'; scenes?: number[] /*SOURCE s; absent 
 - `tl = new Timeline(p.recording.duration, p.clips)`
 - taps from `tapsToOutput`, waits from `rangesToOutput`
 - scenes mapped from source through the timeline the way taps are mapped
-- zooms from `focusSegmentsFor(p, opts.cursor ?? [])` (D5), the same list the editor draws
+- zooms are NOT an input since look round 4: they do not play while the phone is 3D (`compositor.ts`), so they cannot clash with a move (`cursor` still feeds the self-check's `projectWarnings`, D5)
 - D = `tl.outputDuration`
 
 1. **Busy intervals.**
    - A tap is busy over `[t−0.6, max(t+0.8, settleT_out+0.3, t+duration+0.4)]`.
    - A typing run is busy from its first tap to its last tap, plus 0.8.
-   - Each zoom is busy over `[inStart, outEnd]`.
+   - Zooms are not busy (fix round 1 of look round 4): a zoom never plays on the 3D screen, so blocking a shot for one left shots out for a clash that cannot happen.
    - Intervals closer than 1.2 s merge.
    - **Rule:** during busy time, facing ≥ cos 12°.
 2. **Free windows** are the complement of busy time, each shrunk by 0.15 s at both ends. A window that overlaps a wait is `quiet`.
@@ -367,6 +367,7 @@ export interface Warning { code: string; message: string; at?: number; end?: num
 | `pose-jump` | an explicit `from` differs from the resolved pose before it by > 1° or 0.5%, using `poseDelta` (turn and rotate modulo 360, so a D21 rebase is not a jump) | `editTransition {from:null}` |
 | `too-fast` | `poseSpeed` > 600°/s, or > 360°/s with motion blur off | — |
 | `floor-flat` | floor shadow with `camera.elevation < 4` (invisible) | `phone3d {camera:{elevation:12}}` |
+| `zoom-3d` | a manual zoom while the phone is 3D: it does not play (the screen always shows the whole recording). One per zoom, at its `inStart`. Zoom ops on a 3D project also add "zooms do not play while the phone is 3D" to their `changes` note; the editor's Zoom tab shows the same notice, fades the zoom lane and turns off Option-click and Add Zoom Here | — (the zooms play again with 3D off; removing them is the user's call) |
 
 Warnings never block `applyOps`. A test applies each `fix` and checks the warning is gone. There is one positive and one negative test per code.
 
@@ -703,7 +704,7 @@ Add to `OP_NAMES` and the `applyOp` switch in agentOps.ts. All are refused with 
 - `warnings`
 - `shotRecipes: [{name, duration, summary, use}]`
 
-`apply`, `polish` and `direct` print `warnings`. `export` still refuses on problems and prints warnings to stderr as progress lines. All of them compute warnings with the bundle's `cursor.json` (D5), so `validate` reports the same over-zoom warnings the editor shows.
+`apply`, `polish` and `direct` print `warnings`. `export` still refuses on problems and prints warnings to stderr as progress lines. All of them compute warnings with the bundle's `cursor.json` (D5), so `validate` reports the same warnings the editor shows (`zoom-3d` for manual zooms that do not play in 3D; the `over-zoom` warning is gone).
 
 **4K export (D18)**
 - `shared/exportArgs.ts`: new `presetCanvasSize(preset, exportPreset)`: App Store presets → the preset's size; `exportPreset === 'uhd4k'` → scale `2160 / min(preset.width, preset.height)`, both sides even; else the preset's size.

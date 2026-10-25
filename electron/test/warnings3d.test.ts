@@ -2,7 +2,7 @@
 // fix clears its warning when applied through applyOps (as the editor's Fix
 // button and an agent's `apply` do).
 import { describe, expect, it } from 'vitest';
-import { applyOps, type EditOp } from '../src/shared/agentOps';
+import { applyOps, ZOOM_3D_NOTE, type EditOp } from '../src/shared/agentOps';
 import { FRONT, type Phone3D, type Pose, type PoseTransition } from '../src/shared/phone3d/model';
 import { OFF_CANVAS_ADDED_PX, offCanvasAdded, offCanvasMeter, projectWarnings, WARNING_CODES, type Warning } from '../src/shared/phone3d/warnings';
 import type { Project } from '../src/shared/types';
@@ -43,7 +43,7 @@ describe('projectWarnings: scope', () => {
   });
 
   it('knows exactly the spec codes', () => {
-    expect([...WARNING_CODES]).toEqual(['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat']);
+    expect([...WARNING_CODES]).toEqual(['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat', 'zoom-3d']);
   });
 
   it('never blocks applyOps: a project full of warnings still takes edits', () => {
@@ -373,6 +373,34 @@ describe('floor-flat', () => {
     expect(only(take({ shadow: { on: true, kind: 'floor', opacity: 0.4, softness: 0.5 }, camera: { fov: 22, elevation: 12 } }), 'floor-flat')).toEqual([]);
     expect(only(take(), 'floor-flat')).toEqual([]);
     expect(only(take({ shadow: { on: false, kind: 'floor', opacity: 0.4, softness: 0.5 } }), 'floor-flat')).toEqual([]);
+  });
+});
+
+describe('zoom-3d', () => {
+  it('names each manual zoom while the phone is 3D (zooms do not play there), with no fix', () => {
+    const p = applyOps(take(), [{ op: 'addZoom', at: 4, scale: 2 }, { op: 'addZoom', at: 11, scale: 1.5 }]).project;
+    const ws = only(p, 'zoom-3d');
+    expect(ws.map((w) => w.at)).toEqual([4, 11]);
+    for (const w of ws) {
+      expect(w.end).toBeGreaterThan(w.at!);
+      expect(w.fix).toBeUndefined();
+      expect(w.message).toContain('does not play while the phone is 3D');
+    }
+  });
+
+  it('negative: no manual zooms, or 3D off (the zooms play)', () => {
+    expect(only(take(), 'zoom-3d')).toEqual([]);
+    const off = applyOps(take({ enabled: false }), [{ op: 'addZoom', at: 4 }]).project;
+    expect(projectWarnings(off)).toEqual([]);
+  });
+
+  it('zoom ops still apply, and their notes say the zooms do not play while the phone is 3D', () => {
+    const ops: EditOp[] = [{ op: 'addZoom', at: 4 }, { op: 'zoomSettings', autofocus: true }, { op: 'clearZooms' }];
+    const on = applyOps(take(), ops);
+    expect(on.notes.every((n) => n.endsWith(ZOOM_3D_NOTE))).toBe(true);
+    const off = applyOps(take({ enabled: false }), ops);
+    expect(off.notes.some((n) => n.includes(ZOOM_3D_NOTE))).toBe(false);
+    expect(off.project.zoom).toEqual(on.project.zoom);
   });
 });
 

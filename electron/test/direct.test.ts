@@ -36,15 +36,14 @@ function directed(p: Project, opts: DirectOptions): Project {
   return applyOps(p, [{ op: 'direct', style: opts.style, replace: opts.replace, ...(opts.scenes ? {} : { scenes: false }) }], { newId: () => `d${++n}`, scenes: opts.scenes ? [...opts.scenes] : undefined, cursor: opts.cursor ? [...opts.cursor] : undefined }).project;
 }
 
-/** The busy intervals by the spec's formulas (output s): taps, typing runs and zooms. */
-function busyOf(p: Project, cursor: readonly CursorSample[] = []): { start: number; end: number }[] {
+/** Busy time: taps and typing only (zooms do not play while the phone is 3D, so they are never busy). */
+function busyOf(p: Project): { start: number; end: number }[] {
   const tl = new Timeline(p.recording.duration, p.clips);
   const out = tapsToOutput(p.taps, tl).map((t) =>
     t.kind === 'typing'
       ? { start: t.t - 0.6, end: t.t + (t.duration ?? 0) + 0.8 }
       : { start: t.t - 0.6, end: Math.max(t.t + 0.8, t.settleT !== undefined ? t.settleT + 0.3 : -Infinity, t.t + (t.duration ?? 0) + 0.4) },
   );
-  for (const z of focusSegmentsFor(p, cursor)) out.push({ start: z.inStart, end: z.outEnd });
   return out;
 }
 
@@ -108,7 +107,7 @@ function checkPlan(p: Project, opts: DirectOptions, label: string) {
   if (opts.replace) {
     expect(warnings, `${label}: warnings`).toEqual([]);
     // While busy, the phone faces the viewer within 12°.
-    for (const b of busyOf(p, opts.cursor)) {
+    for (const b of busyOf(p)) {
       for (let t = Math.max(0, b.start); t <= Math.min(D, b.end); t += 1 / 60) expect(facing(p3, t), `${label}: facing at ${t.toFixed(3)}`).toBeGreaterThanOrEqual(COS_BUSY - 1e-9);
     }
   } else {
@@ -272,7 +271,7 @@ describe('planDirect: rules', () => {
     for (const t of list) if (t.id !== 'mine') expect(t.end <= 19 || t.start >= 21).toBe(true);
   });
 
-  it('cursor samples: autofocus zooms are busy time, and the same samples give the same plan', () => {
+  it('cursor samples: zooms are not busy time (they do not play while the phone is 3D), and the same samples give the same plan', () => {
     const p = take(30);
     p.zoom = { ...p.zoom, autofocus: true };
     const cursor: CursorSample[] = [
@@ -286,9 +285,10 @@ describe('planDirect: rules', () => {
     const a = planDirect(p, { style: 'hero', replace: true, cursor });
     const b = planDirect(p, { style: 'hero', replace: true, cursor: fromFile });
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    for (const s of a.shots) for (const z of zooms) expect(s.end <= z.inStart || s.start >= z.outEnd).toBe(true);
+    // The zooms change nothing: the same plan as with no cursor at all, and a shot runs through a zoom's time.
+    expect(JSON.stringify(planDirect(p, { style: 'hero', replace: true }))).toBe(JSON.stringify(a));
+    expect(a.shots.some((s) => zooms.some((z) => s.start < z.outEnd && s.end > z.inStart))).toBe(true);
     checkPlan(p, { style: 'hero', replace: true, cursor }, 'cursor');
-    expect(JSON.stringify(planDirect(p, { style: 'hero', replace: true }))).not.toBe(JSON.stringify(a));
   });
 
   it('self-check: a shot that would push a large phone off the canvas is re-planned (turn-to-back → hero-layback)', () => {
