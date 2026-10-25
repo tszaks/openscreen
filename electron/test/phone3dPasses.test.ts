@@ -22,6 +22,7 @@ import {
   tileMaxPx,
   TILE_MAX_SIDE,
   screenSteadiness,
+  SCREEN_STEADY_FLOOR,
   tentShutter,
 } from '../src/renderer/src/phone3d/passes';
 import { tapGapAt } from '../src/shared/taps';
@@ -95,17 +96,20 @@ describe('sample plan (§3.7 step 4)', () => {
     expect(sd / (sh / Math.sqrt(24))).toBeLessThan(1.1);
   });
 
-  it('screen steadiness: held still facing the viewer or within 0.15 s of a tap, full blur when turned away with no tap near', () => {
+  it('screen steadiness: held still facing the viewer or within 0.15 s of a tap; turned away with no tap near, half the blur (the floor)', () => {
     expect(screenSteadiness(1, Infinity)).toBe(1);
     expect(screenSteadiness(0.9, Infinity)).toBe(1);
-    expect(screenSteadiness(0.8, Infinity)).toBe(0);
-    expect(screenSteadiness(0.5, Infinity)).toBe(0);
+    // Look round 4: never the full smear; the content moves at most half as far as the body (readable mid-spin).
+    expect(SCREEN_STEADY_FLOOR).toBe(0.5);
+    expect(screenSteadiness(0.8, Infinity)).toBe(SCREEN_STEADY_FLOOR);
+    expect(screenSteadiness(0.5, Infinity)).toBe(SCREEN_STEADY_FLOOR);
+    expect(screenSteadiness(-1, Infinity)).toBe(SCREEN_STEADY_FLOOR);
     expect(screenSteadiness(0.5, 0)).toBe(1);
     expect(screenSteadiness(0.5, 0.15)).toBe(1);
-    expect(screenSteadiness(0.5, 0.3)).toBe(0);
-    const half = screenSteadiness(0.85, Infinity);
-    expect(half).toBeGreaterThan(0.3);
-    expect(half).toBeLessThan(0.7);
+    expect(screenSteadiness(0.5, 0.3)).toBe(SCREEN_STEADY_FLOOR);
+    const mid = screenSteadiness(0.88, Infinity);
+    expect(mid).toBeGreaterThan(SCREEN_STEADY_FLOOR);
+    expect(mid).toBeLessThan(1);
     expect(screenSteadiness(-1, 0.1)).toBe(1);
     expect(tapGapAt([], 2)).toBe(Infinity);
     expect(tapGapAt([{ t: 1 }, { t: 3, duration: 1 }], 2)).toBe(1);

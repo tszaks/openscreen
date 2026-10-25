@@ -31,6 +31,7 @@ import {
   shadowCatcherCorners,
   shadowHull,
   shadowPointsWorld,
+  contactPointsWorld,
   shadowSigma,
   SHADOW_OFFSET,
   shadowLightDir,
@@ -219,8 +220,8 @@ describe('shadow light (look round 2: a drop shadow at every turn)', () => {
     return { s, cam, off: Math.max(...pts.map((q, i) => (wall ? Math.hypot(q[0] - sh[i][0], q[1] - sh[i][1]) : Math.hypot(q[0] - sh[i][0], q[2] - sh[i][2])))) };
   };
 
-  it('the offset never passes the 2D frame shadow\'s (SHADOW_OFFSET × body long side), front to edge-on, wall and floor', () => {
-    expect(SHADOW_OFFSET).toBe(DEFAULT_FRAME_SHADOW.offsetY);
+  it('the drop shadow\'s offset never passes SHADOW_OFFSET × body long side (a look decision, twice the 2D frame\'s), front to edge-on, wall and floor', () => {
+    expect(SHADOW_OFFSET).toBe(2 * DEFAULT_FRAME_SHADOW.offsetY);
     for (const kind of ['wall', 'floor'] as const) {
       for (const turn of [0, 30, 60, 90, 120, 150, 180]) {
         for (const azimuth of [-35, 0, 60, 160]) {
@@ -337,9 +338,11 @@ describe('ROI, shadow and depth', () => {
       const cam = camAt(s, 0, { ...FRONT, turn: 35, tilt: 15 });
       const g = SHADOW_SUPPORT_SIGMAS * shadowSigma(s, cam).ambient;
       const corners = shadowCatcherCorners(s, cam);
-      const pts = shadowPointsWorld(s, cam);
+      // Both layers: the drop shadow (cast along the key) and the contact shadow (cast straight onto the catcher).
+      const pts = [...shadowPointsWorld(s, cam), ...contactPointsWorld(s, cam)];
       const ax = kind === 'wall' ? [0, 1] : [0, 2];
       const plane = kind === 'wall' ? 2 : 1;
+      expect(contactPointsWorld(s, cam).every((q) => q[plane] === pts[0][plane])).toBe(true);
       for (const c of corners) expect(c[plane]).toBeCloseTo(pts[0][plane], 9);
       for (const i of ax) {
         expect(Math.min(...corners.map((c) => c[i]))).toBeCloseTo(Math.min(...pts.map((q) => q[i])) - g, 6);
@@ -694,13 +697,13 @@ describe('ROI, shadow and depth', () => {
     expect(Math.min(...bodyPointsMm(bs, true).map((q) => project(q, bcam)[2]))).toBeLessThan(-500);
     checkFrame(big, 'size 3 tilt −85 fov 60 el 30');
     // The first case, by the numbers the review measured (the regressed code gave h = 1434, near = 1,
-    // shadowBlurPx = −5682): near stays near the body. Its shadow, once long enough to reach the canvas bottom, is
-    // now the capped drop shadow, so the ROI ends above it.
+    // shadowBlurPx = −5682): near stays near the body, and the ROI is the canvas from the top down to the drop
+    // shadow (look round 4's longer drop shadow reaches the canvas bottom here; the ROI is clipped to it).
     const p = cases[0][1];
     const roi = renderRoi(p, 0)!;
     expect(roi).toMatchObject({ x: 0, y: 0, w: 1080 });
     expect(roi.h).toBeGreaterThan(1600);
-    expect(roi.h).toBeLessThan(1920);
+    expect(roi.h).toBeLessThanOrEqual(1920);
     expect(depthRange(p, 0)!.near).toBeGreaterThan(400);
   });
 

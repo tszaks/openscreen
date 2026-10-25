@@ -80,9 +80,9 @@ export const ROUNDED_LAND_MM = 0.06;
 /** Seam between band and glass: width and depth (spec §3.3). */
 export const SEAM_W_MM = 0.12;
 export const SEAM_D_MM = 0.1;
-/** The glass edge rounds down into the seam over this width. */
-/** The cover glass's rounded edge, mm across: wide enough (4 px at 1080) to draw a thin bright line round the front. */
-const GLASS_EDGE_MM = 0.45;
+/** The cover glass's rounded edge, mm across: a thin bright line round the front (about 2.5 px at 1080). Wider cuts into the
+ *  screen hole on the narrowest bezels (iPhone 17, 16 Pro Max: 0.35 mm already does). */
+export const GLASS_EDGE_MM = 0.3;
 /** Antenna line width (along the outline). */
 const ANTENNA_W_MM = 0.6;
 /** Plateau: the shortest run of its filleted rise (a plateau with no measured inset still rolls onto its top). */
@@ -138,7 +138,7 @@ const RISE_ROWS = 32;
  * back (degrees); the fillet radii are mm and shrink together when the step is
  * too low for them.
  */
-export const PLATEAU_STEP = { wall: 62, footR: 0.35, topR: 0.9 } as const;
+export const PLATEAU_STEP = { wall: 60, footR: 0.35, topR: 0.9 } as const;
 
 interface Rise {
   /** Model y where the rise leaves the back, and where it reaches the plateau top (y1 > y0). */

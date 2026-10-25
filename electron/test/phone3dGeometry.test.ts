@@ -31,6 +31,9 @@ import {
   SEAM_W_MM,
   clearPhoneCache,
   fullBarRise,
+  GLASS_EDGE_MM,
+  PLATEAU_STEP,
+  stepProfile,
   phoneDims2d,
   phoneModel,
   insetLoop,
@@ -54,9 +57,10 @@ import {
   LENS_COVER_ROUGHNESS,
   LENS_ELEMENTS,
   ALUMINIUM_ROUGHNESS,
-  PANEL_ALBEDO,
-  PANEL_ROUGHNESS,
-  PANEL_SPECULAR,
+  PANEL,
+  LENS_RING,
+  GLASS_RIM,
+  ALUMINIUM_SEAL,
 } from '../src/renderer/src/phone3d/materials';
 import { aimStudio, boxSize, lightDir, placeStudio, quantizeBg, studioLights, studioRadiance, studioScene } from '../src/renderer/src/phone3d/environment';
 
@@ -380,14 +384,20 @@ describe('front, screen and back', () => {
     }
   });
 
-  it('lens barrels: at least 0.2 mm deep, three element groups and a retaining ring', () => {
+  it('lens barrels: at least 0.2 mm deep, three element groups, a retaining ring and a hood', () => {
     for (const id of ['iphone-16-pro', 'iphone-13', 'iphone-se-3', 'iphone-16e', 'iphone-17-pro-max']) {
       const { group } = build(dev(id));
       const barrel = part(group, 'lensBarrel')[0];
       const bb = barrel.geometry.boundingBox!;
       expect(bb.max.z - bb.min.z, id).toBeGreaterThanOrEqual(0.2);
       const els = part(group, 'lensElements')[0];
-      expect(new Set(els.geometry.groups.map((g) => g.materialIndex))).toEqual(new Set([0, 1, 2, 3]));
+      expect(new Set(els.geometry.groups.map((g) => g.materialIndex))).toEqual(new Set([0, 1, 2, 3, 4]));
+      // Look round 4: the elements shade as domes (normals tilting well off the axis toward the rim), not flat discs
+      // that mirror a softbox edge as one straight line.
+      const en = attr(els.geometry, 'normal');
+      let tilt = 0;
+      for (let i = 0; i < en.count; i++) tilt = Math.max(tilt, Math.acos(Math.min(1, Math.abs(en.getZ(i)))) * (180 / Math.PI));
+      expect(tilt, id).toBeGreaterThan(40);
       // Element discs sit at three different depths between the cover and the barrel floor.
       const cz = part(group, 'lensCover')[0].geometry.boundingBox!.min.z;
       const ez = els.geometry.boundingBox!;
@@ -413,6 +423,29 @@ describe('front, screen and back', () => {
       // body sides, a little steeper. Round 1's wall was 90° along the whole edge.
       expect(steepest, id).toBeLessThan(62);
       expect(corner, id).toBeLessThan(80);
+    }
+  });
+
+  it('a full-width plateau rises on a crisp machined step (look round 4): a short steep wall between a small foot fillet and a rounded top edge', () => {
+    for (const h of [2.55, 3.03, 0.6]) {
+      const prof = stepProfile(h);
+      // Round 3's smootherstep ran 4.8 mm across (a soft ramp that read as a crease or a folded plate).
+      expect(prof.run, `h ${h}`).toBeLessThan(2.5);
+      expect(prof.at(0).dz).toBeCloseTo(0, 9);
+      expect(prof.at(prof.run).dz).toBeCloseTo(h, 9);
+      expect(prof.at(0).dzdy).toBeCloseTo(0, 6);
+      expect(prof.at(prof.run).dzdy).toBeCloseTo(0, 6);
+      // Tangent-continuous and monotone: no kink a reflection would break on.
+      let prev = prof.at(0);
+      let steepest = 0;
+      for (let k = 1; k <= 2000; k++) {
+        const q = prof.at((prof.run * k) / 2000);
+        expect(q.dz).toBeGreaterThanOrEqual(prev.dz - 1e-12);
+        expect(Math.abs(Math.atan(q.dzdy) - Math.atan(prev.dzdy))).toBeLessThan(0.05);
+        steepest = Math.max(steepest, q.dzdy);
+        prev = q;
+      }
+      expect(Math.atan(steepest) * (180 / Math.PI)).toBeCloseTo(PLATEAU_STEP.wall, 1);
     }
   });
 
@@ -453,7 +486,7 @@ describe('front, screen and back', () => {
         const p = attr(m.geometry, 'position');
         for (let i = 0; i < p.count; i++) surfPts.add(key(p.getX(i), p.getY(i), p.getZ(i)));
       }
-      const edgeX = W / 2 - (dims.unibody ? dims.rim - SEAM_W_MM : dims.rim + 0.25);
+      const edgeX = W / 2 - (dims.unibody ? dims.rim - SEAM_W_MM : dims.rim + GLASS_EDGE_MM);
       const edgeSrc = dims.unibody ? [band] : part(group, 'back');
       let checked = 0;
       for (const m of edgeSrc) {
@@ -572,7 +605,7 @@ describe('materials (§3.4)', () => {
     expect(hue(blue).h * 360).toBeLessThan(225);
   });
 
-  it('matches the material table: no clearcoat on metal or front glass', () => {
+  it('matches the material table: anodised aluminium under a satin seal; no clearcoat on steel, titanium or front glass', () => {
     clearMaterialCache();
     const steel = materialsFor('#403E3D', 'steel', 'frosted', 0.25);
     expect(steel.band.metalness).toBe(1);
@@ -583,7 +616,11 @@ describe('materials (§3.4)', () => {
     expect(ti.band.anisotropy).toBe(0.5);
     const al = materialsFor('#2F2F31', 'aluminum', 'glossy', 0.25);
     expect(al.band.roughness).toBe(ALUMINIUM_ROUGHNESS);
-    expect(al.band.clearcoat).toBe(0);
+    // Look round 4: anodised aluminium is a dyed oxide that is sealed; the seal reflects white like a thin clear coat,
+    // so a softbox draws a crisp light line on the satin colour (the judges' "flat clay").
+    expect(al.band.clearcoat).toBe(ALUMINIUM_SEAL.clearcoat);
+    expect(al.band.clearcoatRoughness).toBe(ALUMINIUM_SEAL.roughness);
+    expect(al.band.clearcoatRoughness).toBeLessThan(al.band.roughness);
     // Glossy back: diffuse colour layer under one glass coat.
     expect(al.back.roughness).toBe(0.6);
     expect(al.back.specularIntensity).toBe(0);
@@ -602,13 +639,17 @@ describe('materials (§3.4)', () => {
     expect(ti.glare.roughness).toBe(FRONT_GLASS_ROUGHNESS);
     expect(ti.frontGlass.specularIntensity).toBe(frontGlassSpecular(0.25));
     expect(ti.glare.specularIntensity).toBe(ti.frontGlass.specularIntensity);
-    // The default glass is anti-reflective (about 1.4% straight on); glass 1 is bare glass (4%).
-    expect(frontGlassSpecular(0.25)).toBeCloseTo(0.35, 9);
+    // Look round 4: the default glass is bare cover glass (4% straight on: specular 1); glass 1 is a glossy mirror.
+    expect(frontGlassSpecular(0.25)).toBeCloseTo(1, 9);
     // The glass mirrors the softboxes only: the set's fill would lay a grey veil over the whole screen.
     expect(ti.frontGlass.envMapIntensity).toBe(0);
     expect(ti.glare.envMapIntensity).toBe(0);
     expect(frontGlassSpecular(0)).toBe(0);
-    expect(frontGlassSpecular(1)).toBe(1);
+    expect(frontGlassSpecular(1)).toBe(4);
+    // Its rounded rim is polished glass that mirrors the whole studio: the thin bright line round the front.
+    expect(ti.glassRim.roughness).toBe(GLASS_RIM.roughness);
+    expect(ti.glassRim.specularIntensity).toBe(GLASS_RIM.specular);
+    expect(ti.glassRim.envMapIntensity).toBe(1);
     expect(ti.frontGlass.ior).toBe(1.5);
     expect(ti.frontGlass.color.getHexString()).toBe('050506');
     // Glare: additive, coverage untouched; none at glass 0.
@@ -621,19 +662,27 @@ describe('materials (§3.4)', () => {
     expect(ti.lensCover.roughness).toBeGreaterThanOrEqual(0.05);
     expect(ti.lensCover.specularIntensity * 0.04).toBeLessThan(0.02);
     expect(ti.lensElements.map((m) => m.roughness)).toEqual(LENS_ELEMENTS.map((e) => e.roughness));
-    // Unibody panel: satin etched glass in the colour of the metal round it, a step lighter.
+    // Unibody panel (look round 4): the metal's own reflectance (so it tracks the aluminium in every pose), a touch
+    // desaturated, rougher, under a satin clearcoat; mostly metal with a little diffuse, never a darker matte card.
     const uni = materialsFor('#3A4659', 'aluminum', 'frosted', 0.25, { backMetal: true, plateau: 'band' });
-    expect(uni.backPanel.roughness).toBe(PANEL_ROUGHNESS);
-    expect(uni.backPanel.metalness).toBe(0);
-    // Its diffuse colour is the metal's lifted F0 (what the metal reads as in the studio) × PANEL_ALBEDO, not the
-    // dark swatch (a near-black card on a mid-blue back in round 1).
-    expect(uni.backPanel.color.r).toBeCloseTo(uni.band.color.r * PANEL_ALBEDO, 9);
-    expect(uni.backPanel.color.b).toBeCloseTo(uni.band.color.b * PANEL_ALBEDO, 9);
-    expect(uni.backPanel.specularIntensity).toBe(PANEL_SPECULAR);
+    expect(uni.backPanel.roughness).toBe(PANEL.roughness);
+    expect(uni.backPanel.roughness).toBeGreaterThan(uni.band.roughness);
+    expect(uni.backPanel.metalness).toBe(PANEL.metalness);
+    expect(uni.backPanel.metalness).toBeGreaterThanOrEqual(0.6);
+    expect(uni.backPanel.clearcoat).toBe(PANEL.clearcoat);
+    const lum = (c: { r: number; g: number; b: number }) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+    expect(lum(uni.backPanel.color)).toBeCloseTo(lum(uni.band.color) * PANEL.lift, 6);
+    // Desaturated: its blue leads its red by less than the metal's.
+    expect(uni.backPanel.color.b - uni.backPanel.color.r).toBeLessThan((uni.band.color.b - uni.band.color.r) * PANEL.lift);
+    // Lens rings: a deeper, less saturated shade of the finish's metal (round 3's bright copper read as toy bezels).
+    const orange = materialsFor('#E8732F', 'aluminum', 'frosted', 0.25, { backMetal: true, plateau: 'band' });
+    expect(lum(orange.lensRing.color)).toBeLessThan(lum(orange.band.color) * 0.6);
+    const sat = (c: { r: number; g: number; b: number }) => (Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b)) / Math.max(c.r, c.g, c.b);
+    expect(sat(orange.lensRing.color)).toBeLessThan(sat(orange.band.color));
     expect(ti.lensRing.metalness).toBe(1);
-    expect(ti.lensRing.roughness).toBe(0.15);
+    expect(ti.lensRing.roughness).toBe(LENS_RING.roughness);
     expect(ti.seam.color.getHexString()).toBe('0a0a0a');
-    for (const m of [ti.band, ti.lensRing, ti.lensBarrel]) expect(m.clearcoat).toBe(0);
+    for (const m of [ti.band, steel.band, ti.lensRing, ti.lensBarrel]) expect(m.clearcoat).toBe(0);
   });
 
   it('overlay layers: polygon offset whose units flip under reversed depth; only the screen writes depth', () => {
@@ -761,20 +810,24 @@ describe('studio environment (D13: one procedural environment holds all the ligh
     expect(DEFAULT_KEY_AZIMUTH).toBe(defaultPhone3D().light.azimuth);
   });
 
-  it('studio: even round the camera, so a finish keeps its colour as the phone turns (what a back mirrors from turn 90 to 180)', () => {
-    // A flat face turned θ off the camera mirrors the direction 2θ off it, near level: 0..±90° of camera azimuth.
-    let lo = Infinity;
-    let hi = 0;
-    for (let az = -90; az <= 90; az += 5) {
-      for (let el = -6; el <= 6; el += 3) {
-        const v = lum(at('studio', az, el));
-        lo = Math.min(lo, v);
-        hi = Math.max(hi, v);
-      }
-    }
-    expect(hi / lo).toBeLessThan(1.35);
+  it('studio (look round 4): a dark set round the camera, so metal reads by the softboxes, never one even tone', () => {
+    // Round 2 kept the set within 35% all round the camera axis (what a flat back mirrors), and every coloured
+    // finish read as flat clay: metal shows its form only by bright and dark zones. Now the set near the camera axis
+    // is dark, the overhead gradient several times brighter, and the boxes carry the light.
+    const near: number[] = [];
+    for (let az = -40; az <= 40; az += 10) for (let el = -6; el <= 6; el += 3) near.push(lum(at('studio', az, el)));
+    expect(Math.max(...near)).toBeLessThan(0.12);
+    expect(lum(at('studio', 0, 80))).toBeGreaterThan(3 * Math.max(...near));
     // Nothing bright on the camera axis (round 1's sheen strip there clipped a Silver back to white at turn 180).
     expect(lum(at('studio', 0, 0))).toBeLessThan(0.75);
+    // A box above the camera axis (a back facing the viewer mirrors its lower edge: bright top, falling off down the
+    // back) and a bounce card below it (downward faces catch a line), both off the axis by more than the front
+    // glass's reflection reach at FRONT, so the screen stays exact.
+    const boxes = LIGHT_PRESETS.studio.boxes;
+    const camAz = -DEFAULT_KEY_AZIMUTH;
+    const onCam = boxes.filter((b) => Math.abs(b.azimuth - camAz) < 1e-9);
+    expect(onCam.some((b) => b.elevation - b.halfH >= 12)).toBe(true);
+    expect(onCam.some((b) => b.elevation + b.halfH <= -12)).toBe(true);
   });
 
   it('studio: a white bounce card below (faces pointing down are lit), dark flags at the sides, the key and rims above the dome', () => {
@@ -789,7 +842,7 @@ describe('studio environment (D13: one procedural environment holds all the ligh
     expect(lum(at('studio', DEFAULT_KEY_AZIMUTH, KEY_ELEVATION))).toBeLessThan(1.5 * lum(at('studio', DEFAULT_KEY_AZIMUTH + 90, KEY_ELEVATION)) + 0.2);
   });
 
-  it('the softboxes are RectAreaLights round the phone: LIGHT_DISTANCE long sides out, facing it, sized by their angle, turned by the light channel', () => {
+  it('the softboxes are RectAreaLights round the phone: LIGHT_DISTANCE long sides out (or their own distance), facing it, sized by their angle, turned by the light channel', () => {
     for (const preset of LIGHT_PRESET_NAMES) {
       const rig = studioLights(preset);
       const boxes = LIGHT_PRESETS[preset].boxes;
@@ -803,7 +856,7 @@ describe('studio environment (D13: one procedural environment holds all the ligh
           expect(l).toBeInstanceOf(RectAreaLight);
           const p = l.getWorldPosition(new Vector3());
           const d = p.clone().sub(new Vector3(...center));
-          expect(d.length()).toBeCloseTo(LIGHT_DISTANCE * unit, 6);
+          expect(d.length()).toBeCloseTo((box.distance ?? LIGHT_DISTANCE) * unit, 6);
           // Its direction from the phone is the box's (azimuth offset from the key, elevation), turned by az.
           const want = lightDir(az + box.azimuth, box.elevation);
           expect(d.normalize().dot(new Vector3(...want))).toBeCloseTo(1, 6);
