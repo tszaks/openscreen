@@ -496,9 +496,10 @@ the same plan.
 7. **Scene changes**: when a scene change falls inside a turn's window,
    the turn is placed so the phone is edge-on exactly at the cut (a
    `hero-layback` reaches its angle at the cut). Moves at scene changes are
-   planned before the closing move. A take over 90 s gets a `note` that
-   recommends trimming it to its best 15-45 s, and (with scene changes) its
-   middle moves go only to scene changes.
+   planned before the closing move; a scene change in busy time (right after
+   the tap that caused it) gets its move as soon as the phone is free. A take
+   over 90 s gets a `note` that recommends trimming it to its best 15-45 s,
+   and its middle moves go only to scene changes and waits (when it has any).
 8. **Ops**, in order: `phone3d` (on, the base pose, light `soft` for subtle
    else `studio`, motion blur on), `clearTransitions` (unless `--keep` /
    `replace:false`; kept moves count as busy time), then one `shot` per shot.

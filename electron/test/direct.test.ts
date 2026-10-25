@@ -538,10 +538,10 @@ describe('planDirect: rules', () => {
     );
     const { plan, out } = checkPlan(p, { style: 'bold', replace: true, scenes: [10, 30, 64, 100] }, '120 s bold');
     const shots = plan.ops.filter((o): o is EditOp & { direction: number } => o.op === 'shot');
-    // Owner decision 18: at most 3 turn-to-backs, and (a take over 90 s with scene changes) the middle moves go to
-    // the scene changes. Many big turns in a row stay in range: shots.test.ts runs 10 turn-to-backs in a row.
+    // Owner decision 18: at most 3 turn-to-backs, and (a take over 90 s) the middle moves go to its natural breaks,
+    // scene changes and waits. Many big turns in a row stay in range: shots.test.ts runs 10 turn-to-backs in a row.
     expect(shots.filter((o) => o.recipe === 'turn-to-back').length).toBe(3);
-    for (const s of plan.shots.filter((x) => x.reason.startsWith('middle') || x.reason.startsWith('scene'))) expect(s.reason, JSON.stringify(s)).toMatch(/^scene change at /);
+    for (const s of plan.shots.filter((x) => x.reason.startsWith('middle') || x.reason.startsWith('scene'))) expect(s.reason, JSON.stringify(s)).toMatch(/^(scene change at |middle; quiet wait)/);
     expect(new Set(shots.filter((o) => o.recipe !== 'spin-in' && o.recipe !== 'settle').map((o) => o.direction))).toEqual(new Set([1, -1]));
     for (const tr of out.phone3d!.transitions) expect(Math.abs(tr.to.turn)).toBeLessThanOrEqual(560);
     expect(plan.note).toMatch(/^This take is 120 s long: .* trim it to its best 15-45 s/);
@@ -610,19 +610,26 @@ describe('planDirect: restraint (owner decision 18)', () => {
       expect(movingTime / D, style).toBeLessThan(0.15);
       expect(big.length, style).toBeLessThanOrEqual(Math.floor(D / BIG_EVERY[style]) + 1);
       expect(moves.filter((s) => s.recipe === 'turn-to-back').length, style).toBeLessThanOrEqual(MAX_TURN_TO_BACKS);
-      expect(plan.note, style).toMatch(/This take is \d+ s long: a social video reads best at 15-45 s, so trim it to its best 15-45 s \(trim, cut\) and run Auto 3D again; until then this plan spaces its moves out, at most one big move per (20|30) s\.$/);
+      expect(plan.note, style).toMatch(/This take is \d+ s long: a social video reads best at 15-45 s, so trim it to its best 15-45 s \(trim, cut\) and run Auto 3D again; until then this plan moves only at scene changes and in waits, at most one big move per (20|30) s\.$/);
       if (style !== 'subtle') expect(big.length, `${style} still moves`).toBeGreaterThan(3);
     }
     const bold = planDirect(p, { style: 'bold', replace: true });
     expect(bold.shots.filter((s) => s.recipe === 'turn-to-back').length).toBe(MAX_TURN_TO_BACKS);
     // The old planner put 56 turn-to-backs in the real take; the cap holds however many waits there are.
-    // With scene changes, a long take moves only at them.
+    // A long take moves only at its natural breaks: scene changes (first) and waits. On a phone take a scene change
+    // lands right after the tap that caused it (in busy time), so the move follows it as soon as the phone is free.
     const scenes = [40.5, 101.2, 180.7, 260.3, 333.3, 410.9, 480.1, 555.5, 600.2];
     const atScenes = checkPlan(p, { style: 'bold', replace: true, scenes }, '637 s bold, scenes').plan;
     const middles = atScenes.shots.filter((s) => !s.reason.startsWith('intro') && !s.reason.startsWith('outro'));
     expect(middles.length).toBeGreaterThan(0);
-    for (const m of middles) expect(m.reason, JSON.stringify(m)).toMatch(/^scene change at /);
-    expect(atScenes.note).toMatch(/until then this plan moves only at scene changes, at most one big move per 20 s\.$/);
+    for (const m of middles) expect(m.reason, JSON.stringify(m)).toMatch(/^(scene change at |middle; quiet wait)/);
+    expect(middles.some((m) => m.reason.startsWith('scene change at '))).toBe(true);
+    expect(atScenes.note).toMatch(/until then this plan moves only at scene changes and in waits, at most one big move per 20 s\.$/);
+    // A take with neither scene changes nor waits spaces its moves out over the free time.
+    const bare = take(200, Array.from({ length: 10 }, (_, i) => tap(10 + i * 19, {}, i)));
+    const spaced = checkPlan(bare, { style: 'bold', replace: true }, '200 s bare').plan;
+    expect(spaced.note).toMatch(/until then this plan spaces its moves out, at most one big move per 20 s\.$/);
+    expect(moving(spaced).filter((s) => s.reason.startsWith('middle; free')).length).toBeGreaterThan(2);
   }, 120_000);
 
   it('the 6 s and 8 s golden takes still give a visible 3D result in every style (owner decision 12)', () => {
@@ -665,7 +672,7 @@ describe('planDirect: restraint (owner decision 18)', () => {
     expect(planDirect(p, { style: 'bold', replace: true }).shots.some((s) => s.reason.startsWith('outro'))).toBe(true);
   });
 
-  it('sweep: 160 takes of 10-400 s, every style: restraint caps hold, long takes recommend a trim and move only at scene changes', () => {
+  it('sweep: 160 takes of 10-400 s, every style: restraint caps hold, long takes recommend a trim and move only at scene changes and waits', () => {
     const tally = { long: 0, sceneOnly: 0, ttb3: 0, multiBig: 0 };
     for (let seed = 1; seed <= 160; seed++) {
       const rnd = lcg(seed * 7919);
@@ -678,9 +685,9 @@ describe('planDirect: restraint (owner decision 18)', () => {
         const long = D > LONG_TAKE;
         expect(/This take is \d+ s long/.test(plan.note ?? ''), `${label}: trim note iff long (${plan.note})`).toBe(long);
         const middles = moving(plan).filter((s) => !s.reason.startsWith('intro') && !s.reason.startsWith('outro'));
-        if (long && scenes) {
-          for (const m of middles) expect(m.reason, label).toMatch(/^scene change at /);
-          if (middles.length) tally.sceneOnly++;
+        if (long && (scenes || p.waits.length)) {
+          for (const m of middles) expect(m.reason, label).toMatch(/^(scene change at |middle; quiet wait)/);
+          if (middles.some((m) => m.reason.startsWith('scene change at '))) tally.sceneOnly++;
         }
         if (long) tally.long++;
         if (moving(plan).filter((s) => s.recipe === 'turn-to-back').length === MAX_TURN_TO_BACKS) tally.ttb3++;

@@ -103,6 +103,9 @@ export const BIG_GAP = 6;
 export const MAX_TURN_TO_BACKS = 3;
 /** A take longer than this gets a note recommending a trim, and its middle moves go to scene changes. */
 export const LONG_TAKE = 90;
+/** A scene change this long before a free window still counts for it: on a phone take the screen changes right
+ *  after the tap that caused it, inside busy time, so the move follows the new screen as soon as the phone is free. */
+export const SCENE_NEAR = 2;
 /** The length a social video reads best at, which the long-take note recommends. */
 export const TRIM_TO: readonly [number, number] = [15, 45];
 /** During a zoom the phone stays within this angle of straight on (owner decision 20; the steep-angle limit). */
@@ -336,7 +339,10 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
     shots.push(d);
     used += d.duration;
     reserved.push({ start: d.start - SHOT_GAP, end: d.start + d.duration + SHOT_GAP });
-    if (BIG_MOVES.includes(d.recipe)) bigs.push({ start: d.start, end: d.start + d.duration, recipe: d.recipe });
+    // A scene-change turn's start is final only once its direction is known (time order, below): both are kept, so
+    // the spacing holds whichever way it turns.
+    const starts = d.scene !== undefined ? ([1, -1] as const).map((dir) => d.scene! - edgeOnOffset(base, dir, d.duration)) : [d.start];
+    if (BIG_MOVES.includes(d.recipe)) for (const st of starts) bigs.push({ start: st, end: st + d.duration, recipe: d.recipe });
     if (d.recipe === 'turn-to-back') turnBacks++;
   };
   /** Starts (open intervals) a big move of `duration` may not use: within P of another big move's start, or within
@@ -415,9 +421,10 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
     end: b,
     len: b - a,
     quiet: inp.waits.some((w) => w.start < b && w.end > a),
-    scene: inp.scenes.some((t) => t >= a && t <= b),
+    scene: inp.scenes.some((t) => t >= a - SCENE_NEAR && t <= b),
   });
-  const sceneOnly = D > LONG_TAKE && inp.scenes.length > 0;
+  // A long take moves only at its natural breaks: scene changes and waits (when it has either).
+  const focused = longTakeFocus(inp);
   const maxMiddle = Math.floor(D / MIDDLE_EVERY);
   let middle = 0;
   /** The longest free gap a middle move could use (before the last pass's first move), the shortest middle move the
@@ -439,8 +446,8 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
       const next: Free[] = [];
       for (const x of pool) {
         if (middle >= maxMiddle) break;
-        if ((atScenes || sceneOnly) && !x.scene) {
-          if (sceneOnly && x.len >= LAYBACK_MIN) offScene = true;
+        if ((atScenes && !x.scene) || (focused && !x.scene && !x.quiet)) {
+          if (!atScenes && x.len >= LAYBACK_MIN) offScene = true;
           continue;
         }
         const options: ShotRecipe[] =
@@ -482,7 +489,18 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
             }
           }
           if (start === null) {
-            if (atScenes || sceneOnly) {
+            // A scene change just before the window (in the busy time of the tap that caused it): the move starts as
+            // soon as the phone is free, or as near that as the restraint rules allow.
+            const cut = inp.scenes.filter((t) => t >= x.start - SCENE_NEAR && t <= x.start).at(-1);
+            const at = cut !== undefined ? nearestAllowed(x.start, x.end - duration, forbidden, x.start) : null;
+            if (cut !== undefined && at !== null && at - cut <= SCENE_NEAR + BIG_GAP) {
+              start = at;
+              reason = `scene change at ${s1(cut)}, right after it; ${why}`;
+            }
+          }
+          if (start === null) {
+            // No move at the scene change fits: the scene pass, or a long take in a gap with no wait, places none.
+            if (atScenes || (focused && !x.quiet)) {
               restrained = true;
               continue;
             }
@@ -543,7 +561,7 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
             ? `the longest free gap${beside} is ${below(longest, LAYBACK_MIN)}, under the ${LAYBACK_MIN} s a middle move needs`
             : `no free time is left${beside} for a middle move`;
       } else if (restrained) misses.middle = `every free gap a middle move fits in is within ${P} s of another big move or under a zoom (${style} allows one big move per ${P} s)`;
-      else if (offScene) misses.middle = `the take is over ${LONG_TAKE} s, so middle moves go only to scene changes, and no scene change falls in a free gap`;
+      else if (offScene) misses.middle = `the take is over ${LONG_TAKE} s, so middle moves go only to scene changes and waits, and no free gap has either`;
     }
   }
 
@@ -747,6 +765,10 @@ function missingCauses(opts: DirectOptions, inp: Inputs, checked: Checked, turni
   return out;
 }
 
+/** Owner decision 18: a long take's middle moves go only to its natural breaks (scene changes and waits), when it
+ *  has any; one with neither spaces its moves out over the free time. */
+const longTakeFocus = (inp: Inputs) => inp.D > LONG_TAKE && (inp.scenes.length > 0 || inp.waits.length > 0);
+
 /**
  * Owner decision 18: a take over LONG_TAKE s is not a social video yet. The
  * note recommends a trim to its best TRIM_TO seconds, and says where this plan
@@ -754,7 +776,7 @@ function missingCauses(opts: DirectOptions, inp: Inputs, checked: Checked, turni
  */
 function longTakeNote(inp: Inputs, style: DirectStyle): string | undefined {
   if (inp.D <= LONG_TAKE) return undefined;
-  const where = inp.scenes.length ? 'this plan moves only at scene changes' : 'this plan spaces its moves out';
+  const where = longTakeFocus(inp) ? 'this plan moves only at scene changes and in waits' : 'this plan spaces its moves out';
   return `This take is ${Math.round(inp.D)} s long: a social video reads best at ${TRIM_TO[0]}-${TRIM_TO[1]} s, so trim it to its best ${TRIM_TO[0]}-${TRIM_TO[1]} s (trim, cut) and run Auto 3D again; until then ${where}, at most one big move per ${BIG_EVERY[style]} s.`;
 }
 
