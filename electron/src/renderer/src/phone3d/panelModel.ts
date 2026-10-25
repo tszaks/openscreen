@@ -444,6 +444,32 @@ export function durationDragOps(base: DurationBase, delta: number): EditOp[] {
   return base.map((m) => ({ op: 'editTransition', id: m.id, end: m.start + Math.max(MIN_TRANSITION, m.len + delta) }));
 }
 
+/** What one press of ⌫ removes, first match wins. */
+export type DeleteTarget = 'layer' | 'moves' | 'keep-layer' | 'words' | 'tap' | 'music' | 'clip';
+
+/**
+ * The ⌫ chain. Selected 3D moves are removed only while the 3D tab or the 3D
+ * lane has focus: a move selection left behind on another tab never takes the
+ * key from the words, tap or sound that tab has selected.
+ */
+export function deleteTarget(s: {
+  layer: boolean;
+  layerHides: boolean;
+  moves: number;
+  movesFocused: boolean;
+  words: boolean;
+  tap: boolean;
+  music: boolean;
+}): DeleteTarget {
+  if (s.layer && s.layerHides) return 'layer';
+  if (s.moves > 0 && s.movesFocused) return 'moves';
+  if (s.layer) return 'keep-layer';
+  if (s.words) return 'words';
+  if (s.tap) return 'tap';
+  if (s.music) return 'music';
+  return 'clip';
+}
+
 // ---------------------------------------------------------------------------
 // The lane
 

@@ -22,6 +22,7 @@ import { CurveThumb } from './phone3d/EasingCurve';
 import {
   addMoveOp,
   chipFor,
+  deleteTarget,
   duplicateOp,
   EASE_LABEL,
   EASE_MENU,
@@ -648,10 +649,13 @@ export function Editor({
   };
   const faceFront = () => nudgePose(() => ({ turn: 0, tilt: 0, rotate: 0 }));
 
-  /** T, Option-click on the lane, "Add 3D Move Here": a move at `t`, selected. */
+  /** T, Option-click on the lane, "Add 3D Move Here": a move at `t`, selected.
+   *  On a take with no 3D phone yet (only the menu can do that) the move also
+   *  turns the 3D phone on, so it says so, with Undo. */
   const addMoveAt = (t: number) => {
     const id = crypto.randomUUID();
-    if (apply3d(addMoveOp(projRef.current.phone3d ?? defaultPhone3D(), t), { ids: [id] })) selectMoves([id], 'end');
+    const p3 = (latest3d.current ?? projRef.current).phone3d;
+    if (apply3d(addMoveOp(p3 ?? defaultPhone3D(), t), { ids: [id], ...(p3 ? {} : { announce: '3D phone on: move added' }) })) selectMoves([id], 'end');
   };
 
   /** A shot from the gallery or the timeline menu, at output time `at` (one undo step and a toast). */
@@ -2154,7 +2158,8 @@ export function Editor({
         return;
       }
       // The 3D lane: T adds a move at the playhead, J / K go to the previous / next keyframe, F frames the selection.
-      if (isPhone && !hasPhoneLayer && !role) {
+      // These keys belong to the lane, so they work only while it is shown: a stray T never turns a flat take 3D.
+      if (isPhone && proj.phone3d && !hasPhoneLayer && !role) {
         const key = e.key.toLowerCase();
         if (key === 't' && !e.shiftKey) {
           e.preventDefault();
@@ -2187,28 +2192,25 @@ export function Editor({
       } else if (e.key === 's' || e.key === 'S') {
         splitAtPlayhead();
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
-        if (selectedLayer && canHide(selectedLayer)) {
-          // A selected layer hides (camera, phone, text, title); the recording never does.
-          e.preventDefault();
-          hideSelected(selectedLayer);
-        } else if (liveSel.length) {
-          // Then the selected 3D moves: one apply3d list, one undo step.
-          e.preventDefault();
+        const target = deleteTarget({
+          layer: !!selectedLayer,
+          layerHides: !!selectedLayer && canHide(selectedLayer),
+          moves: liveSel.length,
+          movesFocused: laneFocus3d.current || activeTab === 'three',
+          words: editTranscript && !!wordSel,
+          tap: !!selectedTap,
+          music: !!selectedMusic,
+        });
+        if (target !== 'clip') e.preventDefault();
+        // A selected layer hides (camera, phone, text, title); the recording never does.
+        if (target === 'layer') hideSelected(selectedLayer!);
+        // The selected 3D moves: one apply3d list, one undo step.
+        else if (target === 'moves') {
           if (apply3d(liveSel.map((id) => ({ op: 'removeTransition', id })))) setSelectedMoves([]);
-        } else if (selectedLayer) {
-          e.preventDefault();
-        } else if (editTranscript && wordSel) {
-          e.preventDefault();
-          cutSelectedWords();
-        } else if (selectedTap) {
-          e.preventDefault();
-          removeTap(selectedTap);
-        } else if (selectedMusic) {
-          e.preventDefault();
-          removeMusic(selectedMusic.item.id);
-        } else {
-          deleteSelectedClip();
-        }
+        } else if (target === 'words') cutSelectedWords();
+        else if (target === 'tap') removeTap(selectedTap!);
+        else if (target === 'music') removeMusic(selectedMusic!.item.id);
+        else if (target === 'clip') deleteSelectedClip();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -3686,6 +3688,8 @@ export function Editor({
                 onClick={() => {
                   setEditTranscript((v) => !v);
                   setWordSel(null);
+                  // Words, not 3D moves, are what ⌫ cuts in edit mode.
+                  setSelectedMoves([]);
                 }}
               >
                 Edit
@@ -3764,6 +3768,7 @@ export function Editor({
                             title={fmtTime(w.start)}
                             onClick={(e) => {
                               e.stopPropagation();
+                              setSelectedMoves([]);
                               if (e.shiftKey && wordSel?.cueId === c.id) {
                                 setWordSel({ cueId: c.id, anchor: wordSel.anchor, end: wi });
                               } else {

@@ -41,7 +41,6 @@ import {
   chipFor,
   clock,
   durationBase,
-  type DurationBase,
   durationDragOps,
   durationOps,
   EASE_LABEL,
@@ -71,6 +70,7 @@ import {
   shotLine,
   warningText,
   type Chip,
+  type DurationBase,
   type PoseLock,
 } from './panelModel';
 import type { MenuItem, MenuSpec } from './PopupMenu';

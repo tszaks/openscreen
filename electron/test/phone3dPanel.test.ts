@@ -11,6 +11,7 @@ import {
   addMoveOp,
   bezierFrom,
   chipFor,
+  deleteTarget,
   clock,
   dragTimes,
   durationBase,
@@ -353,6 +354,33 @@ describe('a mixed Duration drag', () => {
     const p = drag(mk(), ['a', 'b'], [-0.4, -0.8, 0], true);
     expect(lens(p)).toEqual([0.6, 1.2]);
     expect(lens(drag(mk(), ['a', 'b'], [-0.8], true))).toEqual([0.1, 0.4]);
+  });
+});
+
+describe('the ⌫ key', () => {
+  const none = { layer: false, layerHides: false, moves: 0, movesFocused: false, words: false, tap: false, music: false };
+
+  it('cuts the selected words when moves are still selected from the 3D tab but the transcript has focus', () => {
+    expect(deleteTarget({ ...none, moves: 2, movesFocused: false, words: true })).toBe('words');
+    expect(deleteTarget({ ...none, moves: 2, movesFocused: false, tap: true })).toBe('tap');
+    expect(deleteTarget({ ...none, moves: 2, movesFocused: false, music: true })).toBe('music');
+  });
+
+  it('removes the moves while the 3D tab or lane has focus, before words, taps and sounds', () => {
+    expect(deleteTarget({ ...none, moves: 1, movesFocused: true, words: true, tap: true, music: true })).toBe('moves');
+    expect(deleteTarget({ ...none, moves: 0, movesFocused: true, words: true })).toBe('words');
+  });
+
+  it('keeps the old order for everything else', () => {
+    expect(deleteTarget({ ...none, layer: true, layerHides: true, moves: 1, movesFocused: true })).toBe('layer');
+    expect(deleteTarget({ ...none, layer: true, words: true })).toBe('keep-layer'); // the recording never hides
+    expect(deleteTarget(none)).toBe('clip');
+  });
+
+  it('is what the editor\'s key handler uses, with the focus rule and the lane-only T, J, K, F', () => {
+    const editor = readFileSync(join(__dirname, '../src/renderer/src/Editor.tsx'), 'utf8');
+    expect(editor).toMatch(/const target = deleteTarget\(\{[^}]*movesFocused: laneFocus3d\.current \|\| activeTab === 'three',/);
+    expect(editor).toMatch(/if \(isPhone && proj\.phone3d && !hasPhoneLayer && !role\) \{\s*const key = e\.key\.toLowerCase\(\);\s*if \(key === 't'/);
   });
 });
 
