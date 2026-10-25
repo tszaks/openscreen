@@ -103,24 +103,25 @@ Run these in order. Each step is done when its check holds.
    Times change: re-run `info` and work in **output seconds** from here on.
 5. `<cli> direct <bundle> --style hero` — `bold` for promos (rests a few
    degrees off front), `subtle` for tutorials. Read each `shots[].reason`
-   and the `note`. Auto 3D is restrained on purpose: at most one big move
-   (`spin-in`, `turn-to-back`, `hero-layback`) per 30 s (`hero`, `subtle`)
-   or per 20 s (`bold`), never two big moves within 6 s, at most 3
-   `turn-to-back`s; the phone holds a calm pose the rest of the time. On a
-   take over 90 s the `note` recommends a trim to the best 15–45 s: do
-   step 3 again rather than adding shots.
+   and the `note`. **Restraint** is yours to keep: `direct` does not cap
+   big moves (on a long take, `bold` plans dozens). Aim for at most one big
+   move (`spin-in`, `turn-to-back`, `hero-layback`) per 30 s, or per 20 s
+   for a bold promo, never two within 6 s, at most 3 `turn-to-back`s; the
+   phone holds a calm pose the rest of the time. No warning checks this:
+   count the big moves in `info.transitions` and remove extras with
+   `removeTransition`. A take over 90 s is too long for this: do step 3
+   again (best 15–45 s) rather than trimming shots.
    **Placing a shot yourself** (only when the video is short and has no
    shot after the intro): pick a gap between taps of at least the shot's
    length (2.4 s for `hero-layback`), convert the taps to output seconds
-   with `info.clips`, and keep the same restraint (one big move per 30 s,
-   6 s apart). **Zooms count too**: a zoom (Zoom to taps, auto-focus or a
-   manual zoom) pushes the 3D camera in toward the screen, so while one
-   plays the phone must stay within 35° of front. A tap zoom starts just
-   before its tap, so end the shot's lean (the first 1.4 s of a
-   `hero-layback`) before the next tap, and never put `spin-in` or
-   `turn-to-back` over a zoom. Check with `apply --dry-run`: done when
-   `warnings: []`; a `zoom-angle` or `tap-angle` warning names the moment:
-   move the shot earlier, shorten it (`duration`), or apply its `fix`.
+   with `info.clips`, and keep the same restraint. **Zooms**: in this
+   version a zoom (Zoom to taps, auto-focus or a manual zoom) does not play
+   while the phone is 3D, so a shot may run through one; each manual zoom
+   gives a `zoom-3d` warning (remove it, or keep it for the flat version).
+   Taps still count: check with `apply --dry-run`: done when the only
+   warnings are `zoom-3d` (or none); a `tap-angle` or `tap-back` warning
+   names the moment: move the shot, shorten it (`duration`), or apply its
+   `fix`.
    The rest pose after Auto 3D is the End of the intro **and of every
    planned shot that returns to rest**. To rest a few degrees off front for
    the whole video: use `--style bold` (rests at -8°/5°), or edit the End
@@ -135,10 +136,9 @@ Run these in order. Each step is done when its check holds.
    own Start (Auto 3D's spin-in does); its output note says so.
 6. `<cli> frames <bundle> --moves --sheet --draft` — **open `sheet.png`**
    and judge it against the checklist below. Each file's `facing` must be
-   near 1 at every tap time and during every zoom. On a long video,
-   `--from S --to E` limits the stills to output seconds S..E; when the
-   moves need more than 200 stills, `--moves` samples them evenly and says
-   so in its output.
+   near 1 at every tap time. At most 200 stills: on a long video with many
+   moves, `--moves` is refused, so use `--at` with the times you want to
+   see (or cut first, step 3).
 7. Fix what you saw with one `<cli> apply <bundle> '[…]'` per round:
    `setPose`, `editTransition`, `shot`, `removeTransition`, a `phone3d`
    setting, or a warning's `fix` list as it is. Read each note in `changes`.
@@ -165,8 +165,6 @@ fixes you made, the final warnings (0), and the output path.
 
 - Only the best moments, inside the target length (social: 15–30 s).
 - The screen faces front at every tap (facing near 1), readable.
-- Zooms play with the phone near front (within 35°): a zoom pushes the
-  camera in, so it is never the moment for a big turn.
 - Restraint: at most one big move per 30 s (bold: per 20 s), never two
   within 6 s; the phone holds a calm pose (float is fine) the rest of the time.
 - One idea per move; nothing moves while something happens on screen.
@@ -182,8 +180,8 @@ fixes you made, the final warnings (0), and the output path.
 |---|---|
 | `spin-in` | the intro, before the first tap |
 | `settle` | a gentle intro, or any intro under 2 s |
-| `hero-layback` | a wait of 2.4 s or more; with `"return":"stay"` as the outro; its lean ends before the next zoom |
-| `turn-to-back` | a long wait (4.5 s or more) or a scene change, never over a zoom; bold promos, at most 3 per video |
+| `hero-layback` | a wait of 2.4 s or more; with `"return":"stay"` as the outro |
+| `turn-to-back` | a long wait (4.5 s or more) or a scene change; bold promos, at most 3 per video |
 | `float` | calm tutorials (idle drift, no moves) |
 
 `info.shotRecipes` has each one's length and summary. Easing: `spring` for
@@ -198,8 +196,8 @@ length), `cinematic` for turns of 90° or more, `smooth` for small moves,
 - `trim`, `cut` and `speed` take source seconds; every other time is output
   seconds after cuts. In one edits list, put `trim`/`cut`/`speed` first.
 - App Store layouts stay flat by design; use a social preset for 3D.
-- Zooms play in 3D as a camera push-in (same timing and easing as flat);
-  there is no separate 3D zoom control: the Zoom tab and zoom ops drive it.
+- Zooms do not play while the phone is 3D (they play again with 3D off);
+  a manual zoom on a 3D project gives `zoom-3d`.
 - An export renders 10-15× slower than real time: judge with `frames`, and
   export once at the end.
 - `<cli> undo <bundle>` swaps back the last `apply`, `polish` or `direct`

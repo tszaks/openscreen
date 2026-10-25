@@ -195,15 +195,16 @@ describe('ops parity: the rest pose after Auto 3D and the worked example', () =>
     expect(AGENTS).not.toMatch(/rest pose is the End of the intro \(and of each later move\), so\s+edit that End/);
   });
 
-  it('the worked example checks its fixes with --dry-run before it applies them, and keeps decision 18\'s restraint', () => {
+  it('the worked example checks its fixes with --dry-run before it applies them, and keeps the restraint it advises', () => {
     const ex = section(AGENTS, '### Example: "make this world class" (an iPhone take)');
     const dry = ex.indexOf('apply "$B" fixes.json --dry-run');
     const real = ex.search(/apply "\$B" fixes\.json\s+#/);
     expect(dry, 'a dry run of fixes.json').toBeGreaterThan(-1);
     expect(real, 'the real apply').toBeGreaterThan(dry);
     const fixes = JSON.parse(ex.match(/```json\n([\s\S]*?)```/)![1]);
-    // Every op in it is a real op. Owner decision 18 (restraint): after the spin-in at 0, the only big move it adds
-    // is one layback at least 20 s later (the bold limit for a promo); the quiet middle gets float.
+    // Every op in it is a real op. Restraint (owner decision 18, advice in AGENTS.md until direct enforces it): after
+    // the spin-in at 0, the only big move it adds is one layback at least 20 s later (the bold limit for a promo); the
+    // quiet middle gets float.
     for (const o of fixes) expect(OP_NAMES as readonly string[]).toContain(o.op);
     const shots = fixes.filter((o: { op: string }) => o.op === 'shot') as { recipe: string; at?: number }[];
     expect(shots.map((o) => o.recipe)).toEqual(['float', 'hero-layback']);
@@ -216,6 +217,25 @@ describe('ops parity: the 3D numbers in AGENTS.md match the code', () => {
   it('every warning code is in the warnings table', () => {
     const table = section(P3D, '### Warnings');
     for (const code of WARNING_CODES) expect(table, `warning ${code}`).toMatch(new RegExp(`\\| \`${code}\` \\|`));
+  });
+
+  it('every code in the warnings table is one the code gives (a row whose meaning starts "retired" is the only exception)', () => {
+    const rows = section(P3D, '### Warnings').split('\n').map((l) => l.match(/^\| `([a-z0-9-]+)` \| (.*)$/)).filter((m) => m !== null);
+    expect(rows.length).toBeGreaterThan(5);
+    for (const [, code, rest] of rows) {
+      if (/^retired\b/.test(rest)) {
+        expect(WARNING_CODES as readonly string[], `${code} is retired in the doc`).not.toContain(code);
+        continue;
+      }
+      expect(WARNING_CODES as readonly string[], `the doc's warning ${code}`).toContain(code);
+    }
+    // Neither SKILL.md nor AGENTS.md may name a warning code the code does not have.
+    const SKILL = readFileSync(join(E, '..', 'skills', 'openscreen', 'SKILL.md'), 'utf8');
+    for (const [name, md] of [['AGENTS.md', AGENTS], ['SKILL.md', SKILL]] as const) {
+      for (const m of md.matchAll(/`((?:zoom|tap|off|pose|past|too|floor)-[a-z0-9]+)`/g)) {
+        expect(WARNING_CODES as readonly string[], `${name} names \`${m[1]}\``).toContain(m[1]);
+      }
+    }
   });
 
   it('every shot recipe row states its real default length (and the one-way length)', () => {
@@ -273,6 +293,20 @@ describe('ops parity: every CLI command is documented', () => {
     expect(parsed.length).toBeGreaterThanOrEqual(8);
     const framesRow = COMMANDS.split('\n').find((l) => l.startsWith('| `frames '))!;
     for (const f of parsed) expect(framesRow, `frames ${f}`).toContain(f);
+  });
+
+  it('the direct and frames rows list no flag the CLI does not parse', () => {
+    const flagsOf = (body: string) => [...body.matchAll(/(?:flag|bool)\(args, '(--[\w-]+)'\)/g)].map((m) => m[1]);
+    const rowFlags = (cmd: string) => {
+      const row = COMMANDS.split('\n').find((l) => l.startsWith(`| \`${cmd} `))!;
+      return [...row.split(' | ')[0].matchAll(/--[a-z][\w-]*/g)].map((m) => m[0]);
+    };
+    const direct = flagsOf(fnBody(SRC('src/node/agentCli.ts'), 'parseDirectArgs'));
+    const frames = flagsOf(fnBody(SRC('src/node/framesCmd.ts'), 'parseFramesArgs'));
+    expect(rowFlags('direct').length).toBeGreaterThanOrEqual(4);
+    expect(rowFlags('frames').length).toBeGreaterThanOrEqual(8);
+    for (const f of rowFlags('direct')) expect(direct, `direct ${f} in AGENTS.md`).toContain(f);
+    for (const f of rowFlags('frames')) expect(frames, `frames ${f} in AGENTS.md`).toContain(f);
   });
 });
 
