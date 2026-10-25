@@ -46,10 +46,13 @@ import { FLASH_GROUP, BAND_GROUP, FRONT_GLASS_GROUP, FRONT_GROUP, PLATEAU_GROUP,
  * Midnight, Black) turned into light grey in the turntable, while 0.16
  * keeps them dark and still lets the softbox streaks read as metal.
  */
-export const METAL_F0: Record<FrameMaterial, { f0: [number, number, number]; floor: number }> = {
-  titanium: { f0: [0.54, 0.5, 0.45], floor: 0.18 },
-  steel: { f0: [0.56, 0.57, 0.58], floor: 0.18 },
-  aluminum: { f0: [0.91, 0.92, 0.92], floor: 0.11 },
+export const METAL_F0: Record<FrameMaterial, { f0: [number, number, number]; floor: number; ceiling: number }> = {
+  titanium: { f0: [0.54, 0.5, 0.45], floor: 0.18, ceiling: 1 },
+  steel: { f0: [0.56, 0.57, 0.58], floor: 0.18, ceiling: 1 },
+  // Ceiling (look v2 round 2): a near-white swatch (Silver #F5F5F5) as F0 is a bare-aluminium mirror, and the
+  // plateau tone mapped to flat white with no shape at turn 150; clear anodised, bead-blasted aluminium reflects
+  // well under that, so a swatch above the ceiling is scaled down to it (hue kept).
+  aluminum: { f0: [0.91, 0.92, 0.92], floor: 0.11, ceiling: 0.7 },
 };
 
 /** Rec. 709 luminance of a linear colour. */
@@ -63,12 +66,14 @@ export const luminance = (c: { r: number; g: number; b: number }) => 0.2126 * c.
  * saturation (mixing toward the grey base F0, the spec's first idea, turned
  * Deep Blue grey). If a channel would pass 1 it is pulled toward the neutral
  * grey of the same luminance. A black swatch takes the base metal's own
- * tint at the floor. Swatches already above the floor are kept.
+ * tint at the floor. Swatches between the floor and the ceiling are kept; a
+ * swatch above the ceiling is scaled down to it.
  */
 export function bandF0(hex: string, material: FrameMaterial): Color {
   const c = new Color().setStyle(hex); // linear (ColorManagement on)
-  const { f0, floor } = METAL_F0[material];
+  const { f0, floor, ceiling } = METAL_F0[material];
   const L0 = luminance(c);
+  if (L0 > ceiling) return c.multiplyScalar(ceiling / L0);
   if (L0 >= floor) return c;
   if (L0 < 1e-4) {
     const b = new Color(f0[0], f0[1], f0[2]);
@@ -262,7 +267,7 @@ export const PANEL = { metalness: 1, roughness: 0.4, desaturate: 0, lift: 1, cle
  * and read lighter than the top face, a hinged lid (look v2 round 1, all three judges). Darker, so the step reads
  * as a machined wall under a top edge that alone catches the light.
  */
-export const PLATEAU_WALL = 0.35;
+export const PLATEAU_WALL = { tint: 0.8, roughness: 0.5, metalness: 0.7 } as const;
 /** The lens and flash rings: the finish's metal, darker and less saturated (a deeper shade of the body, not a bright bezel). */
 export const LENS_RING = { darken: 0.42, desaturate: 0.3, roughness: 0.16 } as const;
 /** Mix a swatch toward white by `t` in sRGB (how a designer lightens a colour), returned linear. */
@@ -359,7 +364,11 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   // A full-width step's wall (only the 17 Pro unibody and the Air have one): the same surface built again (shader
   // patches do not survive Material.clone), its colour × PLATEAU_WALL.
   const plateauWall = opts.plateau === 'band' ? bandMaterial(hex, material, !!opts.polishedBand) : opts.plateau === 'lensRing' ? lensRing : glossy(towardWhite(hex, BACK_LIFT.glossy));
-  if (opts.plateau !== 'lensRing') plateauWall.color.multiplyScalar(PLATEAU_WALL);
+  if (opts.plateau !== 'lensRing') {
+    plateauWall.color.multiplyScalar(PLATEAU_WALL.tint);
+    plateauWall.roughness = Math.max(plateauWall.roughness, PLATEAU_WALL.roughness);
+    plateauWall.metalness = Math.min(plateauWall.metalness, PLATEAU_WALL.metalness);
+  }
 
   const lensBarrel = physical({ color: srgb('#1c1c1f'), metalness: 1, roughness: 0.5, side: FrontSide });
   // Coated optics: near-black with a cool cast, glossy at the top, rougher deeper down. Multi-coated lens glass

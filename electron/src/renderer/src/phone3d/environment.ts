@@ -64,7 +64,7 @@ const DOME_RADIUS = 10;
  * With the fall, a back's top (which mirrors nearer the horizon) is lighter than its bottom, the gradient a
  * product shot's sweep gives, and the step's wall (which mirrors further down) is darker than the top face.
  */
-export const FLOOR_FALL = { fromDeg: 0, toDeg: 18, deep: 0.2 } as const;
+export const FLOOR_FALL = { fromDeg: 0, toDeg: 18, deep: 0.3 } as const;
 export const PMREM_SIZE = 512;
 
 const deg = Math.PI / 180;

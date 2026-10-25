@@ -595,7 +595,10 @@ describe('materials (§3.4)', () => {
         expect(luminance(out), `${d.id} ${f.name}`).toBeGreaterThanOrEqual(floor - 1e-6);
         const src = new Color().setStyle(f.hex);
         const hs = hue(src);
-        if (luminance(src) >= floor) expect(out.getHex()).toBe(src.getHex());
+        const ceiling = METAL_F0[d.material].ceiling;
+        expect(luminance(out), `${d.id} ${f.name}`).toBeLessThanOrEqual(ceiling + 1e-6);
+        if (luminance(src) > ceiling) expect(luminance(out)).toBeCloseTo(ceiling, 6);
+        else if (luminance(src) >= floor) expect(out.getHex()).toBe(src.getHex());
         else if (hs.s > 0.15) {
           const dh = Math.abs(hue(out).h - hs.h);
           expect(Math.min(dh, 1 - dh) * 360, `${d.id} ${f.name}`).toBeLessThan(3);
@@ -610,7 +613,10 @@ describe('materials (§3.4)', () => {
     expect(h.h * 360).toBeGreaterThan(14);
     expect(h.h * 360).toBeLessThan(30);
     expect(h.s).toBeGreaterThan(0.5);
-    expect(bandF0('#DDDEDF', 'aluminum').getHex()).toBe(new Color().setStyle('#DDDEDF').getHex());
+    // Silver: a light grey under the ceiling, its own grey kept (not white).
+    const silver = bandF0('#F5F5F5', 'aluminum');
+    expect(luminance(silver)).toBeCloseTo(METAL_F0.aluminum.ceiling, 6);
+    expect(Math.max(silver.r, silver.g, silver.b) - Math.min(silver.r, silver.g, silver.b)).toBeLessThan(0.01);
     const black = bandF0('#3C3C3D', 'titanium');
     expect(luminance(black)).toBeCloseTo(0.18, 3);
     expect(Math.max(black.r, black.g, black.b) - Math.min(black.r, black.g, black.b)).toBeLessThan(0.05);
