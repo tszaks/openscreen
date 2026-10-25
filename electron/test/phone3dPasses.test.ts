@@ -20,6 +20,7 @@ import {
   planGlare,
   GLARE_SAMPLES,
   tileMaxPx,
+  TILE_THRESHOLD_BYTES_FULL,
   TILE_MAX_SIDE,
   screenLookup,
   noRectLights,
@@ -271,11 +272,12 @@ describe('tiles (§3.7 step 8)', () => {
       expect(planTiles(1000, 1500, 1, 4, b)).toEqual([{ x: 0, y: 0, w: 1000, h: 1500, px: 0, py: 0, pw: 1000, ph: 1500 }]);
   });
 
-  it('a full-quality 4K ROI (no MSAA target) needs fewer tiles than an MSAA one, each within 120 MB of targets', () => {
+  it('a full-quality 4K ROI (no MSAA target) needs no more tiles than an MSAA one, each within its threshold (full: 80 MB since look v2, MSAA: 120 MB)', () => {
     const full = planTiles(1972, 3840, 1, 6, TILE_BYTES_PER_PX.full);
     const ms = planTiles(1972, 3840, 1, 6, TILE_BYTES_PER_PX.msaa);
-    expect(full.length).toBeLessThan(ms.length);
-    for (const t of full) expect(t.pw * t.ph * TILE_BYTES_PER_PX.full).toBeLessThanOrEqual(120e6);
+    expect(full.length).toBeLessThanOrEqual(ms.length);
+    expect(TILE_THRESHOLD_BYTES_FULL).toBe(80e6);
+    for (const t of full) expect(t.pw * t.ph * TILE_BYTES_PER_PX.full).toBeLessThanOrEqual(80e6);
     for (const t of ms) expect(t.pw * t.ph * TILE_BYTES_PER_PX.msaa).toBeLessThanOrEqual(120e6);
   });
 

@@ -160,11 +160,19 @@ export const TILE_BYTES_PER_PX = { full: 20 + 16 + 16, msaa: 4 * 20 } as const;
 
 /** Above this many bytes, the ROI renders in tiles (§3.7 step 8). */
 export const TILE_THRESHOLD_BYTES = 120e6;
+/**
+ * The same for full-quality frames (export, frames: TILE_BYTES_PER_PX.full), since look v2: 80 MB. The 4K export's
+ * measured GPU footprint sat on owner decision 16's 400 MiB (389 / 400 / 418 MiB, run to run); a third smaller tile
+ * targets take about 40 MB off it, for some more tiles at 4K (the 4K moving budget, 800 ms, has the room). A
+ * 1080×1920 frame (about 1.4 Mpx × 52 B) is still one tile, and the MSAA preview keeps 120 MB.
+ */
+export const TILE_THRESHOLD_BYTES_FULL = 80e6;
+const thresholdFor = (bytesPerPx: number) => (bytesPerPx === TILE_BYTES_PER_PX.full ? TILE_THRESHOLD_BYTES_FULL : TILE_THRESHOLD_BYTES);
 /** Largest tile side, render px. */
 export const TILE_MAX_SIDE = 2048;
 /** Largest tile area, render px: as many pixels as TILE_THRESHOLD_BYTES of targets hold at `bytesPerPx`. */
 export function tileMaxPx(bytesPerPx: number): number {
-  return Math.floor(TILE_THRESHOLD_BYTES / bytesPerPx);
+  return Math.floor(thresholdFor(bytesPerPx) / bytesPerPx);
 }
 
 /** One tile: its core (written to the canvas) and the padded window rendered for it, render px, top-down. */
@@ -190,7 +198,7 @@ export interface Tile {
  */
 export function planTiles(w: number, h: number, ss: number, overlap: number, bytesPerPx: number = TILE_BYTES_PER_PX.full): Tile[] {
   if (w <= 0 || h <= 0) return [];
-  if (w * h * bytesPerPx <= TILE_THRESHOLD_BYTES) return [{ x: 0, y: 0, w, h, px: 0, py: 0, pw: w, ph: h }];
+  if (w * h * bytesPerPx <= thresholdFor(bytesPerPx)) return [{ x: 0, y: 0, w, h, px: 0, py: 0, pw: w, ph: h }];
   const ov = Math.max(0, Math.ceil(overlap));
   const maxPx = tileMaxPx(bytesPerPx);
   // The fewest columns and rows whose padded tiles fit the limits.
