@@ -101,8 +101,13 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
       // A tall strip right of the camera (60° from it): its reflection crosses the screen glass as the phone turns
       // toward it, and sweeps over the back in the three-quarter back view.
       { azimuth: 95, elevation: 12, halfW: 6, halfH: 36, radiance: 1.4, color: '#ffffff' },
+      // A wide box above the camera axis: a back facing the viewer mirrors its lower edge (bright top, falling off down the back).
+      { azimuth: 35, elevation: 24, halfW: 26, halfH: 9, radiance: 3, color: '#ffffff' },
+      // A white bounce card low in front: the downward faces (the plateau step's rounded edge, the band's lower
+      // chamfers) catch a thin line of it.
+      { azimuth: 35, elevation: -32, halfW: 30, halfH: 10, radiance: 1.2, color: '#ffffff' },
     ],
-    set: { top: 0.8, horizon: 0.45, front: 0.15, floor: 0.55, flags: 0.9 },
+    set: { top: 0.3, horizon: 0.04, front: 0.02, floor: 0.15, flags: 1 },
     key: { elevation: KEY_ELEVATION, intensity: 1 },
   },
   // Large, low-contrast sources: gentle gradients, quiet reflections.

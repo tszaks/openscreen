@@ -1,8 +1,10 @@
-// The 3D phone's shadow (SPEC §3.7 step 5, D14): the phone's silhouette
-// cast onto the catcher along the key light, blurred with the two widths of
-// the flat frame's shadow (DEFAULT_FRAME_SHADOW: ambient, and a tight
-// contact layer at 0.22× the blur and 0.7× the opacity), then drawn on the
-// catcher plane as premultiplied black.
+// The 3D phone's shadow (SPEC §3.7 step 5, D14): two layers drawn on the
+// catcher plane as premultiplied black. The drop (ambient) layer is the
+// phone's silhouette cast onto the catcher along the key light, blurred with
+// the flat frame's shadow width; the contact layer is the silhouette cast
+// STRAIGHT onto the catcher, blurred to 0.22× that at 0.7× the opacity, so a
+// tight shade hugs the outline on every side while the drop shadow falls away
+// from the key (look round 4: one cast for both left no visible shadow).
 //
 // The silhouette is rendered IN CATCHER-PLANE COORDINATES: every vertex is
 // projected onto the catcher along the light (a planar shadow matrix), and an
@@ -265,8 +267,9 @@ export function blurKernel(sigmaTexels: number): { half: number; step: number } 
 export class ShadowPass {
   readonly catcher: THREE.Mesh;
   private readonly sil = r16(SILHOUETTE_SIZE, 4);
-  /** The average of a moving frame's silhouettes. */
+  /** The (weighted) sum of the frame's silhouettes: cast along the key (drop), and straight on (contact). */
   private readonly avg = r16(SILHOUETTE_SIZE);
+  private readonly avgC = r16(SILHOUETTE_SIZE);
   private readonly tc = r16(SILHOUETTE_SIZE);
   private readonly ta = r16(AMBIENT_SIZE);
   /** The frame's blurred masks, and what they were last rendered for (equal inputs give equal masks: reused). */
@@ -275,7 +278,7 @@ export class ShadowPass {
   private key = '';
   /** Blurred mask sets made so far (one per frame at most); stats and tests. */
   maskRenders = 0;
-  /** Silhouettes cast so far (one per distinct sub-sample pose of each frame whose masks were made). */
+  /** Silhouettes cast so far (two per distinct sub-sample pose of each frame whose masks were made: drop and contact). */
   silhouettes = 0;
   private readonly silMat: THREE.ShaderMaterial;
   private readonly blurMat: THREE.ShaderMaterial;
@@ -412,31 +415,36 @@ export class ShadowPass {
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld(true);
     this.silScene.add(phone);
-    if (n > 1) {
-      r.setRenderTarget(this.avg);
+    // Each pose casts twice: along its key (the drop layer) and straight onto the catcher (the contact layer), each
+    // silhouette added into its layer's sum with the pose's weight.
+    const straight: [number, number, number] = frame.kind === 'wall' ? [0, 0, 1] : [0, 1, 0];
+    for (const dst of [this.avg, this.avgC]) {
+      r.setRenderTarget(dst);
       r.setClearColor(0x000000, 0);
       r.clear(true, false, false);
     }
     for (let i = 0; i < n; i++) {
       place(i);
       phone.updateMatrixWorld(true);
-      (this.silMat.uniforms.uShadow.value as THREE.Matrix4).copy(planarShadowMatrix(frame.kind, frame.plane, lights[i]));
-      r.setRenderTarget(this.sil);
-      r.setClearColor(0x000000, 0);
-      r.clear(true, false, false);
-      r.render(this.silScene, cam);
-      this.silhouettes++;
-      if (n > 1) {
+      for (const [L, dst] of [
+        [lights[i], this.avg],
+        [straight, this.avgC],
+      ] as const) {
+        (this.silMat.uniforms.uShadow.value as THREE.Matrix4).copy(planarShadowMatrix(frame.kind, frame.plane, L));
+        r.setRenderTarget(this.sil);
+        r.setClearColor(0x000000, 0);
+        r.clear(true, false, false);
+        r.render(this.silScene, cam);
+        this.silhouettes++;
         this.addMat.uniforms.uSrc.value = this.sil.texture;
         this.addMat.uniforms.uW.value = weights ? weights[i] : 1 / n;
         this.quad.material = this.addMat;
-        r.setRenderTarget(this.avg);
+        r.setRenderTarget(dst);
         r.render(this.quadScene, this.quadCam);
       }
     }
     if (parent) parent.add(phone);
     else this.silScene.remove(phone);
-    const src = n > 1 ? this.avg : this.sil;
 
     // Blur: σ in texels along each axis (the mask is square, the catcher area is not).
     const du = frame.u1 - frame.u0;
@@ -457,10 +465,10 @@ export class ShadowPass {
       r.render(this.quadScene, this.quadCam);
     };
     const S = SILHOUETTE_SIZE;
-    blur(src.texture, S, this.tc, 'u', frame.sigma.contact);
+    blur(this.avgC.texture, S, this.tc, 'u', frame.sigma.contact);
     blur(this.tc.texture, S, this.contact, 'v', frame.sigma.contact);
     // The ambient blur reads the 1024 silhouette at 512-texel centres: a free 2 × 2 average.
-    blur(src.texture, S, this.ta, 'u', frame.sigma.ambient);
+    blur(this.avg.texture, S, this.ta, 'u', frame.sigma.ambient);
     blur(this.ta.texture, AMBIENT_SIZE, this.ambient, 'v', frame.sigma.ambient);
   }
 
@@ -494,13 +502,13 @@ export class ShadowPass {
   bytes(): number {
     const S = SILHOUETTE_SIZE * SILHOUETTE_SIZE;
     const A = AMBIENT_SIZE * AMBIENT_SIZE;
-    // Silhouette (4 MSAA samples + resolve), the average, the contact intermediate and mask (1024²), the ambient
+    // Silhouette (4 MSAA samples + resolve), the two sums, the contact intermediate and mask (1024²), the ambient
     // intermediate and mask (512²); all 2 B per texel.
-    return S * 2 * 5 + S * 2 * 3 + A * 2 * 2;
+    return S * 2 * 5 + S * 2 * 4 + A * 2 * 2;
   }
 
   dispose(): void {
-    for (const t of [this.sil, this.avg, this.tc, this.ta, this.contact, this.ambient]) t.dispose();
+    for (const t of [this.sil, this.avg, this.avgC, this.tc, this.ta, this.contact, this.ambient]) t.dispose();
     this.silMat.dispose();
     this.addMat.dispose();
     this.blurMat.dispose();

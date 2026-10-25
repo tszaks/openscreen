@@ -81,7 +81,8 @@ export const ROUNDED_LAND_MM = 0.06;
 export const SEAM_W_MM = 0.12;
 export const SEAM_D_MM = 0.1;
 /** The glass edge rounds down into the seam over this width. */
-const GLASS_EDGE_MM = 0.25;
+/** The cover glass's rounded edge, mm across: wide enough (4 px at 1080) to draw a thin bright line round the front. */
+const GLASS_EDGE_MM = 0.45;
 /** Antenna line width (along the outline). */
 const ANTENNA_W_MM = 0.6;
 /** Plateau: the shortest run of its filleted rise (a plateau with no measured inset still rolls onto its top). */
@@ -89,10 +90,14 @@ const PLATEAU_MIN_RUN_MM = 0.6;
 /** Rings in the plateau's rise. */
 const PLATEAU_RISE_RINGS = 14;
 /** Lens assembly. */
-const LENS_GLASS_FRAC = 0.78; // cover-glass radius / ring radius
+const LENS_GLASS_FRAC = 0.83; // cover-glass radius / ring radius (round 3's 0.78 drew rings that read as thick toy bezels)
 const LENS_RING_FILLET_MM = 0.1;
 const LENS_BEVEL_MM = 0.25; // the cover glass sits this far below the ring top
 const LENS_BARREL_MM = 1.5;
+/** Inside a lens, as fractions of the cover-glass radius: the retaining ring's inner and outer radius (the hood fills outside it). */
+export const LENS_RINGS = { retainer: [0.79, 0.83] } as const;
+/** The lens elements' shading curvature: a dome this × its radius high (normals tilt up to 45° at the rim). */
+export const LENS_DOME = 0.5;
 /** Buttons. */
 export const BUTTON_PROUD_MM = 0.55;
 const BUTTON_EMBED_MM = 0.3;
@@ -114,13 +119,26 @@ const CIRCLE_SEG = 64;
 /**
  * Estimate (no Apple drawing gives it): the aluminium-unibody 17 Pro / Pro Max
  * has a Ceramic Shield panel inlaid in the back below the plateau, nearly edge
- * to edge: `margin` of metal at the sides and bottom, `top` mm below the foot
- * of the plateau's rise; its corners are concentric with the body's. Round 2's
- * 7 mm margin read as a sticker set into the back.
+ * to edge: `margin` of metal from the body outline at the sides and bottom
+ * (the band's rounded edge takes about 0.7 mm of it, so about 0.8 mm of flat
+ * metal shows beside the glass: 7 px at 1080), `top` mm below the foot of
+ * the plateau's step; its corners are concentric with the body's. Round 2's 7 mm
+ * and round 3's 4.2 mm margins read as a sticker or a tray set into the back.
  */
-const UNIBODY_PANEL = { margin: 4.2, top: 5 };
+const UNIBODY_PANEL = { margin: 1.5, top: 2.5 };
 /** Rows across a full-width plateau's rise (shared by the band, its seam and the back). */
-const RISE_ROWS = 20;
+const RISE_ROWS = 32;
+/**
+ * A full-width plateau's step, in profile: a small concave fillet at its foot,
+ * a steep straight wall and a larger convex fillet onto the top (look round 4).
+ * Round 3's smootherstep over the measured 4.8 mm top inset was a soft ramp
+ * whose long slope faced down and drew a wide dark band across the back (a
+ * crease, a folded plate); a real machined step is a short wall whose rounded
+ * top edge catches a thin line of light. `wall` is the wall's angle from the
+ * back (degrees); the fillet radii are mm and shrink together when the step is
+ * too low for them.
+ */
+export const PLATEAU_STEP = { wall: 62, footR: 0.35, topR: 0.9 } as const;
 
 interface Rise {
   /** Model y where the rise leaves the back, and where it reaches the plateau top (y1 > y0). */
@@ -132,25 +150,50 @@ interface Rise {
 }
 
 /**
- * A full-width plateau's rise across the back: from the foot of its footprint
- * (model y0) up to the top over the measured top inset (insetMm, at least
- * PLATEAU_MIN_RUN_MM and 0.9 × the height), on a smootherstep
- * (6u⁵ − 15u⁴ + 10u³): its curvature is 0 at both ends, so a reflection runs
- * off the back onto the rise and onto the top with no kink, and it is
- * steepest (1.875 × height / run) halfway.
+ * The step profile (PLATEAU_STEP) for a height h: its run (mm across) and its
+ * height dz and slope dz/ds at a distance s from the foot. Slope 0 at both
+ * ends and tangent-continuous everywhere (arc, line, arc), so reflections run
+ * off the back onto the wall and onto the top with no kink.
  */
+export function stepProfile(h: number): { run: number; at(s: number): { dz: number; dzdy: number } } {
+  const th = (PLATEAU_STEP.wall * Math.PI) / 180;
+  const sin = Math.sin(th);
+  const cos = Math.cos(th);
+  const tan = Math.tan(th);
+  // Arcs climb r(1 − cos θ) each; if they would climb past h, both shrink by the same factor.
+  const k = Math.min(1, h / ((PLATEAU_STEP.footR + PLATEAU_STEP.topR) * (1 - cos)));
+  const rf = PLATEAU_STEP.footR * k;
+  const rt = PLATEAU_STEP.topR * k;
+  const wallH = Math.max(0, h - (rf + rt) * (1 - cos));
+  const s1 = rf * sin; // foot arc ends
+  const s2 = s1 + wallH / tan; // wall ends
+  const run = s2 + rt * sin;
+  return {
+    run,
+    at(s) {
+      const x = Math.min(run, Math.max(0, s));
+      if (x <= s1) {
+        const q = Math.sqrt(Math.max(1e-12, rf * rf - x * x));
+        return { dz: rf - q, dzdy: x / q };
+      }
+      if (x <= s2) return { dz: rf * (1 - cos) + (x - s1) * tan, dzdy: tan };
+      const e = run - x;
+      const q = Math.sqrt(Math.max(1e-12, rt * rt - e * e));
+      return { dz: h - rt + q, dzdy: e / q };
+    },
+  };
+}
+
+/** A full-width plateau's rise across the back: the step profile (stepProfile) from the foot of its footprint (model y0) up to the top. */
 export function fullBarRise(H: number, pl: Body3D['plateau']): Rise {
   const y0 = H / 2 - (pl.y + pl.h) * H;
-  const run = Math.max(pl.insetMm, PLATEAU_MIN_RUN_MM, pl.heightMm * 0.9);
-  const h = pl.heightMm;
+  const prof = stepProfile(pl.heightMm);
+  const run = prof.run;
   return {
     y0,
     y1: y0 + run,
     rows: Array.from({ length: RISE_ROWS + 1 }, (_, k) => y0 + (run * k) / RISE_ROWS),
-    at(y) {
-      const u = Math.min(1, Math.max(0, (y - y0) / run));
-      return { dz: h * u * u * u * (u * (6 * u - 15) + 10), dzdy: (30 * h * u * u * (u - 1) * (u - 1)) / run };
-    },
+    at: (y) => prof.at(y - y0),
   };
 }
 
@@ -179,7 +222,7 @@ function splitAtRise(contour: V2[], rise: Rise): { below: V2[]; above: V2[]; row
 /** The unibody panel's seam: width and depth of the metal step round the glass (a fine line, under 1 px at 1080). */
 const PANEL_SEAM_MM = 0.05;
 /** The panel glass's rounded edge (a small bevel that catches light as it rises out of the seam). */
-const PANEL_EDGE_MM = 0.35;
+const PANEL_EDGE_MM = 0.12;
 
 /** The panel glass edge: a quarter-ellipse from the seam floor (inset `seam`, depth `seam`) up onto the flat glass. */
 function panelEdge(seam: number): Strip {
@@ -225,9 +268,11 @@ export const BAND_GROUP = { metal: 0, antenna: 1 } as const;
 /** Material groups of the front hardware in the bezel (SE, iPads): glass lens, metal ring, dark grille. */
 export const FRONT_GROUP = { lens: 0, ring: 1, grille: 2 } as const;
 /** Material groups inside the lens-elements mesh: three element domes (top to bottom) and the retaining ring. */
-export const LENS_GROUP = { element0: 0, element1: 1, element2: 2, retainer: 3 } as const;
+export const LENS_GROUP = { element0: 0, element1: 1, element2: 2, retainer: 3, hood: 4 } as const;
 /** Material groups inside the flash mesh. */
 export const FLASH_GROUP = { ring: 0, lamp: 1 } as const;
+/** frontGlass material groups: the flat sheet (border round the screen) and its rounded rim. */
+export const FRONT_GLASS_GROUP = { flat: 0, rim: 1 } as const;
 
 /** The measured layout the meshes were built from, for tests and the renderer. */
 export interface PhoneDims {
@@ -837,22 +882,28 @@ function buildLens(L: LensBuild, s: LensSpec) {
     { z: bottom, i: 0, no: -1, nz: 0 },
   ]]);
   cap(L.barrel, bLoop.p, bottom, 1);
-  const fr = [0.22, 0.5, 0.8];
-  const rr = [0.94, 0.8, 0.62];
+  // Three stacked coated elements, each a dome steep enough that a softbox reflects in it as a small coloured
+  // crescent, not a tint over the whole disc (round 3's shallow top element turned every lens one flat violet).
+  const fr = [0.25, 0.52, 0.8];
+  const rr = [0.78, 0.6, 0.42];
   fr.forEach((fz, gi) => {
     const r = glassR * rr[gi];
     const zc = coverZ - depth * fz;
     // A curved element mirrors a spread of the studio: the key lands as a small catchlight near its top instead
     // of the element reading as a flat disc. Its crown stays under the one above it (and under the cover).
-    const sag = Math.min(r * 0.22, depth * fz * 0.85);
-    const rings = 6;
+    const sag = Math.min(r * 0.45, depth * fz * 0.85);
+    // The barrel is only about 1.5 mm deep, so the domes are nearly flat (sag/r about 0.06) and mirrored a softbox
+    // edge as one straight line across a flat violet disc. Shading uses the curvature of a dome LENS_DOME × r high
+    // (its normals tilt up to atan(2·LENS_DOME) at the rim); the geometry keeps its true depth.
+    const shadeSag = r * LENS_DOME;
+    const rings = 8;
     const seg = 48;
     const idx: number[][] = [];
     for (let k = 0; k <= rings; k++) {
       const rk = (r * k) / rings;
       const zk = zc + sag * (1 - (rk / r) ** 2);
-      // Dome z = sag·(1 − (ρ/r)²): slope −2·sag·ρ/r².
-      const slope = (2 * sag * rk) / (r * r);
+      // Dome z = sag·(1 − (ρ/r)²); the shading normal's slope is the shading dome's, −2·shadeSag·ρ/r².
+      const slope = (2 * shadeSag * rk) / (r * r);
       const row: number[] = [];
       for (let q = 0; q < (k === 0 ? 1 : seg); q++) {
         const th = (2 * Math.PI * q) / seg;
@@ -871,14 +922,13 @@ function buildLens(L: LensBuild, s: LensSpec) {
       }
     }
   });
-  // Retaining ring just under the cover glass: the first thing the eye
-  // reads inside a real lens (a thin bright-edged annulus around the dark optics).
-  const rr0 = glassR * 0.995;
-  const rr1 = glassR * 0.8;
+  // Under the cover glass, from the outside in: a matte black hood (the lens housing's face), a thin dark metal
+  // retaining ring (the first fine ring the eye reads inside a real lens), then the deep optics.
   const rz = coverZ - Math.min(0.12, depth * 0.1);
-  const ringOuter = bLoop.p;
-  const ringInner = at(circleLoop(rr1)).p;
-  cap(L.elements, ringOuter.map(([px, py]): V2 => [x + (px - x) * (rr0 / glassR), y + (py - y) * (rr0 / glassR)]), rz, 1, [ringInner.slice().reverse()], undefined, LENS_GROUP.retainer);
+  const ringAt = (k: number) => at(circleLoop(glassR * k)).p;
+  cap(L.elements, ringAt(0.995), rz, 1, [ringAt(LENS_RINGS.retainer[1]).slice().reverse()], undefined, LENS_GROUP.hood);
+  const rz2 = rz - Math.min(0.05, depth * 0.04);
+  cap(L.elements, ringAt(LENS_RINGS.retainer[1]), rz2, 1, [ringAt(LENS_RINGS.retainer[0]).slice().reverse()], undefined, LENS_GROUP.retainer);
   cap(L.cover, bLoop.p, coverZ, 1);
 }
 
@@ -972,8 +1022,8 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
   // the two meet with no crack.
   const glassContour = insetLoop(outline, prof.glassInset);
   const front = new Builder();
-  sweep(front, outline, [prof.glassEdge]);
-  cap(front, glassContour, d2, 1, [screenLoop.p]);
+  sweep(front, outline, [prof.glassEdge], { groupOf: () => FRONT_GLASS_GROUP.rim });
+  cap(front, glassContour, d2, 1, [screenLoop.p], undefined, FRONT_GLASS_GROUP.flat);
   add(partMesh('frontGlass', front, RENDER_ORDER.glass));
 
   // The screen and the glare over it are the same triangles (the same cap of

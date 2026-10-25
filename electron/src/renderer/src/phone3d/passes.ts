@@ -138,6 +138,9 @@ export function planSamples({ t, travelPx, motion, full }: SampleInputs): Sample
 export const SCREEN_STEADY_FACING = [0.8, 0.9] as const;
 /** ...and within this many seconds of a tap (fully steady inside the first, blurring again by the second). */
 export const SCREEN_STEADY_TAP = [0.15, 0.3] as const;
+/** ...and never less than this: even turned away at full speed the content smears half as far as the body moves, so
+ *  the UI stays readable through a spin (look round 4: the full smear at the spin-in's peak hid the app). */
+export const SCREEN_STEADY_FLOOR = 0.5;
 
 const smoothstep = (a: number, b: number, x: number) => {
   const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -148,16 +151,17 @@ const smoothstep = (a: number, b: number, x: number) => {
  * How still the screen CONTENT is held under motion blur, 0..1 (§3.7 step 4,
  * look round 3): 1 when the screen faces the viewer (facing ≥ 0.9) or a tap
  * is within 0.15 s, so the UI is crisp when it is the point of the frame and
- * a tap always lands on legible text; 0 (the full blur) when the phone is
- * turned away and no tap is near. In between it eases. The body, the screen's
+ * a tap always lands on legible text; the floor (half the blur) when the
+ * phone is turned away and no tap is near. In between it eases. The body, the screen's
  * edge and the glass still blur as the phone moves; only what the screen shows
- * is read where the frame's centre pose put it. `tapGap` = seconds from the
+ * is read where the frame's centre pose put it. Never below
+ * SCREEN_STEADY_FLOOR (half the content smear). `tapGap` = seconds from the
  * frame to the nearest tap (Infinity when none). Pure.
  */
 export function screenSteadiness(facing: number, tapGap: number): number {
   const byFacing = smoothstep(SCREEN_STEADY_FACING[0], SCREEN_STEADY_FACING[1], facing);
   const byTap = 1 - smoothstep(SCREEN_STEADY_TAP[0], SCREEN_STEADY_TAP[1], tapGap);
-  return Math.max(byFacing, byTap);
+  return Math.max(SCREEN_STEADY_FLOOR, byFacing, byTap);
 }
 
 // ---------------------------------------------------------------------------
