@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { applyOps, type EditOp } from '../src/shared/agentOps';
 import { focusSegmentsFor } from '../src/shared/focusSegments';
 import { tapsToOutput } from '../src/shared/mobileProject';
-import { BOLD_BASE, BUSY_FACING_DEG, edgeOnOffset, MIDDLE_EVERY, MOVING_CAP, planDirect, type DirectOptions, type DirectStyle } from '../src/shared/phone3d/direct';
+import { BOLD_BASE, BUSY_FACING_DEG, edgeOnOffset, MIDDLE_EVERY, MOVING_CAP, planDirect, POSED_REST, SHORT_INTRO_MIN, VISIBLE_DEG, type DirectOptions, type DirectStyle } from '../src/shared/phone3d/direct';
 import { FRONT, type Phone3D } from '../src/shared/phone3d/model';
 import { facing, poseInRange } from '../src/shared/phone3d/pose';
 import { bodyBounds, scene3d } from '../src/shared/phone3d/projection';
@@ -13,6 +13,7 @@ import { OFF_CANVAS_FRACTION, projectWarnings } from '../src/shared/phone3d/warn
 import { Timeline } from '../src/shared/timeline';
 import type { CursorSample, Project } from '../src/shared/types';
 import type { TapSuggestion } from '../src/shared/taps';
+import { loadGoldenFixture } from './helpers/compositorHarness';
 import { lcg, phoneProject, move, with3d } from './helpers/phone3dFixtures';
 
 const STYLES: DirectStyle[] = ['subtle', 'hero', 'bold'];
@@ -28,6 +29,28 @@ function take(duration: number, taps: TapSuggestion[] = [], waits: { start: numb
   p.waits = waits;
   p.tapsAnalyzed = true;
   return p;
+}
+
+/**
+ * A plan note never contradicts itself: every stated shortfall is under the
+ * limit it names, the cap it quotes is the style's share of the take, the take
+ * length rules match the take, and a free gap long enough for a middle move is
+ * never given as the reason one is missing.
+ */
+function expectNoteConsistent(note: string, D: number, style: DirectStyle, label: string): void {
+  const at = `${label}: ${note}`;
+  for (const m of note.matchAll(/([\d.]+) s, under the ([\d.]+) s/g)) expect(Number(m[1]), at).toBeLessThan(Number(m[2]));
+  for (const m of note.matchAll(/takes ([\d.]+) s, more than the (?:([\d.]+) s left of the )?moving-time cap \((\d+)% of the take, ([\d.]+) s\)/g)) {
+    expect(Number(m[2] ?? m[4]), at).toBeLessThan(Number(m[1]));
+    expect(Number(m[3]), at).toBe(Math.round(MOVING_CAP[style] * 100));
+    expect(Math.abs(Number(m[4]) - MOVING_CAP[style] * D), at).toBeLessThanOrEqual(0.05 + 1e-9);
+  }
+  const spinTake = note.match(/the take is ([\d.]+) s, under the 4 s a spin-in needs/);
+  if (spinTake) expect(D, at).toBeLessThan(4);
+  const middleTake = note.match(/a middle move needs a take of 6 s or more \(this one is ([\d.]+) s\)/);
+  if (middleTake) expect(D, at).toBeLessThan(MIDDLE_EVERY);
+  const gap = note.match(/longest free gap[^;]* is ([\d.]+) s[^;]*a middle move needs/);
+  if (gap && Number(gap[1]) >= 2.4) expect(note, at).toMatch(/dropped|moving-time cap/);
 }
 
 /** The project after the `direct` op, with its plan inputs. */
@@ -48,22 +71,25 @@ function busyOf(p: Project, cursor: readonly CursorSample[] = []): { start: numb
   return out;
 }
 
-/** How far the body pokes out of the canvas at t (px; <= 0 inside). Measured here, not with warnings.ts. */
-function overflowOf(p: Project): (t: number) => number {
+/** How far the body pokes past each canvas edge at t: [left, top, right, bottom] (px; <= 0 inside). Measured here, not with warnings.ts. */
+function edgesOf(p: Project): (t: number) => number[] {
   const s = scene3d(p)!;
   return (t) => {
     const b = bodyBounds(s, t)!;
-    return Math.max(-b.x, -b.y, b.x + b.w - s.canvas.width, b.y + b.h - s.canvas.height);
+    return [-b.x, -b.y, b.x + b.w - s.canvas.width, b.y + b.h - s.canvas.height];
   };
 }
 
+const EDGE_NAMES = ['left', 'top', 'right', 'bottom'];
+
 /**
- * Moments where the planned project pokes further off the canvas than the same
- * project without the shots (past the 2% margin, by more than 0.5 px), sampled
- * at 20 Hz plus every keyframe. A kept pose near an edge or the float may
- * already poke out; a shot must never push it further.
+ * Moments where the planned project pokes further past a canvas edge than the
+ * same project without the shots pokes past THAT edge (past the 2% margin, by
+ * more than 0.5 px), sampled at 20 Hz plus every keyframe. A kept pose near an
+ * edge or the float may already poke out; a shot must never push it further,
+ * and a big overflow at one edge never excuses a new one at another.
  */
-function offCanvasAddedByShots(p: Project, plan: ReturnType<typeof planDirect>): { t: number; planned: number; baseline: number }[] {
+function offCanvasAddedByShots(p: Project, plan: ReturnType<typeof planDirect>): { t: number; edge: string; planned: number; baseline: number }[] {
   let n = 0;
   const out = applyOps(p, plan.ops, { newId: () => `d${++n}` }).project;
   const base = applyOps(p, plan.ops.filter((o) => o.op !== 'shot' || o.recipe === 'float'), { newId: () => `b${++n}` }).project;
@@ -73,14 +99,16 @@ function offCanvasAddedByShots(p: Project, plan: ReturnType<typeof planDirect>):
   const D = new Timeline(p.recording.duration, p.clips).outputDuration;
   const ts = Array.from({ length: Math.ceil(D * 20) + 1 }, (_, k) => Math.min(D, k / 20));
   for (const tr of out.phone3d!.transitions) ts.push(tr.start, tr.end);
-  const [po, bo] = [overflowOf(out), overflowOf(base)];
-  const bad: { t: number; planned: number; baseline: number }[] = [];
+  const [po, bo] = [edgesOf(out), edgesOf(base)];
+  const bad: { t: number; edge: string; planned: number; baseline: number }[] = [];
   for (const t of ts) {
     if (t < 0 || t > D) continue;
     const planned = po(t);
-    if (planned <= margin) continue;
+    if (planned.every((o) => o <= margin)) continue;
     const baseline = bo(t);
-    if (planned > baseline + 0.5) bad.push({ t: Math.round(t * 1000) / 1000, planned: Math.round(planned), baseline: Math.round(baseline) });
+    planned.forEach((o, i) => {
+      if (o > margin && o > baseline[i] + 0.5) bad.push({ t: Math.round(t * 1000) / 1000, edge: EDGE_NAMES[i], planned: Math.round(o), baseline: Math.round(baseline[i]) });
+    });
   }
   return bad;
 }
@@ -134,6 +162,28 @@ function checkPlan(p: Project, opts: DirectOptions, label: string) {
     if (i) expect(moving[i].start).toBeGreaterThanOrEqual(moving[i - 1].end);
   }
   return { plan, out };
+}
+
+/** The most the drawn phone turns off straight on over the take (degrees; 60 Hz plus every keyframe). Measured here. */
+function maxOffFront(out: Project): number {
+  const p3 = out.phone3d!;
+  const D = new Timeline(out.recording.duration, out.clips).outputDuration;
+  const ts = Array.from({ length: Math.ceil(D * 60) + 1 }, (_, k) => Math.min(D, k / 60));
+  for (const tr of p3.transitions) ts.push(tr.start, tr.end);
+  return Math.max(...ts.filter((t) => t >= 0 && t <= D).map((t) => (Math.acos(Math.min(1, facing(p3, t))) * 180) / Math.PI));
+}
+
+const moving = (plan: ReturnType<typeof planDirect>) => plan.shots.filter((s) => s.recipe !== 'float');
+const turning = (plan: ReturnType<typeof planDirect>) => plan.shots.filter((s) => ['spin-in', 'hero-layback', 'turn-to-back'].includes(s.recipe));
+
+/** Share of the take (60 Hz samples) where the drawn phone is at least `deg` off straight on. */
+function heldOff(out: Project, deg: number): number {
+  const p3 = out.phone3d!;
+  const D = new Timeline(out.recording.duration, out.clips).outputDuration;
+  const n = Math.ceil(D * 60);
+  let hit = 0;
+  for (let k = 0; k <= n; k++) if ((Math.acos(Math.min(1, facing(p3, (D * k) / n))) * 180) / Math.PI >= deg) hit++;
+  return hit / (n + 1);
 }
 
 const FIXTURES: { name: string; p: () => Project; scenes?: number[] }[] = [
@@ -193,8 +243,11 @@ describe('planDirect: rules', () => {
     expect(planDirect(take(20, [tap(8)]), { style: 'hero', replace: true }).shots[0]).toMatchObject({ recipe: 'spin-in', start: 0, end: 1.6 });
     expect(planDirect(take(20, [tap(8)]), { style: 'bold', replace: true }).shots[0]).toMatchObject({ recipe: 'spin-in', start: 0 });
     expect(planDirect(take(20, [tap(8)]), { style: 'subtle', replace: true }).shots.map((s) => s.recipe)).toEqual(['settle', 'float']);
-    // A tap at 1.5 s leaves no room for an intro.
-    expect(planDirect(take(20, [tap(1.5)]), { style: 'hero', replace: true }).shots.some((s) => s.reason.startsWith('intro'))).toBe(false);
+    // A tap at 1.5 s leaves 0.9 s before its busy time: too little for spin-in or a full settle, so a short settle
+    // (owner decision 12) lands 0.25 s before it.
+    expect(planDirect(take(20, [tap(1.5)]), { style: 'hero', replace: true }).shots[0]).toMatchObject({ recipe: 'settle', start: 0, end: 0.65 });
+    // A tap at 1.1 s leaves 0.5 s, under the 0.6 s shortest intro: none.
+    expect(planDirect(take(20, [tap(1.1)]), { style: 'hero', replace: true }).shots.some((s) => s.reason.startsWith('intro'))).toBe(false);
   });
 
   it('ops come in the fixed order: phone3d, clearTransitions (when replacing), shots by time, float last', () => {
@@ -337,7 +390,7 @@ describe('planDirect: rules', () => {
         expect(projectWarnings(out).some((w) => w.code === 'off-canvas'), `${label}: the kept pose still pokes out`).toBe(true);
       }
     }
-  });
+  }, 60_000);
 
   it('self-check: the float is part of the style, so an overflow the float alone causes is not blamed on subtle\'s intro', () => {
     // A kept move parks the phone near the top edge at 20-21 s; subtle turns the float on and it bobs the phone
@@ -352,6 +405,69 @@ describe('planDirect: rules', () => {
     const out = applyOps(p, plan.ops, { newId: () => `d${++n}` }).project;
     expect(projectWarnings(out).map((w) => w.message)).toEqual([expect.stringContaining('(the idle float carries it past the edge)')]);
   });
+
+  it('self-check: a shot that pushes the phone past a NEW edge is mirrored or dropped, even when another edge is further out', () => {
+    // The review repro: a kept move parks the phone up and to the right, so its top pokes about 50 px out all take
+    // (the float bobs it). The outro's hero angle (leaning right) pulls the top back in but pushes the right side
+    // about 20 px past the right edge, which the kept pose never crosses. Comparing only the worst edge (50 px vs
+    // 50 px) excused it. Now the outro leans the other way, which keeps the right side in.
+    const p = with3d(take(52, [tap(9.76)]), { transitions: [move('k', 1, 2, { x: 0.1457, y: -0.1234 })], float: { on: true, amount: 1, period: 2 } });
+    const plan = planDirect(p, { style: 'hero', replace: false });
+    const outro = plan.ops.find((o) => o.op === 'shot' && o.return === 'stay');
+    expect(outro).toMatchObject({ recipe: 'hero-layback', at: 50.5, direction: -1 });
+    expect(offCanvasAddedByShots(p, plan)).toEqual([]);
+    // The outro leaning right does push the right side out: the oracle is not blind to it.
+    const right = plan.ops.map((o) => (o === outro ? { ...o, direction: 1 } : o));
+    const added = offCanvasAddedByShots(p, { ...plan, ops: right });
+    expect(added.length).toBeGreaterThan(0);
+    expect(new Set(added.map((x) => x.edge))).toEqual(new Set(['right']));
+    expect(Math.max(...added.map((x) => x.planned))).toBeGreaterThan(15);
+    let n = 0;
+    const out = applyOps(p, plan.ops, { newId: () => `d${++n}` }).project;
+    const planned = new Set(out.phone3d!.transitions.map((t) => t.id).filter((id) => id.startsWith('d')));
+    expect(projectWarnings(out).filter((w) => w.transitionId && planned.has(w.transitionId))).toEqual([]);
+  });
+
+  it('self-check: when neither direction fits, the shot is dropped', () => {
+    // A phone scaled to the canvas width: a hero lean pokes past one side or the other, whichever way it leans.
+    const p = take(30, [tap(10)]);
+    p.style = { ...p.style, contentTransform: { scale: 1.3 } };
+    const plan = planDirect(p, { style: 'hero', replace: true });
+    const middle = plan.check.dropped.filter((s) => s.reason.startsWith('middle'));
+    expect(middle.length).toBeGreaterThan(0);
+    expect(plan.shots.some((s) => s.reason.startsWith('middle'))).toBe(false);
+    expect(offCanvasAddedByShots(p, plan)).toEqual([]);
+  });
+
+  it('self-check sweep: 300 kept poses near every edge, with and without the float; no shot pushes the phone past any edge', () => {
+    let withShots = 0;
+    let edgeDrops = 0;
+    for (let seed = 1; seed <= 300; seed++) {
+      const r = lcg(seed * 104729);
+      const D = 20 + Math.floor(r() * 60);
+      const taps = Array.from({ length: Math.floor(r() * 8) }, () => Math.round(r() * D * 100) / 100).sort((a, b) => a - b);
+      // A kept pose near a corner: up or down 0.08-0.16 and sideways up to 0.15, so two edges are in play.
+      const to = { y: (r() < 0.5 ? -1 : 1) * (0.08 + r() * 0.08), x: (r() - 0.5) * 0.3 };
+      const p = with3d(
+        take(
+          D,
+          taps.map((t, i) => tap(t, {}, i)),
+        ),
+        { transitions: [move('k', 1, 2, to)], float: { on: r() < 0.6, amount: 1, period: 2 } },
+      );
+      for (const style of STYLES) {
+        const label = `seed ${seed} ${style} D ${D} kept ${JSON.stringify(to)}`;
+        const plan = planDirect(p, { style, replace: false });
+        expect(plan.check.retries, label).toBe(0);
+        expect(offCanvasAddedByShots(p, plan), `${label}: shots push the phone further past an edge`).toEqual([]);
+        if (plan.shots.some((s) => s.recipe !== 'float')) withShots++;
+        if (plan.check.dropped.length) edgeDrops++;
+      }
+    }
+    // The sweep plans real shots and exercises the self-check (it is not passing by planning nothing).
+    expect(withShots).toBeGreaterThan(600);
+    expect(edgeDrops).toBeGreaterThan(10);
+  }, 240_000);
 
   it('a 120 s bold plan with long waits: many middle shots, both directions, a hero-layback among them, all in range', () => {
     const p = take(
@@ -373,6 +489,274 @@ describe('planDirect: rules', () => {
     expect(shots.some((o) => o.recipe === 'hero-layback')).toBe(true);
     for (const tr of out.phone3d!.transitions) expect(Math.abs(tr.to.turn)).toBeLessThanOrEqual(560);
   });
+});
+
+describe('planDirect: always a visible 3D result (owner decision 12)', () => {
+  it('the 8 s ios-social golden take (dense taps, a cut, tap zooms) opens with a short settle in every style', () => {
+    const { project, cursor } = loadGoldenFixture('ios-social');
+    for (const style of STYLES) {
+      const opts: DirectOptions = { style, replace: true, cursor };
+      const { plan, out } = checkPlan(project, opts, `ios-social/${style}`);
+      expect(moving(plan).map((s) => s.recipe), style).toEqual(['settle']);
+      const intro = plan.shots[0];
+      expect(intro.start).toBe(0);
+      expect(intro.end - intro.start).toBeGreaterThanOrEqual(SHORT_INTRO_MIN);
+      // It lands before the first busy start (the tap at 1.2 s is busy from 0.6 s), and before the first zoom.
+      expect(intro.end).toBeLessThanOrEqual(0.6 + 1e-9);
+      expect(intro.end).toBeLessThanOrEqual(Math.min(...focusSegmentsFor(project, cursor).map((z) => z.inStart)));
+      expect(maxOffFront(out), style).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
+    }
+    // Hero fits no turning shot, so it rests at the posed angle and holds it (a settle alone is a 0.2 s lean); bold
+    // holds its own angle; subtle keeps straight on with its float.
+    const hero = checkPlan(project, { style: 'hero', replace: true, cursor }, 'ios-social/hero');
+    expect(hero.plan.ops[0]).toMatchObject({ op: 'phone3d', pose: { ...POSED_REST } });
+    expect(heldOff(hero.out, VISIBLE_DEG)).toBeGreaterThan(0.9);
+    expect(hero.plan.note).toBe(
+      'No turning shot fits: the phone must face front from 0.6 s, which leaves a spin-in 0.4 s, under the 2.0 s it needs; no free time is left beside the planned shots (with the 1.0 s rest around each) for a middle move; the free time at the end is 0.0 s, under the 1.5 s the closing move needs. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+    const bold = checkPlan(project, { style: 'bold', replace: true, cursor }, 'ios-social/bold');
+    expect(bold.plan.ops[0]).toMatchObject({ pose: { ...BOLD_BASE } });
+    expect(heldOff(bold.out, VISIBLE_DEG)).toBeGreaterThan(0.9);
+    expect(bold.plan.note).toBeUndefined();
+    const subtle = checkPlan(project, { style: 'subtle', replace: true, cursor }, 'ios-social/subtle');
+    expect(subtle.plan.ops[0]).toMatchObject({ pose: { ...FRONT } });
+    expect(subtle.plan.note).toBeUndefined();
+  });
+
+  it('a take with no room for any move rests at a posed angle and says why', () => {
+    // Taps every 0.8 s from 0.4 s: busy from 0 to the end, so no intro, middle or closing move fits.
+    const p = take(8, Array.from({ length: 10 }, (_, i) => tap(0.4 + i * 0.8, {}, i)));
+    for (const style of STYLES) {
+      const { plan, out } = checkPlan(p, { style, replace: true }, `no room/${style}`);
+      expect(moving(plan), style).toEqual([]);
+      expect(plan.ops[0]).toMatchObject({ op: 'phone3d', pose: style === 'bold' ? { ...BOLD_BASE } : { ...POSED_REST } });
+      expect(maxOffFront(out), style).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
+      expect(plan.note, style).toMatch(/^No moving shot fits: the phone must face front from 0\.0 s \(a tap, zoom or kept move starts there\), so no intro fits; /);
+    }
+    expect(planDirect(p, { style: 'hero', replace: true }).note).toBe(
+      'No moving shot fits: the phone must face front from 0.0 s (a tap, zoom or kept move starts there), so no intro fits; there is no free time between taps, zooms and kept moves. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+    expect(planDirect(p, { style: 'bold', replace: true }).note).toMatch(/\. The phone rests at the bold angle \(9\.4° off front\)\.$/);
+    expect(planDirect(p, { style: 'subtle', replace: true }).note).toMatch(/; subtle plans no moves after the intro\. The phone rests at a posed angle instead/);
+  });
+
+  it('the dense-taps fixture (first tap at 1 s) names the short first gap and the longest free gap', () => {
+    const p = FIXTURES.find((f) => f.name === 'dense taps')!.p();
+    const plan = planDirect(p, { style: 'hero', replace: true });
+    expect(moving(plan)).toEqual([]);
+    expect(plan.note).toBe(
+      'No moving shot fits: the phone must face front from 0.4 s (the first tap, zoom or kept move), under the 0.6 s an intro needs; the longest free gap is 0.6 s, under the 2.4 s a middle move needs; the free time at the end is 0.6 s, under the 1.5 s the closing move needs. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+  });
+
+  it('kept moves are not touched: the note says so and the base pose stays the style\'s', () => {
+    const p = take(8, Array.from({ length: 10 }, (_, i) => tap(0.4 + i * 0.8, {}, i)));
+    const mine = applyOps(p, [{ op: 'phone3d', enabled: true }], { newId: () => 'x' }).project;
+    mine.phone3d!.transitions = [move('mine', 3, 4, { turn: 10 }), move('back', 4, 5, { turn: 0 })];
+    const plan = planDirect(mine, { style: 'hero', replace: false });
+    expect(moving(plan)).toEqual([]);
+    expect(plan.ops[0]).toMatchObject({ pose: { ...FRONT } });
+    expect(plan.note).toMatch(/\. Your own moves stay as they are\.$/);
+  });
+
+  it('a posed angle that would push a phone scaled past the canvas further out is refused, and the note says so', () => {
+    const p = take(8, Array.from({ length: 10 }, (_, i) => tap(0.4 + i * 0.8, {}, i)));
+    p.style = { ...p.style, contentTransform: { scale: 1.3 } };
+    const plan = planDirect(p, { style: 'hero', replace: true });
+    expect(plan.ops[0]).toMatchObject({ pose: { ...FRONT } });
+    expect(plan.note).toMatch(/\. The phone stays straight on: a posed angle would push the phone further off the canvas\.$/);
+  });
+
+  it('a posed angle that would break the 12° tap rule (with a strong float) is refused, and the note says so', () => {
+    // The user turned the float up to full: ±4° turn and ±2.5° tilt on top of 9.4° would pass 12° during taps.
+    const p = with3d(take(8, Array.from({ length: 10 }, (_, i) => tap(0.4 + i * 0.8, {}, i))), { float: { on: false, amount: 1, period: 6 } });
+    const { plan, out } = checkPlan(p, { style: 'subtle', replace: true }, 'strong float');
+    expect(plan.ops[0]).toMatchObject({ pose: { ...FRONT } });
+    expect(out.phone3d!.float).toEqual({ on: true, amount: 1, period: 6 });
+    expect(plan.note).toMatch(/\. The phone stays straight on: a posed angle would turn the phone more than 12° off front during taps\.$/);
+    // At the default float amount the posed angle fits.
+    const calm = planDirect(with3d(take(8, Array.from({ length: 10 }, (_, i) => tap(0.4 + i * 0.8, {}, i)))), { style: 'subtle', replace: true });
+    expect(calm.ops[0]).toMatchObject({ pose: { ...POSED_REST } });
+  });
+
+  it('a note exactly when the style\'s own moves do not fit: no moving shot, or hero with no turning shot', () => {
+    const cases: [Project, DirectStyle, boolean][] = [
+      [take(30, [tap(10)]), 'hero', false],
+      [take(30, [tap(10)]), 'subtle', false],
+      [take(8, [tap(0.3), tap(1.2), tap(2.1), tap(3), tap(3.9), tap(4.8), tap(5.7), tap(6.6), tap(7.5)]), 'subtle', true],
+      [take(2.5), 'bold', false],
+      // A 2.5 s clip: hero gets settle only (no room for spin-in), so it rests posed and says why.
+      [take(2.5), 'hero', true],
+    ];
+    for (const [p, style, noted] of cases) {
+      const plan = planDirect(p, { style, replace: true });
+      expect(plan.note !== undefined, `${style} ${JSON.stringify(plan.shots)}`).toBe(noted);
+    }
+    expect(planDirect(take(2.5), { style: 'hero', replace: true }).note).toMatch(/^No turning shot fits: the take is 2\.5 s, under the 4 s a spin-in needs; /);
+  });
+
+  it('the note names the gate that actually refused each shot (short takes: the take length, the 6 s middle rule, the moving-time cap)', () => {
+    // 3.9 s, no taps: the whole take is free, so free time is never the reason. The spin-in needs a 4 s take, no
+    // middle move is planned under 6 s, and the closing move (1.4 s) is over the 35% cap (1.365 s).
+    expect(0.35 * 3.9).toBeLessThan(1.4);
+    const plan = planDirect(take(3.9), { style: 'hero', replace: true });
+    expect(plan.shots.map((s) => `${s.recipe} ${s.start}-${s.end}`)).toEqual(['settle 0-1']);
+    expect(plan.note).toBe(
+      'No turning shot fits: the take is 3.9 s, under the 4 s a spin-in needs; a middle move needs a take of 6 s or more (this one is 3.9 s); the closing move takes 1.4 s, more than the moving-time cap (35% of the take, 1.36 s). The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+    // 3 s: the closing move would also start too soon after the intro (settle 0-1 then a 1 s rest; it starts at 1.5 s).
+    expect(planDirect(take(3), { style: 'hero', replace: true }).note).toBe(
+      'No turning shot fits: the take is 3.0 s, under the 4 s a spin-in needs; a middle move needs a take of 6 s or more (this one is 3.0 s); the closing move would start 0.5 s after the intro ends, under the 1.0 s rest between shots, and the closing move takes 1.4 s, more than the moving-time cap (35% of the take, 1.0 s). The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+  });
+
+  it('the note reports the spin-in\'s own window (busy start minus the inset), shown precisely enough to read as short', () => {
+    // First tap at 2.7 s: busy from 2.1 s, so the first window is 2.1 - 0.15 = 1.95 s, under the 2.0 s a spin-in
+    // needs (at one decimal 1.95 would round to "2.0 s" and contradict itself). Dense taps after it, to the end.
+    const taps = [2.7];
+    for (let t = 3.5; t < 10; t += 0.8) taps.push(Math.round(t * 100) / 100);
+    const plan = planDirect(take(10, taps.map((t, i) => tap(t, {}, i))), { style: 'hero', replace: true });
+    expect(plan.shots.map((s) => s.recipe)).toEqual(['settle']);
+    expect(plan.note).toBe(
+      'No turning shot fits: the phone must face front from 2.1 s, which leaves a spin-in 1.95 s, under the 2.0 s it needs; no free time is left beside the planned shots (with the 1.0 s rest around each) for a middle move; the free time at the end is 0.0 s, under the 1.5 s the closing move needs. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+    // A first tap 0.05 s later leaves the spin-in its 2.0 s, so it is planned and there is no note.
+    taps[0] = 2.75;
+    const later = planDirect(take(10, taps.map((t, i) => tap(t, {}, i))), { style: 'hero', replace: true });
+    expect(later.shots.map((s) => s.recipe)).toEqual(['spin-in']);
+    expect(later.note).toBeUndefined();
+  });
+
+  it('a middle move refused by the moving-time cap says so, not the free gap it would fit in', () => {
+    // 6.5 s, one tap at 2 s (busy, with its tap zoom, from 1.4 s to 3.5 s): a settle opens it (1.25 s is too short
+    // for a spin-in), then 3.65 s to the end is free, more than both the 2.4 s a middle move needs and the 1.5 s the
+    // closing move needs. The 35% cap is 2.275 s and the settle uses 1.0 s, so neither 1.4 s move fits the 1.275 s left.
+    const p = take(6.5, [tap(2)]);
+    expect(focusSegmentsFor(p, []).map((z) => [z.inStart, z.outEnd])).toEqual([[1.75, 3.5]]);
+    const plan = planDirect(p, { style: 'hero', replace: true });
+    expect(plan.shots.map((s) => s.recipe)).toEqual(['settle']);
+    expect(plan.note).toBe(
+      'No turning shot fits: the phone must face front from 1.4 s, which leaves a spin-in 1.3 s, under the 2.0 s it needs; a middle move takes 1.4 s, more than the 1.3 s left of the moving-time cap (35% of the take, 2.3 s) after the other planned shots; the closing move takes 1.4 s, more than the 1.3 s left of the moving-time cap (35% of the take, 2.3 s) after the other planned shots. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+  });
+
+  it('sweep: 400 iPhone takes of 3-30 s, dense taps from the first moment, every style: visible 3D, clean, and a note whenever the style\'s own moves do not fit', () => {
+    const presets = ['social-9x16', 'feed-4x5', 'square', 'landscape-16x9', 'none'];
+    const tally = { short: 0, posed: 0, full: 0 };
+    let notes = 0;
+    for (let seed = 1; seed <= 400; seed++) {
+      const rnd = lcg(seed * 6151);
+      const D = 3 + rnd() * 27;
+      // 0.1 to 2 taps a second; the first one anywhere in the first 2.5 s (often before 1.2 s, where no intro fits).
+      const rate = 0.1 + rnd() * 1.9;
+      const taps: TapSuggestion[] = [];
+      for (let t = rnd() * 2.5, i = 0; t < D; t += (0.4 + rnd() * 1.6) / rate, i++) {
+        const k = rnd();
+        if (k < 0.15) taps.push(tap(t, { kind: 'typing', duration: rnd() * 2 }, i));
+        else if (k < 0.3) taps.push(tap(t, { kind: 'swipe', duration: rnd() * 0.8 }, i));
+        else taps.push(tap(t, rnd() < 0.5 ? { settleT: t + rnd() * 1.2 } : {}, i));
+      }
+      let p = take(D, taps, [], presets[Math.floor(rnd() * presets.length)]);
+      if (rnd() < 0.3 && D > 8) {
+        const s = 1 + rnd() * (D - 6);
+        p = applyOps(p, [{ op: 'cut', ranges: [{ start: s, end: s + 0.5 + rnd() * 2 }] }], { newId: () => 'c' }).project;
+      }
+      const outD = new Timeline(p.recording.duration, p.clips).outputDuration;
+      for (const style of STYLES) {
+        const label = `seed ${seed} (${style}, D ${outD.toFixed(1)}, ${taps.length} taps)`;
+        const { plan, out } = checkPlan(p, { style, replace: true }, label);
+        if (outD >= 3) expect(maxOffFront(out), `${label}: visible 3D`).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
+        const moves = moving(plan);
+        const ownMovesFit = moves.length > 0 && (style !== 'hero' || turning(plan).length > 0);
+        expect(plan.note === undefined, `${label}: note iff the style's own moves do not fit (${plan.note})`).toBe(ownMovesFit);
+        expectNoteMatchesPlan(plan, style, label);
+        if (plan.note) {
+          expect(plan.note, label).toMatch(/^No (moving|turning) shot fits: .+\. The phone rests at (a posed angle instead|the bold angle)/);
+          expectNoteConsistent(plan.note, outD, style, label);
+          notes++;
+        }
+        // Hero and bold read as 3D for most of the take, unless a turning shot carries it.
+        if (style !== 'subtle' && !turning(plan).length) expect(heldOff(out, VISIBLE_DEG), `${label}: holds a 3D angle`).toBeGreaterThan(0.75);
+        if (plan.ops[0].op === 'phone3d' && JSON.stringify(plan.ops[0].pose) === JSON.stringify(POSED_REST) && style !== 'bold') tally.posed++;
+        if (moves[0]?.reason.startsWith('intro (short')) tally.short++;
+        if (turning(plan).length) tally.full++;
+      }
+    }
+    // Every branch is exercised many times (the sweep is not passing by planning the same thing everywhere).
+    // (Measured: 255 short intros, 547 posed rests, 92 plans with a turning shot.)
+    expect(tally.short).toBeGreaterThan(150);
+    expect(tally.posed).toBeGreaterThan(300);
+    expect(tally.full).toBeGreaterThan(50);
+    expect(notes).toBeGreaterThan(300);
+  }, 240_000);
+
+  /** The note describes the plan it is attached to: its kind of shortfall and its dropped count match the shots. */
+  function expectNoteMatchesPlan(plan: ReturnType<typeof planDirect>, style: DirectStyle, label: string): void {
+    const ownMovesFit = moving(plan).length > 0 && (style !== 'hero' || turning(plan).length > 0);
+    expect(plan.note === undefined, `${label}: note iff the style's own moves do not fit (${plan.note})`).toBe(ownMovesFit);
+    if (!plan.note) return;
+    expect(plan.note.startsWith('No moving shot fits'), `${label}: "No moving" iff no moving shot (${plan.note})`).toBe(moving(plan).length === 0);
+    const dropped = plan.note.match(/the self-check dropped (\d+) shots? /);
+    expect(dropped ? Number(dropped[1]) : 0, `${label}: the note's dropped count is the plan's (${plan.note})`).toBe(plan.check.dropped.length);
+  }
+
+  it('moved layouts, where straight on and the posed angle drop different shots: the note comes from the run whose shots the plan returns', () => {
+    // Two takes found by a review sweep. Straight on, every shot pushes the moved phone off the canvas and is dropped;
+    // from the posed angle the same shots fit. The note used to come from the straight-on run ("No moving shot fits
+    // ... the self-check dropped 2 shots") while the plan carried three turning shots and one dropped shot.
+    const hero = take(23.514, [tap(2.206, {}, 0), tap(20.395, {}, 1)], [], 'feed-4x5');
+    hero.style = { ...hero.style, contentTransform: { scale: 0.9707804731559009, x: 0.6391470730304718, y: 0.37616323521360756 } };
+    const h = checkPlan(hero, { style: 'hero', replace: true }, 'moved hero').plan;
+    expect(h.ops[0]).toMatchObject({ op: 'phone3d', pose: POSED_REST });
+    expect(h.shots.map((s) => `${s.recipe} ${s.start}`)).toEqual(['hero-layback 4.428', 'hero-layback 11', 'hero-layback 17.573']);
+    expect(h.check.dropped.map((s) => s.recipe)).toEqual(['settle']);
+    expect(h.note).toBeUndefined();
+    const subtle = take(28.755, [tap(3.36, {}, 0), tap(23.223, {}, 1)], [], 'square');
+    subtle.style = { ...subtle.style, contentTransform: { scale: 0.9217379806097598, x: 0.6025434959679843, y: 0.4070532980374992 } };
+    const s = checkPlan(subtle, { style: 'subtle', replace: true }, 'moved subtle').plan;
+    expect(s.ops[0]).toMatchObject({ op: 'phone3d', pose: POSED_REST });
+    expect(moving(s).map((x) => `${x.recipe} ${x.start}-${x.end}`)).toEqual(['settle 0-1']);
+    expect(s.check.dropped).toEqual([]);
+    expect(s.note).toBeUndefined();
+    // The other way round: straight on keeps the short settle, from the posed angle it pokes the moved phone off the
+    // canvas and is dropped. The plan has no shot, so the note must give the posed run's reasons and its dropped shot.
+    const busy = take(9.5, [1.86, 4.38, 4.85, 7.47, 8.65].map((t, i) => tap(t, {}, i)), [], 'social-9x16');
+    busy.style = { ...busy.style, contentTransform: { scale: 0.9, x: 0.68, y: 0.47 } };
+    const b = checkPlan(busy, { style: 'hero', replace: true }, 'moved busy hero').plan;
+    expect(b.ops[0]).toMatchObject({ op: 'phone3d', pose: POSED_REST });
+    expect(b.shots).toEqual([]);
+    expect(b.check.dropped.map((x) => `${x.recipe} ${x.start}-${x.end}`)).toEqual(['settle 0-0.91']);
+    expect(b.note).toBe(
+      'No moving shot fits: the longest free gap is 1.0 s, under the 2.4 s a middle move needs; the free time at the end is 0.0 s, under the 1.5 s the closing move needs; the self-check dropped 1 shot that would cause off-canvas warnings. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+  });
+
+  it('sweep: 400 takes with a moved or scaled phone, every style: a note exactly when the style\'s own moves do not fit, and its dropped count is the plan\'s', () => {
+    const presets = ['social-9x16', 'feed-4x5', 'square', 'landscape-16x9', 'none'];
+    let posedWithOwnMoves = 0;
+    let droppedNotes = 0;
+    for (let seed = 1; seed <= 400; seed++) {
+      const rnd = lcg(seed * 4447 + 7);
+      const D = 3 + rnd() * 37;
+      const rate = 0.05 + rnd() * 1.2;
+      const taps: TapSuggestion[] = [];
+      for (let t = rnd() * 4, i = 0; t < D; t += (0.4 + rnd() * 3) / rate, i++) taps.push(tap(t, {}, i));
+      const p = take(D, taps, [], presets[Math.floor(rnd() * presets.length)]);
+      p.style = { ...p.style, contentTransform: { scale: 0.8 + rnd() * 0.6, x: 0.3 + rnd() * 0.4, y: 0.3 + rnd() * 0.4 } };
+      for (const style of STYLES) {
+        const label = `seed ${seed} (${style}, D ${D.toFixed(2)}, ${JSON.stringify(p.style.contentTransform)})`;
+        const plan = planDirect(p, { style, replace: true });
+        expectNoteMatchesPlan(plan, style, label);
+        if (plan.note && /dropped/.test(plan.note)) droppedNotes++;
+        const posed = plan.ops[0].op === 'phone3d' && JSON.stringify(plan.ops[0].pose) === JSON.stringify(POSED_REST);
+        if (style !== 'bold' && posed && plan.note === undefined) posedWithOwnMoves++;
+      }
+    }
+    // The case under test is reached (a posed rest whose shots include the style's own moves), and many notes carry a
+    // dropped count. (Measured: 2 and 494.)
+    expect(posedWithOwnMoves).toBeGreaterThan(0);
+    expect(droppedNotes).toBeGreaterThan(300);
+  }, 240_000);
 });
 
 describe('planDirect: 500 seeded projects', () => {

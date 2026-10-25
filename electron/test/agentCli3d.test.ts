@@ -5,9 +5,9 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { defaultFramesDir, framesCmd, parseFramesArgs, planFrameTimes, poseInfo } from '../src/node/framesCmd';
-import { parseDirectArgs } from '../src/node/agentCli';
+import { main, parseDirectArgs } from '../src/node/agentCli';
 import { needsScenes } from '../src/node/phone3dPlan';
 import { readCursorSamples } from '../src/node/bundleFiles';
 import { CliError } from '../src/node/cliKit';
@@ -221,6 +221,37 @@ describe('direct arguments', () => {
   it('refuses an unknown style or option (exit 2)', () => {
     expect(usage(() => parseDirectArgs(['b', '--style', 'wild'])).code).toBe(2);
     expect(usage(() => parseDirectArgs(['b', '--replace'])).code).toBe(2);
+  });
+
+  it('the command prints the plan\'s note when no moving shot fits (and only then), and --dry-run writes nothing', async () => {
+    const run = async (taps: number[]) => {
+      const dir = join(scratch, `rec-direct-${taps.length}.openscreen`);
+      mkdirSync(dir, { recursive: true });
+      const p = phoneProject({ duration: 8 });
+      p.taps = taps.map((t, i) => ({ id: `tap${i}`, t, x: 0.5, y: 0.5, kind: 'tap' as const, confidence: 1 }));
+      p.tapsAnalyzed = true;
+      const before = JSON.stringify(p);
+      writeFileSync(join(dir, 'project.json'), before);
+      const chunks: string[] = [];
+      const spy = vi.spyOn(process.stdout, 'write').mockImplementation((c: string | Uint8Array) => (chunks.push(String(c)), true));
+      let code: number;
+      try {
+        code = await main(['direct', dir, '--no-scenes', '--dry-run']);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(code).toBe(0);
+      expect(readFileSync(join(dir, 'project.json'), 'utf8')).toBe(before);
+      return JSON.parse(chunks.join(''));
+    };
+    const dense = await run(Array.from({ length: 10 }, (_, i) => 0.4 + i * 0.8));
+    expect(dense.shots).toEqual([]);
+    expect(dense.note).toMatch(/^No moving shot fits: .+\. The phone rests at a posed angle instead \(9\.4° off front, inside the 12° rule for taps\)\.$/);
+    expect(dense.ops[0]).toMatchObject({ op: 'phone3d', pose: { ...FRONT, turn: -8, tilt: 5 } });
+    expect(dense.warnings).toEqual([]);
+    const roomy = await run([5]);
+    expect(roomy.shots.length).toBeGreaterThan(0);
+    expect('note' in roomy).toBe(false);
   });
 
   it('needs scene analysis only for a direct op without scenes:false', () => {

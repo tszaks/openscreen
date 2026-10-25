@@ -319,6 +319,7 @@ Options: `{ style: 'subtle'|'hero'|'bold'; scenes?: number[] /*SOURCE s; absent 
 4. **Intro.** If D ≥ 4 and the first window starts at 0:
    - length ≥ 2.0: spin-in (hero or bold) over `[0, min(1.6, len−0.2)]`
    - length ≥ 1.0: settle
+   - else, when the first busy start is ≥ 0.6 s (owner decision 12): a short settle over `[0, min(1.0, max(0.6, busyStart − 0.25))]`. It leans only 8° and lands on the base pose by the first busy start, never after it.
 5. **Middle.** Windows are taken quiet first, then longer:
    - bold, window ≥ 4.5 s: turn-to-back
    - hero or bold, window ≥ 2.4 s: hero-layback with a return
@@ -335,6 +336,9 @@ Options: `{ style: 'subtle'|'hero'|'bold'; scenes?: number[] /*SOURCE s; absent 
    2. `{op:'clearTransitions'}` when `replace`
    3. one `{op:'shot', recipe, at, duration, direction, intensity}` per shot
 9. **Self-check.** Apply the ops to a copy (`applyOps`, which validates) and run `projectWarnings(copy, { cursor })`. Remove any shot that causes `tap-angle`, `off-canvas`, `overlap` or `over-zoom`, then repeat (at most 4 rounds). A planned project has zero warnings. If `applyOps` throws (it must not; see D21), the planner drops the last shot and retries, and a test fails on any such retry.
+   - Off-canvas is judged per moment and per edge (left, top, right, bottom) against the same project without the shots: a shot is blamed when any edge goes past the 2% margin and more than 0.5 px further past that edge than without the shots. A big overflow at one edge never excuses a new one at another. Inside moves the check reads every 60 fps frame.
+   - A shot blamed only for off-canvas gets one more try in the other direction (the lean mirrored) before it is dropped.
+10. **Always visible (owner decision 12).** A settle alone is only a quick 8° lean (its spring lands in about 0.2 s). So when the style's own moves do not fit (hero: no turning shot, that is no spin-in, hero-layback or turn-to-back; subtle: no shot at all) and there are no kept moves, the base pose becomes `POSED_REST` `{turn:-8, tilt:5}` (9.4°, inside the 12° rule) and the shots are planned on it, after a check that it stays inside 12° during busy time and adds no warning or edge overflow over the style's own base. Bold already rests at that angle. If the shots planned on the posed base include the style's own moves (a shot that pushed the phone off the canvas from straight on may fit from the posed angle), the style's moves fit and the plan has no note. Otherwise the plan carries `note`, built from the same self-check run as the shots it returns (so its reasons and its dropped count describe that plan): one line that says why the style's moves do not fit and what the phone does instead ("No moving shot fits: …" or "No turning shot fits: …"). Each reason in it comes from the planner check that actually refused that shot: the take length (a spin-in needs a 4 s take, a middle move 6 s), the free time the check reads (the spin-in's first window, the usable middle gap beside the planned shots, the free time at the end), the 1 s rest between shots, the moving-time cap, or the self-check dropping it. A stated shortfall is shown with enough decimals to read as under its limit (1.95 s, not 2.0 s). Every plan with no moving shot has a `note`. The `direct` op's note and the CLI's `direct` output (`note`) show it.
 
 There is no randomness and no clock.
 

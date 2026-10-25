@@ -393,6 +393,20 @@ describe('direct op', () => {
     expect(p3of(replaced).transitions.find((t) => t.id === 'mine')).toBeUndefined();
   });
 
+  it('a take with no room for a move: the note says why instead of a bare "nothing"', () => {
+    const p = phoneProject({ duration: 8 });
+    p.taps = Array.from({ length: 10 }, (_, i) => ({ id: `tap${i}`, t: 0.4 + i * 0.8, x: 0.5, y: 0.5, kind: 'tap' as const, confidence: 1 }));
+    p.tapsAnalyzed = true;
+    const r = applyOp(p, { op: 'direct', style: 'hero', scenes: false }, fresh());
+    expect(r.note).toBe(
+      'Auto 3D (hero; scene changes off): No moving shot fits: the phone must face front from 0.0 s (a tap, zoom or kept move starts there), so no intro fits; there is no free time between taps, zooms and kept moves. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+    );
+    expect(p3of(r.project).transitions).toEqual([]);
+    expect(p3of(r.project).pose).toEqual(P({ turn: -8, tilt: 5 }));
+    // With shots, the note lists them and adds nothing else.
+    expect(applyOp(tapped(), { op: 'direct', style: 'hero', scenes: false }, fresh()).note).toMatch(/^Auto 3D \(hero; scene changes off\): spin-in 0\.00–1\.60 s(, [a-z-]+ \d+\.\d\d–\d+\.\d\d s)+$/);
+  });
+
   it('refuses a bad style or unknown field', () => {
     expect(() => applyOps(tapped(), [{ op: 'direct', style: 'wild' }], fresh())).toThrow(/style must be subtle\|hero\|bold/);
     expect(() => applyOps(tapped(), [{ op: 'direct', keep: true }], fresh())).toThrow(/unknown field "keep"/);

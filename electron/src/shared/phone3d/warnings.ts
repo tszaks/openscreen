@@ -215,21 +215,30 @@ interface OffCanvas {
   target: PoseTarget;
 }
 
-/** Bounds per pose: with the float off the phone holds still most of the time, so most samples repeat a pose. */
-type BoundsCache = Map<string, number>;
+/** The canvas edges, in the order EdgeOverflow lists them. */
+export const EDGES = ['left', 'top', 'right', 'bottom'] as const;
+export type Edge = (typeof EDGES)[number];
+/** How far the body pokes past each canvas edge (px; ≤ 0 = inside that edge). */
+export type EdgeOverflow = readonly [left: number, top: number, right: number, bottom: number];
 
-/** How far the body pokes out of the canvas at t (px; ≤ 0 = inside). */
-function overflowAt(s: Scene3D, t: number, cache: BoundsCache = new Map(), pose: Pose = s.poseAt(t)): number {
+const INSIDE: EdgeOverflow = [0, 0, 0, 0];
+
+/** Bounds per pose: with the float off the phone holds still most of the time, so most samples repeat a pose. */
+type BoundsCache = Map<string, EdgeOverflow>;
+
+/** How far the body pokes past each edge of the canvas at t (px; ≤ 0 = inside). */
+function edgesAt(s: Scene3D, t: number, cache: BoundsCache = new Map(), pose: Pose = s.poseAt(t)): EdgeOverflow {
   const key = `${pose.turn},${pose.tilt},${pose.rotate},${pose.size},${pose.x},${pose.y}`;
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
   const b = bodyBounds({ ...s, poseAt: () => pose }, t);
-  const W = s.canvas.width;
-  const H = s.canvas.height;
-  const over = b ? Math.max(-b.x, -b.y, b.x + b.w - W, b.y + b.h - H) : 0;
-  cache.set(key, over);
-  return over;
+  const edges: EdgeOverflow = b ? [-b.x, -b.y, b.x + b.w - s.canvas.width, b.y + b.h - s.canvas.height] : INSIDE;
+  cache.set(key, edges);
+  return edges;
 }
+
+/** How far the body pokes out of the canvas at t, past its worst edge (px; ≤ 0 = inside). */
+const overflowAt = (s: Scene3D, t: number, cache?: BoundsCache, pose?: Pose): number => Math.max(...edgesAt(s, t, cache, pose));
 
 /** Allowed overflow (px): OFF_CANVAS_FRACTION of the canvas's short side. */
 const offCanvasMargin = (s: Scene3D) => OFF_CANVAS_FRACTION * Math.min(s.canvas.width, s.canvas.height);
@@ -239,6 +248,25 @@ function offCanvasTimes(c: Ctx): number[] {
   const ts = Array.from({ length: n + 1 }, (_, k) => (c.D * k) / n);
   for (const tr of c.p3.transitions) for (const t of [tr.start, tr.end]) if (t >= 0 && t <= c.D) ts.push(t);
   return [...new Set(ts)].sort((a, b) => a - b);
+}
+
+/** Samples per second inside every move for the Auto 3D self-check (offCanvasAdded): every frame at 60 fps. */
+export const OFF_CANVAS_MOVING_HZ = 60;
+
+/**
+ * offCanvasTimes plus every 60 fps frame inside each move. While the phone
+ * moves, an edge can poke out and back between two 15 Hz samples (a fast
+ * turn near an edge peaks for a few frames), and a shot is the only thing
+ * that moves the phone fast, so the self-check reads every frame there.
+ */
+function movingTimes(c: Ctx): number[] {
+  const ts = offCanvasTimes(c);
+  for (const tr of c.p3.transitions) {
+    const a = Math.max(0, tr.start);
+    const b = Math.min(c.D, tr.end);
+    for (let k = Math.ceil(a * OFF_CANVAS_MOVING_HZ - 1e-9); k <= Math.floor(b * OFF_CANVAS_MOVING_HZ + 1e-9); k++) ts.push(k / OFF_CANVAS_MOVING_HZ);
+  }
+  return [...new Set(ts)].sort((x, y) => x - y);
 }
 
 /** The sample times inside [a, b] (sorted). */
@@ -379,16 +407,18 @@ function offCanvasCleared(g: OffCanvas, fc: Ctx): boolean {
   return worstOverflow(fc.scene, groupTimes(fc, g), g.worst).over <= offCanvasMargin(fc.scene);
 }
 
-/** A shot may add up to this much overflow (px) over the project without it before the self-check blames it. */
+/** A shot may add up to this much overflow (px) past an edge over the project without it before the self-check blames it. */
 export const OFF_CANVAS_ADDED_PX = 0.5;
 
-/** A stretch where a planned project pokes further off the canvas than it does without the shots (direct.ts). */
+/** A stretch where a planned project pokes further past a canvas edge than it does without the shots (direct.ts). */
 export interface OffCanvasAdded {
   /** First and last sample of the stretch, and its worst moment (OUTPUT s, raw). */
   at: number;
   end: number;
   worst: number;
-  /** The overflow (px) at `worst`, and the project-without-shots overflow at the same time (absent with no baseline). */
+  /** The edge the phone is pushed past at `worst`. */
+  edge: Edge;
+  /** The overflow (px) past `edge` at `worst`, and the project-without-shots overflow past the same edge at the same time (absent with no baseline). */
   over: number;
   baseline?: number;
   /** The move behind the worst moment (as the off-canvas warning names it). */
@@ -399,19 +429,20 @@ export interface OffCanvasAdded {
 const geometryChecked = (p: Project) => !!p.phone3d?.enabled && !phone3dProblems(p).length && phone3dActive(p).active;
 
 /**
- * How far `p`'s body pokes out of its canvas at t (px; ≤ 0 = inside), memoized
- * per time so a planner can reuse it across rounds. null when projectWarnings
- * would not check the geometry (3D off, inactive or invalid).
+ * How far `p`'s body pokes past each edge of its canvas at t (px; ≤ 0 =
+ * inside), memoized per time so a planner can reuse it across rounds. null
+ * when projectWarnings would not check the geometry (3D off, inactive or
+ * invalid).
  */
-export function offCanvasMeter(p: Project): ((t: number) => number) | null {
+export function offCanvasMeter(p: Project): ((t: number) => EdgeOverflow) | null {
   if (!geometryChecked(p)) return null;
   const scene = scene3d(p);
   if (!scene) return null;
   const cache: BoundsCache = new Map();
-  const memo = new Map<number, number>();
+  const memo = new Map<number, EdgeOverflow>();
   return (t) => {
     let v = memo.get(t);
-    if (v === undefined) memo.set(t, (v = overflowAt(scene, t, cache)));
+    if (v === undefined) memo.set(t, (v = edgesAt(scene, t, cache)));
     return v;
   };
 }
@@ -419,15 +450,19 @@ export function offCanvasMeter(p: Project): ((t: number) => number) | null {
 /**
  * For the Auto 3D self-check, which must not judge by warning spans: one
  * off-canvas warning covers every run its keyframe causes, so its span can
- * be most of the take. This compares moment by moment instead. Returns the
- * stretches where `p` pokes past the margin AND further out than `baseline`
- * (the same project without the shots; offCanvasMeter) at the same time, by
- * more than OFF_CANVAS_ADDED_PX. A kept pose near an edge, or the float, that
- * already pokes out is not counted; a shot that pushes the phone further out
- * is, wherever it does. Samples: the off-canvas check's own (15 Hz plus every
- * keyframe of `p`). With no baseline every overflow past the margin counts.
+ * be most of the take. This compares moment by moment and edge by edge
+ * instead. Returns the stretches where `p` pokes past the margin at some
+ * edge AND further past that same edge than `baseline` (the same project
+ * without the shots; offCanvasMeter) at the same time, by more than
+ * OFF_CANVAS_ADDED_PX. A kept pose near an edge, or the float, that already
+ * pokes out is not counted; a shot that pushes the phone further out is,
+ * wherever it does, and so is a shot that pushes it past a different edge
+ * (a big overflow at the top never excuses a new one at the side). Samples:
+ * the off-canvas check's own (15 Hz plus every keyframe of `p`) plus every
+ * 60 fps frame inside each move of `p`. With no baseline every overflow past
+ * the margin counts.
  */
-export function offCanvasAdded(p: Project, baseline: ((t: number) => number) | null): OffCanvasAdded[] {
+export function offCanvasAdded(p: Project, baseline: ((t: number) => EdgeOverflow) | null): OffCanvasAdded[] {
   if (!geometryChecked(p)) return [];
   const c = makeCtx(p, []);
   if (!c) return [];
@@ -436,20 +471,31 @@ export function offCanvasAdded(p: Project, baseline: ((t: number) => number) | n
   const out: OffCanvasAdded[] = [];
   let cur: OffCanvasAdded | null = null;
   let worstExcess = 0;
-  for (const t of offCanvasTimes(c)) {
-    const over = overflowAt(c.scene, t, cache);
-    const base = over > margin && baseline ? baseline(t) : undefined;
-    // How far past both the margin and the baseline this moment is.
-    const excess = over - Math.max(margin, base ?? -Infinity);
-    if (over > margin && (base === undefined || over > base + OFF_CANVAS_ADDED_PX)) {
+  for (const t of movingTimes(c)) {
+    const edges = edgesAt(c.scene, t, cache);
+    const base = baseline && edges.some((o) => o > margin) ? baseline(t) : null;
+    // The edge furthest past both the margin and the baseline's overflow at that edge.
+    let k = -1;
+    let excess = -Infinity;
+    for (let i = 0; i < 4; i++) {
+      const o = edges[i];
+      if (!(o > margin) || (base && !(o > base[i] + OFF_CANVAS_ADDED_PX))) continue;
+      const e = o - Math.max(margin, base ? base[i] : -Infinity);
+      if (e > excess) {
+        excess = e;
+        k = i;
+      }
+    }
+    if (k >= 0) {
+      const at = { worst: t, edge: EDGES[k], over: edges[k], ...(base ? { baseline: base[k] } : {}) };
       if (!cur) {
-        cur = { at: t, end: t, worst: t, over, ...(base !== undefined ? { baseline: base } : {}) };
+        cur = { at: t, end: t, ...at };
         worstExcess = excess;
       }
       cur.end = t;
       if (excess > worstExcess) {
         worstExcess = excess;
-        Object.assign(cur, { worst: t, over, ...(base !== undefined ? { baseline: base } : {}) });
+        Object.assign(cur, at);
       }
     } else if (cur) {
       out.push(cur);
