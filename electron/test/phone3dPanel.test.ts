@@ -12,6 +12,9 @@ import {
   bezierFrom,
   chipFor,
   deleteTarget,
+  changeIsTyped,
+  mixedFieldRange,
+  movesHaveFocus,
   clock,
   dragTimes,
   durationBase,
@@ -482,7 +485,38 @@ describe('a many-move drag that makes every value match part-way', () => {
     expect(multi.match(/durationStepOps\(/g)?.length).toBe(1);
     // Angle (light) uses the same pose gesture, and its commit clears it.
     expect(multi).toMatch(/poseStep\('light'/);
-    expect(multi.match(/onCommit=\{endPose\}/g)?.length).toBe(2);
+    expect(multi).toMatch(/poseStep\('focus'/);
+    expect(multi.match(/onCommit=\{endPose\}/g)?.length).toBe(3);
+  });
+});
+
+describe('a "–" field: typed, stepped, or put back', () => {
+  const key = (k: string, draft: string | null = null) => ({ key: k, draft });
+  it('a drag or an arrow key on the field itself is never typed (each move changes by the same amount)', () => {
+    expect(changeIsTyped(false, null)).toBe(false);
+    expect(changeIsTyped(false, key('ArrowUp'))).toBe(false);
+  });
+  it('in the text input: Enter and blur are typed; Escape puts the value back (not typed)', () => {
+    expect(changeIsTyped(true, key('Enter', '12'))).toBe(true);
+    expect(changeIsTyped(true, null)).toBe(true);
+    expect(changeIsTyped(true, key('Escape', '12'))).toBe(false);
+  });
+  it('an arrow key on "–" adds to each move; on a typed number it sets them all', () => {
+    expect(changeIsTyped(true, key('ArrowUp', '–'))).toBe(false);
+    expect(changeIsTyped(true, key('ArrowDown', ''))).toBe(false);
+    expect(changeIsTyped(true, key('ArrowUp', '12'))).toBe(true);
+    expect(changeIsTyped(true, key('ArrowDown', '−3'))).toBe(true);
+  });
+  it('the field\'s own number has a range width of room each side, so the first move never stops the others', () => {
+    const [lo, hi] = mixedFieldRange(0.1, 60);
+    expect(lo).toBeCloseTo(-59.8, 9);
+    expect(hi).toBeCloseTo(119.9, 9);
+    expect(mixedFieldRange(-720, 720)).toEqual([-2160, 2160]);
+  });
+  it('a mixed Duration drag keeps every move inside 0.1..60 s on its own', () => {
+    const base = [{ id: 'a', start: 0, len: 0.5 }, { id: 'b', start: 2, len: 59 }];
+    expect(durationDragOps(base, 5).map((o) => (o as { end: number }).end)).toEqual([5.5, 62]);
+    expect(durationDragOps(base, -5).map((o) => +((o as { end: number }).end).toFixed(3))).toEqual([0.1, 56]);
   });
 });
 
@@ -500,6 +534,15 @@ describe('the ⌫ key', () => {
     expect(deleteTarget({ ...none, moves: 0, movesFocused: true, words: true })).toBe('words');
   });
 
+  it('gives the keys to the moves only from the lane, or the 3D tab when the transcript did not have the last press', () => {
+    expect(movesHaveFocus('lane3d', 'text')).toBe(true);
+    expect(movesHaveFocus('other', 'three')).toBe(true);
+    expect(movesHaveFocus('transcript', 'three')).toBe(false);
+    // Words selected, a move clicked on the lane (the tab turns to 3D), then the Text tab pressed: the words own ⌫.
+    expect(movesHaveFocus('other', 'text')).toBe(false);
+    expect(movesHaveFocus('transcript', 'text')).toBe(false);
+  });
+
   it('keeps the old order for everything else', () => {
     expect(deleteTarget({ ...none, layer: true, layerHides: true, moves: 1, movesFocused: true })).toBe('layer');
     expect(deleteTarget({ ...none, layer: true, words: true })).toBe('keep-layer'); // the recording never hides
@@ -508,7 +551,12 @@ describe('the ⌫ key', () => {
 
   it('is what the editor\'s key handler uses, with the focus rule and the lane-only T, J, K, F', () => {
     const editor = readFileSync(join(__dirname, '../src/renderer/src/Editor.tsx'), 'utf8');
-    expect(editor).toMatch(/const target = deleteTarget\(\{[^}]*movesFocused: laneFocus3d\.current \|\| activeTab === 'three',/);
+    expect(editor).toMatch(/const target = deleteTarget\(\{[^}]*movesFocused: movesHaveFocus\(pressScope\.current, activeTab\),/);
+    // The scope follows every press and focus change, window-wide (a tab click, a word, the lane).
+    expect(editor).toMatch(/window\.addEventListener\('pointerdown', onPress, true\)/);
+    expect(editor).toMatch(/window\.addEventListener\('focusin', onPress, true\)/);
+    expect(editor).toMatch(/closest\('\[data-scope="transcript"\]'\)/);
+    expect(editor.match(/data-scope="transcript"/g)?.length).toBeGreaterThanOrEqual(2);
     expect(editor).toMatch(/if \(isPhone && proj\.phone3d && !hasPhoneLayer && !role\) \{\s*const key = e\.key\.toLowerCase\(\);\s*if \(key === 't'/);
   });
 });

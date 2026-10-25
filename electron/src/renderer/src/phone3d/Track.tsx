@@ -7,8 +7,7 @@
 
 import React, { useRef } from 'react';
 import { ScrubField } from '../components/ScrubField';
-import { parseScrubInput } from '../../../shared/scrub';
-import { minus } from './panelModel';
+import { changeIsTyped, mixedFieldRange, minus } from './panelModel';
 
 export interface TrackProps {
   label: string;
@@ -69,9 +68,7 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
   // itself must not stop at the first move's range end: it gets one range
   // width of room on each side, each move is kept in range on its own
   // (panelModel), and a typed number is kept in range here.
-  const span = max - min;
-  const fieldMin = mixed ? min - span : min;
-  const fieldMax = mixed ? max + span : max;
+  const [fieldMin, fieldMax] = mixed ? mixedFieldRange(min, max) : [min, max];
   return (
     <div
       ref={root}
@@ -124,20 +121,6 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
       />
     </div>
   );
-}
-
-/**
- * Whether a change of the field is a typed number (sets every move) or a
- * relative change (a drag, a step on "–", Escape putting the value back).
- * `editing`: the text input is open. `key`: the key being handled, with the
- * input's text when it went down (null: no key, i.e. a blur).
- */
-export function changeIsTyped(editing: boolean, key: { key: string; draft: string | null } | null): boolean {
-  if (!editing) return false;
-  if (!key) return true; // blur: the typed text is accepted
-  if (key.key === 'Escape') return false;
-  if (key.key === 'ArrowUp' || key.key === 'ArrowDown') return key.draft !== null && parseScrubInput(key.draft) !== null;
-  return true;
 }
 
 /** A read-only value in the same shape (a fitted spring's "Settles 0.80 s"). */

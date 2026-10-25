@@ -24,6 +24,8 @@ import {
   addMoveOp,
   chipFor,
   deleteTarget,
+  movesHaveFocus,
+  type PressScope,
   duplicateOp,
   EASE_LABEL,
   EASE_MENU,
@@ -439,9 +441,9 @@ export function Editor({
    *  user is working in: ⌘A on the lane selects every move, and ⌫ removes
    *  selected 3D moves only from the lane or the 3D tab, never while the
    *  transcript (and its word selection) has the focus. */
-  const pressScope = useRef<'lane3d' | 'transcript' | 'other'>('other');
+  const pressScope = useRef<PressScope>('other');
   useEffect(() => {
-    const scopeOf = (t: EventTarget | null): 'lane3d' | 'transcript' | 'other' => {
+    const scopeOf = (t: EventTarget | null): PressScope => {
       const el = t instanceof Element ? t : null;
       if (el?.closest('.lane-3d')) return 'lane3d';
       if (el?.closest('[data-scope="transcript"]')) return 'transcript';
@@ -2221,7 +2223,7 @@ export function Editor({
           layer: !!selectedLayer,
           layerHides: !!selectedLayer && canHide(selectedLayer),
           moves: liveSel.length,
-          movesFocused: pressScope.current === 'lane3d' || (activeTab === 'three' && pressScope.current !== 'transcript'),
+          movesFocused: movesHaveFocus(pressScope.current, activeTab),
           words: editTranscript && !!wordSel,
           tap: !!selectedTap,
           music: !!selectedMusic,
