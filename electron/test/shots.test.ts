@@ -4,7 +4,7 @@ import { ease } from '../src/shared/phone3d/easing3d';
 import { FRONT, POSE_KEYS, SHOT_RECIPES, type Pose, type PoseTransition } from '../src/shared/phone3d/model';
 import { facingOf, lerpPose, poseAt, poseDelta, poseInRange, poseRotation, resolveStarts, rotationAngle } from '../src/shared/phone3d/pose';
 import { screenQuad } from '../src/shared/phone3d/projection';
-import { defaultShotDuration, expandShot, shotKeys, shotRecipeList, SHOTS } from '../src/shared/phone3d/shots';
+import { defaultShotDuration, expandShot, SHOT_OVERSHOOT, shotKeys, shotRecipeList, SHOTS } from '../src/shared/phone3d/shots';
 import { TOO_FAST_DEG_S } from '../src/shared/phone3d/warnings';
 import { phoneProject, with3d } from './helpers/phone3dFixtures';
 
@@ -62,25 +62,103 @@ describe('SHOTS', () => {
   });
 });
 
+describe('shot timing (look round 2: no whips)', () => {
+  /** Peak angular speed (°/s) inside [t0, t1] of a played list. */
+  const peakIn = (list: PoseTransition[], before: Pose, t0: number, t1: number) => {
+    const p3 = { pose: before, transitions: list };
+    const h = 1 / 240;
+    let peak = 0;
+    for (let t = t0 + h; t <= t1 - h; t += 1 / 480) peak = Math.max(peak, rotationAngle(poseRotation(poseAt(p3, t - h)), poseRotation(poseAt(p3, t + h))) / (2 * h));
+    return peak;
+  };
+
+  it('every recipe peaks under 300°/s at its default length (half the too-fast line), both ways, from FRONT and the bold base', () => {
+    for (const before of [pose({}), pose({ turn: -8, tilt: 5 })]) {
+      for (const r of MOVING) {
+        for (const ret of ['front', 'stay'] as const) {
+          for (const direction of [1, -1] as const) {
+            const { transitions } = expandShot(r, { start: 1, ret, direction }, before, ids());
+            expect(peakSpeed(transitions, before), `${r} ${ret} ${direction}`).toBeLessThan(300);
+          }
+        }
+      }
+    }
+  });
+
+  it('no move uses the quint-like cinematic curve or a spring from rest: every key eases in and out (cubic-type)', () => {
+    for (const r of MOVING) {
+      for (const k of SHOTS[r].keys) {
+        expect(k.easing.kind, r).not.toBe('cinematic');
+        // Peak slope of the curve, × the average: a cubic ease-in-out is about 1.7, cinematic 4.4.
+        let m = 0;
+        for (let i = 0; i < 1000; i++) m = Math.max(m, (ease(k.easing, (i + 1) / 1000, 1) - ease(k.easing, i / 1000, 1)) * 1000);
+        expect(m, r).toBeLessThan(2);
+      }
+    }
+  });
+
+  it('hero-layback holds its pose at least 0.8 s and returns no faster than it went out', () => {
+    const list = expandShot('hero-layback', { start: 0 }, FRONT, ids()).transitions;
+    const [out, back] = list;
+    expect(back.start - out.end).toBeGreaterThanOrEqual(0.8 - 1e-9);
+    const vOut = peakIn(list, FRONT, out.start, out.end);
+    const vBack = peakIn(list, FRONT, back.start, list[list.length - 1].end);
+    expect(vBack).toBeLessThanOrEqual(vOut * 1.02);
+  });
+
+  it('spin-in and hero-layback carry a small visible overshoot past the pose, then settle onto it', () => {
+    const spin = expandShot('spin-in', { start: 0 }, FRONT, ids()).transitions;
+    const p3 = { pose: FRONT, transitions: spin };
+    let over = 0;
+    for (let t = 0; t <= 1.6; t += 1 / 240) over = Math.max(over, poseAt(p3, t).turn);
+    expect(over).toBeGreaterThan(3);
+    expect(over).toBeLessThan(5);
+    expect(poseAt(p3, 1.6)).toEqual(FRONT);
+    // The settle takes about 0.4 s.
+    expect(spin[1].end - spin[1].start).toBeCloseTo(0.4, 9);
+    const hero = expandShot('hero-layback', { start: 0 }, FRONT, ids()).transitions;
+    expect(hero[1].to.turn).toBeCloseTo(24 * SHOT_OVERSHOOT, 9);
+    expect(hero[2].to).toEqual({ ...FRONT });
+  });
+
+  it('turn-to-back never stops on the bare back: it passes it at half speed, and "stay" comes to rest there', () => {
+    const list = expandShot('turn-to-back', { start: 0 }, FRONT, ids()).transitions;
+    expect(list[0].end).toBe(list[1].start);
+    const p3 = { pose: FRONT, transitions: list };
+    const h = 1 / 240;
+    const at = list[0].end;
+    const vBack = rotationAngle(poseRotation(poseAt(p3, at - h)), poseRotation(poseAt(p3, at + h))) / (2 * h);
+    const peak = peakIn(list, FRONT, 0, list[1].end);
+    expect(vBack).toBeGreaterThan(0.25 * peak);
+    expect(vBack).toBeLessThan(0.45 * peak);
+    const stay = expandShot('turn-to-back', { start: 0, ret: 'stay' }, FRONT, ids()).transitions;
+    const ps = { pose: FRONT, transitions: stay };
+    const end = stay[0].end;
+    expect(rotationAngle(poseRotation(poseAt(ps, end - 2 * h)), poseRotation(poseAt(ps, end))) / (2 * h)).toBeLessThan(2);
+  });
+});
+
 describe('expandShot', () => {
   it('spin-in starts soft, small and turned away, and lands exactly on `before`', () => {
     const before = pose({ turn: 10, size: 1.2 });
-    const [tr] = expandShot('spin-in', { start: 0 }, before, ids()).transitions;
-    expect(tr).toMatchObject({ id: 's1', start: 0, end: 1.6, recipe: 'spin-in', easing: { kind: 'spring' } });
+    const [tr, settle] = expandShot('spin-in', { start: 0 }, before, ids()).transitions;
+    expect(tr).toMatchObject({ id: 's1', start: 0, recipe: 'spin-in', easing: { kind: 'bezier' } });
+    expect(tr.end).toBeCloseTo(1.2, 9);
     expect(tr.from).toMatchObject({ turn: -190, tilt: 14, size: 1.2 - 0.45, y: 0.06, light: -60, focus: 1.8 });
-    expect(tr.to).toEqual(before);
-    // A spring overshoots once, then lands on the end exactly.
-    const peak = Math.max(...Array.from({ length: 1001 }, (_, i) => ease(tr.easing, i / 1000, 1.6)));
-    expect(peak).toBeGreaterThan(1.005);
-    expect(ease(tr.easing, 1, 1.6)).toBe(1);
+    // It carries 4° past the pose, then settles back onto `before` exactly.
+    expect(tr.to).toEqual({ ...before, turn: 14 });
+    expect(settle.start).toBeCloseTo(1.2, 9);
+    expect(settle.end).toBe(1.6);
+    expect(settle.from).toBeUndefined();
+    expect(settle.to).toEqual(before);
   });
 
   it('turn-to-back is a round trip that ends at +360 by default; return "stay" ends on the back', () => {
     const rt = expandShot('turn-to-back', { start: 2 }, FRONT, ids()).transitions;
     expect(rt).toHaveLength(2);
     expect(rt.map((t) => [t.start, t.end])).toEqual([
-      [2, 2 + 0.45 * 3.2],
-      [2 + 0.55 * 3.2, 2 + 3.2],
+      [2, 2 + 0.5 * 2.4],
+      [2 + 0.5 * 2.4, 2 + 2.4],
     ]);
     expect(rt[0].to).toMatchObject({ turn: 180, tilt: 6, light: 40 });
     expect(rt[1].to).toMatchObject({ turn: 360, tilt: 0, light: 0 });
@@ -90,29 +168,34 @@ describe('expandShot', () => {
     expect(stay).toHaveLength(1);
     expect(stay[0].to.turn).toBe(180);
     // The outbound key fills the shot; the default length is the outbound part of the recipe's.
-    expect(defaultShotDuration('turn-to-back', 'stay')).toBeCloseTo(0.45 * 3.2, 9);
-    expect(stay[0].end - stay[0].start).toBeCloseTo(0.45 * 3.2, 9);
+    expect(defaultShotDuration('turn-to-back', 'stay')).toBeCloseTo(0.5 * 2.4, 9);
+    expect(stay[0].end - stay[0].start).toBeCloseTo(0.5 * 2.4, 9);
+    // Ending the shot, the outbound key comes to rest on the back (its stay easing), not at half speed.
+    expect(stay[0].easing).toEqual(SHOTS['turn-to-back'].keys[0].stayEasing);
+    expect(rt[0].easing).toEqual(SHOTS['turn-to-back'].keys[0].easing);
     const custom = expandShot('turn-to-back', { start: 0, ret: 'stay', duration: 2 }, FRONT, ids()).transitions;
     expect([custom[0].start, custom[0].end]).toEqual([0, 2]);
     expect(shotKeys('hero-layback', 'stay').keys[0].frac).toEqual([0, 1]);
   });
 
-  it('hero-layback leans the top away (+tilt) and springs back; its tilt is positive', () => {
-    const [out, back] = expandShot('hero-layback', { start: 0 }, FRONT, ids()).transitions;
+  it('hero-layback leans the top away (+tilt) and swings back past the pose, then settles; its tilt is positive', () => {
+    const [out, back, settle] = expandShot('hero-layback', { start: 0 }, FRONT, ids()).transitions;
     expect(out.to.tilt).toBeGreaterThan(0);
     expect(out.to).toMatchObject({ turn: -24, tilt: 16, rotate: -4, size: 0.92, light: -25 });
-    expect(back.to).toEqual({ ...FRONT });
-    expect(back.easing.kind).toBe('spring');
+    expect(back.to.turn).toBeGreaterThan(0);
+    expect(back.to.tilt).toBeLessThan(0);
+    expect(settle.to).toEqual({ ...FRONT });
     // + tilt = layback: on the canvas the screen's top edge is narrower than its bottom edge.
     const p = with3d(phoneProject(), { pose: { ...FRONT, tilt: out.to.tilt } });
     const q = screenQuad(p, 0)!.quad;
     expect(Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y)).toBeLessThan(Math.hypot(q[2].x - q[3].x, q[2].y - q[3].y));
   });
 
-  it('settle drops in large and leaned back, then settles', () => {
-    const [tr] = expandShot('settle', { start: 0 }, FRONT, ids()).transitions;
+  it('settle drops in large and leaned back, carries just past the pose, then settles', () => {
+    const [tr, back] = expandShot('settle', { start: 0 }, FRONT, ids()).transitions;
     expect(tr.from).toMatchObject({ tilt: 8, size: 1.06, y: -0.03 });
-    expect(tr.to).toEqual({ ...FRONT });
+    expect(tr.to.tilt).toBeCloseTo(-8 * SHOT_OVERSHOOT, 9);
+    expect(back.to).toEqual({ ...FRONT });
   });
 
   it('float adds no moves and asks for the float', () => {

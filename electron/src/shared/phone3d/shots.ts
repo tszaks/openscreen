@@ -7,16 +7,22 @@
 // from before + from (an explicit Start keyframe); a key without one is
 // linked and continues from wherever the phone is.
 //
-// Two numbers differ from the spec's recipe table (§2.5), because the table
-// broke the spec's own `too-fast` rule (§2.7: > 600°/s with motion blur on)
-// and so the planner could never reach "zero warnings":
-//   spin-in      spring 120/16 peaks at 983°/s (and settles at 0.91 s, then
-//                holds still for the last 0.7 s of its 1.6 s). Spring 40/9.5
-//                (ζ 0.75, one 2.8% overshoot) settles at 1.54 s: the spin
-//                fills the whole shot and peaks at 558°/s.
-//   turn-to-back 2.6 s gave each 180° half 1.17 s of `cinematic`, peaking at
-//                678°/s. 3.2 s (1.44 s a half) peaks at 551°/s.
-// test/shots.test.ts pins both peaks under 600°/s.
+// Timing (look round 2). The judges read round 1's moves as whips: the
+// `cinematic` curve (0.7, 0, 0.16, 1) is quint-like, its peak slope is 4.4×
+// the average, so a turn-to-back crossed 146° in 0.53 s, and a spring from
+// rest put 133° of the spin-in into its first 0.29 s, then crept for a
+// second. Now every move is a cubic-type ease-in-out (CSS ease-in-out,
+// peak 1.72× the average) or the softer 1.67× one, and:
+//   spin-in      1.6 s: 204° to 4° past the pose (1.2 s, peak 292°/s), then
+//                a 0.4 s settle back: one visible overshoot that lands.
+//   hero-layback 2.3 s: out in 0.58 s, holds 0.8 s, returns no faster than
+//                it went out to 8% past the pose, then settles in 0.32 s.
+//   turn-to-back 2.4 s: one 360° that slows to half speed on the back
+//                (two halves of 1.2 s, peak 231°/s, 75°/s at the back), no
+//                stop on the bare back; `return: stay` ends on the back at
+//                rest (stayEasing).
+// Peak angular speed stays under 300°/s at the default durations
+// (test/shots.test.ts pins it), half the §2.7 too-fast line.
 
 import { clampPose, FRONT, POSE_KEYS, SHOT_RECIPES, type Easing, type Pose, type PoseKey, type PoseTransition, type ShotRecipe } from './model';
 import { rebaseTurn } from './pose';
@@ -35,6 +41,8 @@ export interface ShotKey {
   ret?: true;
   /** Channels `intensity` does not scale (a turn-to-back must still reach the back). */
   fixed?: PoseKey[];
+  /** The easing when this key ends the shot (`return: 'stay'` dropped the keys after it): it must come to rest. */
+  stayEasing?: Easing;
 }
 
 export interface ShotSpec {
@@ -49,42 +57,63 @@ export interface ShotSpec {
   use: string;
 }
 
+/** CSS ease-in-out: a cubic-type ease, peak speed 1.72× the average. */
+const EASE_IN_OUT: Easing = { kind: 'bezier', x1: 0.42, y1: 0, x2: 0.58, y2: 1 };
+/** A softer ease-in-out (peak 1.67× the average): returns and settles, never faster than the move out. */
+const EASE_SOFT: Easing = { kind: 'bezier', x1: 0.4, y1: 0, x2: 0.6, y2: 1 };
+/** Turn-to-back halves: the first eases in and leaves at half its average speed, the second picks up at that
+ *  speed and eases out (slopes match at the join: (1 − 0.85)/(1 − 0.7) = 0.15/0.3 = 0.5). */
+const LINGER_OUT: Easing = { kind: 'bezier', x1: 0.45, y1: 0, x2: 0.7, y2: 0.85 };
+const LINGER_IN: Easing = { kind: 'bezier', x1: 0.3, y1: 0.15, x2: 0.55, y2: 1 };
+/** How far past the pose a return or spin-in carries before it settles back, as a fraction of the move. */
+export const SHOT_OVERSHOOT = 0.08;
+
 export const SHOTS: Record<ShotRecipe, ShotSpec> = {
   'spin-in': {
     duration: 1.6,
     keys: [
       {
         from: { turn: -200, tilt: 14, size: -0.45, y: 0.06, light: -60, focus: 0.8 },
-        to: {},
-        frac: [0, 1],
-        easing: { kind: 'spring', stiffness: 40, damping: 9.5 },
+        to: { turn: 4 },
+        frac: [0, 0.75],
+        easing: EASE_IN_OUT,
       },
+      { to: {}, frac: [0.75, 1], easing: EASE_SOFT },
     ],
-    summary: 'Spins in from the back, small and soft, and lands sharp on the pose with one soft overshoot.',
+    summary: 'Spins in from the back, small and soft, carries 4° past the pose and settles back onto it.',
     use: 'Intro: the first 1.5-2 s, before the first tap.',
   },
   'turn-to-back': {
-    duration: 3.2,
+    duration: 2.4,
     keys: [
-      { to: { turn: 180, tilt: 6, light: 40 }, frac: [0, 0.45], easing: { kind: 'cinematic' }, fixed: ['turn'] },
-      { to: { turn: 360, tilt: 0, light: 0 }, frac: [0.55, 1], easing: { kind: 'cinematic' }, ret: true, fixed: ['turn'] },
+      { to: { turn: 180, tilt: 6, light: 40 }, frac: [0, 0.5], easing: LINGER_OUT, stayEasing: EASE_IN_OUT, fixed: ['turn'] },
+      { to: { turn: 360, tilt: 0, light: 0 }, frac: [0.5, 1], easing: LINGER_IN, ret: true, fixed: ['turn'] },
     ],
-    summary: 'Turns to show the back, then all the way round to the front again (a full 360°).',
+    summary: 'Turns all the way round (a full 360°), slowing as it passes the back.',
     use: 'A long wait or a scene change (the edge-on moment hides the cut). Bold promos.',
   },
   'hero-layback': {
-    duration: 1.4,
+    duration: 2.3,
     keys: [
-      { to: { turn: -24, tilt: 16, rotate: -4, size: -0.08, light: -25 }, frac: [0, 0.45], easing: { kind: 'cinematic' } },
-      { to: {}, frac: [0.55, 1], easing: { kind: 'spring', stiffness: 180, damping: 18 }, ret: true },
+      { to: { turn: -24, tilt: 16, rotate: -4, size: -0.08, light: -25 }, frac: [0, 0.25], easing: EASE_IN_OUT },
+      {
+        to: { turn: 24 * SHOT_OVERSHOOT, tilt: -16 * SHOT_OVERSHOOT, rotate: 4 * SHOT_OVERSHOOT, size: 0.08 * SHOT_OVERSHOOT, light: 25 * SHOT_OVERSHOOT },
+        frac: [0.6, 0.86],
+        easing: EASE_SOFT,
+        ret: true,
+      },
+      { to: {}, frac: [0.86, 1], easing: EASE_SOFT, ret: true },
     ],
-    summary: 'Leans back into a three-quarter hero angle, then springs back to the pose.',
+    summary: 'Leans back into a three-quarter hero angle, holds it, then swings back just past the pose and settles.',
     use: 'A short wait (2.4 s or more) in the middle; one-way (return: stay) as the outro.',
   },
   settle: {
     duration: 1.0,
-    keys: [{ from: { tilt: 8, size: 0.06, y: -0.03 }, to: {}, frac: [0, 1], easing: { kind: 'spring', stiffness: 220, damping: 20 } }],
-    summary: 'Drops in slightly large and leaned back, and settles onto the pose.',
+    keys: [
+      { from: { tilt: 8, size: 0.06, y: -0.03 }, to: { tilt: -8 * SHOT_OVERSHOOT }, frac: [0, 0.65], easing: EASE_IN_OUT },
+      { to: {}, frac: [0.65, 1], easing: EASE_SOFT },
+    ],
+    summary: 'Drops in slightly large and leaned back, carries just past the pose and settles onto it.',
     use: 'A gentle intro, or any intro shorter than 2 s.',
   },
   float: {
@@ -117,12 +146,20 @@ export interface ShotOptions {
   ret?: ShotReturn;
 }
 
-/** The keys a shot keeps for `ret`, with fracs stretched so the last kept key ends at 1. */
+/** The keys a shot keeps for `ret`, with fracs stretched so the last kept key ends at 1; a last kept key with a
+ *  `stayEasing` takes it (it ends the shot, so it must come to rest). */
 export function shotKeys(recipe: ShotRecipe, ret: ShotReturn = 'front'): { keys: ShotKey[]; span: number } {
   const all = SHOTS[recipe].keys;
   const kept = ret === 'stay' ? all.filter((k) => !k.ret) : all;
   const span = kept.length ? kept[kept.length - 1].frac[1] : 1;
-  return { keys: kept.map((k) => ({ ...k, frac: [k.frac[0] / span, k.frac[1] / span] as [number, number] })), span };
+  return {
+    keys: kept.map((k, i) => {
+      const out: ShotKey = { ...k, frac: [k.frac[0] / span, k.frac[1] / span] as [number, number] };
+      if (i === kept.length - 1 && k.stayEasing && kept.length < all.length) out.easing = k.stayEasing;
+      return out;
+    }),
+    span,
+  };
 }
 
 /** A shot's default length for `ret` (seconds). */

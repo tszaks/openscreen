@@ -8,7 +8,10 @@ import {
   halton,
   JITTER,
   MAX_SAMPLES,
+  MOTION_STEP_PX,
   mrtOutput,
+  slotOffset,
+  travelRefPx,
   lodBias,
   needsRealloc,
   planSamples,
@@ -29,7 +32,6 @@ import {
   scene3d,
   screenQuadAt,
   shadowPointsWorld,
-  subFrameTimes,
   project as projectPt,
   type Quad,
 } from '../src/shared/phone3d/projection';
@@ -65,21 +67,41 @@ describe('sample plan (§3.7 step 4)', () => {
     expect(planSamples({ t: 2, travelPx: 50, motion: null, full: true }).nMotion).toBe(1);
   });
 
-  it('moving: the user samples are a minimum, adjacent copies ≤ 1.5 px apart, capped at 64; times span the shutter', () => {
+  it('moving: the user samples are a minimum, copies MOTION_STEP_PX apart on average, capped at 64; each sample at a fixed-random place in its own slot of the shutter', () => {
     const sh = 1 / 60;
+    expect(MOTION_STEP_PX).toBe(1);
     expect(planSamples({ t: 1, travelPx: 3, motion: { samples: 12, shutterSec: sh }, full: true }).nMotion).toBe(12);
     const fast = planSamples({ t: 1, travelPx: 45, motion: { samples: 12, shutterSec: sh }, full: true });
-    expect(fast.nMotion).toBe(30);
-    expect(fast.n).toBe(30);
-    expect(45 / fast.nMotion).toBeLessThanOrEqual(1.5);
-    expect(fast.times).toEqual(subFrameTimes(1, sh, 30));
-    expect(Math.min(...fast.times)).toBeGreaterThan(1 - sh / 2);
-    expect(Math.max(...fast.times)).toBeLessThan(1 + sh / 2);
+    expect(fast.nMotion).toBe(45);
+    expect(fast.n).toBe(45);
+    // Stratified: sample k lies in [k, k + 1) / n of the shutter, so the times are ordered and span it.
+    fast.times.forEach((x, k) => {
+      const u = (x - (1 - sh / 2)) / sh;
+      expect(u).toBeGreaterThanOrEqual(k / 45 - 1e-12);
+      expect(u).toBeLessThan((k + 1) / 45 + 1e-12);
+    });
+    // Not evenly spaced (the stack of copies that read as ghosts), but the same every time for the same frame.
+    const gaps = fast.times.slice(1).map((x, k) => x - fast.times[k]);
+    expect(Math.max(...gaps) - Math.min(...gaps)).toBeGreaterThan(0.3 * (sh / 45));
+    expect(planSamples({ t: 1, travelPx: 45, motion: { samples: 12, shutterSec: sh }, full: true })).toEqual(fast);
+    expect(planSamples({ t: 1 + 1 / 30, travelPx: 45, motion: { samples: 12, shutterSec: sh }, full: true }).times.map((x) => x - 1 / 30)).not.toEqual(fast.times);
     expect(planSamples({ t: 1, travelPx: 1e4, motion: { samples: 2, shutterSec: sh }, full: true }).n).toBe(MAX_SAMPLES);
     expect(planSamples({ t: 1, travelPx: 1, motion: { samples: 1, shutterSec: sh }, full: true }).nMotion).toBe(2);
   });
 
-  it('no strobing (§6.3): on a fast 360° spin every sample plan keeps adjacent hull copies ≤ 2 px apart', () => {
+  it('slotOffset is a fixed hash in [0, 1); travelRefPx counts a 4K canvas at the 1080 reference', () => {
+    const xs = Array.from({ length: 200 }, (_, k) => slotOffset(2.5, k));
+    expect(xs.every((x) => x >= 0 && x < 1)).toBe(true);
+    expect(slotOffset(2.5, 3)).toBe(xs[3]);
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    expect(mean).toBeGreaterThan(0.4);
+    expect(mean).toBeLessThan(0.6);
+    expect(travelRefPx(40, 1080)).toBe(40);
+    expect(travelRefPx(40, 2160)).toBe(20);
+    expect(travelRefPx(40, 720)).toBe(40);
+  });
+
+  it('no strobing (§6.3): on a fast 360° spin every sample plan keeps hull copies 1 px apart on average and about two slots apart at worst', () => {
     const p = with3d(phoneProject(), { transitions: [move('spin', 1, 1.6, { turn: 360 }, { easing: { kind: 'linear' } })] });
     const s = scene3d(p, projectCanvasSize(p))!;
     const sh = 0.5 / 30;
@@ -90,16 +112,24 @@ describe('sample plan (§3.7 step 4)', () => {
       // Largest per-step move of any hull corner between adjacent sample times.
       const pts = bodyPointsMm(s, true);
       let worst = 0;
+      const sum = new Array(pts.length).fill(0);
       for (let k = 1; k < plan.times.length; k++) {
         const a = camAt(s, plan.times[k - 1]);
         const b = camAt(s, plan.times[k]);
-        for (const q of pts) {
+        pts.forEach((q, i) => {
           const [ax, ay] = projectPt(q, a);
           const [bx, by] = projectPt(q, b);
-          worst = Math.max(worst, Math.hypot(bx - ax, by - ay));
-        }
+          const d = Math.hypot(bx - ax, by - ay);
+          worst = Math.max(worst, d);
+          sum[i] += d;
+        });
       }
-      expect(worst).toBeLessThanOrEqual(2);
+      // n copies over at most the shutter's whole path: MOTION_STEP_PX apart on average (wider only past the 64 cap,
+      // at 600°/s, twice the recipes' peak), and two slots apart at worst (+ 12%: a corner nearer the camera moves
+      // faster than the path's average).
+      const step = Math.max(MOTION_STEP_PX, travel / MAX_SAMPLES);
+      expect(worst).toBeLessThanOrEqual(2.25 * step);
+      expect(Math.max(...sum) / plan.times.length).toBeLessThanOrEqual(step + 0.02);
     }
   });
 });
@@ -108,6 +138,9 @@ describe('glass sheen samples (planGlare)', () => {
   it('still: sample 0 only, standing for all N; draft: the one sample', () => {
     expect(planGlare({ n: 8, nMotion: 1 })).toEqual([8, 0, 0, 0, 0, 0, 0, 0]);
     expect(planGlare({ n: 1, nMotion: 1 })).toEqual([1]);
+  });
+  it('moving: every sample draws it once (it continues the border round the screen, which every sample draws)', () => {
+    for (const n of [2, 8, 13, 45, 64]) expect(planGlare({ n, nMotion: n })).toEqual(new Array(n).fill(1));
   });
   it('moving: at most GLARE_SAMPLES draws, evenly spaced, whose weights add up to N', () => {
     for (const n of [2, 8, 12, 13, 30, 36, 63, 64]) {

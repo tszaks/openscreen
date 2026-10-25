@@ -33,7 +33,7 @@ import {
   type Scene3D,
 } from '../../../shared/phone3d/projection';
 import type { Engine, PhoneLook } from './engine';
-import { planGlare, planSamples, planTiles, Passes, setGlareWeight, setScreenJitter, TILE_BYTES_PER_PX, type SamplePlan } from './passes';
+import { planGlare, planSamples, planTiles, Passes, setGlareWeight, setScreenJitter, TILE_BYTES_PER_PX, travelRefPx, type SamplePlan } from './passes';
 import { planScreenTexture, screenRoom, textureLimit } from './screenTexture';
 import { aimStudio } from './environment';
 import { frameCatcher, sampleLight } from './shadow';
@@ -206,7 +206,8 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   // 1-2. Sample plan and ROI.
   const motion = a.quality.full && a.quality.motion && a.quality.fps > 0 ? a.quality.motion : null;
   const shutterSec = motion ? Math.max(0, motion.shutter) / a.quality.fps : 0;
-  const travelPx = motion && shutterSec > 0 ? hullTravelPx(s, t, shutterSec, ss) : 0;
+  // Hull travel in output px, counted at the 1080 reference: a 4K frame takes the samples a 1080 one does.
+  const travelPx = motion && shutterSec > 0 ? travelRefPx(hullTravelPx(s, t, shutterSec, 1), Math.min(W, H)) : 0;
   const plan: SamplePlan = planSamples({ t, travelPx, motion: motion ? { samples: motion.samples, shutterSec } : null, full: a.quality.full });
   const roi = renderRoi(s, t, plan.nMotion > 1 ? plan.times : undefined);
   if (!roi || roi.w <= 0 || roi.h <= 0) return { empty: true, roi: roi ?? { x: 0, y: 0, w: 0, h: 0 } };

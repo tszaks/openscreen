@@ -36,15 +36,34 @@ export function halton(i: number, base: number): number {
 export const MAX_SAMPLES = 64;
 /** Anti-aliasing sub-samples in export and full-quality frames (D19). */
 export const AA_SAMPLES = 8;
-/** Adjacent motion-blur copies are at most this far apart, render px (§3.7 step 4). */
-export const MOTION_STEP_PX = 1.5;
-/** Below this hull travel over the shutter the phone counts as still, render px. */
+/**
+ * Adjacent motion-blur copies are on average at most this far apart, in output px at the 1080 reference
+ * (MOTION_REF_PX on the canvas's short side; a 4K canvas counts its travel at half). Round 1's 1.5 render px left
+ * every crisp edge (side buttons, UI text) as a stack of copies 1.5-3 px apart that read as ghosts; at 1 px with
+ * each copy at a random time inside its slot (planSamples), the copies blend into a smear.
+ */
+export const MOTION_STEP_PX = 1;
+/** The canvas short side the motion step is measured at. */
+export const MOTION_REF_PX = 1080;
+/** Below this hull travel over the shutter (output px at the reference) the phone counts as still. */
 export const STILL_TRAVEL_PX = 0.5;
 
 /** Fixed sub-pixel jitter per sample, render px: sample 0 is unjittered, then Halton(2, 3) − 0.5 (D19). */
 export const JITTER: readonly (readonly [number, number])[] = Array.from({ length: MAX_SAMPLES }, (_, k) =>
   k === 0 ? ([0, 0] as const) : ([halton(k, 2) - 0.5, halton(k, 3) - 0.5] as const),
 );
+
+/**
+ * A fixed hash of (frame time, sample) to [0, 1): where inside its time slot a motion sample sits. Keyed on the
+ * time in whole microseconds, so the same frame always renders the same way (frames, export and a re-render agree).
+ */
+export function slotOffset(t: number, k: number): number {
+  let h = (Math.round(t * 1e6) | 0) ^ Math.imul(k + 1, 0x9e3779b1);
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
 
 export interface SamplePlan {
   /** Sub-samples rendered for this frame. */
@@ -60,7 +79,7 @@ export interface SamplePlan {
 export interface SampleInputs {
   /** Output time of the frame. */
   t: number;
-  /** Longest projected hull path over the shutter, render px (hullTravelPx); 0 with motion blur off. */
+  /** Longest projected hull path over the shutter, output px at the 1080 reference (travelRefPx); 0 with motion blur off. */
   travelPx: number;
   /** Motion blur: the user's minimum sample count and the shutter in seconds; null = off. */
   motion: { samples: number; shutterSec: number } | null;
@@ -68,11 +87,20 @@ export interface SampleInputs {
   full: boolean;
 }
 
+/** Hull travel in output px of a canvas whose short side is `shortSide`, as px at the 1080 reference. */
+export function travelRefPx(travelOutputPx: number, shortSide: number): number {
+  return travelOutputPx * Math.min(1, MOTION_REF_PX / Math.max(1, shortSide));
+}
+
 /**
  * The sub-samples of one frame (§3.7 step 4), from pose and fixed tables only,
  * so a frame always renders the same way. Nmotion = 1 when the hull moves less
- * than STILL_TRAVEL_PX over the shutter, else ceil(travel / 1.5) clamped to
- * [max(2, samples), 64]; N = max(Nmotion, 8) at full quality, 1 otherwise.
+ * than STILL_TRAVEL_PX over the shutter, else ceil(travel / MOTION_STEP_PX)
+ * clamped to [max(2, samples), 64]; N = max(Nmotion, 8) at full quality, 1
+ * otherwise. A moving frame's shutter is cut into N equal slots and each
+ * sample sits at a fixed-random place in its own slot (stratified): even
+ * spacing printed the copies of an edge as a regular stack (ghosts); jittered,
+ * the leftover steps are fine noise inside the smear.
  */
 export function planSamples({ t, travelPx, motion, full }: SampleInputs): SamplePlan {
   if (!full) return { n: 1, nMotion: 1, times: [t], jitter: [JITTER[0]] };
@@ -81,7 +109,7 @@ export function planSamples({ t, travelPx, motion, full }: SampleInputs): Sample
     ? Math.min(MAX_SAMPLES, Math.max(Math.max(2, Math.round(motion.samples)), Math.ceil(travelPx / MOTION_STEP_PX)))
     : 1;
   const n = Math.max(nMotion, AA_SAMPLES);
-  const times = Array.from({ length: n }, (_, k) => (nMotion > 1 ? t + ((k + 0.5) / n - 0.5) * motion!.shutterSec : t));
+  const times = Array.from({ length: n }, (_, k) => (nMotion > 1 ? t + ((k + slotOffset(t, k)) / n - 0.5) * motion!.shutterSec : t));
   return { n, nMotion, times, jitter: JITTER.slice(0, n) };
 }
 
@@ -251,20 +279,20 @@ export function setGlareWeight(mat: THREE.Material, w: number): void {
   glareWeight(mat).value = w;
 }
 
-/** Most samples a frame draws the glass sheen on. */
-export const GLARE_SAMPLES = 8;
+/** Most samples a moving frame draws the glass sheen on: every one (MAX_SAMPLES). */
+export const GLARE_SAMPLES = MAX_SAMPLES;
 
 /**
  * Which samples draw the screen's glass sheen, and with what weight (§3.7
- * step 5). The sheen is a broad, soft gradient (GLARE_ROUGHNESS) and the
- * costliest thing on a FRONT phone (a lit physical surface over the whole
- * screen, 27% of a 4K still frame's scene time), so:
+ * step 5). The sheen is one sheet with the border round the screen
+ * (materials.ts FRONT_GLASS_ROUGHNESS), so:
  * - a still phone draws it on sample 0 only, × N: the screen layer of a
- *   still export frame is then the --draft frame's exactly, sheen included;
- * - a moving one on every ⌈N / GLARE_SAMPLES⌉-th sample, each × the samples
- *   it stands for (the weights add up to N, so the sheen keeps its strength);
- *   adjacent sheen copies are then at most 8 × 1.5 px apart, which a gradient
- *   that soft does not show.
+ *   still export frame is then the --draft frame's exactly, sheen included
+ *   (the sheen does not move with the sub-pixel jitter);
+ * - a moving one on every sample, like the border it continues: round 1
+ *   drew it on 8 samples at most, and with a sharper sheen and finer motion
+ *   steps those 8 copies would strobe across the screen. With all the light
+ *   in one environment it is cheap enough (look round 2 bench).
  * `weight[k]` is 0 for a sample that skips it. Pure.
  */
 export function planGlare(plan: Pick<SamplePlan, 'n' | 'nMotion'>): number[] {

@@ -9,7 +9,6 @@ import {
   InstancedMesh,
   Mesh,
   MeshPhysicalMaterial,
-  RectAreaLight,
   Scene,
   SRGBColorSpace,
   ShaderLib,
@@ -19,8 +18,8 @@ import {
 import { DEVICES, genericDevice, getDevice, type DeviceModel } from '../src/shared/devices';
 import { body3dFor } from '../src/shared/devices3d';
 import { continuousRectPoints } from '../src/shared/phone3d/outline';
-import { LIGHT_DISTANCE, LIGHT_PRESETS } from '../src/shared/phone3d/lighting';
-import { LIGHT_PRESET_NAMES } from '../src/shared/phone3d/model';
+import { DEFAULT_KEY_AZIMUTH, FLAGS, KEY_ELEVATION, LIGHT_PRESETS } from '../src/shared/phone3d/lighting';
+import { defaultPhone3D, LIGHT_PRESET_NAMES } from '../src/shared/phone3d/model';
 import {
   CHAMFER_MM,
   FILLET_MM,
@@ -47,8 +46,15 @@ import {
   materialsForDevice,
   mrtOutput,
   lodBias,
+  FRONT_GLASS_ROUGHNESS,
+  frontGlassSpecular,
+  LENS_COVER_ROUGHNESS,
+  LENS_ELEMENTS,
+  PANEL_ALBEDO,
+  PANEL_ROUGHNESS,
+  PANEL_SPECULAR,
 } from '../src/renderer/src/phone3d/materials';
-import { aimStudio, fillRadiance, fillScene, lightDir, quantizeBg, studioLights } from '../src/renderer/src/phone3d/environment';
+import { aimStudio, lightDir, quantizeBg, studioRadiance, studioScene } from '../src/renderer/src/phone3d/environment';
 
 const dev = (id: string) => getDevice(id)!;
 const build = (d: DeviceModel): PhoneModel => phoneModel(d, body3dFor(d));
@@ -380,11 +386,52 @@ describe('front, screen and back', () => {
     }
   });
 
-  it('17 Pro: aluminium unibody back with an inlaid glass panel and its seam; no back seam at the band', () => {
+  it('plateaus rise on a filleted curve: no face of the rise looks down at the floor (round 1 drew a black undercut there)', () => {
+    for (const id of ['iphone-17-pro', 'iphone-16-pro', 'iphone-air', 'iphone-17']) {
+      const { group } = build(dev(id));
+      const pl = part(group, 'plateau')[0];
+      const n = attr(pl.geometry, 'normal');
+      let steepest = 0;
+      let corner = 0;
+      for (let i = 0; i < n.count; i++) {
+        // A face of the rise that points down (−y) must also point out of the back (−z): never a vertical wall.
+        const a = Math.acos(Math.min(1, -n.getZ(i))) * (180 / Math.PI);
+        if (n.getY(i) < -0.2) corner = Math.max(corner, a);
+        if (n.getY(i) < -0.5) steepest = Math.max(steepest, a);
+      }
+      // The bottom edge rises at most ~60° (1.5 × height / run); a bar's corners, where it turns flush into the
+      // body sides, a little steeper. Round 1's wall was 90° along the whole edge.
+      expect(steepest, id).toBeLessThan(62);
+      expect(corner, id).toBeLessThan(80);
+    }
+  });
+
+  it('side buttons are crowned (their tops curve like the band) and about 3.5 mm across', () => {
+    const { group, dims } = build(dev('iphone-17-pro'));
+    const b = part(group, 'button')[0];
+    const n = attr(b.geometry, 'normal');
+    // Normals on the left-side buttons spread smoothly from the side (−x) toward the faces: a dome, not a flat top.
+    const tilts = new Set<number>();
+    for (let i = 0; i < n.count; i++) if (n.getX(i) < -0.2) tilts.add(Math.round(Math.acos(-n.getX(i)) * (180 / Math.PI) / 10));
+    expect(tilts.size).toBeGreaterThanOrEqual(6);
+    const bb = b.geometry.boundingBox!;
+    expect(bb.max.z - bb.min.z).toBeLessThan(4);
+    expect(bb.max.z - bb.min.z).toBeGreaterThan(0.3 * dims.depth);
+  });
+
+  it('17 Pro: aluminium unibody back with an inlaid glass panel in a fine metal seam (no black keyline); no back seam at the band', () => {
     const { group, dims } = build(dev('iphone-17-pro'));
     expect(dims.unibody).toBe(true);
     expect(part(group, 'backPanel').length).toBe(1);
-    expect(part(group, 'seam').map((m) => m.name).sort()).toEqual(['seam', 'seam:panel']);
+    // The only dark seam is the front one: the panel sits in a 0.05 mm step of the back's own metal.
+    expect(part(group, 'seam').map((m) => m.name)).toEqual(['seam']);
+    const seamBox = part(group, 'seam')[0].geometry.boundingBox!;
+    expect(seamBox.min.z).toBeGreaterThan(0);
+    const back = part(group, 'back')[0].geometry.boundingBox!;
+    const panel = part(group, 'backPanel')[0].geometry.boundingBox!;
+    expect(back.max.z).toBeCloseTo(-dims.depth / 2 + 0.05, 6);
+    expect(panel.max.z).toBeCloseTo(-dims.depth / 2 + 0.05, 6);
+    expect(panel.min.z).toBeCloseTo(-dims.depth / 2, 6);
     expect(build(dev('iphone-16-pro')).dims.unibody).toBe(false);
     expect(part(build(dev('iphone-16-pro')).group, 'backPanel').length).toBe(0);
   });
@@ -474,22 +521,37 @@ describe('materials (§3.4)', () => {
     expect(ti.back.clearcoat).toBe(0);
     // Plateau stays glossy glass on a frosted Pro.
     expect(ti.plateau.clearcoat).toBe(1);
-    // Front glass: AR-coated, one lobe.
+    // Front glass: AR-coated, one lobe; the border and the screen's sheen are ONE sheet (same roughness, same
+    // strength from the glass setting), so a reflection crosses the whole front with no halo at the screen edge.
     expect(ti.frontGlass.clearcoat).toBe(0);
-    expect(ti.frontGlass.roughness).toBe(0.02);
-    expect(ti.frontGlass.specularIntensity).toBe(0.7);
+    expect(ti.frontGlass.roughness).toBe(FRONT_GLASS_ROUGHNESS);
+    expect(ti.glare.roughness).toBe(FRONT_GLASS_ROUGHNESS);
+    expect(ti.frontGlass.specularIntensity).toBe(frontGlassSpecular(0.25));
+    expect(ti.glare.specularIntensity).toBe(ti.frontGlass.specularIntensity);
+    expect(frontGlassSpecular(0.25)).toBeCloseTo(0.6, 9);
+    expect(frontGlassSpecular(0)).toBe(0);
+    expect(frontGlassSpecular(1)).toBe(1);
     expect(ti.frontGlass.ior).toBe(1.5);
     expect(ti.frontGlass.color.getHexString()).toBe('050506');
-    // Glare = the glass setting, additive, coverage untouched.
-    expect(ti.glare.specularIntensity).toBe(0.25);
+    // Glare: additive, coverage untouched; none at glass 0.
     expect(ti.glare.blending).toBe(CustomBlending);
     expect(ti.glare.visible).toBe(true);
     expect(materialsFor('#3C3C3D', 'titanium', 'frosted', 0).glare.visible).toBe(false);
-    // Lens cover: iridescent AR tint.
-    expect(ti.lensCover.iridescence).toBe(0.6);
-    expect(ti.lensCover.iridescenceIOR).toBe(1.38);
-    expect(ti.lensCover.iridescenceThicknessRange).toEqual([250, 450]);
-    expect(ti.lensElements.map((m) => m.roughness)).toEqual([0.05, 0.17, 0.3]);
+    // Lens cover: AR-coated (about 1.5% straight on), slightly rough, no thin-film tint.
+    expect(ti.lensCover.iridescence).toBe(0);
+    expect(ti.lensCover.roughness).toBe(LENS_COVER_ROUGHNESS);
+    expect(ti.lensCover.roughness).toBeGreaterThanOrEqual(0.05);
+    expect(ti.lensCover.specularIntensity * 0.04).toBeLessThan(0.02);
+    expect(ti.lensElements.map((m) => m.roughness)).toEqual(LENS_ELEMENTS.map((e) => e.roughness));
+    // Unibody panel: satin etched glass in the colour of the metal round it, a step lighter.
+    const uni = materialsFor('#3A4659', 'aluminum', 'frosted', 0.25, { backMetal: true, plateau: 'band' });
+    expect(uni.backPanel.roughness).toBe(PANEL_ROUGHNESS);
+    expect(uni.backPanel.metalness).toBe(0);
+    // Its diffuse colour is the metal's lifted F0 (what the metal reads as in the studio) × PANEL_ALBEDO, not the
+    // dark swatch (a near-black card on a mid-blue back in round 1).
+    expect(uni.backPanel.color.r).toBeCloseTo(uni.band.color.r * PANEL_ALBEDO, 9);
+    expect(uni.backPanel.color.b).toBeCloseTo(uni.band.color.b * PANEL_ALBEDO, 9);
+    expect(uni.backPanel.specularIntensity).toBe(PANEL_SPECULAR);
     expect(ti.lensRing.metalness).toBe(1);
     expect(ti.lensRing.roughness).toBe(0.15);
     expect(ti.seam.color.getHexString()).toBe('0a0a0a');
@@ -588,76 +650,79 @@ describe('materials (§3.4)', () => {
   });
 });
 
-describe('studio environment (D13)', () => {
-  it('hero softboxes are RectAreaLights from the preset, aimed at the phone', () => {
-    for (const preset of LIGHT_PRESET_NAMES) {
-      const unit = 150;
-      const g = studioLights(preset, unit, 1);
-      const boxes = LIGHT_PRESETS[preset].boxes;
-      expect(g.children).toHaveLength(boxes.length);
-      g.updateMatrixWorld(true);
-      g.children.forEach((l, i) => {
-        expect(l).toBeInstanceOf(RectAreaLight);
-        const light = l as RectAreaLight;
-        expect(light.width).toBeCloseTo(boxes[i].w * unit, 9);
-        expect(light.height).toBeCloseTo(boxes[i].h * unit, 9);
-        expect(light.position.length()).toBeCloseTo(LIGHT_DISTANCE * unit, 6);
-        const [x, y, z] = lightDir(boxes[i].azimuth, boxes[i].elevation);
-        expect(light.position.x / (LIGHT_DISTANCE * unit)).toBeCloseTo(x, 9);
-        expect(light.position.y / (LIGHT_DISTANCE * unit)).toBeCloseTo(y, 9);
-        expect(light.position.z / (LIGHT_DISTANCE * unit)).toBeCloseTo(z, 9);
-        // It emits along its −z, which lookAt (the camera/light convention) aims at the origin.
-        const fwd = new Vector3(0, 0, -1).applyQuaternion(light.quaternion);
-        expect(fwd.dot(light.position.clone().normalize().negate())).toBeCloseTo(1, 6);
-      });
-      expect(g.children[0].name).toBe('key');
-    }
-  });
+describe('studio environment (D13: one procedural environment holds all the light)', () => {
+  const bg = [0.4, 0.05, 0.9] as const;
+  const at = (preset: (typeof LIGHT_PRESET_NAMES)[number], camAz: number, el: number) =>
+    studioRadiance(preset, bg, lightDir(camAz - DEFAULT_KEY_AZIMUTH, el));
+  const lum = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 
-  it('the PMREM fill scene holds only the dome and the sheen strip (no hero boxes)', () => {
-    const s = fillScene('studio', [0.4, 0.05, 0.9]);
+  it('the PMREM scene is the dome alone: no lights of any kind, every vertex colour finite and from studioRadiance', () => {
+    const s = studioScene('studio', bg);
     const kinds: string[] = [];
     s.traverse((o) => {
       if (o !== s) kinds.push(o.name || o.type);
-      expect(o).not.toBeInstanceOf(RectAreaLight);
+      expect((o as { isLight?: boolean }).isLight).not.toBe(true);
     });
-    expect(kinds.sort()).toEqual(['fill:dome', 'fill:sheen']);
-    // Base dome: 2–6% (studio ambient 0.05: horizon 0.02, top 0.05); the floor is tinted by the background.
-    const bg = [0.4, 0.05, 0.9] as const;
-    expect(fillRadiance('studio', bg, [0, 1, 0], false)[0]).toBeCloseTo(0.05, 9);
-    expect(fillRadiance('studio', bg, [0, 0, 1], false)[0]).toBeCloseTo(0.02, 9);
-    const floor = fillRadiance('studio', bg, [0, -1, 0], false);
-    expect(floor[2]).toBeGreaterThan(floor[0]);
-    expect(floor[0]).toBeGreaterThan(floor[1]);
-    // Bounce cards: soft, either side of the phone as seen at the default key azimuth (−35),
-    // dim next to a softbox (22+), and absent straight behind the camera.
-    const side = (az: number) => fillRadiance('studio', bg, lightDir(az + 35, 10))[0];
-    expect(side(-105)).toBeGreaterThan(0.5);
-    expect(side(105)).toBeGreaterThan(0.4);
-    expect(side(0)).toBeLessThan(0.05);
-    expect(fillRadiance('night', bg, lightDir(-105 + 35, 10))[0]).toBeLessThan(side(-105));
-    // The dome mesh carries exactly these values, all finite.
-    const dome = s.getObjectByName('fill:dome') as Mesh;
+    expect(kinds).toEqual(['studio:dome']);
+    const dome = s.getObjectByName('studio:dome') as Mesh;
     const pos = attr(dome.geometry, 'position');
     const col = attr(dome.geometry, 'color');
     for (let i = 0; i < pos.count; i += 7) {
-      const v = fillRadiance('studio', [0.4, 0.05, 0.9], [pos.getX(i) / 10, pos.getY(i) / 10, pos.getZ(i) / 10]);
+      const v = studioRadiance('studio', bg, [pos.getX(i) / 10, pos.getY(i) / 10, pos.getZ(i) / 10]);
       expect(col.getX(i)).toBeCloseTo(v[0], 5);
+      expect(Number.isFinite(col.getY(i)) && col.getY(i) >= 0).toBe(true);
     }
-    const strip0 = s.getObjectByName('fill:sheen') as Mesh;
-    const sc = attr(strip0.geometry, 'color');
-    for (let i = 0; i < sc.count; i++) expect(Number.isFinite(sc.getX(i)) && sc.getX(i) >= 0).toBe(true);
-    // The sheen strip is in front (camera side), above centre.
-    const strip = s.getObjectByName('fill:sheen')!;
-    expect(strip.position.z).toBeGreaterThan(0);
-    expect(strip.position.y).toBeGreaterThan(0);
+    expect(DEFAULT_KEY_AZIMUTH).toBe(defaultPhone3D().light.azimuth);
   });
 
-  it('aimStudio turns the boxes and the environment together; bg quantizes to 16 levels', () => {
+  it('studio: even round the camera, so a finish keeps its colour as the phone turns (what a back mirrors from turn 90 to 180)', () => {
+    // A flat face turned θ off the camera mirrors the direction 2θ off it, near level: 0..±90° of camera azimuth.
+    let lo = Infinity;
+    let hi = 0;
+    for (let az = -90; az <= 90; az += 5) {
+      for (let el = -6; el <= 6; el += 3) {
+        const v = lum(at('studio', az, el));
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
+      }
+    }
+    expect(hi / lo).toBeLessThan(1.35);
+    // Nothing bright on the camera axis (round 1's sheen strip there clipped a Silver back to white at turn 180).
+    expect(lum(at('studio', 0, 0))).toBeLessThan(0.75);
+  });
+
+  it('studio: a white bounce card below (faces pointing down are lit), dark flags at the sides, the key and rims above the dome', () => {
+    const horizon = lum(at('studio', 0, 0));
+    expect(lum(at('studio', 0, -60))).toBeGreaterThan(0.75 * horizon);
+    // The card is mostly white: the background tints it only a little.
+    const floor = at('studio', 0, -60);
+    expect(floor[2] / floor[1]).toBeLessThan(1.3);
+    // Flags: either side, a little behind the phone.
+    for (const side of [-1, 1]) expect(lum(at('studio', side * FLAGS.azimuth, FLAGS.elevation))).toBeLessThan(0.25 * horizon);
+    // The key (azimuth = the key's own, KEY_ELEVATION up) and the rim strips behind outshine the dome.
+    expect(lum(at('studio', DEFAULT_KEY_AZIMUTH, KEY_ELEVATION))).toBeGreaterThan(2 * horizon);
+    const rim = LIGHT_PRESETS.studio.boxes[2];
+    expect(lum(at('studio', DEFAULT_KEY_AZIMUTH + rim.azimuth, rim.elevation))).toBeGreaterThan(3 * horizon);
+  });
+
+  it('every softbox has a soft edge (no hard rectangle in a lens or the glass), and no preset clips its key', () => {
+    for (const preset of LIGHT_PRESET_NAMES) {
+      const key = LIGHT_PRESETS[preset].boxes[0];
+      // Walk out of the key horizontally in 0.5° steps: no step changes more than 12% of its radiance.
+      let prev = lum(at(preset, DEFAULT_KEY_AZIMUTH, key.elevation));
+      for (let d = 0.5; d <= key.halfW * 1.6; d += 0.5) {
+        const v = lum(at(preset, DEFAULT_KEY_AZIMUTH + d / Math.cos((key.elevation * Math.PI) / 180), key.elevation));
+        expect(Math.abs(v - prev), `${preset} ${d}`).toBeLessThan(0.12 * key.radiance);
+        prev = v;
+      }
+      // A key at 2.5 or more tone maps to white on any metal and washed Cosmic Orange to peach in round 1.
+      expect(key.radiance, preset).toBeLessThanOrEqual(2.5);
+    }
+  });
+
+  it('aimStudio turns the environment to the key azimuth; bg quantizes to 16 levels', () => {
     const scene = new Scene();
-    const g = studioLights('studio');
-    aimStudio(g, scene, -35);
-    expect(g.rotation.y).toBeCloseTo((-35 * Math.PI) / 180, 12);
+    aimStudio(scene, -35);
     expect(scene.environmentRotation.y).toBeCloseTo((-35 * Math.PI) / 180, 12);
     expect(quantizeBg([0.5, 0.01, 1.2])).toEqual([0.5333333333333333, 0, 1]);
   });

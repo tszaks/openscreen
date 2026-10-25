@@ -32,6 +32,8 @@ import {
   shadowHull,
   shadowPointsWorld,
   shadowSigma,
+  SHADOW_OFFSET,
+  shadowLightDir,
   WALL_GAP_MM,
   subFrameTimes,
   type Cam3D,
@@ -203,6 +205,47 @@ describe('screen hit-testing', () => {
     };
     expect(steep(70)).not.toBeNull();
     expect(steep(85)).toBeNull();
+  });
+});
+
+describe('shadow light (look round 2: a drop shadow at every turn)', () => {
+  /** Largest sideways offset (world px) of a shadow point from its body point seen straight on the catcher. */
+  const offsetOf = (p: ReturnType<typeof with3d>) => {
+    const s = scene3d(p)!;
+    const cam = camAt(s, 0);
+    const pts = bodyPointsMm(s, true).map((q) => modelToWorld(q, cam));
+    const sh = shadowPointsWorld(s, cam);
+    const wall = s.p3.shadow.kind === 'wall';
+    return { s, cam, off: Math.max(...pts.map((q, i) => (wall ? Math.hypot(q[0] - sh[i][0], q[1] - sh[i][1]) : Math.hypot(q[0] - sh[i][0], q[2] - sh[i][2])))) };
+  };
+
+  it('the offset never passes the 2D frame shadow\'s (SHADOW_OFFSET × body long side), front to edge-on, wall and floor', () => {
+    expect(SHADOW_OFFSET).toBe(DEFAULT_FRAME_SHADOW.offsetY);
+    for (const kind of ['wall', 'floor'] as const) {
+      for (const turn of [0, 30, 60, 90, 120, 150, 180]) {
+        for (const azimuth of [-35, 0, 60, 160]) {
+          const p = with3d(phoneProject(), { pose: { ...FRONT, turn }, shadow: { on: true, kind, opacity: 0.4, softness: 0.5 }, light: { preset: 'studio', azimuth, intensity: 1 } });
+          const { s, cam, off } = offsetOf(p);
+          const long = Math.max(s.bodyMm.width, s.bodyMm.height) * cam.scale;
+          expect(off, `${kind} turn ${turn} az ${azimuth}`).toBeLessThanOrEqual(SHADOW_OFFSET * long * 1.0001);
+        }
+      }
+    }
+    // Edge-on, round 1's wall shadow ran ~5 phone widths sideways; now it hugs the profile.
+    const edge = offsetOf(with3d(phoneProject(), { pose: { ...FRONT, turn: 90 } }));
+    expect(edge.off).toBeLessThan(edge.s.bodyMm.width * edge.cam.scale * 0.25);
+  });
+
+  it('keeps the key\'s direction (down and away from the key), and a shot\'s light channel does not swing it', () => {
+    const base = with3d(phoneProject(), { light: { preset: 'studio', azimuth: -35, intensity: 1 } });
+    const s = scene3d(base)!;
+    const cam = camAt(s, 0);
+    const L = shadowLightDir(s, cam);
+    expect(L[0]).toBeLessThan(0); // light from the left: the shadow falls right
+    expect(L[1]).toBeGreaterThan(0); // from above: it falls down
+    const swung = with3d(phoneProject(), { light: { preset: 'studio', azimuth: -35, intensity: 1 }, pose: { ...FRONT, light: -60 } });
+    const s2 = scene3d(swung)!;
+    expect(shadowLightDir(s2, camAt(s2, 0))).toEqual(L);
   });
 });
 
@@ -613,16 +656,25 @@ describe('ROI, shadow and depth', () => {
       });
     const cases: [string, ReturnType<typeof with3d>][] = [
       ['9:16 size 1.5 y −0.35 fov 55 el 8 az 160', floor('social-9x16', 55, 8, 160, { size: 1.5, y: -0.35 })],
-      ['9:16 fov 60 tilt −40 az 180', floor('social-9x16', 60, 0, 180, { tilt: -40 })],
-      ['9:16 fov 60 size 1.2 az 180', floor('social-9x16', 60, 0, 180, { size: 1.2 })],
-      ['16:9 fov 60 size 1.2 tilt −85 az 180', floor('landscape-16x9', 60, 0, 180, { size: 1.2, tilt: -85 })],
-      ['none fov 60 tilt −40 az 180', floor('none', 60, 0, 180, { tilt: -40 })],
+      // With the shadow offset capped, the floor catcher reaches behind the eye only for a big phone leaned toward
+      // the camera (round 1 reached it with long shadows from a key behind the phone).
+      ['9:16 fov 60 size 2 tilt −40 az 180', floor('social-9x16', 60, 0, 180, { size: 2, tilt: -40 })],
+      ['9:16 fov 55 size 1.5 tilt −85 az 180', floor('social-9x16', 60, 8, 180, { size: 1.5, tilt: -85 })],
+      ['16:9 fov 60 size 3 tilt −85 az 180', floor('landscape-16x9', 60, 0, 180, { size: 3, tilt: -85 })],
+      ['none fov 60 size 3 tilt −40 az 180', floor('none', 60, 0, 180, { size: 3, tilt: -40 })],
     ];
     for (const [label, p] of cases) {
       const s = scene3d(p)!;
       const cam = camAt(s, 0);
-      // The setup really has catcher corners behind the eye.
-      expect(Math.min(...shadowCatcherCorners(s, cam).map((w) => projectWorld(w, cam)[2])), label).toBeLessThan(0);
+      const nearest = Math.min(...shadowCatcherCorners(s, cam).map((w) => projectWorld(w, cam)[2]));
+      if (label.startsWith('9:16 size 1.5')) {
+        // Round 1's long shadow from a key behind (az 160) ran the floor catcher behind the eye here; with the
+        // offset capped at the 2D frame shadow's (SHADOW_OFFSET) it stays in front.
+        expect(nearest, label).toBeGreaterThan(0);
+      } else {
+        // The setup really has catcher corners behind the eye.
+        expect(nearest, label).toBeLessThan(0);
+      }
       checkFrame(p, label);
       // What is seen of the catcher is in front of the eye and on the canvas, and the blur is measured there.
       const seen = catcherInView(s, cam);
@@ -641,10 +693,14 @@ describe('ROI, shadow and depth', () => {
     const bcam = camAt(bs, 0);
     expect(Math.min(...bodyPointsMm(bs, true).map((q) => project(q, bcam)[2]))).toBeLessThan(-500);
     checkFrame(big, 'size 3 tilt −85 fov 60 el 30');
-    // The first case, by the numbers the review measured: the hard shadow reaches the canvas bottom and near
-    // stays near the body (the regressed code gave h = 1434, near = 1, shadowBlurPx = −5682).
+    // The first case, by the numbers the review measured (the regressed code gave h = 1434, near = 1,
+    // shadowBlurPx = −5682): near stays near the body. Its shadow, once long enough to reach the canvas bottom, is
+    // now the capped drop shadow, so the ROI ends above it.
     const p = cases[0][1];
-    expect(renderRoi(p, 0)).toEqual({ x: 0, y: 0, w: 1080, h: 1920 });
+    const roi = renderRoi(p, 0)!;
+    expect(roi).toMatchObject({ x: 0, y: 0, w: 1080 });
+    expect(roi.h).toBeGreaterThan(1600);
+    expect(roi.h).toBeLessThan(1920);
     expect(depthRange(p, 0)!.near).toBeGreaterThan(400);
   });
 

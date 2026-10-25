@@ -190,21 +190,21 @@ export const FRONT_GLASS_SPECULAR_PER_GLASS = 2.4;
 /** The front glass's specularIntensity for a phone3d.glass value (border and glare alike). */
 export const frontGlassSpecular = (glass: number) => Math.min(1, Math.max(0, glass) * FRONT_GLASS_SPECULAR_PER_GLASS);
 
-export const BACK_LIFT = { glossy: 0.04, frosted: 0.06, panel: 0.07 };
-/** The unibody panel's etched glass: satin (soft gradient reflection), lit by the same studio as the metal round it. */
+export const BACK_LIFT = { glossy: 0.04, frosted: 0.06 };
+/**
+ * The unibody panel's etched glass: satin (soft gradient reflection), lit by the same studio as the metal round it.
+ * Its diffuse colour is the metal's F0 × PANEL_ALBEDO: measured on the turntable (bin/metal.py) that puts it
+ * a step lighter than the metal (2-10% in sRGB) for Deep Blue, Silver and Cosmic Orange at turns 150 and 180.
+ */
 export const PANEL_ROUGHNESS = 0.36;
-export const PANEL_SPECULAR = 0.8;
+export const PANEL_SPECULAR = 0.4;
+export const PANEL_ALBEDO = 0.85;
 /** Mix a swatch toward white by `t` in sRGB (how a designer lightens a colour), returned linear. */
 function towardWhite(hex: string, t: number): Color {
   const c = new Color().setStyle(hex);
   const s = c.clone().convertLinearToSRGB();
   s.lerp(new Color(1, 1, 1), t);
   return s.convertSRGBToLinear();
-}
-
-/** A linear colour mixed toward white by `t` in sRGB, returned linear. */
-function lighter(c: Color, t: number): Color {
-  return c.clone().convertLinearToSRGB().lerp(new Color(1, 1, 1), t).convertSRGBToLinear();
 }
 
 function physical(params: ConstructorParameters<typeof MeshPhysicalMaterial>[0]): MeshPhysicalMaterial {
@@ -269,9 +269,10 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   const backGlass = back === 'glossy' ? glossy(towardWhite(hex, BACK_LIFT.glossy)) : frosted(towardWhite(hex, BACK_LIFT.frosted));
   const backMat = opts.backMetal ? band : backGlass;
   // The unibody's inlaid Ceramic Shield panel: a satin etched glass (a soft gradient reflection, not a matte card)
-  // in the colour the metal round it reads as (its lifted F0, bandF0), a step lighter. From the swatch itself, the
-  // Deep Blue panel was a near-black card on a mid-blue back and the Silver one a grey card on a white back.
-  const backPanel = physical({ color: lighter(bandF0(hex, material), BACK_LIFT.panel), roughness: PANEL_ROUGHNESS, specularIntensity: PANEL_SPECULAR, metalness: 0 });
+  // in the colour the metal round it reads as (its lifted F0, bandF0, × PANEL_ALBEDO), so it sits a step lighter than
+  // the metal in the studio. From the swatch itself, the Deep Blue panel was a near-black card on a mid-blue back and
+  // the Silver one a grey card on a white back.
+  const backPanel = physical({ color: bandF0(hex, material).multiplyScalar(PANEL_ALBEDO), roughness: PANEL_ROUGHNESS, specularIntensity: PANEL_SPECULAR, metalness: 0 });
 
   const ringColor = bandF0(darken(hex, 0.25), material);
   const lensRing = physical({ color: ringColor, metalness: 1, roughness: 0.15 });

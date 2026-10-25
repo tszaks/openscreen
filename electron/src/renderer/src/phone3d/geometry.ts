@@ -765,9 +765,9 @@ function buildLens(L: LensBuild, s: LensSpec) {
   fr.forEach((fz, gi) => {
     const r = glassR * rr[gi];
     const zc = coverZ - depth * fz;
-    // A curved element (up to about 12° at its rim) mirrors a spread of the studio: the key lands as a small
-    // catchlight near its top instead of the element reading as a flat disc.
-    const sag = Math.min(r * 0.22, depth * 0.35);
+    // A curved element mirrors a spread of the studio: the key lands as a small catchlight near its top instead
+    // of the element reading as a flat disc. Its crown stays under the one above it (and under the cover).
+    const sag = Math.min(r * 0.22, depth * fz * 0.85);
     const rings = 6;
     const seg = 48;
     const idx: number[][] = [];
