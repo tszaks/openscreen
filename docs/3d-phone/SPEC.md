@@ -529,6 +529,51 @@ One reflection lobe per real surface: real cover glass is one AR-coated surface,
 | GPU memory 4K ss2, measured, still (MiB) | 609.6 / 587.9 / 615 | 609.6 | <= 560 | FAIL |
 | GPU memory 4K ss2, measured, moving (MiB) | 393.5 / 409 / 375.8 | 393.5 | <= 560 | PASS |
 
+**Look round 4, fix round 1 (verification findings).** The round 4 text above called round 4 "faster than round 3"; that hid the real step back. Round 2's environment-only rig passed every speed budget on the same harness and machine, and the RectAreaLight rig (round 3, kept in round 4 as six lights) costs about 2 to 4 times as much. These are M4 Max numbers; the budgets are for an 8 GB M1, which would be slower again (not measured on 8 GB).
+
+| Measure (ms, median of 3) | round 2 (env only) | round 4 | fix round 1 | budget |
+|---|---|---|---|---|
+| Preview 1080, 3D pass p95 | 2.9 (2.9 / 3.3 / 2.0) | 7.1 | 4.4 | 4 |
+| Export 1080 moving p95 | 26.9 (30.8 / 26.9 / 25.5) | 93.0 | 75.2 | 45 |
+| Export 4K still p50 | 25.7 (23.5 / 28.8 / 25.7) | 62.5 | 37.7 | 60 |
+| Export 4K moving p95, all frames | 174.9 (174.9 / 155.7 / 176.4) | 700.9 | 324.0 | 200 |
+| Export 4K moving, adaptive-N max | 182.7 (182.7 / 173.2 / 188.1) | 1342.7 | 548.8 | 400 |
+
+Fix round 1 changes that change no look: metals (diffuse term exactly 0) and the glare skip each rect light's diffuse LTC integral (`passes.ts rectSpecularOnly`), the glare is not drawn inside the front glass flag, and the DoF target is made only by a frame that blurs. The 4K still and the preview gain most (the glare was a full six-light pass over the screen at FRONT). Round 4's medians were taken while other GPU work shared the machine (its runs spread 633-849 ms); fix round 1's three runs agree within 2%.
+
+Fix round 1 bench (GPU harness, final code, median of 3; Apple M4 Max; not measured on 8 GB):
+
+| Measure | runs 1 / 2 / 3 | median | budget | result |
+|---|---|---|---|---|
+| Preview 1080, 3D pass p95 (ms) | 4.4 / 4.3 / 4.4 | 4.4 | <= 4 | FAIL |
+| Preview 1080 with DoF, 3D pass p95 (ms) | 4.3 / 4.6 / 4.4 | 4.4 | <= 7 | PASS |
+| Export 1080 still, 3D pass p50 (ms) | 10.2 / 9.4 / 9.0 | 9.4 | <= 20 | PASS |
+| Export 1080 moving, 3D pass p95 (ms) | 75.2 / 76.8 / 72.2 | 75.2 | <= 45 | FAIL |
+| Export 4K still, 3D pass p50 (ms) | 39.1 / 37.3 / 37.7 | 37.7 | <= 60 | PASS |
+| Export 4K moving, 3D pass p95, all frames (ms) | 321.5 / 324.5 / 324.0 | 324.0 | <= 200 (decision 10) | FAIL |
+| Export 4K moving, adaptive-N frames, max (ms) | 537.7 / 548.8 / 587.3 | 548.8 | <= 400 | FAIL |
+| Export 4K moving, 3D pass CPU p50 (ms) | 118.9 / 132 / 147.3 | 132 | (info) | PASS |
+| Export 4K still, 3D pass CPU p50 (ms) | 71.5 / 71 / 73.5 | 71.5 | (info) | PASS |
+| GPU memory 4K ss1, measured, still (MiB) | 386.5 / 387.1 / 391.7 | 387.1 | <= 400 | PASS |
+| GPU memory 4K ss1, measured, moving (MiB) | 365.5 / 351.6 / 350 | 351.6 | <= 400 | PASS |
+| GPU memory 4K ss2, measured, still (MiB) | 615.5 / 618.1 / 616.1 | 616.1 | <= 560 | FAIL |
+| GPU memory 4K ss2, measured, moving (MiB) | 391.3 / 346.3 / 407.7 | 391.3 | <= 560 | PASS |
+
+Where the moving cost goes (4K, per sample, GPU timer, min of 7; a back view at turn about 150): 10.7 ms with the round 4 rig; 5.7 ms with the rect lights left out of the clearcoat lobe; 3.5 ms with that and two rect lights; 2.8 ms with no rect lights. The clearcoat lobe of the sealed aluminium (round 4) is half the cost: three r186's `RE_Direct_RectArea_Physical` evaluates a second LTC integral per light for it. The adaptive frames of the bench's 200° turn reach 46-56 samples, so the 200 ms all-frames budget needs about 3.5 ms per sample.
+
+**Open for the owner (decision 10): pick a trade or relax the budget.** Each option measured with the budgets suite, three runs, median (the options were temporary shader switches for the measurement, not committed):
+
+| Option | preview p95 | 1080 moving p95 | 4K still p50 | 4K moving p95 all | 4K adaptive max | budgets failed |
+|---|---|---|---|---|---|---|
+| O0 as shipped (round 4 look) | 4.2 | 89.6 | 46.6 | 318.7 | 549.1 | preview, 1080 moving, 4K moving, adaptive |
+| O1 rect lights not in the clear seal (the seal mirrors the painted environment only) | 3.3 | 74.8 | 40.5 | 291.4 | 321.0 | 1080 moving, 4K moving |
+| O2 O1 + only the key and one flat-face box as rect lights (the rest painted into the PMREM) | 2.5 | 51.6 | 39.6 | 215.6 | 223.1 | 1080 moving (52/45), 4K moving (216/200) |
+| O4 no rect lights (round 2's environment-only rig) | 2.4 | 42.2 | 31.9 | 190.3 | 199.9 | none |
+
+O1's look against the shipped look: `/tmp/openscreen-3d/look/fix/trade/seal-AB-back.png` (the back is darker; the flash diffuser turns grey without the seal's reflection of the boxes). O4 is the rig round 2's judges rejected (flat faces read as one flat tone). The other lever, a lower adaptive-N cap at 4K, makes fast turns strobe at 4K and is not measured. WP4b's acceptance line "§6.5 budgets met" is NOT met and stays open until the owner picks.
+
+**GPU memory (decision 10), fix round 1.** 4K ss 2 still: 616 MiB against 560 (FAIL, open); ss 1 still 387 MiB against 400 (13 MiB margin). What grew since a06392b (ss 1 still 340, ss 2 still 578): the studio dome went from 96×48 to 512×256 segments (about 9 MB of vertex buffers while the PMREM is made) and six RectAreaLights with clearcoat make larger programs (with no rect lights the ss 1 still number drops about 20-25 MiB; run-to-run noise is about ±15 MiB). The avgC shadow target is 2 MB. The "still" number is a first-frames peak: the same frame repeated 30 more times reads about 30-50 MiB lower, and the moving number after 121 frames is 391 MiB (ss 2), so most of the excess is memory the driver frees late, not memory the engine holds (counted: tile targets 117.5 MB, ss 2 screen texture 141 MB, shadow 20 MB, PMREM 25 MB). Options: count the steady state, or take O2/O4 (smaller programs). Not measured on 8 GB.
+
 GPU: ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Max, Unspecified Version). Not measured on 8 GB (no M1 8 GB here). Memory = macOS `footprint` of the GPU process, 3D at 4K (phone filling the 2160x3840 canvas) minus the same canvas drawn flat, in MiB (2^20 B); "still" is after the first 3 frames, "moving" after a 121-frame 200-degree turn. Times: GPU timer queries per 3D pass.
 
 ### 3.5 Colour management (D3)
@@ -1062,7 +1107,7 @@ Each control's only write path is `apply3d`. Staff copy is terse.
   - [ ] `WEBGL_lose_context` recovers in preview and aborts export.
   - [ ] Flat projects do not load three.
   - [ ] The App Store preset renders flat.
-  - [ ] §6.5 budgets met, including 4K on the real 2160×3840 file, GPU memory ≤ 340 MB, and one engine render per exported frame.
+  - [ ] §6.5 budgets met, including 4K on the real 2160×3840 file, GPU memory ≤ 340 MB, and one engine render per exported frame. (Open since look round 3: see "Look round 4, fix round 1"; the owner picks a trade or relaxes decision 10.)
 
 ### WP5: Editor UI (after WP2 op shapes and the WP3/WP4b Editor merges; can start on stubs)
 - **Owns:**
