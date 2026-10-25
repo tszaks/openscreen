@@ -641,3 +641,14 @@ describe('every 3D control writes through apply3d (SPEC D1)', () => {
     expect(editor).toMatch(/if \('error' in first\) \{\s*toast\(first\.error\);\s*return false;/);
   });
 });
+
+describe('popup menus', () => {
+  const css = (f: string) => readFileSync(join(__dirname, '../src/renderer/src', f), 'utf8');
+  it('never draw the focus ring a submenu would get when hovering its row focuses it (the highlighted row shows focus)', () => {
+    // The app-wide keyboard ring is a box-shadow on :focus-visible, and a focus() after a hover counts as keyboard focus.
+    expect(css('styles.css')).toMatch(/(^|\n):focus-visible\s*\{[^}]*box-shadow:\s*var\(--focus-ring\)/);
+    const rule = css('phone3d/phone3d.css').match(/\.p3-menu:focus-visible\s*\{([^}]*)\}/);
+    expect(rule?.[1]).toMatch(/box-shadow:\s*var\(--shadow-float\)/);
+    expect(css('phone3d/phone3d.css')).toMatch(/\.p3-menu\s*\{[^}]*box-shadow:\s*var\(--shadow-float\)/);
+  });
+});

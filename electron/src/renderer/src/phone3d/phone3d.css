@@ -1046,6 +1046,11 @@
   color: var(--label);
   outline: none;
 }
+/* A menu (or a submenu opened by hovering its row) takes focus for the arrow
+   keys; like a Mac menu it shows that by the highlighted row, never a ring. */
+.p3-menu:focus-visible {
+  box-shadow: var(--shadow-float);
+}
 .p3-menu .it {
   display: flex;
   align-items: center;
