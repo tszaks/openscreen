@@ -3,7 +3,8 @@
 //
 // - The hero softboxes (lighting.ts boxes: the key, the rim strips, the
 //   overhead strip, the lens catchlight) are RectAreaLights at a finite
-//   distance round the phone (LIGHT_DISTANCE body long sides). A light at a
+//   distance round the phone (LIGHT_DISTANCE body long sides, or the box's
+//   own nearer distance). A light at a
 //   finite distance is what models a FLAT face: each point of the 17 Pro's
 //   back sees the box from its own angle, so a broad soft highlight sweeps
 //   across the back and the band as the phone turns. Round 2 painted the
@@ -12,8 +13,10 @@
 //   backs and the turn-90 side read as one flat tone (look judges round 2).
 // - The set (the overhead gradient, the front fill, the white bounce card
 //   below, the dark side flags) is the PMREM environment (512): the room the
-//   phone stands in, so no face ever falls into a black gap between boxes
-//   (round 1's 2-6% fill turned Silver black at turn 150).
+//   phone stands in. Since look round 4 it is dark round the camera axis
+//   (metal reads by bright and dark zones; round 3's bright even set made
+//   every coloured finish one flat tone), with enough overhead gradient and
+//   floor card that no face goes black between the boxes.
 //
 // The light channel turns both together: the rig's group and
 // scene.environmentRotation (placeStudio, aimStudio), by the key azimuth

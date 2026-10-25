@@ -559,7 +559,8 @@ export const SHADOW_OFFSET = 0.08;
 /**
  * The direction (unit, toward the light) the shadow is cast along at this pose: the key's (`azimuth`, default the
  * project's light.azimuth, KEY_ELEVATION up), its sideways part scaled down so the highest point of the body above
- * the catcher lands at most SHADOW_OFFSET · body long side from where it would with a light straight on.
+ * the catcher lands at most SHADOW_OFFSET · body long side from where it would with a light straight on (the drop
+ * layer; the contact layer is cast straight on, contactPointsWorld).
  * The pose's `light` channel does NOT turn it: a shot turns the reflections, but a shadow that swept across the
  * backdrop in a spin-in (a hard wedge, then a streak, then a blob) drew the eye off the phone. Pure; the renderer
  * casts the silhouette along exactly this (renderer/phone3d/shadow.ts sampleLight).

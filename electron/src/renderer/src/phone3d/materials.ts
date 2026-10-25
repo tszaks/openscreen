@@ -1,8 +1,9 @@
 // Materials for the procedural phone (spec §3.4, §3.5, §3.6, D3).
 //
-// One reflection lobe per real surface: cover glass is one AR-coated
-// surface; a colour-under-glass back is a diffuse colour layer under one
-// glass surface (clearcoat); metal has no clearcoat.
+// One reflection lobe per real surface: cover glass is one surface; a
+// colour-under-glass back is a diffuse colour layer under one glass surface
+// (clearcoat); steel and titanium have no clearcoat; anodised aluminium is a
+// dyed oxide under a clear seal, so it has one (look round 4).
 //
 // Every material that is drawn into the engine's 2-attachment target gets
 // one of two output patches (`mrtOutput`):

@@ -24,10 +24,11 @@ import type { LightPreset } from './model';
  * Elevation of the key light, degrees: the key softbox and the shadow's light
  * (projection.ts keyLightDir) both use it, so it is a one-line look decision
  * (owner decision 7). 32 was picked by looking at 20, 32 and 44 in round 1;
- * round 2 kept it after the shadow offset was capped (projection.ts
- * SHADOW_OFFSET), because then it only moves the key's reflection: 32 lights
- * the back's upper half in a turn to the back without mirroring the key on
- * the plateau top.
+ * since round 2 the drop shadow's offset is capped (projection.ts
+ * SHADOW_OFFSET, 0.08 of the body since look round 4), so it mostly moves the
+ * key's reflection: 32 lights the back's upper half in a turn to the back
+ * without mirroring the key on the plateau top. Round 4 looked again with the
+ * darker set and kept it.
  */
 export const KEY_ELEVATION = 32;
 
