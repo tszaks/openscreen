@@ -133,6 +133,7 @@ export interface PhoneMaterials {
   lensCover: MeshPhysicalMaterial;
   flashRing: MeshPhysicalMaterial;
   flash: MeshPhysicalMaterial;
+  flashFresnel: MeshPhysicalMaterial;
   sensor: MeshPhysicalMaterial;
   decal: MeshPhysicalMaterial;
   cameraControl: MeshPhysicalMaterial;
@@ -359,12 +360,14 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   // Flash: a thin polished ring of the finish's metal round a frosted diffuser under a clear cover (the cover's
   // clearcoat reflects the softboxes like the lens glass does; the diffuser under it is a pale warm grey, not cream).
   const flashRing = physical({ color: ringColorOf(hex, material), metalness: 1, roughness: LENS_RING.roughness });
-  const flash = physical({ color: srgb(FLASH_DIFFUSER), roughness: 0.45, metalness: 0, specularIntensity: 0.4, clearcoat: 1, clearcoatRoughness: 0.04 });
+  // Under its cover glass (geometry.ts: a lensCover disc over it) the diffuser is frosted plastic: no coat of its own.
+  const flash = physical({ color: srgb(FLASH_DIFFUSER), roughness: 0.55, metalness: 0, specularIntensity: 0.3 });
+  const flashFresnel = physical({ color: srgb(FLASH_DIFFUSER).multiplyScalar(0.88), roughness: 0.5, metalness: 0, specularIntensity: 0.3 });
   // LiDAR / front camera glass: a dark violet-black disc under clear glass (clearcoat), so it reflects the studio
   // like the lens covers; round 2's matte near-#000 read as a hole.
-  const sensor = physical({ color: srgb(SENSOR_COLOR), roughness: 0.35, metalness: 0, specularIntensity: 0.5, clearcoat: 1, clearcoatRoughness: 0.03 });
+  const sensor = physical({ color: srgb(SENSOR_COLOR), roughness: 0.35, metalness: 0, specularIntensity: 0.5 });
   const decal = physical({ color: srgb('#050505'), roughness: 0.9, metalness: 0 });
-  for (const m of [flashRing, flash, sensor, decal]) {
+  for (const m of [flashRing, flash, flashFresnel, sensor, decal]) {
     m.polygonOffset = true;
     m.polygonOffsetFactor = -1;
     m.polygonOffsetUnits = reversed ? 4 : -4;
@@ -387,7 +390,7 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   screen.depthWrite = true;
 
   const all: Material[] = [];
-  for (const m of [band, antenna, seam, frontGlass, glassRim, glare, backGlass, backPanel, plateauGlass, lensRing, lensBarrel, ...lensElements, lensRetainer, lensHood, lensCover, flashRing, flash, sensor, decal, cameraControl, screen]) {
+  for (const m of [band, antenna, seam, frontGlass, glassRim, glare, backGlass, backPanel, plateauGlass, lensRing, lensBarrel, ...lensElements, lensRetainer, lensHood, lensCover, flashRing, flash, flashFresnel, sensor, decal, cameraControl, screen]) {
     if (!all.includes(m)) all.push(m);
   }
   return {
@@ -408,6 +411,7 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
     lensCover,
     flashRing,
     flash,
+    flashFresnel,
     sensor,
     decal,
     cameraControl,
@@ -472,6 +476,7 @@ export function materialForPart(part: PhonePart, m: PhoneMaterials): Material | 
       const list: Material[] = [];
       list[FLASH_GROUP.ring] = m.flashRing;
       list[FLASH_GROUP.lamp] = m.flash;
+      list[FLASH_GROUP.fresnel] = m.flashFresnel;
       return list;
     }
     case 'lensElements':

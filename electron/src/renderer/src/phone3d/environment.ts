@@ -49,7 +49,7 @@ import type { LightPreset } from '../../../shared/phone3d/model';
 import { HDRI, hdriTexture } from './hdri';
 
 /** How much the bounce card takes on the background's mean colour (the rest is white). */
-const FLOOR_TINT = 0.15;
+const FLOOR_TINT = 0.06;
 /** The floor card blends in over this many degrees below the horizon. */
 const FLOOR_BLEND_DEG = 15;
 const DOME_RADIUS = 10;
@@ -153,7 +153,7 @@ const angleDiff = (a: number, b: number) => ((((a - b) % 360) + 540) % 360) - 18
  *  panorama is the room every preset stands in; the presets differ by how bright and what colour it is, and by
  *  their softboxes (lighting.ts). */
 export const HDRI_LOOK: Record<LightPreset, { gain: number; tint: string }> = {
-  studio: { gain: 0.35, tint: '#ffffff' },
+  studio: { gain: 0.35, tint: '#f3f6ff' },
   soft: { gain: 0.6, tint: '#ffffff' },
   contrast: { gain: 0.25, tint: '#ffffff' },
   warm: { gain: 0.4, tint: '#ffd9b8' },

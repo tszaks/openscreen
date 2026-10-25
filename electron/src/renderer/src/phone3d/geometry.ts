@@ -107,6 +107,8 @@ const BUTTON_CROWN = 0.32;
 const CAMERA_CONTROL_PROUD_MM = 0.06;
 /** The flash: a thin metal ring round a frosted diffuser that fills it (round 2's black 22% ring read as clip-art). */
 const FLASH_LAMP_FRAC = 0.88;
+/** The flash diffuser's Fresnel lens: this many fine concentric rings, a shade darker than the diffuser. */
+const FLASH_FRESNEL_RINGS = 7;
 /** Bottom edge: USB-C pill and grilles. */
 const PORT_MM = { w: 8.3, h: 2.5 };
 const GRILLE = { holes: 6, d: 0.95, pitch: 1.3, gap: 2.4 };
@@ -138,7 +140,7 @@ const RISE_ROWS = 32;
  * back (degrees); the fillet radii are mm and shrink together when the step is
  * too low for them.
  */
-export const PLATEAU_STEP = { wall: 60, footR: 0.35, topR: 0.9 } as const;
+export const PLATEAU_STEP = { wall: 70, footR: 0.3, topR: 0.7 } as const;
 
 interface Rise {
   /** Model y where the rise leaves the back, and where it reaches the plateau top (y1 > y0). */
@@ -270,7 +272,7 @@ export const FRONT_GROUP = { lens: 0, ring: 1, grille: 2 } as const;
 /** Material groups inside the lens-elements mesh: three element domes (top to bottom) and the retaining ring. */
 export const LENS_GROUP = { element0: 0, element1: 1, element2: 2, retainer: 3, hood: 4 } as const;
 /** Material groups inside the flash mesh. */
-export const FLASH_GROUP = { ring: 0, lamp: 1 } as const;
+export const FLASH_GROUP = { ring: 0, lamp: 1, fresnel: 2 } as const;
 /** frontGlass material groups: the flat sheet (border round the screen) and its rounded rim. */
 export const FRONT_GLASS_GROUP = { flat: 0, rim: 1 } as const;
 
@@ -1172,25 +1174,41 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
   // Flash, sensor (LiDAR), mic: discs on the plateau top, or on the back beside it.
   const surfaceZ = (q: V2) => (onTop(q) ? plateauTop : d2) + DECAL_LIFT_MM;
   const flash = new Builder();
+  // Flash and LiDAR sit under flat cover glass (owner decision 15: glass-covered, not flat discs): a glass disc
+  // over each (the lens covers' material: it mirrors the room), over a frosted diffuser with the fine concentric
+  // rings of its Fresnel lens (flash), or a dark sensor window (LiDAR).
+  const covers = new Builder();
   if (pl.flash) {
     const q = lensPos(pl.flash);
     const r = pl.flash.rMm ?? 3.4;
-    disc(flash, q[0], q[1], r, surfaceZ(q), FLASH_GROUP.ring);
-    disc(flash, q[0], q[1], r * FLASH_LAMP_FRAC, surfaceZ(q) + DECAL_LIFT_MM, FLASH_GROUP.lamp);
+    const z = surfaceZ(q);
+    const rl = r * FLASH_LAMP_FRAC;
+    disc(flash, q[0], q[1], r, z, FLASH_GROUP.ring);
+    disc(flash, q[0], q[1], rl, z + DECAL_LIFT_MM, FLASH_GROUP.lamp);
+    for (let k = 1; k <= FLASH_FRESNEL_RINGS; k++) {
+      const ro = (rl * (k + 0.5)) / (FLASH_FRESNEL_RINGS + 1);
+      const ri = ro - rl / (2 * (FLASH_FRESNEL_RINGS + 1));
+      const ring = (rad: number) => circleLoop(rad, 48).p.map(([px, py]): V2 => [px + q[0], py + q[1]]);
+      cap(flash, ring(ro), z + 2 * DECAL_LIFT_MM, 1, [ring(ri).reverse()], undefined, FLASH_GROUP.fresnel);
+    }
+    disc(covers, q[0], q[1], r * 0.98, z + 3 * DECAL_LIFT_MM);
   }
   const sensor = new Builder();
   if (pl.sensor) {
     const q = lensPos(pl.sensor);
-    disc(sensor, q[0], q[1], pl.sensor.rMm ?? 3.3, surfaceZ(q));
+    const r = pl.sensor.rMm ?? 3.3;
+    disc(sensor, q[0], q[1], r, surfaceZ(q));
+    disc(covers, q[0], q[1], r * 0.98, surfaceZ(q) + 3 * DECAL_LIFT_MM);
   }
   const mic = new Builder();
   if (pl.mic) {
     const q = lensPos(pl.mic);
     disc(mic, q[0], q[1], Math.max(0.35, pl.mic.rMm ?? 0.5), surfaceZ(q), 0, 20);
   }
-  for (const b of [flash, sensor, mic]) transformBuilder(b, 0, BACK_TO_MODEL);
+  for (const b of [flash, sensor, mic, covers]) transformBuilder(b, 0, BACK_TO_MODEL);
   add(partMesh('flash', flash, RENDER_ORDER.decal));
   add(partMesh('sensor', sensor, RENDER_ORDER.decal));
+  add(partMesh('lensCover', covers, RENDER_ORDER.lensCover));
   add(partMesh('mic', mic, RENDER_ORDER.decal));
 
   // --- Buttons --------------------------------------------------------------------
