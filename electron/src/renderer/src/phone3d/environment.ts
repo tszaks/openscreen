@@ -56,6 +56,15 @@ const FLOOR_TINT = 0.06;
 /** The floor card blends in over this many degrees below the horizon. */
 const FLOOR_BLEND_DEG = 15;
 const DOME_RADIUS = 10;
+/**
+ * The studio floor falls off from the horizon toward the nadir: × 1 down to `fromDeg` below the horizon, × `deep`
+ * from `toDeg` (smoothstep between). The panorama's floor is one bright white sweep, and a back seen from the
+ * camera's height (22° above) mirrors the floor 10-35° down: unfalloffed, every back read as one flat tone and
+ * the plateau step's down-facing wall mirrored the white and read lighter than the top face (look v2 round 1).
+ * With the fall, a back's top (which mirrors nearer the horizon) is lighter than its bottom, the gradient a
+ * product shot's sweep gives, and the step's wall (which mirrors further down) is darker than the top face.
+ */
+export const FLOOR_FALL = { fromDeg: 0, toDeg: 18, deep: 0.2 } as const;
 export const PMREM_SIZE = 512;
 
 const deg = Math.PI / 180;
@@ -98,7 +107,7 @@ export function studioLights(preset: LightPreset): Group {
     if (box.inEnv) return; // painted into the set (studioRadiance)
     const light = new RectAreaLight(new Color().setStyle(box.color), box.radiance, 1, 1);
     light.name = i === 0 ? 'key' : `box${i}`;
-    light.userData.box = { dir: lightDir(box.azimuth, box.elevation), ...boxSize(box), radiance: box.radiance, distance: box.distance ?? LIGHT_DISTANCE };
+    light.userData.box = { dir: lightDir(box.azimuth, box.elevation), ...boxSize(box), radiance: box.radiance * HDRI_LOOK[preset].boxes, distance: box.distance ?? LIGHT_DISTANCE };
     g.add(light);
   });
   return g;
@@ -153,12 +162,12 @@ const angleDiff = (a: number, b: number) => ((((a - b) % 360) + 540) % 360) - 18
 /** How each preset takes the HDRI (owner decision 15): a gain (scene-linear) and a tint (sRGB). The studio
  *  panorama is the room every preset stands in; the presets differ by how bright and what colour it is, and by
  *  their softboxes (lighting.ts). */
-export const HDRI_LOOK: Record<LightPreset, { gain: number; tint: string }> = {
-  studio: { gain: 0.35, tint: '#f3f6ff' },
-  soft: { gain: 0.6, tint: '#ffffff' },
-  contrast: { gain: 0.25, tint: '#ffffff' },
-  warm: { gain: 0.4, tint: '#ffd9b8' },
-  night: { gain: 0.1, tint: '#b8c8ff' },
+export const HDRI_LOOK: Record<LightPreset, { gain: number; tint: string; boxes: number }> = {
+  studio: { gain: 0.5, tint: '#f3f6ff', boxes: 0.5 },
+  soft: { gain: 0.6, tint: '#ffffff', boxes: 1 },
+  contrast: { gain: 0.25, tint: '#ffffff', boxes: 1 },
+  warm: { gain: 0.4, tint: '#ffd9b8', boxes: 1 },
+  night: { gain: 0.1, tint: '#b8c8ff', boxes: 1 },
 };
 
 /**
@@ -182,7 +191,8 @@ export function studioSet(preset: LightPreset, bgMean: Rgb, dir: readonly [numbe
   const f = smoothstep(0, FLOOR_BLEND_DEG, -el);
   const [br, bgc, bb] = quantizeBg(bgMean);
   const floor = (c: number) => 1 - f * FLOOR_TINT + f * FLOOR_TINT * c * 2;
-  const keep: [number, number, number] = [k * floor(br), k * floor(bgc), k * floor(bb)];
+  const k2 = k * (1 - (1 - FLOOR_FALL.deep) * smoothstep(FLOOR_FALL.fromDeg, FLOOR_FALL.toDeg, -el));
+  const keep: [number, number, number] = [k2 * floor(br), k2 * floor(bgc), k2 * floor(bb)];
   const add: [number, number, number] = [0, 0, 0];
   // In the environment's own frame a box's azimuth is its offset from the key (the set turns with the rig).
   for (const box of rig.boxes) {

@@ -18,7 +18,7 @@ export const HDRI = {
   /** Poly Haven asset id (assets/SOURCE.md). */
   id: 'studio_small_09',
   /** Panorama turn, degrees, so its main lights stand where the key does (picked by looking). */
-  yawDeg: 270,
+  yawDeg: 133,
 } as const;
 
 export interface HdriData {

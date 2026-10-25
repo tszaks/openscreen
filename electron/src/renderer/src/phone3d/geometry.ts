@@ -127,7 +127,7 @@ const CIRCLE_SEG = 64;
  * the plateau's step; its corners are concentric with the body's. Round 2's 7 mm
  * and round 3's 4.2 mm margins read as a sticker or a tray set into the back.
  */
-const UNIBODY_PANEL = { margin: 1.5, top: 2.5 };
+const UNIBODY_PANEL = { margin: 1.5, top: 1.5 };
 /** Rows across a full-width plateau's rise (shared by the band, its seam and the back). */
 const RISE_ROWS = 32;
 /**
@@ -148,6 +148,8 @@ interface Rise {
   y1: number;
   /** The rows' y, y0 .. y1. */
   rows: number[];
+  /** Model y where the step's wall ends and its rounded top edge begins (y0 < yWall < y1). */
+  yWall: number;
   at(y: number): { dz: number; dzdy: number };
 }
 
@@ -157,7 +159,7 @@ interface Rise {
  * ends and tangent-continuous everywhere (arc, line, arc), so reflections run
  * off the back onto the wall and onto the top with no kink.
  */
-export function stepProfile(h: number): { run: number; at(s: number): { dz: number; dzdy: number } } {
+export function stepProfile(h: number): { run: number; wallEnd: number; at(s: number): { dz: number; dzdy: number } } {
   const th = (PLATEAU_STEP.wall * Math.PI) / 180;
   const sin = Math.sin(th);
   const cos = Math.cos(th);
@@ -172,6 +174,7 @@ export function stepProfile(h: number): { run: number; at(s: number): { dz: numb
   const run = s2 + rt * sin;
   return {
     run,
+    wallEnd: s2,
     at(s) {
       const x = Math.min(run, Math.max(0, s));
       if (x <= s1) {
@@ -195,6 +198,7 @@ export function fullBarRise(H: number, pl: Body3D['plateau']): Rise {
     y0,
     y1: y0 + run,
     rows: Array.from({ length: RISE_ROWS + 1 }, (_, k) => y0 + (run * k) / RISE_ROWS),
+    yWall: y0 + prof.wallEnd,
     at: (y) => prof.at(y - y0),
   };
 }
@@ -275,6 +279,12 @@ export const LENS_GROUP = { element0: 0, element1: 1, element2: 2, retainer: 3, 
 export const FLASH_GROUP = { ring: 0, lamp: 1, fresnel: 2 } as const;
 /** frontGlass material groups: the flat sheet (border round the screen) and its rounded rim. */
 export const FRONT_GLASS_GROUP = { flat: 0, rim: 1 } as const;
+/** Material groups of the LiDAR: its dark glass window and the thin metal ring round it. */
+export const SENSOR_GROUP = { glass: 0, ring: 1 } as const;
+/** The LiDAR window's radius as a fraction of the sensor's (the rest is its ring). */
+export const SENSOR_WINDOW_FRAC = 0.86;
+/** Plateau mesh groups: its top (and rounded top edge), and a full-width step's foot and wall. */
+export const PLATEAU_GROUP = { top: 0, wall: 1 } as const;
 
 /** The measured layout the meshes were built from, for tests and the renderer. */
 export interface PhoneDims {
@@ -1122,8 +1132,11 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
       const n = norm2(-r.dzdy, 1);
       const row: [number, number] = [plateau.v(xl, y, d2 + r.dz, 0, n[0], n[1]), plateau.v(xr, y, d2 + r.dz, 0, n[0], n[1])];
       if (prev) {
-        plateau.tri(prev[0], prev[1], row[1]);
-        plateau.tri(prev[0], row[1], row[0]);
+        // The foot fillet and the wall (rows up to the wall's end) are PLATEAU_GROUP.wall: a machined wall facing
+        // down reads darker than the top face; only the rounded top edge (PLATEAU_GROUP.top) catches a highlight.
+        const g = y <= rise.yWall + 1e-6 ? PLATEAU_GROUP.wall : PLATEAU_GROUP.top;
+        plateau.tri(prev[0], prev[1], row[1], g);
+        plateau.tri(prev[0], row[1], row[0], g);
       }
       prev = row;
     }
@@ -1197,7 +1210,10 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
   if (pl.sensor) {
     const q = lensPos(pl.sensor);
     const r = pl.sensor.rMm ?? 3.3;
-    disc(sensor, q[0], q[1], r, surfaceZ(q));
+    // A thin ring of the finish's metal round a dark glass window (as the flash), so the LiDAR reads as a flush
+    // window under the cover glass, not a black disc or a hole.
+    disc(sensor, q[0], q[1], r, surfaceZ(q), SENSOR_GROUP.ring);
+    disc(sensor, q[0], q[1], r * SENSOR_WINDOW_FRAC, surfaceZ(q) + DECAL_LIFT_MM, SENSOR_GROUP.glass);
     disc(covers, q[0], q[1], r * 0.98, surfaceZ(q) + 3 * DECAL_LIFT_MM);
   }
   const mic = new Builder();
