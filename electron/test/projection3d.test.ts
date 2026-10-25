@@ -42,6 +42,7 @@ import {
   WALL_GAP_MM,
   subFrameTimes,
   zoomViewAt,
+  ZOOM_PUSH,
   type Cam3D,
   type Quad,
   type Vec3,
@@ -829,28 +830,60 @@ describe('ROI, shadow and depth', () => {
 });
 
 describe('zoom push-in (owner decision 20)', () => {
-  it('zoomViewAt: none at scale 1; the zoom point lands where the screen centre was; at FRONT the screen scales by k about it', () => {
+  it('zoomViewAt: none at scale 1; capped so the phone stays whole (ZOOM_PUSH); the zoom point moves toward the canvas centre; every projection goes through it', () => {
     const p = with3d(phoneProject({ presetId: 'social-9x16' }));
     const s = scene3d(p)!;
     expect(zoomViewAt(s, 0, 1, { x: 0.3, y: 0.7 })).toBeNull();
-    const v = zoomViewAt(s, 0, 2, { x: 0.3, y: 0.7 })!;
     const before = screenMap3d(s, 0)!;
-    const P = applyHomography(before.h, 0.3, 0.7)!;
-    const R = applyHomography(before.h, 0.5, 0.5)!;
-    expect(v.s * P.x + v.ox).toBeCloseTo(R.x, 6);
-    expect(v.s * P.y + v.oy).toBeCloseTo(R.y, 6);
-    // A scene with the push-in: every projection goes through it.
+    const hull0 = bodyHull(s, 0)!;
+    const box = (pts: { x: number; y: number }[]) => {
+      const xs = pts.map((q) => q.x);
+      const ys = pts.map((q) => q.y);
+      return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+    };
+    const b0 = box(hull0);
+    const { width: W, height: H } = s.canvas;
+    // A 2× zoom on a phone that already fills ~60% of the canvas: the push stops where the outline fills ZOOM_PUSH.fill.
+    const v = zoomViewAt(s, 0, 2, { x: 0.3, y: 0.7 })!;
+    expect(v.s).toBeGreaterThan(1.05);
+    expect(v.s).toBeLessThan(2);
+    // (The cap counts the buttons too, so it is a touch under the bare outline's fit.)
+    const fit = Math.min((ZOOM_PUSH.fill * W) / (b0.x1 - b0.x0), (ZOOM_PUSH.fill * H) / (b0.y1 - b0.y0));
+    expect(v.s).toBeLessThanOrEqual(fit + 1e-9);
+    expect(v.s).toBeGreaterThan(fit - 0.03);
     const z = { ...s, viewAt: () => v };
+    const b1 = box(bodyHull(z, 0)!);
+    expect(b1.x0).toBeGreaterThanOrEqual(-1e-6);
+    expect(b1.y0).toBeGreaterThanOrEqual(-1e-6);
+    expect(b1.x1).toBeLessThanOrEqual(W + 1e-6);
+    expect(b1.y1).toBeLessThanOrEqual(H + 1e-6);
     const after = screenMap3d(z, 0)!;
     after.quad.forEach((q, i) => {
       expect(q.x).toBeCloseTo(v.s * before.quad[i].x + v.ox, 6);
       expect(q.y).toBeCloseTo(v.s * before.quad[i].y + v.oy, 6);
     });
-    expect(applyHomography(after.h, 0.3, 0.7)!.x).toBeCloseTo(R.x, 6);
-    // The ROI stays on the canvas (the zoomed phone runs off it).
+    const ys = after.quad.map((q) => q.y);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeLessThan(0.9 * H);
+    // The zoom point lands on the canvas centre on each axis, unless the outline would leave the fill band there
+    // (then the outline touches the band on that axis).
+    const P1 = applyHomography(after.h, 0.3, 0.7)!;
+    const mx = ((1 - ZOOM_PUSH.fill) / 2) * W;
+    const my = ((1 - ZOOM_PUSH.fill) / 2) * H;
+    // (bodyHull leaves out the buttons the clamp counts: a few px.)
+    const near = (a: number, b: number) => Math.abs(a - b) < 8;
+    expect(Math.abs(P1.x - W / 2) < 1e-3 || near(b1.x0, mx) || near(b1.x1, W - mx)).toBe(true);
+    expect(Math.abs(P1.y - H / 2) < 1e-3 || near(b1.y0, my) || near(b1.y1, H - my)).toBe(true);
+    // Half way through the flat zoom (k 1.5 of kMax 2), half the push; and it starts from the identity.
+    const half = zoomViewAt(s, 0, 1.5, { x: 0.3, y: 0.7 }, 2)!;
+    expect(half.s - 1).toBeCloseTo((v.s - 1) / 2, 6);
+    const tiny = zoomViewAt(s, 0, 1 + 1e-4, { x: 0.3, y: 0.7 }, 2)!;
+    expect(Math.abs(tiny.s - 1) + Math.abs(tiny.ox) + Math.abs(tiny.oy)).toBeLessThan(0.1);
+    // A phone already past the fill gets no push.
+    const big = scene3d(with3d(phoneProject({ presetId: 'social-9x16' }), { pose: { ...FRONT, size: 1.6 } }));
+    if (big) expect(zoomViewAt(big, 0, 2, { x: 0.5, y: 0.5 })).toBeNull();
+    // The ROI stays on the canvas.
     const roi = renderRoi(z, 0)!;
-    expect(roi.x >= 0 && roi.y >= 0 && roi.x + roi.w <= s.canvas.width && roi.y + roi.h <= s.canvas.height).toBe(true);
-    expect(roi.w * roi.h).toBeGreaterThan(0.5 * s.canvas.width * s.canvas.height);
+    expect(roi.x >= 0 && roi.y >= 0 && roi.x + roi.w <= W && roi.y + roi.h <= H).toBe(true);
   });
 
   it('the renderer\'s view offset (setViewOffset of the s-times view, shifted by −o) draws exactly the zoomed projection', () => {
@@ -859,7 +892,8 @@ describe('zoom push-in (owner decision 20)', () => {
       const p = with3d(phoneProject({ presetId: LAYOUTS[i % 3] }), { camera: { fov: 12 + r() * 30, elevation: r() * 20 } });
       const s = scene3d(p)!;
       const k = 1 + r() * 2;
-      const v = zoomViewAt(s, 0, k, { x: r(), y: r() })!;
+      // Any push-in (not only the capped ones zoomViewAt makes): the renderer must draw exactly the projection.
+      const v = { s: k, ox: (r() - 0.5) * 600 - (k - 1) * 540, oy: (r() - 0.5) * 600 - (k - 1) * 960 };
       const z = { ...s, viewAt: () => v };
       const pose = randomPose(r);
       const cam = camAt(z, 0, pose);

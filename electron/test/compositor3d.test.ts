@@ -220,16 +220,23 @@ describe('3D active with an engine', () => {
     texSrc.forEach((v, i) => expect(v).toBeCloseTo(full[i], 6));
   });
 
-  it('a zoom pushes the 3D camera in (owner decision 20): same segment and scale as flat, the screen grows by it, the crop centre lands on the screen centre', async () => {
+  it('a zoom pushes the 3D camera in (owner decision 20): same segment as flat, capped so the phone stays whole, the screen grows by it', async () => {
     const t = 5.5; // inside the fixture's manual zoom (hold 5-6.2 s, scale 1.5)
     const still = await renderOnce(with3d(base()), t, {}, (h) => fakeEngine(h, 1080, 1920), false);
     const zoomed = await renderOnce(with3d(base()), t, {}, (h) => fakeEngine(h, 1080, 1920), true);
     const q0 = (still.c.screenMap as { phone3d: { map: { quad: { x: number; y: number }[] } } }).phone3d.map.quad;
     const q1 = (zoomed.c.screenMap as { phone3d: { map: { quad: { x: number; y: number }[] } } }).phone3d.map.quad;
     const w = (q: { x: number; y: number }[]) => Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y);
-    expect(w(q1) / w(q0)).toBeCloseTo(1.5, 6);
+    // The push-in is capped (projection.ts ZOOM_PUSH): it grows the screen, by no more than the flat zoom's 1.5, and
+    // the screen stays under 0.9 of the canvas's height (the phone's outline stays on the canvas).
+    const k = w(q1) / w(q0);
+    expect(k).toBeGreaterThan(1.05);
+    expect(k).toBeLessThanOrEqual(1.5 + 1e-9);
+    const hgt = (q: { x: number; y: number }[]) => Math.max(...q.map((p) => p.y)) - Math.min(...q.map((p) => p.y));
+    expect(hgt(q1)).toBeLessThan(0.9 * 1920);
+    for (const p of q1) expect(p.y > 0 && p.y < 1920 && p.x > 0 && p.x < 1080).toBe(true);
     // The texture follows the on-canvas size: it is planned from the zoomed screen.
-    expect(zoomed.engine!.calls[0].scale).toBeCloseTo(1.5, 6);
+    expect(zoomed.engine!.calls[0].scale).toBeCloseTo(k, 6);
     expect(still.engine!.calls[0].scale).toBe(1);
     // Hit-testing goes through the zoomed screen: the canvas point of a source point moves with the push-in.
     const src = { x: 0.3, y: 0.4 };

@@ -264,7 +264,7 @@ export const PANEL = { metalness: 1, roughness: 0.4, desaturate: 0, lift: 1, cle
  */
 export const PLATEAU_WALL = 0.35;
 /** The lens and flash rings: the finish's metal, darker and less saturated (a deeper shade of the body, not a bright bezel). */
-export const LENS_RING = { darken: 0.35, desaturate: 0.3, roughness: 0.16 } as const;
+export const LENS_RING = { darken: 0.42, desaturate: 0.3, roughness: 0.16 } as const;
 /** Mix a swatch toward white by `t` in sRGB (how a designer lightens a colour), returned linear. */
 function towardWhite(hex: string, t: number): Color {
   const c = new Color().setStyle(hex);

@@ -65,6 +65,7 @@ import {
   LENS_ELEMENTS,
   ALUMINIUM_ROUGHNESS,
   PANEL,
+  PLATEAU_WALL,
   LENS_RING,
   GLASS_RIM,
   FRONT_GLASS_KNEE,
@@ -73,7 +74,7 @@ import {
   FRONT_GLASS_FLAG_SIN,
 } from '../src/renderer/src/phone3d/materials';
 import { RECT_DIFFUSE_LINE } from '../src/renderer/src/phone3d/passes';
-import { aimStudio, boxSize, equirectDir, HDRI_LOOK, lightDir, placeStudio, quantizeBg, SET_TEX, studioLights, studioSet, studioScene } from '../src/renderer/src/phone3d/environment';
+import { aimStudio, boxSize, equirectDir, FLOOR_FALL, HDRI_LOOK, lightDir, placeStudio, quantizeBg, SET_TEX, studioLights, studioSet, studioScene } from '../src/renderer/src/phone3d/environment';
 import { HDRI, hdriData, hdriTexture, rgbeToFloat } from '../src/renderer/src/phone3d/hdri';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { readFileSync } from 'node:fs';
@@ -684,19 +685,25 @@ describe('materials (§3.4)', () => {
     expect(ti.lensCover.specularIntensity).toBe(LENS_COVER_SPECULAR);
     for (const m of [ti.lensCover, ...ti.lensElements]) expect(m.customProgramCacheKey().split('|')).toContain('no-rect');
     expect(ti.lensElements.map((m) => m.roughness)).toEqual(LENS_ELEMENTS.map((e) => e.roughness));
-    // Unibody panel (look v2): frosted Ceramic Shield over the colour: mostly a diffuse colour layer under a soft glass
-    // coat, rougher than the metal round it, so it reads as glass in the finish's colour, not as more metal.
+    // Unibody panel (look v2 round 2): frosted Ceramic Shield over the colour, the SAME reflectance as the aluminium
+    // round it (round 1's mostly-diffuse panel read as a grey-slate or salmon sticker next to the metal); it differs
+    // only by finish: rougher, under a soft glass coat.
     const uni = materialsFor('#3A4659', 'aluminum', 'frosted', 0.25, { backMetal: true, plateau: 'band' });
     expect(uni.backPanel.roughness).toBe(PANEL.roughness);
     expect(uni.backPanel.roughness).toBeGreaterThan(uni.band.roughness);
     expect(uni.backPanel.metalness).toBe(PANEL.metalness);
-    expect(uni.backPanel.metalness).toBeLessThan(0.5);
+    expect(uni.backPanel.metalness).toBe(uni.band.metalness);
     expect(uni.backPanel.clearcoat).toBe(PANEL.clearcoat);
     expect(uni.backPanel.clearcoat).toBeGreaterThan(0);
+    expect(uni.backPanel.clearcoatRoughness).toBeGreaterThanOrEqual(0.3);
     const lum = (c: { r: number; g: number; b: number }) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-    expect(lum(uni.backPanel.color)).toBeCloseTo(lum(uni.band.color) * PANEL.lift, 6);
-    // Desaturated: its blue leads its red by less than the metal's.
-    expect(uni.backPanel.color.b - uni.backPanel.color.r).toBeLessThan((uni.band.color.b - uni.band.color.r) * PANEL.lift);
+    expect(uni.backPanel.color.r).toBeCloseTo(uni.band.color.r, 6);
+    expect(uni.backPanel.color.g).toBeCloseTo(uni.band.color.g, 6);
+    expect(uni.backPanel.color.b).toBeCloseTo(uni.band.color.b, 6);
+    // The plateau step's wall: the plateau's metal, darker (it faces down, away from the lights; a lit wall read as a lid).
+    expect(uni.plateauWall.metalness).toBe(uni.plateau.metalness);
+    expect(uni.plateauWall.roughness).toBe(uni.plateau.roughness);
+    expect(lum(uni.plateauWall.color)).toBeCloseTo(lum(uni.plateau.color) * PLATEAU_WALL, 6);
     // Lens rings: a deeper, less saturated shade of the finish's metal (round 3's bright copper read as toy bezels).
     const orange = materialsFor('#E8732F', 'aluminum', 'frosted', 0.25, { backMetal: true, plateau: 'band' });
     expect(lum(orange.lensRing.color)).toBeLessThan(lum(orange.band.color) * 0.6);
@@ -772,7 +779,7 @@ describe('materials (§3.4)', () => {
       const none = m.customProgramCacheKey().split('|').includes('no-rect');
       expect(patched(m), m.name || m.type).toBe(!none && m.metalness === 1);
     }
-    expect(patched(set.band) && patched(set.lensRing) && !patched(set.backPanel) && !patched(set.antenna)).toBe(true);
+    expect(patched(set.band) && patched(set.lensRing) && patched(set.backPanel) && !patched(set.antenna)).toBe(true);
     const s1 = frag();
     set.band.onBeforeCompile(s1 as never, undefined as never);
     expect(s1.fragmentShader).not.toContain('#include <lights_physical_pars_fragment>');
@@ -781,7 +788,7 @@ describe('materials (§3.4)', () => {
     const fn = s1.fragmentShader.slice(s1.fragmentShader.indexOf('void RE_Direct_RectArea_Physical'));
     expect(fn.slice(0, fn.indexOf('\n\t}\n')).split('LTC_Evaluate(').length - 1).toBe(2);
     const s2 = frag();
-    set.backPanel.onBeforeCompile(s2 as never, undefined as never);
+    set.antenna.onBeforeCompile(s2 as never, undefined as never);
     expect(s2.fragmentShader).toContain('#include <lights_physical_pars_fragment>');
   });
 
@@ -934,13 +941,23 @@ describe('studio environment (owner decision 15: one CC0 studio HDRI, the hero s
     for (const p of LIGHT_PRESET_NAMES) expect(HDRI_LOOK[p].gain, p).toBeGreaterThan(0);
   });
 
-  it('flags cut the room at the sides; the floor takes only a little of the backdrop colour', () => {
+  it('flags cut the room at the sides; the floor falls off below the horizon and takes only a little of the backdrop colour', () => {
     for (const side of [-1, 1]) expect(lum(at('studio', side * FLAGS.azimuth, FLAGS.elevation).keep)).toBeLessThan(0.1);
     const up = at('studio', 0, 60).keep;
     expect(up).toEqual([1, 1, 1]);
+    expect(lum(at('studio', 0, 0).keep)).toBeCloseTo(1, 6);
     const floor = at('studio', 0, -60).keep;
     expect(floor[2] / floor[1]).toBeLessThan(1.15);
-    expect(lum(floor)).toBeGreaterThan(0.9);
+    // Look v2 round 2: the floor falls to FLOOR_FALL.deep by FLOOR_FALL.toDeg (a back mirrors it as a top-to-bottom
+    // gradient, the step's down-facing wall reads darker than the top face), smoothly.
+    expect(lum(floor)).toBeGreaterThan(0.9 * FLOOR_FALL.deep);
+    expect(lum(floor)).toBeLessThan(1.1 * FLOOR_FALL.deep);
+    let prev = Infinity;
+    for (let el = 0; el >= -FLOOR_FALL.toDeg - 5; el -= 2) {
+      const v = lum(at('studio', 0, el).keep);
+      expect(v).toBeLessThanOrEqual(prev + 1e-9);
+      prev = v;
+    }
   });
 
   it('boxes marked inEnv are painted into the set with soft edges (lights only where a flat face needs one)', () => {
@@ -997,7 +1014,9 @@ describe('studio environment (owner decision 15: one CC0 studio HDRI, the hero s
           const size = boxSize(box);
           expect(l.width).toBeCloseTo(size.w * unit, 6);
           expect(l.height).toBeCloseTo(size.h * unit, 6);
-          expect(l.intensity).toBeCloseTo(box.radiance * 1.5, 9);
+          // × the preset's box gain against the room (HDRI_LOOK.boxes; look v2 round 2: half for studio, so the
+          // room's structure shows on the back instead of the boxes' even wash).
+          expect(l.intensity).toBeCloseTo(box.radiance * HDRI_LOOK[preset].boxes * 1.5, 9);
         });
       }
       // A key at 2.5 or more tone maps to white on any metal and washed Cosmic Orange to peach in round 1.

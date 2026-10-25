@@ -218,9 +218,9 @@ export class CanvasCompositor {
   }
 
   /**
-   * The 3D camera's push-in for the zoom at output time t (owner decision 20): the same zoom segments, scale,
-   * easing and timing as a flat zoom (cameraAt), aimed at the centre of what the flat zoom would show (the
-   * clamped crop), which lands where the screen's centre was. Null when no zoom plays.
+   * The 3D camera's push-in for the zoom at output time t (owner decision 20): the same zoom segments, easing and
+   * timing as a flat zoom (cameraAt), aimed at the centre of what the flat zoom would show (the clamped crop) and
+   * capped so the phone stays whole on the canvas (projection.ts zoomViewAt, ZOOM_PUSH). Null when no zoom plays.
    */
   private zoomView3d(s3: Scene3D, t: number): View2D | null {
     const cam = cameraAt(t, this.focusSegments, this.autofocusOpts);
@@ -231,7 +231,14 @@ export class CanvasCompositor {
     const all = sourceCrop(crop, fullW, fullH, { center: { x: 0.5, y: 0.5 }, scale: 1 });
     const z = sourceCrop(crop, fullW, fullH, cam);
     const uv = { x: (z.sx + z.cropW / 2 - all.sx) / all.cropW, y: (z.sy + z.cropH / 2 - all.sy) / all.cropH };
-    return zoomViewAt(s3, t, cam.scale, uv);
+    return zoomViewAt(s3, t, cam.scale, uv, this.zoomScaleMax());
+  }
+
+  /** The strongest zoom in the project (the push-in's full strength, zoomViewAt's kMax). */
+  private zoomScaleMax(): number {
+    let m = 1;
+    for (const seg of this.focusSegments) m = Math.max(m, seg.scale);
+    return m;
   }
 
   /** Whether this project draws a 3D phone (phone3dActive and a framed phone on this canvas). */

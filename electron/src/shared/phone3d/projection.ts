@@ -317,22 +317,61 @@ export function camAt(s: Scene3D, t: number, pose: Pose = s.poseAt(t)): Cam3D {
 }
 
 /**
- * The push-in that frames a zoom on the 3D phone (owner decision 20): the
- * flat zoom's scale `k`, about the point `uv` of the screen (0..1 over the
- * flat screen rect, v down: the centre of what the flat zoom would show), so
- * that point lands where the screen's centre is without the zoom. At k = 1
- * and the screen's centre it is the identity. From the unzoomed camera at t
- * (pose included), so it follows the screen as the phone moves.
+ * How far a zoom may push the 3D camera in (owner decision 20: "the phone stays whole"): the phone's outline at
+ * most `fill` of the canvas's width and height (so the screen is at most about 0.88 of the canvas's height and the
+ * phone's edge stays in frame). Look v2 round 1 pushed in by the flat zoom's own scale: a 2× zoom on a phone that
+ * fills 60% of a 9:16 canvas put the app full-bleed for 1.5 s, cut its labels at the canvas edge and lost the
+ * phone, so the 3D was invisible (all three judges).
  */
-export function zoomViewAt(s: Scene3D, t: number, k: number, uv: Point): View2D | null {
+export const ZOOM_PUSH = { fill: 0.92 } as const;
+
+/**
+ * The push-in that frames a zoom on the 3D phone (owner decision 20), from
+ * the flat zoom's scale `k` now and the strongest zoom in the project
+ * (`kMax`), about the point `uv` of the screen (0..1 over the flat screen
+ * rect, v down: the centre of what the flat zoom would show).
+ * - Strength: the push is capped so the phone's outline fills at most
+ *   ZOOM_PUSH.fill of the canvas (the cap), and the flat zoom's progress
+ *   (k − 1) / (kMax − 1) runs it from 1 to the cap with the flat zoom's own
+ *   easing and timing (a weaker zoom pushes in proportionally less).
+ * - Aim: the zoom point moves from where it is toward the canvas's centre by
+ *   the same progress, then the shift is clamped so the phone's outline stays
+ *   on the canvas (an outline already past an edge may not move further out).
+ * At k = 1 it is the identity (null). From the unzoomed camera at t (pose
+ * included), so it follows the phone as it moves.
+ */
+export function zoomViewAt(s: Scene3D, t: number, k: number, uv: Point, kMax: number = k): View2D | null {
   if (!(k > 1 + 1e-6)) return null;
   const base = cameraFor(s.home, s.poseAt(t), s.p3.camera, s.canvas, s.body3d);
   const { quad } = screenQuadAt(s, t, base);
   const h = homography(quad);
   const p = applyHomography(h, uv.x, uv.y);
-  const r = applyHomography(h, 0.5, 0.5);
-  if (!p || !r) return null;
-  return { s: k, ox: r.x - k * p.x, oy: r.y - k * p.y };
+  if (!p) return null;
+  const hull = projectedHull(s, base, true);
+  if (hull.length < 3) return null;
+  const b = bboxOf(hull);
+  const W = s.canvas.width;
+  const H = s.canvas.height;
+  const fill = ZOOM_PUSH.fill;
+  const cap = Math.min(Math.max(k, kMax), (fill * W) / Math.max(b.w, 1e-6), (fill * H) / Math.max(b.h, 1e-6));
+  if (!(cap > 1 + 1e-6)) return null;
+  const progress = Math.min(1, Math.max(0, (k - 1) / Math.max(Math.max(k, kMax) - 1, 1e-6)));
+  const z = 1 + progress * (cap - 1);
+  // Aim: the zoom point lands progress of the way from where it is to the canvas centre.
+  const ax = p.x + progress * (W / 2 - p.x);
+  const ay = p.y + progress * (H / 2 - p.y);
+  const clampAxis = (o: number, lo0: number, hi0: number, size: number) => {
+    // Allowed band: the canvas inset by the fill margin, widened to wherever the unzoomed outline already is.
+    const m = ((1 - fill) / 2) * size;
+    const lo = Math.min(m, lo0);
+    const hi = Math.max(size - m, hi0);
+    const min = lo - z * lo0; // z·lo0 + o ≥ lo
+    const max = hi - z * hi0; // z·hi0 + o ≤ hi
+    return min <= max ? Math.min(max, Math.max(min, o)) : (min + max) / 2;
+  };
+  const ox = clampAxis(ax - z * p.x, b.x, b.x + b.w, W);
+  const oy = clampAxis(ay - z * p.y, b.y, b.y + b.h, H);
+  return { s: z, ox, oy };
 }
 
 // ---------------------------------------------------------------------------
