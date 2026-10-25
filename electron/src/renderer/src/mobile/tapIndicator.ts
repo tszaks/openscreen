@@ -28,6 +28,11 @@ export interface TouchIndicatorOptions {
   strokePt: number;
   /** Soft dark shadow behind the indicator (0 disables). */
   shadowOpacity: number;
+  /** The dark hairline just outside the rim (its alpha), so a white indicator has an edge on a white screen. */
+  edgeOpacity: number;
+  /** Keep the whole indicator (its released ring at full size included) inside `screenRect`: a tap at the very
+   *  edge of the screen draws its circle just inside the edge instead of half off it. */
+  inside?: boolean;
 }
 
 export const defaultTouchIndicator: TouchIndicatorOptions = {
@@ -37,7 +42,19 @@ export const defaultTouchIndicator: TouchIndicatorOptions = {
   fillOpacity: 0.4,
   strokePt: 1,
   shadowOpacity: 0.35,
+  edgeOpacity: 0.16,
 };
+
+/**
+ * The 3D phone's touch indicator (look round 4): a smaller, softer press
+ * than the flat one (PHONE3D_TOUCH_SIZE × the size, a light fill, a soft
+ * shadow for its edge instead of round 3's firm dark hairline, which read as
+ * a grey simulator cursor), kept inside the screen. Flat projects keep the
+ * defaults.
+ */
+export const PHONE3D_TOUCH: Partial<TouchIndicatorOptions> = { fillOpacity: 0.34, strokePt: 1.2, edgeOpacity: 0.12, shadowOpacity: 0.3, inside: true };
+/** The 3D indicator's size × the project's tap size. */
+export const PHONE3D_TOUCH_SIZE = 0.75;
 
 /** The OpenScreen accent, for an on-brand variant. */
 export const ACCENT_TOUCH_COLOR = '#FF8A3D';
@@ -103,6 +120,15 @@ export function touchPhase(s: TapSuggestion, u: number) {
   };
 }
 
+/** How far the released ring grows (touchPhase ringScale at its widest). */
+const RING_GROWTH = 1.6;
+
+/** `p` moved just enough that a circle of radius `r` round it fits inside `rect` (centred when it cannot fit). */
+export function insideRect(p: { x: number; y: number }, rect: Rect, r: number): { x: number; y: number } {
+  const fit = (v: number, lo: number, len: number) => (len <= 2 * r ? lo + len / 2 : Math.min(lo + len - r, Math.max(lo + r, v)));
+  return { x: fit(p.x, rect.x, rect.w), y: fit(p.y, rect.y, rect.h) };
+}
+
 function rgba(hex: string, a: number): string {
   const h = hex.replace('#', '');
   const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
@@ -143,7 +169,8 @@ export function drawTouchIndicator(
     x: screenRect.x + p.x * screenRect.w,
     y: screenRect.y + p.y * screenRect.h,
   });
-  const at = toPx(s.kind === 'swipe' ? swipePoint(s, Math.min(u, PRESS_IN + holdFor(s))) : s);
+  const raw = toPx(s.kind === 'swipe' ? swipePoint(s, Math.min(u, PRESS_IN + holdFor(s))) : s);
+  const at = o.inside ? insideRect(raw, screenRect, radius * RING_GROWTH + stroke) : raw;
 
   ctx.save();
   if (s.kind === 'swipe') drawTrail(ctx, s, u, toPx, radius, o);
@@ -160,12 +187,14 @@ export function drawTouchIndicator(
     ctx.shadowOffsetY = 0;
   };
   // Crisp rim: the colour stroke plus a faint dark hairline just outside it,
-  // so a white indicator still has an edge on a white screen.
+  // so a white indicator still has an edge on a white screen (1 px; a firmer edge, scaled with the rim, when the
+  // edge is stronger than the default).
+  const edgeW = o.edgeOpacity > defaultTouchIndicator.edgeOpacity ? Math.max(1, stroke * 0.6) : 1;
   const rim = (x: number, y: number, rad: number, width: number, alpha: number) => {
     ctx.beginPath();
-    ctx.arc(x, y, rad + width * 0.5 + 0.5, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(0,0,0,${0.16 * alpha})`;
-    ctx.lineWidth = 1;
+    ctx.arc(x, y, rad + width * 0.5 + 0.5 * edgeW, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(0,0,0,${o.edgeOpacity * alpha})`;
+    ctx.lineWidth = edgeW;
     ctx.stroke();
     ctx.beginPath();
     ctx.arc(x, y, rad, 0, Math.PI * 2);

@@ -80,23 +80,33 @@ export const ROUNDED_LAND_MM = 0.06;
 /** Seam between band and glass: width and depth (spec §3.3). */
 export const SEAM_W_MM = 0.12;
 export const SEAM_D_MM = 0.1;
-/** The glass edge rounds down into the seam over this width. */
-const GLASS_EDGE_MM = 0.25;
+/** The cover glass's rounded edge, mm across: a thin bright line round the front (about 2.5 px at 1080). Wider cuts into the
+ *  screen hole on the narrowest bezels (iPhone 17, 16 Pro Max: 0.35 mm already does). */
+export const GLASS_EDGE_MM = 0.3;
 /** Antenna line width (along the outline). */
 const ANTENNA_W_MM = 0.6;
-/** Plateau: the concave fillet where it meets the back (spec: 0.4). */
-const PLATEAU_BASE_FILLET_MM = 0.4;
-/** Plateau with no measured inset still gets a rounded top edge. */
-const PLATEAU_MIN_ROUND_MM = 0.2;
+/** Plateau: the shortest run of its filleted rise (a plateau with no measured inset still rolls onto its top). */
+const PLATEAU_MIN_RUN_MM = 0.6;
+/** Rings in the plateau's rise. */
+const PLATEAU_RISE_RINGS = 14;
 /** Lens assembly. */
-const LENS_GLASS_FRAC = 0.78; // cover-glass radius / ring radius
+const LENS_GLASS_FRAC = 0.83; // cover-glass radius / ring radius (round 3's 0.78 drew rings that read as thick toy bezels)
 const LENS_RING_FILLET_MM = 0.1;
 const LENS_BEVEL_MM = 0.25; // the cover glass sits this far below the ring top
 const LENS_BARREL_MM = 1.5;
+/** Inside a lens, as fractions of the cover-glass radius: the retaining ring's inner and outer radius (the hood fills outside it). */
+export const LENS_RINGS = { retainer: [0.79, 0.83] } as const;
+/** The lens elements' shading curvature: a dome this × its radius high (normals tilt up to 45° at the rim). */
+export const LENS_DOME = 0.5;
 /** Buttons. */
 export const BUTTON_PROUD_MM = 0.55;
 const BUTTON_EMBED_MM = 0.3;
-const CAMERA_CONTROL_PROUD_MM = 0.28;
+/** The crown's inset run as a fraction of the button's width (the top stays flat over the middle 1 − 2·this). */
+const BUTTON_CROWN = 0.32;
+/** Camera Control: a sapphire strip nearly flush with the band (round 2's 0.28 mm crown read as a black slot). */
+const CAMERA_CONTROL_PROUD_MM = 0.06;
+/** The flash: a thin metal ring round a frosted diffuser that fills it (round 2's black 22% ring read as clip-art). */
+const FLASH_LAMP_FRAC = 0.88;
 /** Bottom edge: USB-C pill and grilles. */
 const PORT_MM = { w: 8.3, h: 2.5 };
 const GRILLE = { holes: 6, d: 0.95, pitch: 1.3, gap: 2.4 };
@@ -108,10 +118,122 @@ const CIRCLE_SEG = 64;
 
 /**
  * Estimate (no Apple drawing gives it): the aluminium-unibody 17 Pro / Pro Max
- * has a Ceramic Shield panel "slightly larger than a credit card" inlaid in
- * the back below the plateau. Margin from the body edges and the plateau, mm.
+ * has a Ceramic Shield panel inlaid in the back below the plateau, nearly edge
+ * to edge: `margin` of metal from the body outline at the sides and bottom
+ * (the band's rounded edge takes about 0.7 mm of it, so about 0.8 mm of flat
+ * metal shows beside the glass: 7 px at 1080), `top` mm below the foot of
+ * the plateau's step; its corners are concentric with the body's. Round 2's 7 mm
+ * and round 3's 4.2 mm margins read as a sticker or a tray set into the back.
  */
-const UNIBODY_PANEL = { margin: 7, rMm: 6 };
+const UNIBODY_PANEL = { margin: 1.5, top: 2.5 };
+/** Rows across a full-width plateau's rise (shared by the band, its seam and the back). */
+const RISE_ROWS = 32;
+/**
+ * A full-width plateau's step, in profile: a small concave fillet at its foot,
+ * a steep straight wall and a larger convex fillet onto the top (look round 4).
+ * Round 3's smootherstep over the measured 4.8 mm top inset was a soft ramp
+ * whose long slope faced down and drew a wide dark band across the back (a
+ * crease, a folded plate); a real machined step is a short wall whose rounded
+ * top edge catches a thin line of light. `wall` is the wall's angle from the
+ * back (degrees); the fillet radii are mm and shrink together when the step is
+ * too low for them.
+ */
+export const PLATEAU_STEP = { wall: 60, footR: 0.35, topR: 0.9 } as const;
+
+interface Rise {
+  /** Model y where the rise leaves the back, and where it reaches the plateau top (y1 > y0). */
+  y0: number;
+  y1: number;
+  /** The rows' y, y0 .. y1. */
+  rows: number[];
+  at(y: number): { dz: number; dzdy: number };
+}
+
+/**
+ * The step profile (PLATEAU_STEP) for a height h: its run (mm across) and its
+ * height dz and slope dz/ds at a distance s from the foot. Slope 0 at both
+ * ends and tangent-continuous everywhere (arc, line, arc), so reflections run
+ * off the back onto the wall and onto the top with no kink.
+ */
+export function stepProfile(h: number): { run: number; at(s: number): { dz: number; dzdy: number } } {
+  const th = (PLATEAU_STEP.wall * Math.PI) / 180;
+  const sin = Math.sin(th);
+  const cos = Math.cos(th);
+  const tan = Math.tan(th);
+  // Arcs climb r(1 − cos θ) each; if they would climb past h, both shrink by the same factor.
+  const k = Math.min(1, h / ((PLATEAU_STEP.footR + PLATEAU_STEP.topR) * (1 - cos)));
+  const rf = PLATEAU_STEP.footR * k;
+  const rt = PLATEAU_STEP.topR * k;
+  const wallH = Math.max(0, h - (rf + rt) * (1 - cos));
+  const s1 = rf * sin; // foot arc ends
+  const s2 = s1 + wallH / tan; // wall ends
+  const run = s2 + rt * sin;
+  return {
+    run,
+    at(s) {
+      const x = Math.min(run, Math.max(0, s));
+      if (x <= s1) {
+        const q = Math.sqrt(Math.max(1e-12, rf * rf - x * x));
+        return { dz: rf - q, dzdy: x / q };
+      }
+      if (x <= s2) return { dz: rf * (1 - cos) + (x - s1) * tan, dzdy: tan };
+      const e = run - x;
+      const q = Math.sqrt(Math.max(1e-12, rt * rt - e * e));
+      return { dz: h - rt + q, dzdy: e / q };
+    },
+  };
+}
+
+/** A full-width plateau's rise across the back: the step profile (stepProfile) from the foot of its footprint (model y0) up to the top. */
+export function fullBarRise(H: number, pl: Body3D['plateau']): Rise {
+  const y0 = H / 2 - (pl.y + pl.h) * H;
+  const prof = stepProfile(pl.heightMm);
+  const run = prof.run;
+  return {
+    y0,
+    y1: y0 + run,
+    rows: Array.from({ length: RISE_ROWS + 1 }, (_, k) => y0 + (run * k) / RISE_ROWS),
+    at: (y) => prof.at(y - y0),
+  };
+}
+
+/**
+ * Splits the back's cap contour (cut at every rise row) into the part below
+ * the rise, the part above it (the plateau top) and each row's x extent.
+ */
+function splitAtRise(contour: V2[], rise: Rise): { below: V2[]; above: V2[]; rows: [number, number, number][] } {
+  const eps = 1e-6;
+  const n = contour.length;
+  const run = (inside: (y: number) => boolean): V2[] => {
+    const ins = contour.map((q) => inside(q[1]));
+    const starts = ins.flatMap((v, j) => (v && !ins[(j - 1 + n) % n] ? [j] : []));
+    if (starts.length !== 1) throw new Error(`phone3d: the back splits into ${starts.length} parts at the plateau rise`);
+    const out: V2[] = [];
+    for (let k = 0; k < n && ins[(starts[0] + k) % n]; k++) out.push(contour[(starts[0] + k) % n]);
+    return out;
+  };
+  const rows = rise.rows.map((y): [number, number, number] => {
+    const xs = contour.filter((q) => Math.abs(q[1] - y) < eps).map((q) => q[0]);
+    if (xs.length < 2) throw new Error(`phone3d: no back contour row at y = ${y}`);
+    return [y, Math.min(...xs), Math.max(...xs)];
+  });
+  return { below: run((y) => y <= rise.y0 + eps), above: run((y) => y >= rise.y1 - eps), rows };
+}
+/** The unibody panel's seam: width and depth of the metal step round the glass (a fine line, under 1 px at 1080). */
+const PANEL_SEAM_MM = 0.05;
+/** The panel glass's rounded edge (a small bevel that catches light as it rises out of the seam). */
+const PANEL_EDGE_MM = 0.12;
+
+/** The panel glass edge: a quarter-ellipse from the seam floor (inset `seam`, depth `seam`) up onto the flat glass. */
+function panelEdge(seam: number): Strip {
+  const out: Strip = [];
+  for (let k = 0; k <= 6; k++) {
+    const a = (k / 6) * (Math.PI / 2);
+    const n = norm2(seam * Math.cos(a), PANEL_EDGE_MM * Math.sin(a));
+    out.push({ i: seam + PANEL_EDGE_MM * (1 - Math.cos(a)), z: -seam + seam * Math.sin(a), no: n[0], nz: n[1] });
+  }
+  return out;
+}
 
 export const RENDER_ORDER = { glass: 0, screen: 1, glare: 2, lensElements: 3, lensCover: 4, decal: 1 } as const;
 
@@ -146,9 +268,11 @@ export const BAND_GROUP = { metal: 0, antenna: 1 } as const;
 /** Material groups of the front hardware in the bezel (SE, iPads): glass lens, metal ring, dark grille. */
 export const FRONT_GROUP = { lens: 0, ring: 1, grille: 2 } as const;
 /** Material groups inside the lens-elements mesh: three element domes (top to bottom) and the retaining ring. */
-export const LENS_GROUP = { element0: 0, element1: 1, element2: 2, retainer: 3 } as const;
+export const LENS_GROUP = { element0: 0, element1: 1, element2: 2, retainer: 3, hood: 4 } as const;
 /** Material groups inside the flash mesh. */
 export const FLASH_GROUP = { ring: 0, lamp: 1 } as const;
+/** frontGlass material groups: the flat sheet (border round the screen) and its rounded rim. */
+export const FRONT_GLASS_GROUP = { flat: 0, rim: 1 } as const;
 
 /** The measured layout the meshes were built from, for tests and the renderer. */
 export interface PhoneDims {
@@ -332,6 +456,16 @@ interface PP {
 }
 type Strip = PP[];
 
+/**
+ * The rise of a full-width camera plateau as a function of model y (spec §3.3): the body grows back by `dz` at
+ * height y, with slope dz/dy. `side` is the back's z sign in the frame being built (−1 in model space, +1 in the
+ * back frame): only points on that side of z = 0 move.
+ */
+interface Lift {
+  side: 1 | -1;
+  at(y: number): { dz: number; dzdy: number };
+}
+
 /** Arc of radius r around centre (ci, cz) in (inset, z), normal angle from a0 to a1 (0 = outward, 90° = +z), convex. */
 function convexArc(ci: number, cz: number, r: number, a0: number, a1: number, n: number): Strip {
   const out: Strip = [];
@@ -354,11 +488,6 @@ export function roundedEllipse(depth: number, rim: number) {
   const b = ROUNDED_ARC * depth;
   const a = Math.max(0.05, rim - SEAM_W_MM - ROUNDED_LAND_MM);
   return { a, b, z0: depth / 2 - b };
-}
-
-/** Where the band reaches the flat face (inset from the outline): the end of the chamfer or the ellipse. */
-export function faceInset(edge: Body3D['edge'], depth: number, rim: number): number {
-  return edge === 'flat' ? CHAMFER_MM : roundedEllipse(depth, rim).a;
 }
 
 /**
@@ -509,35 +638,46 @@ class Builder {
 
 /**
  * Sweep profile strips along a loop. Each strip gets its own rings, so
- * strips meet at hard creases. `scale[j]` scales the inset at loop point j
- * (the plateau bar's flush sides); `groupOf(j)` picks the material group
- * of the faces between loop points j and j+1.
+ * strips meet at hard creases. `groupOf(j)` picks the material group of the
+ * faces between loop points j and j+1; `lift` moves the back side's points
+ * back by a full-width plateau's rise.
  */
-function sweep(b: Builder, loop: Loop, strips: Strip[], opts: { scale?: number[]; groupOf?: (j: number) => number; z0?: number } = {}) {
+function sweep(
+  b: Builder,
+  loop: Loop,
+  strips: Strip[],
+  opts: { groupOf?: (j: number) => number; z0?: number; lift?: Lift } = {},
+) {
   const n = loop.p.length;
   const z0 = opts.z0 ?? 0;
+  const lift = opts.lift;
   for (const strip of strips) {
     const ring: number[][] = [];
     for (const q of strip) {
       const row: number[] = [];
       for (let j = 0; j < n; j++) {
-        const s = opts.scale ? opts.scale[j] : 1;
         const t = loop.t[j];
         const o = outwardOf(t);
-        const nn = norm2(q.no, q.nz * s);
-        row.push(
-          b.v(
-            loop.p[j][0] - o[0] * q.i * s,
-            loop.p[j][1] - o[1] * q.i * s,
-            z0 + q.z,
-            o[0] * nn[0],
-            o[1] * nn[0],
-            nn[1],
-            t[0],
-            t[1],
-            0,
-          ),
-        );
+        const nn = norm2(q.no, q.nz);
+        const x = loop.p[j][0] - o[0] * q.i;
+        const y = loop.p[j][1] - o[1] * q.i;
+        let z = z0 + q.z;
+        let nx = o[0] * nn[0];
+        let ny = o[1] * nn[0];
+        const nz = nn[1];
+        let tz = 0;
+        // A lifted point (on the back side of the body) moves back by the plateau rise at its height; its normal
+        // takes the rise's slope along the outline and its tangent climbs with it (exact on a straight side: the
+        // surface is sheared along y).
+        if (lift && lift.side * z > 1e-9) {
+          const r = lift.at(y);
+          z += lift.side * r.dz;
+          const k = -r.dzdy * t[1] * nz * lift.side;
+          nx += k * t[0];
+          ny += k * t[1];
+          tz = lift.side * r.dzdy * t[1];
+        }
+        row.push(b.v(x, y, z, nx, ny, nz, t[0], t[1], tz));
       }
       ring.push(row);
     }
@@ -599,18 +739,27 @@ function transformBuilder(b: Builder, from: number, m: Matrix4) {
 // ---------------------------------------------------------------------------
 // Parts
 
-/** A capsule button: stadium outline in its own plane, swept outward. */
+/**
+ * A capsule button: stadium outline in its own plane, swept outward along a
+ * crowned profile (a quarter-ellipse from the wall to the top, its inset
+ * semi-axis BUTTON_CROWN of the width), so the top is a gentle dome that
+ * sweeps through the studio like the band does. A flat-topped pill mirrored
+ * one patch of the studio and read lighter and glossier than the frame.
+ */
 function buildButton(b: Builder, length: number, width: number, proud: number, place: Matrix4) {
   const from = b.pos.length / 3;
   // Local: stadium in xy (x = across the band depth, y = along its length), sweep +z outward.
   const loop = stadiumLoop(width, length, 16);
-  const rf = Math.min(0.3, width * 0.25, proud * 0.6);
-  const wall: Strip = [
-    { z: -BUTTON_EMBED_MM, i: 0, no: 1, nz: 0 },
-    ...convexArc(rf, proud - rf, rf, 0, Math.PI / 2, 5),
-  ];
-  sweep(b, loop, [wall]);
-  cap(b, insetLoop(loop, rf), proud, 1);
+  const ai = width * BUTTON_CROWN;
+  const steps = 8;
+  const crown: Strip = [{ z: -BUTTON_EMBED_MM, i: 0, no: 1, nz: 0 }];
+  for (let k = 0; k <= steps; k++) {
+    const t = (k / steps) * (Math.PI / 2);
+    const n = norm2(proud * Math.cos(t), ai * Math.sin(t));
+    crown.push({ i: ai * (1 - Math.cos(t)), z: proud * Math.sin(t), no: n[0], nz: n[1] });
+  }
+  sweep(b, loop, [crown]);
+  cap(b, insetLoop(loop, ai), proud, 1);
   transformBuilder(b, from, place);
 }
 
@@ -645,27 +794,29 @@ interface BackFrame {
   xy(bx: number, by: number): V2;
 }
 
-/** A pillow-edged plateau (or turret) footprint, swept up from the back surface. */
-function buildPlateau(b: Builder, loop: Loop, zBack: number, heightMm: number, insetMm: number, scale?: number[], holes: V2[][] = []) {
-  const a = Math.max(insetMm, PLATEAU_MIN_ROUND_MM);
-  const rb = Math.min(PLATEAU_BASE_FILLET_MM, heightMm * 0.4);
-  const deg = Math.PI / 180;
+/**
+ * A plateau (or turret) footprint, swept up from the back surface along a
+ * filleted rise: z = h·(3u² − 2u³) over the inset run u ∈ 0..1, so it leaves
+ * the back with a concave fillet, is steepest (1.5·h/run) halfway, and rolls
+ * onto the flat top with a convex one; its normal never faces down. Round 1
+ * rose with a vertical wall under a quarter-ellipse: the wall faced the floor
+ * and drew a black undercut band, so the plateau looked glued on. The run is
+ * the measured top inset (devices3d insetMm), at least PLATEAU_MIN_RUN_MM.
+ */
+function buildPlateau(b: Builder, loop: Loop, zBack: number, heightMm: number, insetMm: number, holes: V2[][] = []) {
+  const a = Math.max(insetMm, PLATEAU_MIN_RUN_MM, heightMm * 0.9);
   const strip: Strip = [];
-  // Concave base fillet: from the back surface (normal up) to the wall foot (normal outward).
-  for (let k = 0; k <= 4; k++) {
-    const ph = (k / 4) * 90 * deg;
-    strip.push({ i: -rb + rb * Math.sin(ph), z: rb - rb * Math.cos(ph), no: Math.sin(ph), nz: Math.cos(ph) });
+  const steps = PLATEAU_RISE_RINGS;
+  for (let k = 0; k <= steps; k++) {
+    const u = k / steps;
+    const z = heightMm * u * u * (3 - 2 * u);
+    // dz/di = 6h·u(1 − u)/a; outward normal ∝ (dz/di, 1) in (outward, z).
+    const slope = (6 * heightMm * u * (1 - u)) / a;
+    const n = norm2(slope, 1);
+    strip.push({ i: a * u, z, no: n[0], nz: n[1] });
   }
-  // Pillow: quarter-ellipse with semi-axes (a, h − rb), wall to top.
-  const hh = heightMm - rb;
-  for (let k = 1; k <= 10; k++) {
-    const th = (k / 10) * 90 * deg;
-    const n = norm2(hh * Math.cos(th), a * Math.sin(th));
-    strip.push({ i: a * (1 - Math.cos(th)), z: rb + hh * Math.sin(th), no: n[0], nz: n[1] });
-  }
-  sweep(b, loop, [strip], { scale, z0: zBack });
-  const sc = scale ?? loop.p.map(() => 1);
-  cap(b, insetLoop(loop, sc.map((s) => a * s)), zBack + heightMm, 1, holes);
+  sweep(b, loop, [strip], { z0: zBack });
+  cap(b, insetLoop(loop, a), zBack + heightMm, 1, holes);
 }
 
 interface LensBuild {
@@ -731,20 +882,28 @@ function buildLens(L: LensBuild, s: LensSpec) {
     { z: bottom, i: 0, no: -1, nz: 0 },
   ]]);
   cap(L.barrel, bLoop.p, bottom, 1);
-  const fr = [0.22, 0.5, 0.8];
-  const rr = [0.94, 0.8, 0.62];
+  // Three stacked coated elements, each a dome steep enough that a softbox reflects in it as a small coloured
+  // crescent, not a tint over the whole disc (round 3's shallow top element turned every lens one flat violet).
+  const fr = [0.25, 0.52, 0.8];
+  const rr = [0.78, 0.6, 0.42];
   fr.forEach((fz, gi) => {
     const r = glassR * rr[gi];
     const zc = coverZ - depth * fz;
-    const sag = Math.min(r * 0.2, depth * 0.2);
-    const rings = 6;
+    // A curved element mirrors a spread of the studio: the key lands as a small catchlight near its top instead
+    // of the element reading as a flat disc. Its crown stays under the one above it (and under the cover).
+    const sag = Math.min(r * 0.45, depth * fz * 0.85);
+    // The barrel is only about 1.5 mm deep, so the domes are nearly flat (sag/r about 0.06) and mirrored a softbox
+    // edge as one straight line across a flat violet disc. Shading uses the curvature of a dome LENS_DOME × r high
+    // (its normals tilt up to atan(2·LENS_DOME) at the rim); the geometry keeps its true depth.
+    const shadeSag = r * LENS_DOME;
+    const rings = 8;
     const seg = 48;
     const idx: number[][] = [];
     for (let k = 0; k <= rings; k++) {
       const rk = (r * k) / rings;
       const zk = zc + sag * (1 - (rk / r) ** 2);
-      // Dome z = sag·(1 − (ρ/r)²): slope −2·sag·ρ/r².
-      const slope = (2 * sag * rk) / (r * r);
+      // Dome z = sag·(1 − (ρ/r)²); the shading normal's slope is the shading dome's, −2·shadeSag·ρ/r².
+      const slope = (2 * shadeSag * rk) / (r * r);
       const row: number[] = [];
       for (let q = 0; q < (k === 0 ? 1 : seg); q++) {
         const th = (2 * Math.PI * q) / seg;
@@ -763,14 +922,13 @@ function buildLens(L: LensBuild, s: LensSpec) {
       }
     }
   });
-  // Retaining ring just under the cover glass: the first thing the eye
-  // reads inside a real lens (a thin bright-edged annulus around the dark optics).
-  const rr0 = glassR * 0.995;
-  const rr1 = glassR * 0.8;
+  // Under the cover glass, from the outside in: a matte black hood (the lens housing's face), a thin dark metal
+  // retaining ring (the first fine ring the eye reads inside a real lens), then the deep optics.
   const rz = coverZ - Math.min(0.12, depth * 0.1);
-  const ringOuter = bLoop.p;
-  const ringInner = at(circleLoop(rr1)).p;
-  cap(L.elements, ringOuter.map(([px, py]): V2 => [x + (px - x) * (rr0 / glassR), y + (py - y) * (rr0 / glassR)]), rz, 1, [ringInner.slice().reverse()], undefined, LENS_GROUP.retainer);
+  const ringAt = (k: number) => at(circleLoop(glassR * k)).p;
+  cap(L.elements, ringAt(0.995), rz, 1, [ringAt(LENS_RINGS.retainer[1]).slice().reverse()], undefined, LENS_GROUP.hood);
+  const rz2 = rz - Math.min(0.05, depth * 0.04);
+  cap(L.elements, ringAt(LENS_RINGS.retainer[1]), rz2, 1, [ringAt(LENS_RINGS.retainer[0]).slice().reverse()], undefined, LENS_GROUP.retainer);
   cap(L.cover, bLoop.p, coverZ, 1);
 }
 
@@ -802,7 +960,12 @@ export function isUnibody(device: DeviceModel, body: Body3D): boolean {
   return body.plateau.kind === 'bar' && device.material === 'aluminum' && device.family === 'iphone';
 }
 
-function build(device: DeviceModel, body: Body3D): PhoneModel {
+/**
+ * A new phone for a device, not cached: the caller owns it and disposes it
+ * (disposePhone). The engine's own LRU holds these; phoneModel below is the
+ * cached form for tools.
+ */
+export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
   const { W, H, bodyRadius, screenW, screenH, screenRadius, rim } = phoneDims2d(device);
   const depth = body.depthMm;
   const d2 = depth / 2;
@@ -812,12 +975,21 @@ function build(device: DeviceModel, body: Body3D): PhoneModel {
   const add = (m: Mesh | null) => m && group.add(m);
 
   // --- Band (+ antenna lines), seams, glass edges --------------------------------
+  // A full-width camera plateau (17 Pro, Pro Max, Air) is part of the body: across the top of the back the whole
+  // body is `heightMm` deeper, so the band's back half, its seam and glass edge move back with it and the plateau's
+  // sides ARE the band. Its lower edge is one rise across the full width (fullBarRise), a smoothstep over the
+  // measured top inset; the outline is cut at every row of the rise, so the band, the step and the back share
+  // vertices there.
+  const pl = body.plateau;
+  const fullBar = pl.kind !== 'single' && (pl.kind === 'bar' || pl.w > 0.98);
+  const rise = fullBar ? fullBarRise(H, pl) : null;
+  const lift = (side: 1 | -1): Lift | undefined => (rise ? { side, at: rise.at } : undefined);
   const outline = rectLoop(W, H, bodyRadius);
   const antennaYs = body.antennaLines.flatMap((f) => {
     const yc = H / 2 - f * H;
     return [yc - ANTENNA_W_MM / 2, yc + ANTENNA_W_MM / 2];
   });
-  const bandLoop = cutLoop(outline, antennaYs);
+  const bandLoop = cutLoop(outline, [...antennaYs, ...(rise?.rows ?? [])]);
   const isAntenna = (j: number) => {
     const a = bandLoop.p[j];
     const c = bandLoop.p[(j + 1) % bandLoop.p.length];
@@ -826,26 +998,36 @@ function build(device: DeviceModel, body: Body3D): PhoneModel {
   };
   const prof = bandProfile(body.edge, depth, rim);
   const band = new Builder();
-  sweep(band, bandLoop, [...prof.band, ...prof.band.map(mirrorStrip)], { groupOf: (j) => (isAntenna(j) ? BAND_GROUP.antenna : BAND_GROUP.metal) });
+  sweep(band, bandLoop, [...prof.band, ...prof.band.map(mirrorStrip)], {
+    groupOf: (j) => (isAntenna(j) ? BAND_GROUP.antenna : BAND_GROUP.metal),
+    lift: lift(-1),
+  });
   add(partMesh('band', band));
 
   const seam = new Builder();
   sweep(seam, outline, prof.seam); // front
-  if (!unibody) sweep(seam, outline, prof.seam.map(mirrorStrip)); // back
+  if (!unibody) sweep(seam, bandLoop, prof.seam.map(mirrorStrip), { lift: lift(-1) }); // back
   add(partMesh('seam', seam));
 
-  // Front glass: rounded edge into the seam, then the flat cap.
+  // Screen and glare: the 2D screen outline ON the glass plane (z = depth/2,
+  // where projection.ts puts the screen quad, so FRONT is exact).
+  const screenLoop = rectLoop(screenW, screenH, screenRadius);
+
+  // Front glass: rounded edge into the seam, then the flat cap: the black
+  // border AROUND the screen. The screen's own outline is a hole in it, so no
+  // glass lies under the screen: two coplanar surfaces with different
+  // triangles z-fight at small turns (the polygon offset's few depth units
+  // cannot cover their interpolation difference), and showed as black blocks
+  // over the screen at turn 0.02°. The hole shares the screen's vertices, so
+  // the two meet with no crack.
   const glassContour = insetLoop(outline, prof.glassInset);
   const front = new Builder();
-  sweep(front, outline, [prof.glassEdge]);
-  cap(front, glassContour, d2, 1);
+  sweep(front, outline, [prof.glassEdge], { groupOf: () => FRONT_GLASS_GROUP.rim });
+  cap(front, glassContour, d2, 1, [screenLoop.p], undefined, FRONT_GLASS_GROUP.flat);
   add(partMesh('frontGlass', front, RENDER_ORDER.glass));
 
-  // Screen and glare: the 2D screen outline ON the glass plane (z = depth/2,
-  // where projection.ts puts the screen quad, so FRONT is exact). They are
-  // overlay layers (materials.ts: no depth write, polygon offset), so they
-  // need no +0.02 / +0.04 lift to beat the glass.
-  const screenLoop = rectLoop(screenW, screenH, screenRadius);
+  // The screen and the glare over it are the same triangles (the same cap of
+  // the same points), so their depths are equal and the glare passes LEQUAL.
   const screen = new Builder();
   screen.withUv = true;
   cap(screen, screenLoop.p, d2, 1, [], { x: -screenW / 2, y: -screenH / 2, w: screenW, h: screenH });
@@ -881,7 +1063,6 @@ function build(device: DeviceModel, body: Body3D): PhoneModel {
   add(partMesh('frontHardware', hw, RENDER_ORDER.decal));
 
   // --- Back --------------------------------------------------------------------
-  const pl = body.plateau;
   const fx0 = pl.x * W;
   const fy0 = pl.y * H;
   const fw = pl.w * W;
@@ -891,84 +1072,75 @@ function build(device: DeviceModel, body: Body3D): PhoneModel {
 
   // Back cap: glass with a rounded edge into its seam; on the unibody the
   // metal runs straight from the band into the back (no seam) and a glass
-  // panel is inlaid below the plateau.
+  // panel is inlaid below the plateau. Built in the back frame; the body
+  // outline (and its cuts) is symmetric in x, so the same loop serves.
   const back = new Builder();
   const backPanel = new Builder();
-  const backSeam = new Builder();
-  const fullBack = rectLoop(W, H, bodyRadius);
-  // Back-frame outline: the body outline is symmetric in x, so the same loop serves.
-  if (!unibody) {
-    sweep(back, fullBack, [prof.glassEdge]);
-    cap(back, insetLoop(fullBack, prof.glassInset), d2, 1);
-  } else {
-    // Metal lip to the outline inset `rim − seam`, flush; then the cap with a hole for the panel.
-    const lipInset = rim - SEAM_W_MM;
-    const pTop = fy0 + fh + UNIBODY_PANEL.margin;
+  const plateau = new Builder();
+  if (!unibody) sweep(back, bandLoop, [prof.glassEdge], { lift: lift(1) });
+  const capContour = insetLoop(bandLoop, unibody ? rim - SEAM_W_MM : prof.glassInset);
+  const panelHoles: V2[][] = [];
+  if (unibody) {
+    // The inlaid Ceramic Shield panel (estimate, UNIBODY_PANEL), below the plateau's rise.
+    const pTop = fy0 + fh + UNIBODY_PANEL.top;
     const pBottom = H - UNIBODY_PANEL.margin;
     const pw = W - 2 * UNIBODY_PANEL.margin;
     const ph = pBottom - pTop;
     const [pcx, pcy] = frame.xy(W / 2, (pTop + pBottom) / 2);
-    const panelLoop = rectLoop(pw, ph, UNIBODY_PANEL.rMm);
-    const moved = (l: Loop): Loop => ({ p: l.p.map(([x, y]) => [x + pcx, y + pcy]), t: l.t });
-    const pl2 = moved(panelLoop);
-    cap(back, insetLoop(fullBack, lipInset), d2, 1, [pl2.p.slice().reverse()]);
-    // Panel seam: a wall down from the metal (facing the panel), a 0.12 mm
-    // floor, then the panel glass rounds up out of it.
-    sweep(backSeam, pl2, [
+    const panelLoop = rectLoop(pw, ph, Math.max(1, bodyRadius - UNIBODY_PANEL.margin));
+    const pl2: Loop = { p: panelLoop.p.map(([x, y]) => [x + pcx, y + pcy]), t: panelLoop.t };
+    panelHoles.push(pl2.p.slice().reverse());
+    // Panel seam: the metal steps down PANEL_SEAM_MM (a wall facing the
+    // panel and a narrow floor, both metal: the back's own material), then the
+    // panel glass rounds up out of it. Flush, with no black keyline: the
+    // front seam's #0a0a0a ring here drew a hairline outline round a matte
+    // card, which read as computer-drawn.
+    sweep(back, pl2, [
       [
         { z: d2, i: 0, no: -1, nz: 0 },
-        { z: d2 - SEAM_D_MM, i: 0, no: -1, nz: 0 },
+        { z: d2 - PANEL_SEAM_MM, i: 0, no: -1, nz: 0 },
       ],
       [
-        { z: d2 - SEAM_D_MM, i: 0, no: 0, nz: 1 },
-        { z: d2 - SEAM_D_MM, i: SEAM_W_MM, no: 0, nz: 1 },
+        { z: d2 - PANEL_SEAM_MM, i: 0, no: 0, nz: 1 },
+        { z: d2 - PANEL_SEAM_MM, i: PANEL_SEAM_MM, no: 0, nz: 1 },
       ],
     ]);
-    const pe = prof.glassEdge.map((q) => ({ ...q, i: q.i - rim + SEAM_W_MM }));
-    sweep(backPanel, pl2, [pe]);
-    cap(backPanel, insetLoop(pl2, SEAM_W_MM + GLASS_EDGE_MM), d2, 1);
+    const pe = panelEdge(PANEL_SEAM_MM);
+    sweep(backPanel, pl2, [pe], { z0: d2 });
+    cap(backPanel, insetLoop(pl2, PANEL_SEAM_MM + PANEL_EDGE_MM), d2, 1);
+  }
+  if (rise) {
+    // The back below the rise, the rise itself (rows across the full width: the surface depends on y only, so one
+    // quad per row is exact) and the plateau top above it.
+    const parts = splitAtRise(capContour, rise);
+    cap(back, parts.below, d2, 1, panelHoles);
+    let prev: [number, number] | null = null;
+    for (const [y, xl, xr] of parts.rows) {
+      const r = rise.at(y);
+      const n = norm2(-r.dzdy, 1);
+      const row: [number, number] = [plateau.v(xl, y, d2 + r.dz, 0, n[0], n[1]), plateau.v(xr, y, d2 + r.dz, 0, n[0], n[1])];
+      if (prev) {
+        plateau.tri(prev[0], prev[1], row[1]);
+        plateau.tri(prev[0], row[1], row[0]);
+      }
+      prev = row;
+    }
+    cap(plateau, parts.above, d2 + pl.heightMm, 1);
+  } else {
+    cap(back, capContour, d2, 1, panelHoles);
   }
   backFrom(back, 0);
   backFrom(backPanel, 0);
-  backFrom(backSeam, 0);
   add(partMesh('back', back));
   add(partMesh('backPanel', backPanel));
-  if (backSeam.pos.length) {
-    // The panel seam shares the seam material.
-    const sm = partMesh('seam', backSeam);
-    if (sm) {
-      sm.name = 'seam:panel';
-      add(sm);
-    }
-  }
 
-  // Plateau.
-  const plateau = new Builder();
+  // Plateau (footprint plateaus and turrets; a full-width bar was built with the back above).
   const [pcx, pcy] = frame.xy(fx0 + fw / 2, fy0 + fh / 2);
-  const fullWidth = pl.w > 0.98;
-  let plLoop: Loop;
-  let scale: number[] | undefined;
-  let topInset = pl.insetMm;
-  if (pl.kind === 'single') {
-    plLoop = circleLoop(Math.min(fw, fh) / 2);
-    topInset = 0;
-  } else if (pl.kind === 'bar' || fullWidth) {
-    // Full-width bar (17 Pro, Air): flush with the body sides, a sloped edge at the bottom.
-    const iL = faceInset(body.edge, depth, rim);
-    const bw = W - 2 * iL;
-    const top = iL;
-    const bh = fh - top;
-    const rTop = Math.max(0.5, bodyRadius - iL);
-    plLoop = rectLoop(bw, bh, [pl.rMm, rTop, rTop, pl.rMm]);
-    const cy = H / 2 - top - bh / 2;
-    plLoop = { p: plLoop.p.map(([x, y]) => [x, y + cy]), t: plLoop.t };
-    scale = plLoop.t.map((t) => Math.max(0.1, -outwardOf(t)[1]));
-  } else if (pl.kind === 'pill') {
-    plLoop = stadiumLoop(fw, fh);
-  } else {
-    plLoop = rectLoop(fw, fh, pl.rMm);
-  }
-  if (pl.kind !== 'bar' && !fullWidth) plLoop = { p: plLoop.p.map(([x, y]) => [x + pcx, y + pcy]), t: plLoop.t };
+  let plLoop: Loop | null = null;
+  const topInset = pl.kind === 'single' ? 0 : pl.insetMm;
+  if (pl.kind === 'single') plLoop = circleLoop(Math.min(fw, fh) / 2);
+  else if (!fullBar) plLoop = pl.kind === 'pill' ? stadiumLoop(fw, fh) : rectLoop(fw, fh, pl.rMm);
+  if (plLoop) plLoop = { p: plLoop.p.map(([x, y]) => [x + pcx, y + pcy]), t: plLoop.t };
   const plateauTop = d2 + pl.heightMm;
   const lensPos = (f: { x: number; y: number }): V2 => frame.xy(fx0 + f.x * fw, fy0 + f.y * fh);
   const turretR = Math.min(fw, fh) / 2;
@@ -982,14 +1154,14 @@ function build(device: DeviceModel, body: Body3D): PhoneModel {
     return { x, y, ringR: lens.rMm, glassR: lens.rMm * LENS_GLASS_FRAC, zBase: plateauTop, proud, maxDepth: proud - Math.min(LENS_BEVEL_MM, proud * 0.25 + 0.05) - 0.05 };
   });
   const holes = pl.kind === 'single' ? lensSpecs.map((l) => circleLoop(l.glassR).p.map(([px, py]): V2 => [px + l.x, py + l.y])) : [];
-  buildPlateau(plateau, plLoop, d2, pl.heightMm, topInset, scale, holes);
+  if (plLoop) buildPlateau(plateau, plLoop, d2, pl.heightMm, topInset, holes);
   transformBuilder(plateau, 0, BACK_TO_MODEL);
   add(partMesh('plateau', plateau));
 
   // Lenses.
   const L: LensBuild = { ring: new Builder(), barrel: new Builder(), elements: new Builder(), cover: new Builder() };
-  const topContour = insetLoop(plLoop, (scale ?? plLoop.p.map(() => 1)).map((s) => Math.max(topInset, PLATEAU_MIN_ROUND_MM) * s));
-  const onTop = (q: V2) => pointInPoly(topContour, q);
+  const topContour = plLoop ? insetLoop(plLoop, Math.max(topInset, PLATEAU_MIN_RUN_MM, pl.heightMm * 0.9)) : null;
+  const onTop = (q: V2) => (rise ? q[1] >= rise.y1 - 1e-6 : pointInPoly(topContour!, q));
   for (const spec of lensSpecs) buildLens(L, spec);
   for (const b of [L.ring, L.barrel, L.elements, L.cover]) transformBuilder(b, 0, BACK_TO_MODEL);
   add(partMesh('lensRing', L.ring));
@@ -1004,7 +1176,7 @@ function build(device: DeviceModel, body: Body3D): PhoneModel {
     const q = lensPos(pl.flash);
     const r = pl.flash.rMm ?? 3.4;
     disc(flash, q[0], q[1], r, surfaceZ(q), FLASH_GROUP.ring);
-    disc(flash, q[0], q[1], r * 0.78, surfaceZ(q) + DECAL_LIFT_MM, FLASH_GROUP.lamp);
+    disc(flash, q[0], q[1], r * FLASH_LAMP_FRAC, surfaceZ(q) + DECAL_LIFT_MM, FLASH_GROUP.lamp);
   }
   const sensor = new Builder();
   if (pl.sensor) {
@@ -1132,7 +1304,7 @@ export function phoneModel(device: DeviceModel, body3d: Body3D): PhoneModel {
     cache.set(key, hit);
     return hit;
   }
-  const model = build(device, body3d);
+  const model = createPhone(device, body3d);
   cache.set(key, model);
   while (cache.size > CACHE_SIZE) {
     const oldest = cache.keys().next().value as string;

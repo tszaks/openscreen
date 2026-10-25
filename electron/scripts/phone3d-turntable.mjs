@@ -104,7 +104,7 @@ import { frameRectForScreen } from '@src/shared/deviceGeometry';
 import { drawCutouts } from '@src/renderer/src/mobile/deviceFrame';
 import { phoneModel } from '@src/renderer/src/phone3d/geometry';
 import { applyMaterials, materialsForDevice, mrtOutput, setEnvIntensity, setScreenMap } from '@src/renderer/src/phone3d/materials';
-import { aimStudio, studioEnv, studioLights } from '@src/renderer/src/phone3d/environment';
+import { aimStudio, studioEnv } from '@src/renderer/src/phone3d/environment';
 
 const ANGLES = {
   front: { turn: 0, tilt: 0, rotate: 0 },
@@ -243,11 +243,10 @@ window.renderStill = async function (job) {
   holder.rotation.copy(new Euler(MathUtils.degToRad(-pose.tilt), MathUtils.degToRad(pose.turn), MathUtils.degToRad(-pose.rotate), 'ZXY'));
   if (!job.probe) holder.add(group);
   scene.add(holder);
-  const long = Math.max(device.bodyMm.width, device.bodyMm.height);
-  const lights = studioLights(job.preset, long, job.intensity);
-  scene.add(lights);
+  // All the light is the studio environment (environment.ts); intensity scales it.
   scene.environment = studioEnv(renderer, job.preset, hexToLinear(job.bg));
-  aimStudio(lights, scene, job.azimuth);
+  scene.environmentIntensity = job.intensity;
+  aimStudio(scene, job.azimuth);
 
   const fov = job.fov || 22;
   const cam = new PerspectiveCamera(fov, W / H, 1, 10000);

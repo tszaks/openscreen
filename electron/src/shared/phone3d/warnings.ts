@@ -8,7 +8,6 @@
 // again; a fix that would not clear its warning is not offered. Pure and
 // deterministic (no clock, no randomness).
 
-import { focusSegmentsFor } from '../focusSegments';
 import { tapsToOutput } from '../mobileProject';
 import { Timeline } from '../timeline';
 import type { CursorSample, Project } from '../types';
@@ -32,7 +31,7 @@ export interface Warning {
   fix?: EditOp[];
 }
 
-export const WARNING_CODES = ['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'over-zoom', 'past-end', 'pose-jump', 'too-fast', 'floor-flat'] as const;
+export const WARNING_CODES = ['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat', 'zoom-3d'] as const;
 export type WarningCode = (typeof WARNING_CODES)[number];
 
 /** A tap must see the screen within this angle of straight on. */
@@ -48,6 +47,9 @@ export const OFF_CANVAS_HZ = 15;
 /** Fastest turn (°/s) before a move strobes, with and without motion blur. */
 export const TOO_FAST_DEG_S = 600;
 export const TOO_FAST_NO_BLUR_DEG_S = 360;
+/** A fix may not make a move turn faster than this (°/s) unless it already did: a product turn reads at about
+ *  half the strobe limit (the shot recipes stay under it). */
+export const COMFORT_DEG_S = 300;
 /** Samples per second for the speed check. */
 export const SPEED_SAMPLE_HZ = 120;
 /** An explicit Start further than this from where the phone is, is a jump. */
@@ -129,12 +131,13 @@ function tapChecks(c: Ctx): TapCheck[] {
     const b = Math.min(c.D, tap.t + (tap.duration ?? 0) + TAP_WINDOW);
     if (!(b >= a)) continue;
     const n = Math.max(1, Math.ceil((b - a) * TAP_SAMPLE_HZ));
-    let minFacing = Infinity;
+    // The worst moment in the window; the tap's own time when the phone is no better there (a held pose).
+    let minFacing = facingOf(sample(tap.t), elev);
     let worst = tap.t;
     for (let k = 0; k <= n; k++) {
       const tt = a + ((b - a) * k) / n;
       const f = facingOf(sample(tt), elev);
-      if (f < minFacing) {
+      if (f < minFacing - 1e-6) {
         minFacing = f;
         worst = tt;
       }
@@ -144,6 +147,13 @@ function tapChecks(c: Ctx): TapCheck[] {
   return out;
 }
 
+/** Where `worst` sits relative to the tap at `t`, in words. */
+function tapRelative(worst: number, t: number): string {
+  const d = worst - t;
+  if (Math.abs(d) < 0.005) return 'at';
+  return `${Math.abs(d).toFixed(2)} s ${d < 0 ? 'before' : 'after'}`;
+}
+
 function tapWarnings(c: Ctx): Found[] {
   const out: Found[] = [];
   for (const chk of tapChecks(c)) {
@@ -151,12 +161,16 @@ function tapWarnings(c: Ctx): Found[] {
     const tr = culprit(c.p3.transitions, chk.worst);
     const deg = Math.acos(Math.max(-1, Math.min(1, chk.minFacing))) / DEG;
     const back = chk.minFacing < 0;
+    // Name the moment the check failed: the window starts TAP_WINDOW before the tap, and round 2's message put the
+    // worst angle in that window at the tap's own time, where the phone was nearly front.
+    const when = tapRelative(chk.worst, chk.t);
+    const rule = `the screen must face within ${TAP_ANGLE_DEG}° from ${TAP_WINDOW} s before a tap to ${TAP_WINDOW} s after it`;
     out.push({
       code: back ? 'tap-back' : 'tap-angle',
       key: `tap:${chk.tapId}`,
       message: back
-        ? `The phone shows its back during the tap at ${s2(chk.t)}, so the tap is not visible`
-        : `The phone is ${Math.round(deg)}° off front during the tap at ${s2(chk.t)} (keep it within ${TAP_ANGLE_DEG}°)`,
+        ? `The phone shows its back at ${s2(chk.worst)}, ${when} the tap at ${s2(chk.t)}, so the tap is not visible (${rule})`
+        : `The phone is ${Math.round(deg)}° off front at ${s2(chk.worst)}, ${when} the tap at ${s2(chk.t)} (${rule})`,
       at: r3(chk.t),
       ...(tr ? { transitionId: tr.id } : {}),
     });
@@ -177,12 +191,16 @@ function tapFixes(c: Ctx, w: Found): EditOp[][] {
   const face: EditOp = { op: 'setPose', at: r3(chk.t), turn: 360 * Math.round(ref / 360), tilt: 0 };
   const out: EditOp[][] = [];
   const inFlight = tr && tr.end > chk.a && tr.start <= chk.worst;
+  if (inFlight) {
+    // First the fixes that keep the move's length (its speed): the whole move earlier, so it lands before the
+    // window, or later, so it starts after it.
+    if (tr.end - chk.a <= tr.start) out.push([{ op: 'editTransition', id: tr.id, by: -ceil3(tr.end - chk.a) }]);
+    out.push([{ op: 'editTransition', id: tr.id, by: ceil3(chk.b - tr.start) }]);
+  }
   if (inFlight && tr.start <= chk.a - MIN_TRANSITION) {
     const pull: EditOp = { op: 'editTransition', id: tr.id, end: floor3(chk.a) };
     out.push([pull], [face], [pull, face]);
   } else out.push([face]);
-  // A move that starts inside the window: start it after the window instead.
-  if (inFlight && tr.start > chk.a - MIN_TRANSITION) out.push([{ op: 'editTransition', id: tr.id, by: ceil3(chk.b - tr.start) }]);
   return out;
 }
 
@@ -542,25 +560,6 @@ function overlapFixes(c: Ctx, w: Found): EditOp[][] {
 }
 const compareStart = (a: PoseTransition, b: PoseTransition) => a.start - b.start || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-function overZoomWarnings(c: Ctx): Found[] {
-  const zooms = focusSegmentsFor(c.p, c.cursor);
-  const out: Found[] = [];
-  for (const tr of c.p3.transitions) {
-    const hits = zooms.filter((z) => tr.start < z.outEnd && tr.end > z.inStart);
-    if (!hits.length) continue;
-    const z = hits[0];
-    out.push({
-      code: 'over-zoom',
-      key: `move:${tr.id}`,
-      message: `Move ${tr.id} (${s2(tr.start)}–${s2(tr.end)}) runs during a zoom (${s2(z.inStart)}–${s2(z.outEnd)})${hits.length > 1 ? ` and ${hits.length - 1} more` : ''}`,
-      at: r3(Math.max(tr.start, z.inStart)),
-      end: r3(Math.min(tr.end, z.outEnd)),
-      transitionId: tr.id,
-    });
-  }
-  return out;
-}
-
 function pastEndWarnings(c: Ctx): Found[] {
   return c.p3.transitions
     .filter((tr) => tr.end > c.D + 1e-6)
@@ -606,11 +605,11 @@ function poseJumpWarnings(c: Ctx): Found[] {
   return out;
 }
 
-function tooFastWarnings(c: Ctx): Found[] {
-  const limit = c.p3.motionBlur.on ? TOO_FAST_DEG_S : TOO_FAST_NO_BLUR_DEG_S;
+/** Each move's peak angular speed (°/s) and when, sampled at SPEED_SAMPLE_HZ on the drawn pose (float included). */
+function peakSpeeds(c: Ctx): Map<string, { peak: number; at: number }> {
   const sample = floatSampler(c.p3);
   const speed = (t: number) => rotationAngle(poseRotation(sample(t - SPEED_STEP)), poseRotation(sample(t + SPEED_STEP))) / (2 * SPEED_STEP);
-  const out: Found[] = [];
+  const out = new Map<string, { peak: number; at: number }>();
   for (const tr of c.p3.transitions) {
     const n = Math.max(2, Math.ceil((tr.end - tr.start) * SPEED_SAMPLE_HZ));
     let peak = 0;
@@ -623,6 +622,17 @@ function tooFastWarnings(c: Ctx): Found[] {
         at = t;
       }
     }
+    out.set(tr.id, { peak, at });
+  }
+  return out;
+}
+
+function tooFastWarnings(c: Ctx): Found[] {
+  const limit = c.p3.motionBlur.on ? TOO_FAST_DEG_S : TOO_FAST_NO_BLUR_DEG_S;
+  const speeds = peakSpeeds(c);
+  const out: Found[] = [];
+  for (const tr of c.p3.transitions) {
+    const { peak, at } = speeds.get(tr.id)!;
     if (peak <= limit) continue;
     out.push({
       code: 'too-fast',
@@ -648,6 +658,24 @@ function floorFlatWarnings(c: Ctx): Found[] {
   ];
 }
 
+/**
+ * Manual zooms do not play while the phone is 3D (compositor.ts: the zoom camera is the identity when the 3D phone
+ * draws), so each one is named, or the user and the agent would add zooms that silently do nothing. No fix: the
+ * zooms come back unchanged when 3D is off, so removing them is the user's call. Automatic zooms (autofocus, taps)
+ * are settings, not marks on the timeline; the editor says they are off in its Zoom panel.
+ */
+function zoom3dWarnings(c: Ctx): Found[] {
+  return c.p.manualZooms
+    .filter((z) => z.inStart < c.D)
+    .map((z, i) => ({
+      code: 'zoom-3d' as const,
+      key: `zoom-3d:${i}`,
+      message: `The zoom at ${s2(z.inStart)} does not play while the phone is 3D (the screen always shows the whole recording); it plays again with 3D off`,
+      at: r3(Math.max(0, z.inStart)),
+      end: r3(Math.min(c.D, z.outEnd)),
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // Fixes
 
@@ -671,7 +699,6 @@ const CHECKS: Partial<Record<WarningCode, Check>> = {
   'tap-angle': tapWarnings,
   'tap-back': tapWarnings,
   overlap: overlapWarnings,
-  'over-zoom': overZoomWarnings,
   'past-end': pastEndWarnings,
   'pose-jump': poseJumpWarnings,
   'too-fast': tooFastWarnings,
@@ -687,11 +714,36 @@ function cleared(w: Found, fixed: Project, cursor: readonly CursorSample[]): boo
   return !again.some((x) => x.key === w.key && (x.code === w.code || w.key.startsWith('tap:')));
 }
 
-/** The first candidate fix that clears `w`. */
+/** Warnings a fix must not add (cheap to re-check; off-canvas has its own fixes). */
+const SIDE_CHECKS: readonly Check[] = [tapWarnings, overlapWarnings, pastEndWarnings, poseJumpWarnings];
+
+/**
+ * A fix that clears one warning must not make the project worse: no new
+ * warning of another kind (a later tap, an overlap, past the end, a jump), and
+ * no move faster than it was, unless it stays under COMFORT_DEG_S. Round 2's
+ * tap fix squeezed a 200° spin into 0.66 s (about 520°/s) to clear a tap.
+ */
+function noWorse(c: Ctx, fixed: Project): boolean {
+  const f = makeCtx(fixed, c.cursor);
+  if (!f) return false;
+  // tap-angle and tap-back are one issue per tap.
+  const id = (x: Found) => (x.key.startsWith('tap:') ? x.key : `${x.code}|${x.key}`);
+  for (const check of SIDE_CHECKS) {
+    const before = new Set(check(c).map(id));
+    if (check(f).some((x) => !before.has(id(x)))) return false;
+  }
+  const was = peakSpeeds(c);
+  for (const [id, now] of peakSpeeds(f)) {
+    if (now.peak > Math.max(COMFORT_DEG_S, (was.get(id)?.peak ?? 0) + 1)) return false;
+  }
+  return true;
+}
+
+/** The first candidate fix that clears `w` and makes nothing else worse. */
 function firstFix(c: Ctx, w: Found, candidates: EditOp[][]): EditOp[] | undefined {
   for (const ops of candidates) {
     const fixed = applyFix(c.p, ops);
-    if (fixed && cleared(w, fixed, c.cursor)) return ops;
+    if (fixed && cleared(w, fixed, c.cursor) && noWorse(c, fixed)) return ops;
   }
   return undefined;
 }
@@ -710,8 +762,10 @@ const codePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * Every warning for `p`'s 3D phone, sorted by time. `cursor` is the
- * bundle's cursor.json samples (zooms from autofocus need them, D5): pass
- * the same samples the editor has, so the CLI and the editor agree.
+ * bundle's cursor.json samples (D5), passed by the CLI and the editor alike.
+ * No check reads it since look round 4: zooms do not play on the 3D screen
+ * (compositor.ts), so the old over-zoom warning (a move during a zoom) cannot
+ * happen; the parameter stays so callers do not change.
  * [] when there is no phone3d, it is off, or it has structural errors
  * (those are validateProject's).
  */
@@ -735,11 +789,11 @@ export function projectWarnings(p: Project, opts: { cursor?: readonly CursorSamp
     ...tapWarnings(c),
     ...offCanvasWarnings(c),
     ...overlapWarnings(c),
-    ...overZoomWarnings(c),
     ...pastEndWarnings(c),
     ...poseJumpWarnings(c),
     ...tooFastWarnings(c),
     ...floorFlatWarnings(c),
+    ...zoom3dWarnings(c),
   ];
   const out = found.map(({ key: _key, offCanvas: _oc, ...w }) => w as Warning);
   found.forEach((w, i) => {

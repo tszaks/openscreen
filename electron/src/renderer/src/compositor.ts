@@ -26,7 +26,7 @@ import type { Annotation, CaptionCue, Point, Project, Size } from '../../shared/
 import { cameraAt, type AutofocusOptions, type FocusSegment } from '../../shared/autofocus';
 import { getFinish, type DeviceModel, type Orientation } from '../../shared/devices';
 import type { ExportPreset } from '../../shared/exportPresets';
-import type { TapSuggestion } from '../../shared/taps';
+import { tapGapAt, type TapSuggestion } from '../../shared/taps';
 import { Timeline } from '../../shared/timeline';
 import { isPhoneProject, layoutPreset, presetAllowsZoom, resolveDevice, tapsToOutput } from '../../shared/mobileProject';
 import {
@@ -39,7 +39,7 @@ import {
   screenRectFor,
   type Rect,
 } from './mobile/deviceFrame';
-import { ACCENT_TOUCH_COLOR, drawTouchIndicators } from './mobile/tapIndicator';
+import { ACCENT_TOUCH_COLOR, drawTouchIndicators, PHONE3D_TOUCH, PHONE3D_TOUCH_SIZE } from './mobile/tapIndicator';
 import { computePhoneLayout, drawBlurredBackground, drawTitleCard, type PhoneLayout } from './mobile/layout';
 import type { Ripple } from '../../shared/ripples';
 import { fileUrl } from '../../shared/fileUrl';
@@ -397,7 +397,9 @@ export class CanvasCompositor {
       }
     }
 
-    const cam = this.zoomOn
+    // A 3D phone never zooms its own screen (look round 4): a real screen does not crop its content while the phone
+    // turns, and the zoom cut the UI and pushed taps off the screen edge. The 3D moves frame the phone instead.
+    const cam = this.zoomOn && !this.scene3d
       ? cameraAt(time, this.focusSegments, this.autofocusOpts)
       : { center: { x: 0.5, y: 0.5 }, scale: 1 };
 
@@ -422,6 +424,7 @@ export class CanvasCompositor {
         time,
         look: { hex: getFinish(phone.device, this.project.device.finishId).hex, back: s3.p3.back, glass: s3.p3.glass },
         bgMean: this.backgroundMean(),
+        tapGap: tapGapAt(phone.taps, time),
         quality: {
           ss: q?.ss ?? 1,
           full: q?.quality === 'full',
@@ -435,7 +438,7 @@ export class CanvasCompositor {
             tctx.rect(dst.x, dst.y, dst.w, dst.h);
             tctx.clip();
           };
-          this.drawScreenContent(tctx, dst, time, input, cam, { clip: clipDst, cursorOutsideClip: false, pxScale });
+          this.drawScreenContent(tctx, dst, time, input, cam, { clip: clipDst, cursorOutsideClip: false, pxScale, phone3d: true });
           drawCutouts(tctx, mapRect(body, rect, dst), phone.device, { orientation: phone.orientation });
         },
       });
@@ -556,7 +559,7 @@ export class CanvasCompositor {
     time: number,
     input: FrameInputs,
     cam: { center: Point; scale: number },
-    opts: { clip: () => void; cursorOutsideClip: boolean; pxScale: number },
+    opts: { clip: () => void; cursorOutsideClip: boolean; pxScale: number; phone3d?: boolean },
   ): void {
     const { phone } = this;
     const H = this.canvas.height;
@@ -583,7 +586,9 @@ export class CanvasCompositor {
       drawTouchIndicators(ctx, phone.taps, time, source, pointScaleFor(dst, phone.device) * cam.scale, {
         style: ts.style,
         color: ts.color === 'accent' ? ACCENT_TOUCH_COLOR : '#FFFFFF',
-        sizePt: ts.sizePt,
+        sizePt: ts.sizePt * (opts.phone3d ? PHONE3D_TOUCH_SIZE : 1),
+        // On a 3D phone: a smaller, softer press, kept inside the screen.
+        ...(opts.phone3d ? PHONE3D_TOUCH : {}),
       });
     }
     if (opts.cursorOutsideClip) ctx.restore();

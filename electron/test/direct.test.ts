@@ -59,15 +59,14 @@ function directed(p: Project, opts: DirectOptions): Project {
   return applyOps(p, [{ op: 'direct', style: opts.style, replace: opts.replace, ...(opts.scenes ? {} : { scenes: false }) }], { newId: () => `d${++n}`, scenes: opts.scenes ? [...opts.scenes] : undefined, cursor: opts.cursor ? [...opts.cursor] : undefined }).project;
 }
 
-/** The busy intervals by the spec's formulas (output s): taps, typing runs and zooms. */
-function busyOf(p: Project, cursor: readonly CursorSample[] = []): { start: number; end: number }[] {
+/** Busy time: taps and typing only (zooms do not play while the phone is 3D, so they are never busy). */
+function busyOf(p: Project): { start: number; end: number }[] {
   const tl = new Timeline(p.recording.duration, p.clips);
   const out = tapsToOutput(p.taps, tl).map((t) =>
     t.kind === 'typing'
       ? { start: t.t - 0.6, end: t.t + (t.duration ?? 0) + 0.8 }
       : { start: t.t - 0.6, end: Math.max(t.t + 0.8, t.settleT !== undefined ? t.settleT + 0.3 : -Infinity, t.t + (t.duration ?? 0) + 0.4) },
   );
-  for (const z of focusSegmentsFor(p, cursor)) out.push({ start: z.inStart, end: z.outEnd });
   return out;
 }
 
@@ -134,9 +133,11 @@ function checkPlan(p: Project, opts: DirectOptions, label: string) {
   const D = new Timeline(p.recording.duration, p.clips).outputDuration;
   const warnings = projectWarnings(out, { cursor: opts.cursor });
   if (opts.replace) {
-    expect(warnings, `${label}: warnings`).toEqual([]);
+    // zoom-3d names each manual zoom on any 3D project (zooms do not play in 3D), with or without shots: one per zoom.
+    expect(warnings.filter((w) => w.code !== 'zoom-3d'), `${label}: warnings`).toEqual([]);
+    expect(warnings.filter((w) => w.code === 'zoom-3d').length, `${label}: zoom-3d`).toBe(p.manualZooms.filter((z) => z.inStart < D).length);
     // While busy, the phone faces the viewer within 12°.
-    for (const b of busyOf(p, opts.cursor)) {
+    for (const b of busyOf(p)) {
       for (let t = Math.max(0, b.start); t <= Math.min(D, b.end); t += 1 / 60) expect(facing(p3, t), `${label}: facing at ${t.toFixed(3)}`).toBeGreaterThanOrEqual(COS_BUSY - 1e-9);
     }
   } else {
@@ -325,7 +326,7 @@ describe('planDirect: rules', () => {
     for (const t of list) if (t.id !== 'mine') expect(t.end <= 19 || t.start >= 21).toBe(true);
   });
 
-  it('cursor samples: autofocus zooms are busy time, and the same samples give the same plan', () => {
+  it('cursor samples: zooms are not busy time (they do not play while the phone is 3D), and the same samples give the same plan', () => {
     const p = take(30);
     p.zoom = { ...p.zoom, autofocus: true };
     const cursor: CursorSample[] = [
@@ -339,9 +340,10 @@ describe('planDirect: rules', () => {
     const a = planDirect(p, { style: 'hero', replace: true, cursor });
     const b = planDirect(p, { style: 'hero', replace: true, cursor: fromFile });
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    for (const s of a.shots) for (const z of zooms) expect(s.end <= z.inStart || s.start >= z.outEnd).toBe(true);
+    // The zooms change nothing: the same plan as with no cursor at all, and a shot runs through a zoom's time.
+    expect(JSON.stringify(planDirect(p, { style: 'hero', replace: true }))).toBe(JSON.stringify(a));
+    expect(a.shots.some((s) => zooms.some((z) => s.start < z.outEnd && s.end > z.inStart))).toBe(true);
     checkPlan(p, { style: 'hero', replace: true, cursor }, 'cursor');
-    expect(JSON.stringify(planDirect(p, { style: 'hero', replace: true }))).not.toBe(JSON.stringify(a));
   });
 
   it('self-check: a shot that would push a large phone off the canvas is re-planned (turn-to-back → hero-layback)', () => {
@@ -531,10 +533,10 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
       expect(moving(plan), style).toEqual([]);
       expect(plan.ops[0]).toMatchObject({ op: 'phone3d', pose: style === 'bold' ? { ...BOLD_BASE } : { ...POSED_REST } });
       expect(maxOffFront(out), style).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
-      expect(plan.note, style).toMatch(/^No moving shot fits: the phone must face front from 0\.0 s \(a tap, zoom or kept move starts there\), so no intro fits; /);
+      expect(plan.note, style).toMatch(/^No moving shot fits: the phone must face front from 0\.0 s \(a tap or kept move starts there\), so no intro fits; /);
     }
     expect(planDirect(p, { style: 'hero', replace: true }).note).toBe(
-      'No moving shot fits: the phone must face front from 0.0 s (a tap, zoom or kept move starts there), so no intro fits; there is no free time between taps, zooms and kept moves. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+      'No moving shot fits: the phone must face front from 0.0 s (a tap or kept move starts there), so no intro fits; there is no free time between taps and kept moves. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
     );
     expect(planDirect(p, { style: 'bold', replace: true }).note).toMatch(/\. The phone rests at the bold angle \(9\.4° off front\)\.$/);
     expect(planDirect(p, { style: 'subtle', replace: true }).note).toMatch(/; subtle plans no moves after the intro\. The phone rests at a posed angle instead/);
@@ -545,7 +547,7 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     const plan = planDirect(p, { style: 'hero', replace: true });
     expect(moving(plan)).toEqual([]);
     expect(plan.note).toBe(
-      'No moving shot fits: the phone must face front from 0.4 s (the first tap, zoom or kept move), under the 0.6 s an intro needs; the longest free gap is 0.6 s, under the 2.4 s a middle move needs; the free time at the end is 0.6 s, under the 1.5 s the closing move needs. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+      'No moving shot fits: the phone must face front from 0.4 s (the first tap or kept move), under the 0.6 s an intro needs; the longest free gap is 1.3 s, under the 2.4 s a middle move needs; the free time at the end is 1.3 s, under the 1.5 s the closing move needs. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
     );
   });
 
@@ -628,15 +630,16 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
   });
 
   it('a middle move refused by the moving-time cap says so, not the free gap it would fit in', () => {
-    // 6.5 s, one tap at 2 s (busy, with its tap zoom, from 1.4 s to 3.5 s): a settle opens it (1.25 s is too short
-    // for a spin-in), then 3.65 s to the end is free, more than both the 2.4 s a middle move needs and the 1.5 s the
-    // closing move needs. The 35% cap is 2.275 s and the settle uses 1.0 s, so neither 1.4 s move fits the 1.275 s left.
+    // 6.5 s, one tap at 2 s (busy from 1.4 s; its tap zoom is not busy, zooms do not play in 3D): a settle opens it
+    // (1.25 s is too short for a spin-in), then the rest of the take is free, more than both the 2.4 s a middle move
+    // needs and the 1.5 s the closing move needs. The 35% cap is 2.275 s: the 2.4 s middle move is longer than the
+    // whole cap, and the settle uses 1.0 s, so the 1.4 s closing move does not fit the 1.275 s left.
     const p = take(6.5, [tap(2)]);
     expect(focusSegmentsFor(p, []).map((z) => [z.inStart, z.outEnd])).toEqual([[1.75, 3.5]]);
     const plan = planDirect(p, { style: 'hero', replace: true });
     expect(plan.shots.map((s) => s.recipe)).toEqual(['settle']);
     expect(plan.note).toBe(
-      'No turning shot fits: the phone must face front from 1.4 s, which leaves a spin-in 1.3 s, under the 2.0 s it needs; a middle move takes 1.4 s, more than the 1.3 s left of the moving-time cap (35% of the take, 2.3 s) after the other planned shots; the closing move takes 1.4 s, more than the 1.3 s left of the moving-time cap (35% of the take, 2.3 s) after the other planned shots. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
+      'No turning shot fits: the phone must face front from 1.4 s, which leaves a spin-in 1.3 s, under the 2.0 s it needs; a middle move takes 2.4 s, more than the moving-time cap (35% of the take, 2.3 s); the closing move takes 1.4 s, more than the 1.3 s left of the moving-time cap (35% of the take, 2.3 s) after the other planned shots. The phone rests at a posed angle instead (9.4° off front, inside the 12° rule for taps).',
     );
   });
 
@@ -704,11 +707,13 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     // Two takes found by a review sweep. Straight on, every shot pushes the moved phone off the canvas and is dropped;
     // from the posed angle the same shots fit. The note used to come from the straight-on run ("No moving shot fits
     // ... the self-check dropped 2 shots") while the plan carried three turning shots and one dropped shot.
-    const hero = take(23.514, [tap(2.206, {}, 0), tap(20.395, {}, 1)], [], 'feed-4x5');
-    hero.style = { ...hero.style, contentTransform: { scale: 0.9707804731559009, x: 0.6391470730304718, y: 0.37616323521360756 } };
+    // (The hero take was found again by the same kind of sweep at integration: look round 4's 2.4 s hero-layback and
+    // zooms that are no longer busy let the old take keep a straight-on outro, so it no longer showed the case.)
+    const hero = take(27.41, [tap(1.922, {}, 0), tap(25.183, {}, 1)], [], 'feed-4x5');
+    hero.style = { ...hero.style, contentTransform: { scale: 0.983, x: 0.63, y: 0.382 } };
     const h = checkPlan(hero, { style: 'hero', replace: true }, 'moved hero').plan;
     expect(h.ops[0]).toMatchObject({ op: 'phone3d', pose: POSED_REST });
-    expect(h.shots.map((s) => `${s.recipe} ${s.start}`)).toEqual(['hero-layback 4.428', 'hero-layback 11', 'hero-layback 17.573']);
+    expect(h.shots.map((s) => `${s.recipe} ${s.start}`)).toEqual(['hero-layback 4.637', 'hero-layback 12.403', 'hero-layback 20.168']);
     expect(h.check.dropped.map((s) => s.recipe)).toEqual(['settle']);
     expect(h.note).toBeUndefined();
     const subtle = take(28.755, [tap(3.36, {}, 0), tap(23.223, {}, 1)], [], 'square');

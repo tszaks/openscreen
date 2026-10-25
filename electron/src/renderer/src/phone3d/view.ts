@@ -6,11 +6,10 @@
 //   2. the sample plan (planSamples): times and jitter, from pose only
 //   3. the screen texture, drawn by the compositor at 1:1 render resolution
 //   4. the shadow masks, once per frame (§3.7 step 8: per frame, not per
-//      tile): one slot when the phone is still, up to SHADOW_SLOTS poses over
-//      the shutter while it moves
-//   5. per tile, per sample: the catcher at the sample's shadow slot, depth
-//      range, jittered view offset, the scene into the 2-attachment target,
-//      added into the accumulation target
+//      tile): one silhouette per distinct sub-sample pose (one when the phone
+//      is still), averaged, then blurred once, on one catcher for the frame
+//   5. per tile, per sample: depth range, jittered view offset, the scene
+//      into the 2-attachment target, added into the accumulation target
 //   6. DoF on both attachments, when it would show
 //   7. the output pass: the tile's core into the engine canvas's top-left,
 //      then the caller's blit copies it 1:1, at integer coordinates, to its
@@ -29,14 +28,31 @@ import {
   maxCocPx,
   projectWorld,
   renderRoi,
+  screenAxisSin,
   screenQuadAt,
+  screenUvMap,
   type Cam3D,
   type Scene3D,
 } from '../../../shared/phone3d/projection';
 import type { Engine, PhoneLook } from './engine';
-import { planSamples, planTiles, Passes, type SamplePlan } from './passes';
-import { obliqueScaleCap, planScreenTexture, screenRoom } from './screenTexture';
-import { catcherFrame, SHADOW_SLOTS, type CatcherFrame } from './shadow';
+import {
+  planGlare,
+  planSamples,
+  planTiles,
+  Passes,
+  screenSteadiness,
+  setGlareWeight,
+  setScreenJitter,
+  setScreenSteady,
+  setScreenTile,
+  TILE_BYTES_PER_PX,
+  travelRefPx,
+  type SamplePlan,
+} from './passes';
+import { planScreenTexture, screenRoom, textureLimit } from './screenTexture';
+import { aimStudio } from './environment';
+import { FRONT_GLASS_FLAG_SIN } from './materials';
+import { frameCatcher, sampleLight } from './shadow';
 
 const DEG = Math.PI / 180;
 
@@ -65,6 +81,9 @@ export interface Render3DArgs {
    */
   drawScreen: (ctx: CanvasRenderingContext2D, dst: Rect, pxScale: number) => void;
   quality: Render3DQuality;
+  /** Seconds from this frame to the nearest tap (its press to its release; Infinity or absent when none): the
+   *  screen content holds still near a tap (screenSteadiness). */
+  tapGap?: number;
 }
 
 /**
@@ -92,24 +111,13 @@ export type Render3DResult =
   | { empty: true; roi: Rect };
 
 /**
- * A frame's shadow slots (§3.7 steps 5 and 8): a still phone has one, cast at
- * sample 0; a moving one follows min(SHADOW_SLOTS, N) poses spread evenly over
- * the shutter (the shadow is soft; a silhouette and four blurs for every one
- * of up to 64 samples would cost more than the scene). `at[i]` is the sample
- * whose pose slot i is cast from (the middle of the samples it serves); `of[k]`
- * is sample k's slot. Pure: from the sample plan only.
+ * The sub-samples whose poses cast the frame's shadow (§3.7 step 5): every
+ * sample while the phone moves (each has its own time), only sample 0 while
+ * it is still (all samples share one pose; the jitter does not move the
+ * shadow). Pure: from the sample plan only.
  */
-export function planShadowSlots(plan: Pick<SamplePlan, 'n' | 'nMotion'>): { count: number; at: number[]; of: number[] } {
-  const N = plan.n;
-  const count = plan.nMotion > 1 ? Math.min(SHADOW_SLOTS, N) : 1;
-  const of = Array.from({ length: N }, (_, k) => (count === 1 ? 0 : Math.floor((k * count) / N)));
-  // The middle of each slot's own run of samples (first..last with of[k] = i).
-  const at = Array.from({ length: count }, (_, i) => {
-    if (count === 1) return 0;
-    const first = of.indexOf(i);
-    return Math.floor((first + of.lastIndexOf(i)) / 2);
-  });
-  return { count, at, of };
+export function shadowSamples(plan: Pick<SamplePlan, 'n' | 'nMotion'>): number[] {
+  return plan.nMotion > 1 ? Array.from({ length: plan.n }, (_, k) => k) : [0];
 }
 /** DoF below this largest blur (render px) is invisible and skipped. */
 export const DOF_MIN_PX = 0.5;
@@ -127,7 +135,7 @@ function statsOn(): boolean {
   return g.__p3dStatsOn === true || !!g.location?.search?.includes('p3dstats');
 }
 
-/** Puts the phone, the lights and the environment rotation at the pose of `cam`. */
+/** Puts the phone, the softboxes and the environment rotation (the key azimuth) at the pose of `cam`. */
 function applyPose(engine: Engine, s: Scene3D, cam: Cam3D): void {
   const p = cam.pose;
   const g = engine.poseGroup;
@@ -135,9 +143,9 @@ function applyPose(engine: Engine, s: Scene3D, cam: Cam3D): void {
   g.rotation.set(-p.tilt * DEG, p.turn * DEG, -p.rotate * DEG, 'ZXY');
   g.scale.setScalar(cam.scale);
   engine.inner.rotation.set(0, 0, cam.landscape);
-  const az = (s.p3.light.azimuth + p.light) * DEG;
-  if (engine.current.rig) engine.current.rig.rotation.set(0, az, 0);
-  engine.scene.environmentRotation.set(0, az, 0);
+  const az = s.p3.light.azimuth + p.light;
+  aimStudio(engine.scene, az);
+  if (engine.lights) engine.kit.placeLights(engine.lights.group, cam.pos, Math.max(s.bodyMm.width, s.bodyMm.height) * cam.scale, az, s.p3.light.intensity);
 }
 
 /** The perspective camera for `cam`, its depth range, and the jittered window of the full W·ss × H·ss view. */
@@ -165,8 +173,8 @@ function applyCamera(
   return range;
 }
 
-/** Makes sure the phone for this scene and look, its light rig and the environment are in the scene. Returns the
- *  phone model's cache key. */
+/** Makes sure the phone for this scene and look, the studio set (environment) and the preset's softboxes are in the
+ *  scene. Returns the phone model's cache key. */
 function prepareScene(engine: Engine, a: Render3DArgs): string {
   const s = a.scene;
   const p3 = s.p3;
@@ -180,32 +188,20 @@ function prepareScene(engine: Engine, a: Render3DArgs): string {
     engine.current.phone = phone;
   }
   const preset = p3.light.preset;
-  const rigKey = `${engine.generation}|${preset}|${p3.light.intensity}`;
-  const rig = engine.rigs.get(rigKey, () => {
-    const obj = engine.kit.lights(preset, p3.light.intensity);
-    return {
-      obj,
-      dispose: () =>
-        obj.traverse((o) => {
-          const d = o as unknown as { dispose?: () => void };
-          if (o !== obj && typeof d.dispose === 'function') d.dispose();
-        }),
-    };
-  });
-  if (engine.current.rig !== rig.obj) {
-    if (engine.current.rig) engine.scene.remove(engine.current.rig);
-    engine.scene.add(rig.obj);
-    engine.current.rig = rig.obj;
-  }
   const q = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 15) / 15;
   const bg = [q(a.bgMean[0]), q(a.bgMean[1]), q(a.bgMean[2])] as const;
   const envKey = `${engine.generation}|${preset}|${bg.join(',')}`;
   const env = engine.envs.get(envKey, () => {
-    const tex = engine.kit.environment(preset, bg, engine.renderer);
-    return { tex, dispose: () => tex?.dispose() };
+    const env = engine.kit.environment(preset, bg, engine.renderer);
+    return { tex: env?.texture ?? null, dispose: () => env?.dispose() };
   });
   engine.scene.environment = env.tex;
   engine.scene.environmentIntensity = p3.light.intensity * engine.kit.envStrength(preset);
+  if (engine.lights?.preset !== preset) {
+    if (engine.lights) engine.scene.remove(engine.lights.group);
+    engine.lights = { preset, group: engine.kit.lights(preset) };
+    engine.scene.add(engine.lights.group);
+  }
   return phoneKey;
 }
 
@@ -236,7 +232,8 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   // 1-2. Sample plan and ROI.
   const motion = a.quality.full && a.quality.motion && a.quality.fps > 0 ? a.quality.motion : null;
   const shutterSec = motion ? Math.max(0, motion.shutter) / a.quality.fps : 0;
-  const travelPx = motion && shutterSec > 0 ? hullTravelPx(s, t, shutterSec, ss) : 0;
+  // Hull travel in output px, counted at the 1080 reference: a 4K frame takes the samples a 1080 one does.
+  const travelPx = motion && shutterSec > 0 ? travelRefPx(hullTravelPx(s, t, shutterSec, 1), Math.min(W, H)) : 0;
   const plan: SamplePlan = planSamples({ t, travelPx, motion: motion ? { samples: motion.samples, shutterSec } : null, full: a.quality.full });
   const roi = renderRoi(s, t, plan.nMotion > 1 ? plan.times : undefined);
   if (!roi || roi.w <= 0 || roi.h <= 0) return { empty: true, roi: roi ?? { x: 0, y: 0, w: 0, h: 0 } };
@@ -251,16 +248,22 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
 
   // 3. The screen texture, at the frame's centre pose (the video frame is fixed for the frame).
   const camT = camAt(s, t);
-  const { quad } = screenQuadAt(s, t, camT);
+  const { quad, facing } = screenQuadAt(s, t, camT);
   const p3t = p3.transitions;
   const sizes = [p3.pose.size, ...p3t.map((tr) => tr.to.size), ...p3t.map((tr) => tr.from?.size ?? 0)];
-  const layout = planScreenTexture(quad, s.home.screen, ss, maxSide, obliqueScaleCap(ss, sizes));
+  const texMax = textureLimit(engine.renderer.capabilities.maxTextureSize);
+  const layout = planScreenTexture(quad, s.home.screen, ss, texMax);
   // Drawn and uploaded now, once (not inside the first sample's draw), in bands when the screen is big.
-  const tex = engine.screen.update(layout, camT.landscape, (tctx) => a.drawScreen(tctx, layout.dst, layout.scale), maxSide, screenRoom(s.home.screen, ss, sizes));
+  const tex = engine.screen.update(layout, camT.landscape, (tctx) => a.drawScreen(tctx, layout.dst, layout.scale), texMax, screenRoom(s.home.screen, ss, sizes));
   if (phone.screen.material.map !== tex) {
     phone.screen.material.map = tex;
     phone.screen.material.needsUpdate = true;
   }
+  // A moving frame holds the screen content still where it should be read (facing the viewer, near a tap).
+  const steady = plan.nMotion > 1 ? screenSteadiness(facing, a.tapGap ?? Infinity) : 0;
+  // tex.matrix is the texture's own uv transform (ScreenTexture sets it; matrixAutoUpdate is off).
+  if (steady > 0) setScreenSteady(phone.screen.material, steady, screenUvMap(s, camT), tex.matrix);
+  else setScreenSteady(phone.screen.material, 0, null, null);
   mark('screen');
 
   // DoF reach (render px) over the frame's samples.
@@ -271,10 +274,12 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
     for (let k = 0; k < plan.times.length; k++) if (k === 0 || cams[k]) coc = Math.max(coc, maxCocPx(s, plan.times[k]) * ss);
   }
   const dofOn = coc >= DOF_MIN_PX;
-  const tiles = planTiles(rw, rh, ss, dofOn ? coc + 2 : 0);
+  // One sample (live preview, --draft) renders with MSAA; full quality renders every sample plain and jittered.
+  const msaa = plan.n === 1;
+  const tiles = planTiles(rw, rh, ss, dofOn ? coc + 2 : 0, msaa ? TILE_BYTES_PER_PX.msaa : TILE_BYTES_PER_PX.full);
   const tw = Math.max(...tiles.map((x) => x.pw));
   const th = Math.max(...tiles.map((x) => x.ph));
-  engine.passes.ensure(tw, th);
+  engine.passes.ensure(tw, th, msaa);
   // One tile core at a time (output px).
   const canvas = engine.sizeCanvas(Math.max(...tiles.map((x) => x.w / ss)), Math.max(...tiles.map((x) => x.h / ss)));
   const passes = engine.passes;
@@ -282,20 +287,26 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
   engine.shadow.catcher.visible = shadowOn;
   const N = plan.n;
 
-  // 4. Shadow masks, once per frame: every slot before any tile (each slot keeps its own masks, so no tile renders
-  // them again). A slot's masks are reused as they are while nothing they depend on changes (a paused preview).
-  const shadowSlots = planShadowSlots(plan);
-  const catchers: CatcherFrame[] = [];
+  // 4. Shadow masks, once per frame, before any tile: one silhouette per sub-sample pose, averaged and blurred once.
+  // The masks are reused as they are while nothing they depend on changes (a paused preview).
   if (shadowOn) {
-    for (let i = 0; i < shadowSlots.count; i++) {
-      const sc = camFor(shadowSlots.at[i]);
-      applyPose(engine, s, sc);
-      engine.poseGroup.updateMatrixWorld(true);
-      catchers[i] = catcherFrame(s, sc);
-      engine.shadow.render(engine.poseGroup, catchers[i], phoneKey, i);
-    }
+    const ks = shadowSamples(plan);
+    const scams = ks.map((k) => camFor(k));
+    const catcher = frameCatcher(s, scams, Math.floor(scams.length / 2));
+    engine.shadow.render(
+      engine.poseGroup,
+      catcher,
+      phoneKey,
+      ks.length,
+      (i) => applyPose(engine, s, scams[i]),
+      scams.map((c) => sampleLight(s, c)),
+      ks.length > 1 ? ks.map((k) => plan.weights[k]) : undefined,
+    );
+    engine.shadow.use(catcher, p3.shadow.opacity);
     mark('shadow');
   }
+
+  const glareWeights = planGlare(plan);
 
   const st = engine.stats;
   st.renders++;
@@ -313,19 +324,14 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
     for (const tile of tiles) {
       if (engine.lost || r.getContext().isContextLost()) return false;
       if (N > 1) passes.clearAccum(tile.pw, tile.ph);
+      setScreenTile(phone.screen.material, roi.x * ss + tile.px, roi.y * ss + tile.py, tile.ph, ss);
       let range = { near: 1, far: 2 };
       let last = passes.msaa!;
-      let shadowSlot = -1;
       for (let k = 0; k < N; k++) {
         const cam = camFor(k);
         const tk = plan.times[k];
         applyPose(engine, s, cam);
         engine.poseGroup.updateMatrixWorld(true);
-        const slot = shadowSlots.of[k];
-        if (shadowOn && slot !== shadowSlot) {
-          shadowSlot = slot;
-          engine.shadow.use(slot, catchers[slot], p3.shadow.opacity);
-        }
         const [jx, jy] = plan.jitter[k];
         range = applyCamera(engine, s, cam, tk, ss, {
           x: roi.x * ss + tile.px + jx,
@@ -333,8 +339,14 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
           w: tile.pw,
           h: tile.ph,
         });
-        // Sample 0 renders with MSAA (the preview's only sample; a still phone's screen); jittered ones without.
-        const target = k === 0 && plan.nMotion === 1 ? passes.msaa! : passes.plain!;
+        const target = msaa ? passes.msaa! : passes.plain!;
+        setScreenJitter(phone.screen.material, jx, jy);
+        if (phone.glare) {
+          // Inside the flag (materials.ts FRONT_GLASS_FLAG) the shader would add exactly 0: skip the draw.
+          const w = screenAxisSin(cam) < FRONT_GLASS_FLAG_SIN.clear ? 0 : glareWeights[k];
+          phone.glare.visible = w > 0;
+          setGlareWeight(phone.glare.material as THREE.Material, w);
+        }
         // Only the last sample's depth is read (by DoF): skip resolving it otherwise.
         target.resolveDepthBuffer = dofOn && k === N - 1;
         Passes.view(target, tile.pw, tile.ph);
@@ -345,8 +357,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
         last = target;
         mark('scene');
         if (N > 1) {
-          const w1 = plan.screenFromFirst ? (k === 0 ? 1 : 0) : 1 / N;
-          passes.accumulate(target, tile.pw, tile.ph, 1 / N, w1);
+          passes.accumulate(target, tile.pw, tile.ph, plan.weights[k], plan.weights[k]);
           mark('accumulate');
         }
       }
@@ -368,8 +379,9 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
       // The core lands at the canvas's top-left: the window shifts by the core's offset in the ROI (render px).
       const cw = tile.w / ss;
       const ch = tile.h / ss;
-      passes.output(src, { x: 0, y: 0, w: cw, h: ch }, { x: tile.px - tile.x, y: tile.py - tile.y, w: tile.pw, h: tile.ph }, ss, canvas.h);
-      blit(engine.canvas, cw, ch, roi.x + tile.x / ss, roi.y + tile.y / ss);
+      const at = { x: roi.x + tile.x / ss, y: roi.y + tile.y / ss };
+      passes.output(src, { x: 0, y: 0, w: cw, h: ch }, { x: tile.px - tile.x, y: tile.py - tile.y, w: tile.pw, h: tile.ph }, ss, canvas.h, at);
+      blit(engine.canvas, cw, ch, at.x, at.y);
       mark('output');
     }
     r.setRenderTarget(null);

@@ -2095,6 +2095,10 @@ body.resizing-y * {
 .zoommark:hover {
   background: var(--accent-tint-strong);
 }
+/* The phone is 3D: zooms do not play, so their marks fade back (still there for when 3D is off). */
+.lane-zoom.off3d .zoommark {
+  opacity: 0.35;
+}
 .zoommark span {
   padding: 0 6px;
   font-size: var(--text-caption);

@@ -1,8 +1,10 @@
-// The 3D phone's shadow (SPEC §3.7 step 5, D14): the phone's silhouette
-// cast onto the catcher along the key light, blurred with the two widths of
-// the flat frame's shadow (DEFAULT_FRAME_SHADOW: ambient, and a tight
-// contact layer at 0.22× the blur and 0.7× the opacity), then drawn on the
-// catcher plane as premultiplied black.
+// The 3D phone's shadow (SPEC §3.7 step 5, D14): two layers drawn on the
+// catcher plane as premultiplied black. The drop (ambient) layer is the
+// phone's silhouette cast onto the catcher along the key light, blurred with
+// the flat frame's shadow width; the contact layer is the silhouette cast
+// STRAIGHT onto the catcher, blurred to 0.22× that at 0.7× the opacity, so a
+// tight shade hugs the outline on every side while the drop shadow falls away
+// from the key (look round 4: one cast for both left no visible shadow).
 //
 // The silhouette is rendered IN CATCHER-PLANE COORDINATES: every vertex is
 // projected onto the catcher along the light (a planar shadow matrix), and an
@@ -18,18 +20,18 @@
 // ~35 texels at 1024; at half size the kernel is half as long and the
 // 2 × 2 average on the way down is free).
 //
-// Slots (§3.7 step 8: the shadow targets are per frame, not per tile): a
-// moving frame's shadow follows up to SHADOW_SLOTS poses over the shutter.
-// Each pose's blurred contact and ambient masks live in their own slot, so
-// view.ts renders every slot once per frame, before the tile loop, and each
-// tile's samples only point the catcher at the matching slot (use()). The
-// silhouette and the two intermediate blur targets are scratch, shared by
-// all slots. Slot 0 is made up front (a still phone needs only it); the
-// others on the first moving frame.
+// Motion (§3.7 steps 5 and 8): a moving frame's shadow is the average of its
+// sub-samples' shadows. Each distinct sub-sample pose casts its silhouette
+// once, into the frame's one catcher area (the union of every sample's), and
+// the silhouettes are averaged before the blur; the blur is linear, so that
+// is the average of the blurred shadows. So the masks are made once per
+// frame, before any tile, with one drop silhouette per sub-sample (and one
+// contact silhouette from the middle pose): no tile renders a mask again, and
+// a fast move's shadow is as smooth as the phone's blur.
 import * as THREE from 'three';
 import {
-  keyLightDir,
   shadowCatcherCorners,
+  shadowLightDir,
   shadowSigma,
   SHADOW_CONTACT,
   type Cam3D,
@@ -38,8 +40,6 @@ import {
 
 export const SILHOUETTE_SIZE = 1024;
 export const AMBIENT_SIZE = 512;
-/** Most shadow poses (mask slots) per frame while the phone moves. */
-export const SHADOW_SLOTS = 6;
 /** Longest blur kernel half-width in taps; wider blurs step over texels (bilinear), deterministically. */
 const MAX_HALF_TAPS = 64;
 
@@ -55,6 +55,14 @@ void main() {
 const SILHOUETTE_FRAG = /* glsl */ `
 layout(location = 0) out highp vec4 o0;
 void main() { o0 = vec4( 1.0 ); }`;
+
+/** Adds a resolved silhouette into the average (blend ONE, ONE) with weight uW. */
+const ADD_FRAG = /* glsl */ `
+precision highp float;
+uniform highp sampler2D uSrc;
+uniform float uW;
+layout(location = 0) out highp vec4 o0;
+void main() { o0 = vec4( texelFetch( uSrc, ivec2( gl_FragCoord.xy ), 0 ).r * uW, 0.0, 0.0, 1.0 ); }`;
 
 const BLUR_FRAG = /* glsl */ `
 precision highp float;
@@ -157,22 +165,37 @@ export interface CatcherFrame {
 /** Minimum light z for a wall (matches shared/phone3d/projection shadowPointsWorld). */
 const MIN_WALL_LZ = 0.1;
 
-/**
- * The catcher, its mask mapping and the planar shadow matrix at one sample:
- * the same catcher area and light direction the shared projection uses
- * (shadowCatcherCorners, keyLightDir), so the ROI and the drawn shadow agree.
- */
-export function catcherFrame(s: Scene3D, cam: Cam3D): CatcherFrame {
-  const corners = shadowCatcherCorners(s, cam).map((c) => new THREE.Vector3(c[0], c[1], c[2]));
-  const L = keyLightDir(s.p3.light.azimuth + cam.pose.light);
-  const sigma = shadowSigma(s, cam);
+/** World → catcher-plane projection along the light L (toward the light): wall z = plane, floor y = plane. */
+export function planarShadowMatrix(kind: 'wall' | 'floor', plane: number, L: readonly [number, number, number]): THREE.Matrix4 {
   const m = new THREE.Matrix4();
-  if (s.p3.shadow.kind === 'wall') {
-    const zw = corners[0].z;
+  if (kind === 'wall') {
     const lz = Math.max(L[2], MIN_WALL_LZ);
     const ax = L[0] / lz;
     const ay = L[1] / lz;
-    m.set(1, 0, -ax, zw * ax, 0, 1, -ay, zw * ay, 0, 0, 0, zw, 0, 0, 0, 1);
+    return m.set(1, 0, -ax, plane * ax, 0, 1, -ay, plane * ay, 0, 0, 0, plane, 0, 0, 0, 1);
+  }
+  const ax = L[0] / L[1];
+  const az = L[2] / L[1];
+  return m.set(1, -ax, 0, plane * ax, 0, 0, 0, plane, 0, -az, 1, plane * az, 0, 0, 0, 1);
+}
+
+/** The light direction a sample's shadow is cast along: the shared shadowLightDir (the project's key, its offset
+ *  capped at the 2D frame shadow's; the pose's light channel does not turn it). */
+export function sampleLight(s: Scene3D, cam: Cam3D): [number, number, number] {
+  return shadowLightDir(s, cam) as [number, number, number];
+}
+
+/**
+ * The catcher, its mask mapping and the planar shadow matrix at one sample:
+ * the same catcher area and light direction the shared projection uses
+ * (shadowCatcherCorners, shadowLightDir), so the ROI and the drawn shadow agree.
+ */
+export function catcherFrame(s: Scene3D, cam: Cam3D): CatcherFrame {
+  const corners = shadowCatcherCorners(s, cam).map((c) => new THREE.Vector3(c[0], c[1], c[2]));
+  const L = sampleLight(s, cam);
+  const sigma = shadowSigma(s, cam);
+  if (s.p3.shadow.kind === 'wall') {
+    const zw = corners[0].z;
     const xs = corners.map((c) => c.x);
     const ys = corners.map((c) => c.y);
     return {
@@ -185,15 +208,12 @@ export function catcherFrame(s: Scene3D, cam: Cam3D): CatcherFrame {
       u1: Math.max(...xs),
       v0: Math.min(...ys),
       v1: Math.max(...ys),
-      shadowMatrix: m,
+      shadowMatrix: planarShadowMatrix('wall', zw, L),
       sigma,
       corners,
     };
   }
   const yf = corners[0].y;
-  const ax = L[0] / L[1];
-  const az = L[2] / L[1];
-  m.set(1, -ax, 0, yf * ax, 0, 0, 0, yf, 0, -az, 1, yf * az, 0, 0, 0, 1);
   const xs = corners.map((c) => c.x);
   // axisV = −z, so the camera looking down (−y) sees u = x to the right and v = −z up.
   const vs = corners.map((c) => -c.z);
@@ -207,10 +227,33 @@ export function catcherFrame(s: Scene3D, cam: Cam3D): CatcherFrame {
     u1: Math.max(...xs),
     v0: Math.min(...vs),
     v1: Math.max(...vs),
-    shadowMatrix: m,
+    shadowMatrix: planarShadowMatrix('floor', yf, L),
     sigma,
     corners,
   };
+}
+
+/**
+ * One catcher for a whole frame: the plane, light and blur of the frame's
+ * middle sample `mid`, its area grown to hold every sample's own catcher area
+ * (each holds that sample's whole blurred shadow, so the union holds the
+ * average). The ROI unions the same per-sample areas (renderRoi over the
+ * sub-frame times), so it holds this one too.
+ */
+export function frameCatcher(s: Scene3D, cams: readonly Cam3D[], mid: number): CatcherFrame {
+  const base = catcherFrame(s, cams[mid]);
+  if (cams.length === 1) return base;
+  let { u0, u1, v0, v1 } = base;
+  for (const c of cams) {
+    const f = catcherFrame(s, c);
+    u0 = Math.min(u0, f.u0);
+    u1 = Math.max(u1, f.u1);
+    v0 = Math.min(v0, f.v0);
+    v1 = Math.max(v1, f.v1);
+  }
+  const P = base.plane;
+  const at = (u: number, v: number) => (base.kind === 'wall' ? new THREE.Vector3(u, v, P) : new THREE.Vector3(u, P, -v));
+  return { ...base, u0, u1, v0, v1, corners: [at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)] };
 }
 
 /** The blur kernel for σ (source texels): taps each side and their spacing, so at most MAX_HALF_TAPS taps per side. */
@@ -225,14 +268,22 @@ export function blurKernel(sigmaTexels: number): { half: number; step: number } 
 export class ShadowPass {
   readonly catcher: THREE.Mesh;
   private readonly sil = r16(SILHOUETTE_SIZE, 4);
+  /** The (weighted) sum of the frame's silhouettes: cast along the key (drop), and straight on (contact). */
+  private readonly avg = r16(SILHOUETTE_SIZE);
+  private readonly avgC = r16(SILHOUETTE_SIZE);
   private readonly tc = r16(SILHOUETTE_SIZE);
   private readonly ta = r16(AMBIENT_SIZE);
-  /** Blurred masks per slot, and what each was last rendered for (equal inputs give equal masks: reused). */
-  private readonly slots: { contact: THREE.WebGLRenderTarget; ambient: THREE.WebGLRenderTarget; key: string }[] = [];
-  /** Mask renders (silhouette + 4 blurs) so far; stats and tests. */
+  /** The frame's blurred masks, and what they were last rendered for (equal inputs give equal masks: reused). */
+  private readonly contact = r16(SILHOUETTE_SIZE);
+  private readonly ambient = r16(AMBIENT_SIZE);
+  private key = '';
+  /** Blurred mask sets made so far (one per frame at most); stats and tests. */
   maskRenders = 0;
+  /** Silhouettes cast so far (per frame whose masks were made: one drop cast per sub-sample pose, one contact cast). */
+  silhouettes = 0;
   private readonly silMat: THREE.ShaderMaterial;
   private readonly blurMat: THREE.ShaderMaterial;
+  private readonly addMat: THREE.ShaderMaterial;
   private readonly catcherMat: THREE.ShaderMaterial;
   private readonly orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20);
   private readonly quadScene = new THREE.Scene();
@@ -265,6 +316,19 @@ export class ShadowPass {
       },
       depthTest: false,
       depthWrite: false,
+    });
+    this.addMat = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      vertexShader: FULLSCREEN_VERT,
+      fragmentShader: ADD_FRAG,
+      uniforms: { uSrc: { value: null }, uW: { value: 1 } },
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneFactor,
     });
     const tri = new THREE.BufferGeometry();
     tri.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
@@ -302,30 +366,39 @@ export class ShadowPass {
     this.catcher.frustumCulled = false;
     this.catcher.renderOrder = -10;
     this.catcher.matrixAutoUpdate = false;
-    this.slot(0);
-  }
-
-  /** Slot `i`'s targets, made on first use. */
-  private slot(i: number): { contact: THREE.WebGLRenderTarget; ambient: THREE.WebGLRenderTarget; key: string } {
-    if (!Number.isInteger(i) || i < 0 || i >= SHADOW_SLOTS) throw new Error(`phone3d: shadow slot ${i} out of range`);
-    while (this.slots.length <= i) this.slots.push({ contact: r16(SILHOUETTE_SIZE), ambient: r16(AMBIENT_SIZE), key: '' });
-    return this.slots[i];
   }
 
   /**
-   * Renders slot `slot`'s masks for `frame` from the phone (`phone` is moved
-   * into the silhouette scene for the pass and put back). `modelKey` names the
-   * phone model; with the same model, catcher, light and pose (the phone's
-   * world matrix) as that slot last had, its masks are reused as they are (a
-   * still phone, the paused preview, playback without moves). Does not place
-   * the catcher: use() does, per sample.
+   * Makes the frame's masks for `frame` (frameCatcher) from `poses` sub-sample
+   * poses: `place(i)` puts the phone (`phone`, moved into the silhouette scene
+   * for the pass and put back) at pose i. Each pose casts its silhouette once,
+   * along its own light (`lights[i]`), onto the frame's one catcher plane; the
+   * silhouettes are averaged (by `weights`, the sample plan's tent shutter;
+   * equal without), then blurred once. `modelKey` names the phone
+   * model; with the same model, catcher, lights and poses as last time, the
+   * masks are reused as they are (a still phone, the paused preview, playback
+   * without moves). Does not place the catcher: use() does.
    */
-  render(phone: THREE.Object3D, frame: CatcherFrame, modelKey: string, slot = 0): void {
+  render(
+    phone: THREE.Object3D,
+    frame: CatcherFrame,
+    modelKey: string,
+    poses: number,
+    place: (i: number) => void,
+    lights: readonly (readonly [number, number, number])[],
+    weights?: readonly number[],
+  ): void {
     const r = this.renderer;
-    const target = this.slot(slot);
-    const key = [modelKey, phone.matrixWorld.elements.join(','), frame.shadowMatrix.elements.join(','), frame.u0, frame.u1, frame.v0, frame.v1, frame.sigma.ambient, frame.sigma.contact].join('|');
-    if (key === target.key) return;
-    target.key = key;
+    const n = Math.max(1, Math.floor(poses));
+    const mats: string[] = [];
+    for (let i = 0; i < n; i++) {
+      place(i);
+      phone.updateMatrixWorld(true);
+      mats.push(phone.matrixWorld.elements.join(','), lights[i].join(','));
+    }
+    const key = [modelKey, n, mats.join(';'), weights?.join(',') ?? '', frame.plane, frame.u0, frame.u1, frame.v0, frame.v1, frame.sigma.ambient, frame.sigma.contact].join('|');
+    if (key === this.key) return;
+    this.key = key;
     this.maskRenders++;
     const parent = phone.parent;
     // Silhouette: an orthographic camera looking straight at the catcher area.
@@ -342,52 +415,77 @@ export class ShadowPass {
     cam.far = 20;
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld(true);
-    (this.silMat.uniforms.uShadow.value as THREE.Matrix4).copy(frame.shadowMatrix);
     this.silScene.add(phone);
-    r.setRenderTarget(this.sil);
-    r.setClearColor(0x000000, 0);
-    r.clear(true, false, false);
-    r.render(this.silScene, cam);
+    // Each pose casts along its key (the drop layer), added into the drop sum with the pose's weight; the middle pose
+    // also casts straight onto the catcher (the contact layer).
+    const straight: [number, number, number] = frame.kind === 'wall' ? [0, 0, 1] : [0, 1, 0];
+    for (const dst of [this.avg, this.avgC]) {
+      r.setRenderTarget(dst);
+      r.setClearColor(0x000000, 0);
+      r.clear(true, false, false);
+    }
+    // The contact layer is a tight halo blurred over a few texels: one cast from the middle pose serves the whole
+    // frame (a sub-frame's motion moves it less than its blur), so a moving frame casts n + 1 silhouettes, not 2n.
+    const mid = Math.floor(n / 2);
+    for (let i = 0; i < n; i++) {
+      place(i);
+      phone.updateMatrixWorld(true);
+      const casts: [readonly [number, number, number], THREE.WebGLRenderTarget, number][] = [[lights[i], this.avg, weights ? weights[i] : 1 / n]];
+      if (i === mid) casts.push([straight, this.avgC, 1]);
+      for (const [L, dst, w] of casts) {
+        (this.silMat.uniforms.uShadow.value as THREE.Matrix4).copy(planarShadowMatrix(frame.kind, frame.plane, L));
+        r.setRenderTarget(this.sil);
+        r.setClearColor(0x000000, 0);
+        r.clear(true, false, false);
+        r.render(this.silScene, cam);
+        this.silhouettes++;
+        this.addMat.uniforms.uSrc.value = this.sil.texture;
+        this.addMat.uniforms.uW.value = w;
+        this.quad.material = this.addMat;
+        r.setRenderTarget(dst);
+        r.render(this.quadScene, this.quadCam);
+      }
+    }
     if (parent) parent.add(phone);
     else this.silScene.remove(phone);
 
     // Blur: σ in texels along each axis (the mask is square, the catcher area is not).
     const du = frame.u1 - frame.u0;
     const dv = frame.v1 - frame.v0;
-    const blur = (src: THREE.Texture, srcSize: number, dst: THREE.WebGLRenderTarget, dir: 'u' | 'v', sigmaWorld: number) => {
+    const blur = (from: THREE.Texture, srcSize: number, dst: THREE.WebGLRenderTarget, dir: 'u' | 'v', sigmaWorld: number) => {
       const span = dir === 'u' ? du : dv;
       const sigma = (sigmaWorld * srcSize) / span;
       const k = blurKernel(sigma);
       const u = this.blurMat.uniforms;
-      u.uSrc.value = src;
+      u.uSrc.value = from;
       (u.uDir.value as THREE.Vector2).set(dir === 'u' ? 1 / srcSize : 0, dir === 'v' ? 1 / srcSize : 0);
       (u.uOutSize.value as THREE.Vector2).set(dst.width, dst.height);
       u.uSigma.value = Math.max(1e-3, sigma);
       u.uStep.value = k.step;
       u.uHalf.value = k.half;
+      this.quad.material = this.blurMat;
       r.setRenderTarget(dst);
       r.render(this.quadScene, this.quadCam);
     };
     const S = SILHOUETTE_SIZE;
-    blur(this.sil.texture, S, this.tc, 'u', frame.sigma.contact);
-    blur(this.tc.texture, S, target.contact, 'v', frame.sigma.contact);
+    blur(this.avgC.texture, S, this.tc, 'u', frame.sigma.contact);
+    blur(this.tc.texture, S, this.contact, 'v', frame.sigma.contact);
     // The ambient blur reads the 1024 silhouette at 512-texel centres: a free 2 × 2 average.
-    blur(this.sil.texture, S, this.ta, 'u', frame.sigma.ambient);
-    blur(this.ta.texture, AMBIENT_SIZE, target.ambient, 'v', frame.sigma.ambient);
+    blur(this.avg.texture, S, this.ta, 'u', frame.sigma.ambient);
+    blur(this.ta.texture, AMBIENT_SIZE, this.ambient, 'v', frame.sigma.ambient);
   }
 
-  /** Places the catcher for `frame` (the pose slot `slot` was rendered at) and points it at that slot's masks. */
-  use(slot: number, frame: CatcherFrame, opacity: number): void {
-    const target = this.slot(slot);
+  /** Places the catcher for `frame` (the one render() made the masks for) and points it at the masks. */
+  use(frame: CatcherFrame, opacity: number): void {
     const u = this.catcherMat.uniforms;
-    u.uContact.value = target.contact.texture;
-    u.uAmbient.value = target.ambient.texture;
+    u.uContact.value = this.contact.texture;
+    u.uAmbient.value = this.ambient.texture;
     this.placeCatcher(frame, opacity);
   }
 
   /** Forget the cached masks (their targets were re-created, or the context was lost). */
   invalidate(): void {
-    for (const t of this.slots) t.key = '';
+    this.key = '';
   }
 
   /** The catcher quad in world space, its mask mapping and its opacity. */
@@ -404,23 +502,18 @@ export class ShadowPass {
     u.uOpContact.value = Math.min(1, Math.max(0, opacity * SHADOW_CONTACT.opacity));
   }
 
-  /** Slots made so far (1 until the first moving frame, then up to SHADOW_SLOTS). */
-  get slotCount(): number {
-    return this.slots.length;
-  }
-
   bytes(): number {
     const S = SILHOUETTE_SIZE * SILHOUETTE_SIZE;
     const A = AMBIENT_SIZE * AMBIENT_SIZE;
-    // Scratch: silhouette (4 MSAA samples + resolve), contact and ambient intermediates; per slot: contact and
-    // ambient masks; all 2 B per texel.
-    return S * 2 * 5 + S * 2 + A * 2 + this.slots.length * (S * 2 + A * 2);
+    // Silhouette (4 MSAA samples + resolve), the two sums, the contact intermediate and mask (1024²), the ambient
+    // intermediate and mask (512²); all 2 B per texel.
+    return S * 2 * 5 + S * 2 * 4 + A * 2 * 2;
   }
 
   dispose(): void {
-    for (const t of [this.sil, this.tc, this.ta, ...this.slots.flatMap((x) => [x.contact, x.ambient])]) t.dispose();
-    this.slots.length = 0;
+    for (const t of [this.sil, this.avg, this.avgC, this.tc, this.ta, this.contact, this.ambient]) t.dispose();
     this.silMat.dispose();
+    this.addMat.dispose();
     this.blurMat.dispose();
     this.catcherMat.dispose();
     this.quad.geometry.dispose();

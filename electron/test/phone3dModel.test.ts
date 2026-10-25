@@ -162,6 +162,25 @@ describe('normalizePhone3D', () => {
   });
 });
 
+describe('a 0.1 s move typed in decimals is kept everywhere', () => {
+  it('normalize, the validator and a remap keep 4.0–4.1 (0.0999999999999996 in floating point)', async () => {
+    const { applyOps } = await import('../src/shared/agentOps');
+    const { remapTransitions } = await import('../src/shared/remap');
+    const { Timeline } = await import('../src/shared/timeline');
+    expect(4.1 - 4.0).toBeLessThan(MIN_TRANSITION);
+    const n = normalizePhone3D({ enabled: true, transitions: [{ id: 'a', start: 4.0, end: 4.1, to: { turn: 180 } }] })!;
+    expect(n.transitions.map((t) => [t.start, t.end])).toEqual([[4.0, 4.1]]);
+    // The op accepts it and the saved project still has it after a normalize round trip.
+    const p = applyOps(with3d(phoneProject()), [{ op: 'addTransition', start: 4.0, end: 4.1, to: { turn: 180 } }]).project;
+    expect(normalizeProject(JSON.parse(JSON.stringify(p))).phone3d!.transitions).toHaveLength(1);
+    expect(phone3dProblems(p)).toEqual([]);
+    const tl = new Timeline(10, [{ id: 'c', sourceStart: 0, sourceEnd: 10, speed: 1 }] as never);
+    expect(remapTransitions(n.transitions, tl, tl)).toHaveLength(1);
+    // Really too short still goes.
+    expect(normalizePhone3D({ enabled: true, transitions: [{ id: 'b', start: 4.0, end: 4.09, to: {} }] })!.transitions).toEqual([]);
+  });
+});
+
 describe('normalizeProject hook', () => {
   it('old projects gain no key', () => {
     const p = phoneProject();

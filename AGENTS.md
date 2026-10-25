@@ -57,7 +57,7 @@ $A undo latest                      # swap project.json <-> project.json.bak
 | `apply <bundle> <edits.json\|-\|'[…]'> [--dry-run]` | Applies edit ops in order. All-or-nothing: if any op fails or the result doesn't validate, nothing is written. Writes `project.json.bak` first. |
 | `polish <bundle> [--style clean\|bold] [--title T] [--subtitle S] [--reanalyze] [--dry-run]` | One-shot good defaults (see below). Deterministic; prints the ops it applied. |
 | `undo <bundle>` | Swaps `project.json` and `project.json.bak` (so a second undo redoes). One level. |
-| `export <bundle> [--out f.mp4\|f.gif\|folder] [--gif] [--preset id[,id…]] [--app /path/OpenScreen.app] [--timeout s]` | Renders through the real app with no window and no dialogs, then `ffprobe`s the file (`probe` in the output). `--preset` writes every listed export preset into a folder. Without `--app` it uses `$OPENSCREEN_APP`, else this checkout's Electron (`electron/`). |
+| `export <bundle> [--out f.mp4\|f.gif\|folder] [--gif] [--preset id[,id…]] [--app /path/OpenScreen.app] [--timeout s] [--force]` | Renders through the real app with no window and no dialogs, then `ffprobe`s the file (`probe` in the output). `--preset` writes every listed export preset into a folder. Without `--app` it uses `$OPENSCREEN_APP`, else this checkout's Electron (`electron/`). A 3D project with a `tap-angle` or `tap-back` warning (a tap the viewer cannot read) is refused (exit 1, the warnings and their `fix` in the output) until it is fixed or `--force` is given; other warnings only print to stderr. |
 | `open <bundle> [--app …]` | Opens the project in the editor for a human (`OpenScreen --open <bundle>`). Later `apply`s show up live. |
 | `ops` | Every op name. |
 
@@ -163,6 +163,8 @@ LayoutSection, TapsLane, ExportPanel) and the op that does the same thing:
 | Export formats (multi-preset) | — | `export --preset square,feed-4x5 --out folder` |
 | Undo | — | `undo` (one level, file-based) |
 | Anything else | any field | `set {path: "/json/pointer", value}` — the value's JSON type must match; `/recording` is read-only |
+
+Zooms (manual, tap and auto-focus) do not play while the 3D phone is on (`phone3d`): the 3D screen always shows the whole recording, 1:1, and the shots frame the phone. They come back as they were when 3D is turned off. Zoom ops still apply, but on a 3D project their `changes` note says the zoom does not play, and `apply`/`validate` list a `zoom-3d` warning per manual zoom. Auto 3D (`direct`) plans shots straight through zooms.
 
 Not in the editor, so not ops: keystroke overlay and click ripples have no
 switch (they are drawn whenever the recording has keystrokes/clicks); use

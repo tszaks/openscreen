@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_FRAME_SHADOW, frameGeometry } from '../src/shared/deviceGeometry';
 import { FRONT, POSE_RANGE, type Pose } from '../src/shared/phone3d/model';
+import { BOLD_BASE, BUSY_FACING_DEG } from '../src/shared/phone3d/direct';
+import { FLOOR_FIX_ELEVATION } from '../src/shared/phone3d/warnings';
+import { FRONT_GLASS_FLAG, FRONT_GLASS_FLAG_SIN } from '../src/renderer/src/phone3d/materials';
 import {
   applyHomography,
   BUTTON_PROUD_MM,
@@ -23,6 +26,7 @@ import {
   renderRoi,
   scene3d,
   screenMap3d,
+  screenAxisSin,
   screenQuad,
   SHADOW_AMBIENT_SIGMA,
   SHADOW_CONTACT,
@@ -31,7 +35,10 @@ import {
   shadowCatcherCorners,
   shadowHull,
   shadowPointsWorld,
+  contactPointsWorld,
   shadowSigma,
+  SHADOW_OFFSET,
+  shadowLightDir,
   WALL_GAP_MM,
   subFrameTimes,
   type Cam3D,
@@ -145,6 +152,64 @@ describe('projection vs three.js', () => {
   });
 });
 
+describe('screenAxisSin (the front glass flag, materials.ts FRONT_GLASS_FLAG)', () => {
+  it('0 at FRONT wherever the phone stands; sin of the tilt or of the camera elevation; equals three view-space normal', () => {
+    const p = with3d(phoneProject({ presetId: 'social-9x16' }), {});
+    const s = scene3d(p)!;
+    for (const at of [{}, { x: 0.3, y: -0.2, size: 0.6 }, { rotate: 40 }]) expect(screenAxisSin(camAt(s, 0, { ...FRONT, ...at }))).toBeLessThan(1e-12);
+    expect(screenAxisSin(camAt(s, 0, { ...FRONT, tilt: 16 }))).toBeCloseTo(Math.sin((16 * Math.PI) / 180), 12);
+    expect(screenAxisSin(camAt(s, 0, { ...FRONT, turn: -24 }))).toBeCloseTo(Math.sin((24 * Math.PI) / 180), 12);
+    const up = scene3d(with3d(phoneProject({ presetId: 'social-9x16' }), { camera: { fov: 22, elevation: 9 } }))!;
+    expect(screenAxisSin(camAt(up, 0, FRONT))).toBeCloseTo(Math.sin((9 * Math.PI) / 180), 12);
+    // Against three: the screen normal through the model's and the camera's matrices, as the shader's view-space normal.
+    const r = lcg(7);
+    for (let i = 0; i < 50; i++) {
+      const q = with3d(phoneProject({ presetId: LAYOUTS[i % 3] }), { camera: { fov: 22, elevation: r() * 30 } });
+      const sq = scene3d(q)!;
+      const pose = randomPose(r);
+      const cam = camAt(sq, 0, pose);
+      const deg = Math.PI / 180;
+      const obj = new THREE.Object3D();
+      obj.rotation.set(-pose.tilt * deg, pose.turn * deg, -pose.rotate * deg, 'ZXY');
+      obj.updateMatrixWorld(true);
+      const camera = new THREE.PerspectiveCamera();
+      camera.rotation.set(-cam.elevation * deg, 0, 0);
+      camera.updateMatrixWorld(true);
+      const n = new THREE.Vector3(0, 0, 1).transformDirection(obj.matrixWorld).transformDirection(camera.matrixWorldInverse);
+      expect(screenAxisSin(cam)).toBeCloseTo(Math.hypot(n.x, n.y), 9);
+    }
+  });
+});
+
+describe('the front glass flag covers every pose where the screen is read (materials.ts FRONT_GLASS_FLAG)', () => {
+  // Look round 4 fix round 2: a 5° flag left a grey veil on dark UI at bold's resting pose (9.4°) and under the
+  // floor fix's camera elevation (12°). Each of these is inside the clear zone (screen = glass-0 screen), on every layout.
+  const deg = (d: number) => (d * Math.PI) / 180;
+  it('busy-time limit, BOLD_BASE, the spin-in landing and the floor fix elevation are clear; the hero layback is full', () => {
+    const clear: [string, Pose, number][] = [
+      ['BOLD_BASE', BOLD_BASE, 0],
+      ['spin-in landing (turn 4)', { ...FRONT, turn: 4 }, 0],
+      ...[-1, 1].flatMap((k): [string, Pose, number][] => [
+        [`turn ${k * BUSY_FACING_DEG}`, { ...FRONT, turn: k * BUSY_FACING_DEG }, 0],
+        [`tilt ${k * BUSY_FACING_DEG}`, { ...FRONT, tilt: k * BUSY_FACING_DEG }, 0],
+      ]),
+      ['FRONT, floor fix elevation', FRONT, FLOOR_FIX_ELEVATION],
+      ['BOLD_BASE, floor fix elevation', BOLD_BASE, FLOOR_FIX_ELEVATION],
+    ];
+    for (const layout of LAYOUTS) {
+      for (const [name, pose, elevation] of clear) {
+        const s = scene3d(with3d(phoneProject({ presetId: layout }), { camera: { fov: 22, elevation } }))!;
+        expect(screenAxisSin(camAt(s, 0, pose)), `${layout} ${name}`).toBeLessThan(FRONT_GLASS_FLAG_SIN.clear);
+      }
+      const s = scene3d(with3d(phoneProject({ presetId: layout }), {}))!;
+      // The hero layback's lean (shots.ts HERO_LEAN: turn -24, tilt 16, about 28.6°) shows the full sheen.
+      expect(screenAxisSin(camAt(s, 0, { ...FRONT, turn: -24, tilt: 16, rotate: -4 })), layout).toBeGreaterThanOrEqual(FRONT_GLASS_FLAG_SIN.full);
+    }
+    expect(FRONT_GLASS_FLAG.clearDeg).toBeGreaterThan(Math.max(BUSY_FACING_DEG, FLOOR_FIX_ELEVATION));
+    expect(Math.sin(deg(FRONT_GLASS_FLAG.fullDeg))).toBeCloseTo(FRONT_GLASS_FLAG_SIN.full, 12);
+  });
+});
+
 describe('screen hit-testing', () => {
   it('the homography round trip is within 1e-6', () => {
     const r = lcg(7);
@@ -203,6 +268,47 @@ describe('screen hit-testing', () => {
     };
     expect(steep(70)).not.toBeNull();
     expect(steep(85)).toBeNull();
+  });
+});
+
+describe('shadow light (look round 2: a drop shadow at every turn)', () => {
+  /** Largest sideways offset (world px) of a shadow point from its body point seen straight on the catcher. */
+  const offsetOf = (p: ReturnType<typeof with3d>) => {
+    const s = scene3d(p)!;
+    const cam = camAt(s, 0);
+    const pts = bodyPointsMm(s, true).map((q) => modelToWorld(q, cam));
+    const sh = shadowPointsWorld(s, cam);
+    const wall = s.p3.shadow.kind === 'wall';
+    return { s, cam, off: Math.max(...pts.map((q, i) => (wall ? Math.hypot(q[0] - sh[i][0], q[1] - sh[i][1]) : Math.hypot(q[0] - sh[i][0], q[2] - sh[i][2])))) };
+  };
+
+  it('the drop shadow\'s offset never passes SHADOW_OFFSET × body long side (a look decision, twice the 2D frame\'s), front to edge-on, wall and floor', () => {
+    expect(SHADOW_OFFSET).toBe(2 * DEFAULT_FRAME_SHADOW.offsetY);
+    for (const kind of ['wall', 'floor'] as const) {
+      for (const turn of [0, 30, 60, 90, 120, 150, 180]) {
+        for (const azimuth of [-35, 0, 60, 160]) {
+          const p = with3d(phoneProject(), { pose: { ...FRONT, turn }, shadow: { on: true, kind, opacity: 0.4, softness: 0.5 }, light: { preset: 'studio', azimuth, intensity: 1 } });
+          const { s, cam, off } = offsetOf(p);
+          const long = Math.max(s.bodyMm.width, s.bodyMm.height) * cam.scale;
+          expect(off, `${kind} turn ${turn} az ${azimuth}`).toBeLessThanOrEqual(SHADOW_OFFSET * long * 1.0001);
+        }
+      }
+    }
+    // Edge-on, round 1's wall shadow ran ~5 phone widths sideways; now it hugs the profile.
+    const edge = offsetOf(with3d(phoneProject(), { pose: { ...FRONT, turn: 90 } }));
+    expect(edge.off).toBeLessThan(edge.s.bodyMm.width * edge.cam.scale * 0.25);
+  });
+
+  it('keeps the key\'s direction (down and away from the key), and a shot\'s light channel does not swing it', () => {
+    const base = with3d(phoneProject(), { light: { preset: 'studio', azimuth: -35, intensity: 1 } });
+    const s = scene3d(base)!;
+    const cam = camAt(s, 0);
+    const L = shadowLightDir(s, cam);
+    expect(L[0]).toBeLessThan(0); // light from the left: the shadow falls right
+    expect(L[1]).toBeGreaterThan(0); // from above: it falls down
+    const swung = with3d(phoneProject(), { light: { preset: 'studio', azimuth: -35, intensity: 1 }, pose: { ...FRONT, light: -60 } });
+    const s2 = scene3d(swung)!;
+    expect(shadowLightDir(s2, camAt(s2, 0))).toEqual(L);
   });
 });
 
@@ -294,9 +400,11 @@ describe('ROI, shadow and depth', () => {
       const cam = camAt(s, 0, { ...FRONT, turn: 35, tilt: 15 });
       const g = SHADOW_SUPPORT_SIGMAS * shadowSigma(s, cam).ambient;
       const corners = shadowCatcherCorners(s, cam);
-      const pts = shadowPointsWorld(s, cam);
+      // Both layers: the drop shadow (cast along the key) and the contact shadow (cast straight onto the catcher).
+      const pts = [...shadowPointsWorld(s, cam), ...contactPointsWorld(s, cam)];
       const ax = kind === 'wall' ? [0, 1] : [0, 2];
       const plane = kind === 'wall' ? 2 : 1;
+      expect(contactPointsWorld(s, cam).every((q) => q[plane] === pts[0][plane])).toBe(true);
       for (const c of corners) expect(c[plane]).toBeCloseTo(pts[0][plane], 9);
       for (const i of ax) {
         expect(Math.min(...corners.map((c) => c[i]))).toBeCloseTo(Math.min(...pts.map((q) => q[i])) - g, 6);
@@ -613,16 +721,25 @@ describe('ROI, shadow and depth', () => {
       });
     const cases: [string, ReturnType<typeof with3d>][] = [
       ['9:16 size 1.5 y −0.35 fov 55 el 8 az 160', floor('social-9x16', 55, 8, 160, { size: 1.5, y: -0.35 })],
-      ['9:16 fov 60 tilt −40 az 180', floor('social-9x16', 60, 0, 180, { tilt: -40 })],
-      ['9:16 fov 60 size 1.2 az 180', floor('social-9x16', 60, 0, 180, { size: 1.2 })],
-      ['16:9 fov 60 size 1.2 tilt −85 az 180', floor('landscape-16x9', 60, 0, 180, { size: 1.2, tilt: -85 })],
-      ['none fov 60 tilt −40 az 180', floor('none', 60, 0, 180, { tilt: -40 })],
+      // With the shadow offset capped, the floor catcher reaches behind the eye only for a big phone leaned toward
+      // the camera (round 1 reached it with long shadows from a key behind the phone).
+      ['9:16 fov 60 size 2 tilt −40 az 180', floor('social-9x16', 60, 0, 180, { size: 2, tilt: -40 })],
+      ['9:16 fov 55 size 1.5 tilt −85 az 180', floor('social-9x16', 60, 8, 180, { size: 1.5, tilt: -85 })],
+      ['16:9 fov 60 size 3 tilt −85 az 180', floor('landscape-16x9', 60, 0, 180, { size: 3, tilt: -85 })],
+      ['none fov 60 size 3 tilt −40 az 180', floor('none', 60, 0, 180, { size: 3, tilt: -40 })],
     ];
     for (const [label, p] of cases) {
       const s = scene3d(p)!;
       const cam = camAt(s, 0);
-      // The setup really has catcher corners behind the eye.
-      expect(Math.min(...shadowCatcherCorners(s, cam).map((w) => projectWorld(w, cam)[2])), label).toBeLessThan(0);
+      const nearest = Math.min(...shadowCatcherCorners(s, cam).map((w) => projectWorld(w, cam)[2]));
+      if (label.startsWith('9:16 size 1.5')) {
+        // Round 1's long shadow from a key behind (az 160) ran the floor catcher behind the eye here; with the
+        // offset capped at the 2D frame shadow's (SHADOW_OFFSET) it stays in front.
+        expect(nearest, label).toBeGreaterThan(0);
+      } else {
+        // The setup really has catcher corners behind the eye.
+        expect(nearest, label).toBeLessThan(0);
+      }
       checkFrame(p, label);
       // What is seen of the catcher is in front of the eye and on the canvas, and the blur is measured there.
       const seen = catcherInView(s, cam);
@@ -641,10 +758,14 @@ describe('ROI, shadow and depth', () => {
     const bcam = camAt(bs, 0);
     expect(Math.min(...bodyPointsMm(bs, true).map((q) => project(q, bcam)[2]))).toBeLessThan(-500);
     checkFrame(big, 'size 3 tilt −85 fov 60 el 30');
-    // The first case, by the numbers the review measured: the hard shadow reaches the canvas bottom and near
-    // stays near the body (the regressed code gave h = 1434, near = 1, shadowBlurPx = −5682).
+    // The first case, by the numbers the review measured (the regressed code gave h = 1434, near = 1,
+    // shadowBlurPx = −5682): near stays near the body, and the ROI is the canvas from the top down to the drop
+    // shadow (look round 4's longer drop shadow reaches the canvas bottom here; the ROI is clipped to it).
     const p = cases[0][1];
-    expect(renderRoi(p, 0)).toEqual({ x: 0, y: 0, w: 1080, h: 1920 });
+    const roi = renderRoi(p, 0)!;
+    expect(roi).toMatchObject({ x: 0, y: 0, w: 1080 });
+    expect(roi.h).toBeGreaterThan(1600);
+    expect(roi.h).toBeLessThanOrEqual(1920);
     expect(depthRange(p, 0)!.near).toBeGreaterThan(400);
   });
 

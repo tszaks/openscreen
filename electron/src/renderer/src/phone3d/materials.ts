@@ -1,8 +1,9 @@
 // Materials for the procedural phone (spec §3.4, §3.5, §3.6, D3).
 //
-// One reflection lobe per real surface: cover glass is one AR-coated
-// surface; a colour-under-glass back is a diffuse colour layer under one
-// glass surface (clearcoat); metal has no clearcoat.
+// One reflection lobe per real surface: cover glass is one surface; a
+// colour-under-glass back is a diffuse colour layer under one glass surface
+// (clearcoat); steel and titanium have no clearcoat; anodised aluminium is a
+// dyed oxide under a clear seal, so it has one (look round 4).
 //
 // Every material that is drawn into the engine's 2-attachment target gets
 // one of two output patches (`mrtOutput`):
@@ -29,11 +30,11 @@ import {
   type Material,
   type Object3D,
   type Texture,
-  type WebGLProgramParametersWithUniforms,
-} from 'three';
+  } from 'three';
 import type { DeviceModel, FrameMaterial } from '../../../shared/devices';
 import type { Body3D } from '../../../shared/devices3d';
-import { FLASH_GROUP, BAND_GROUP, FRONT_GROUP, isUnibody, type PhonePart } from './geometry';
+import { flagFade, lodBias, mrtOutput, rectSpecularOnly, screenLookup } from './passes';
+import { FLASH_GROUP, BAND_GROUP, FRONT_GLASS_GROUP, FRONT_GROUP, isUnibody, type PhonePart } from './geometry';
 
 // ---------------------------------------------------------------------------
 // bandF0: a finish swatch → a believable metal reflectance
@@ -84,66 +85,9 @@ export function bandF0(hex: string, material: FrameMaterial): Color {
 }
 
 // ---------------------------------------------------------------------------
-// Shader patches
+// Shader patches: one implementation, in passes.ts (it owns the MRT layout).
 
-type Patch = { key: string; apply: (shader: WebGLProgramParametersWithUniforms) => void };
-
-function addPatch(mat: Material, patch: Patch) {
-  const list: Patch[] = (mat.userData.phone3dPatches ??= []);
-  if (list.some((p) => p.key === patch.key)) return;
-  list.push(patch);
-  mat.onBeforeCompile = (shader) => {
-    for (const p of list) p.apply(shader);
-  };
-  mat.customProgramCacheKey = () => list.map((p) => p.key).join('|');
-  mat.needsUpdate = true;
-}
-
-/** Insert `code` just before the closing brace of main(). */
-function beforeMainEnd(src: string, code: string): string {
-  const i = src.lastIndexOf('}');
-  if (i < 0) throw new Error('phone3d: fragment shader has no main()');
-  return src.slice(0, i) + code + '\n' + src.slice(i);
-}
-
-export const MRT_DECL = 'layout(location = 1) out highp vec4 pc_fragScreen;';
-
-/**
- * The 2-attachment output (§3.5). Three's program prefix declares
- * `pc_fragColor` at location 0 (WebGLProgram.js:819) before this body, so
- * the location-1 output is declared at the top of the body.
- */
-export function mrtOutput<M extends Material>(mat: M, role: 'lit' | 'screen'): M {
-  addPatch(mat, {
-    key: `mrt-${role}`,
-    apply: (shader) => {
-      const body =
-        role === 'lit'
-          ? '\tpc_fragScreen = vec4( 0.0 );'
-          : '\tpc_fragScreen = vec4( gl_FragColor.rgb * gl_FragColor.a, gl_FragColor.a );\n\tgl_FragColor = vec4( 0.0, 0.0, 0.0, gl_FragColor.a );';
-      shader.fragmentShader = beforeMainEnd(`${MRT_DECL}\n${shader.fragmentShader}`, body);
-    },
-  });
-  return mat;
-}
-
-/** Sample the screen texture with a −0.5 LOD bias (§3.6): up to 8% minification still reads mip 0. */
-export const LOD_BIAS = -0.5;
-export const LOD_MAP_FRAGMENT = `#ifdef USE_MAP
-	vec4 sampledDiffuseColor = texture( map, vMapUv, ${LOD_BIAS.toFixed(1)} );
-	diffuseColor *= sampledDiffuseColor;
-#endif`;
-
-export function lodBias<M extends Material>(mat: M): M {
-  addPatch(mat, {
-    key: 'lodbias',
-    apply: (shader) => {
-      if (!shader.fragmentShader.includes('#include <map_fragment>')) throw new Error('phone3d: no map_fragment to bias');
-      shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', LOD_MAP_FRAGMENT);
-    },
-  });
-  return mat;
-}
+export { LOD_BIAS, LOD_MAP_FRAGMENT, MRT_DECL, lodBias, mrtOutput } from './passes';
 
 /** Overlay layer (screen, glare, lens cover): no depth write, pulled toward the camera. */
 export function overlay<M extends Material>(mat: M, reversedDepth: boolean): M {
@@ -176,6 +120,7 @@ export interface PhoneMaterials {
   antenna: MeshPhysicalMaterial;
   seam: MeshPhysicalMaterial;
   frontGlass: MeshPhysicalMaterial;
+  glassRim: MeshPhysicalMaterial;
   glare: MeshPhysicalMaterial;
   back: MeshPhysicalMaterial;
   backPanel: MeshPhysicalMaterial;
@@ -184,6 +129,7 @@ export interface PhoneMaterials {
   lensBarrel: MeshPhysicalMaterial;
   lensElements: [MeshPhysicalMaterial, MeshPhysicalMaterial, MeshPhysicalMaterial];
   lensRetainer: MeshPhysicalMaterial;
+  lensHood: MeshPhysicalMaterial;
   lensCover: MeshPhysicalMaterial;
   flashRing: MeshPhysicalMaterial;
   flash: MeshPhysicalMaterial;
@@ -215,7 +161,88 @@ const srgb = (hex: string) => new Color().setStyle(hex);
  * (the etched surface's own specular already lightens it). The unibody's
  * Ceramic Shield panel reads a step lighter than the aluminium around it.
  */
-export const BACK_LIFT = { glossy: 0.04, frosted: 0.06, panel: 0.1 };
+/** The lens elements under the cover, top to bottom: roughness, specular (× the 6.7% F0 of ior 1.7 glass) and the
+ *  coating's cast. Saturated casts (violet, green, amber) so each element's reflection of a softbox reads as the
+ *  coloured glint of coated optics, ring inside ring (round 2's pale casts read as flat dark discs). */
+export const LENS_ELEMENTS = [
+  { roughness: 0.04, specular: 1, cast: '#a48cff' },
+  { roughness: 0.1, specular: 1, cast: '#6fe0a4' },
+  { roughness: 0.2, specular: 0.6, cast: '#ffd9a0' },
+] as const;
+/** Lens cover glass roughness: a softbox reflects as a soft round highlight (0.02 drew it as a hard square). */
+export const LENS_COVER_ROUGHNESS = 0.08;
+/** Lens cover specularIntensity: × the 4% F0 of glass ≈ 1.2% straight on (AR coated). */
+export const LENS_COVER_SPECULAR = 0.3;
+
+/**
+ * The front cover glass is ONE sheet: the black border round the screen
+ * (frontGlass) and the sheen over the screen (glare) reflect with the same
+ * roughness and the same strength, so a reflection runs across the whole
+ * front unbroken (round 1's border mirror stopped at the screen edge in a
+ * grey-white halo). The glare is added on top of the screen after its
+ * texture lookup (mrtOutput 'glare'), so the screen pixels themselves stay
+ * exact.
+ * The glass mirrors the softboxes only (envMapIntensity 0): the set round the
+ * phone is the room's fill, and a fill reflected across the whole screen is a
+ * grey veil, not a sheen (round 2 kept it under 25% by making the glass weak,
+ * and the judges saw no reflection at any angle). A softbox draws a
+ * soft-edged reflection that slides across the front as the phone turns, its
+ * edges crossing the screen. On white UI the sheen is lost in the white, as on
+ * a real phone; on dark UI and the border it shows.
+ * Facing the camera the glass mirrors the studio's black flag round the lens
+ * (FRONT_GLASS_FLAG), so the screen at FRONT is exact for every preset and key
+ * azimuth. Look round 4 relied on placing no box near the camera axis, and
+ * that held only for studio at the default azimuth: the box above the camera
+ * lifted dark UI at the top of a FRONT screen by up to 93 levels (26.7 dB
+ * against flat, gate 40), and soft or a mirrored key veiled the whole screen.
+ */
+export const FRONT_GLASS_ROUGHNESS = 0.15;
+/** The glare's strength per unit of phone3d.glass: the default 0.25 → 1, bare cover glass (4% straight on, rising
+ *  toward grazing), so a softbox reflects as a faint sheet that slides over the screen as the phone turns; glass 1
+ *  → 4, a glossy showroom mirror. Round 3's anti-reflective 1.4% vanished on white UI at every angle (all three
+ *  judges: no reflection at any angle, a flat print). Facing the camera the flag (FRONT_GLASS_FLAG) keeps the
+ *  screen exact; one sheet for the border and the screen. */
+export const FRONT_GLASS_SPECULAR_PER_GLASS = 4;
+/**
+ * The black flag round the camera lens, as the angle between the screen's normal and the camera's axis: the front
+ * glass (border and glare) reflects nothing within `clearDeg` and fully from `fullDeg` (smoothstep between, on the
+ * sine; projection.ts screenAxisSin is the same number on the CPU, so a sample inside clearDeg skips the glare draw).
+ * The clear zone covers every angle where the screen must be read: the busy-time rule (direct.ts BUSY_FACING_DEG,
+ * 12°: the phone stays within it for every tap), bold's resting pose (BOLD_BASE, 9.4°), the spin-in's landing
+ * (turn 4) and the floor fix's camera elevation (warnings.ts FLOOR_FIX_ELEVATION, 12°), plus 1° so a pose exactly on
+ * 12° is not on the edge. Fix round 1's 5° left a grey veil on dark UI at BOLD_BASE (18.9 dB) and at elevation 12.
+ * The sheen is full from 25°, below the hero layback (about 29°), so the layback and every turn show all of it.
+ */
+export const FRONT_GLASS_FLAG = { clearDeg: 13, fullDeg: 25 } as const;
+export const FRONT_GLASS_FLAG_SIN = {
+  clear: Math.sin((FRONT_GLASS_FLAG.clearDeg * Math.PI) / 180),
+  full: Math.sin((FRONT_GLASS_FLAG.fullDeg * Math.PI) / 180),
+} as const;
+
+/** The front glass's specularIntensity for a phone3d.glass value (border and glare alike). */
+export const frontGlassSpecular = (glass: number) => Math.max(0, glass) * FRONT_GLASS_SPECULAR_PER_GLASS;
+
+/** The front glass's rounded rim (always bare polished glass, whatever phone3d.glass is). */
+export const GLASS_RIM = { roughness: 0.06, specular: 1.5 } as const;
+
+export const BACK_LIFT = { glossy: 0.04, frosted: 0.06 };
+/** The flash diffuser's colour (sRGB). */
+export const FLASH_DIFFUSER = '#cdc8bc';
+/** The LiDAR / front camera glass's colour under its clear cover (sRGB). */
+export const SENSOR_COLOR = '#100e16';
+/** Camera Control's sapphire: the finish's metal colour × this (a dark glass that still reads as the finish's). */
+export const CAMERA_CONTROL_TINT = 0.12;
+/**
+ * The unibody panel's frosted Ceramic Shield over the colour layer (look round 4). Round 3 made it a diffuse
+ * dielectric in the metal's colour; a diffuse surface and a metal answer the light differently, so the panel came
+ * out darker than the metal round it in most poses and read as a recessed tray or a sticker. Now it is the SAME
+ * metal (same reflectance, so it tracks the aluminium's brightness in every pose and light), a touch desaturated,
+ * rougher (the etched glass spreads each highlight wider and dimmer) under a satin clearcoat (the glass surface's
+ * own soft sheen). It differs from the aluminium only by finish, as on the phone.
+ */
+export const PANEL = { metalness: 0.7, roughness: 0.46, desaturate: 0.1, lift: 1.0, clearcoat: 0.7, clearcoatRoughness: 0.32 } as const;
+/** The lens and flash rings: the finish's metal, darker and less saturated (a deeper shade of the body, not a bright bezel). */
+export const LENS_RING = { darken: 0.55, desaturate: 0.4, roughness: 0.3 } as const;
 /** Mix a swatch toward white by `t` in sRGB (how a designer lightens a colour), returned linear. */
 function towardWhite(hex: string, t: number): Color {
   const c = new Color().setStyle(hex);
@@ -225,8 +252,14 @@ function towardWhite(hex: string, t: number): Color {
 }
 
 function physical(params: ConstructorParameters<typeof MeshPhysicalMaterial>[0]): MeshPhysicalMaterial {
-  return mrtOutput(new MeshPhysicalMaterial(params), 'lit');
+  const m = mrtOutput(new MeshPhysicalMaterial(params), 'lit');
+  // A metal has no diffuse term: skip the rect lights' diffuse integral (exact, and a third of their cost).
+  return params?.metalness === 1 ? rectSpecularOnly(m) : m;
 }
+
+/** Anodised aluminium roughness (the 17 Pro unibody, the 16/17 bands). */
+export const ALUMINIUM_ROUGHNESS = 0.34;
+export const ALUMINIUM_SEAL = { clearcoat: 1, roughness: 0.1 };
 
 function bandMaterial(hex: string, material: FrameMaterial, polished: boolean): MeshPhysicalMaterial {
   const color = bandF0(hex, material);
@@ -236,7 +269,10 @@ function bandMaterial(hex: string, material: FrameMaterial, polished: boolean): 
       ? physical({ color, metalness: 1, roughness: 0.12, anisotropy: 0.2 })
       : physical({ color, metalness: 1, roughness: 0.32, anisotropy: 0.5 });
   }
-  return physical({ color, metalness: 1, roughness: 0.36 });
+  // Anodised aluminium: satin. With the softboxes as lights at a finite distance (look round 3), 0.3 spreads each
+  // box into a broad soft highlight that slides over the back and the band; round 2's 0.24 was chosen against
+  // an environment-only studio, where the back had no other way to fall off.
+  return physical({ color, metalness: 1, roughness: ALUMINIUM_ROUGHNESS, clearcoat: ALUMINIUM_SEAL.clearcoat, clearcoatRoughness: ALUMINIUM_SEAL.roughness });
 }
 
 /**
@@ -273,67 +309,86 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   // Antenna lines: a dielectric filler tinted like the finish.
   const antenna = physical({ color: srgb(hex).multiplyScalar(0.55), roughness: 0.45, metalness: 0 });
   const seam = physical({ color: srgb('#0a0a0a'), roughness: 0.6, metalness: 0 });
-  const frontGlass = physical({ color: srgb('#050506'), roughness: 0.02, ior: 1.5, specularIntensity: 0.7, metalness: 0 });
-  const glare = reflectionOnly(overlay(physical({ color: 0x000000, roughness: 0.03, ior: 1.5, specularIntensity: glass, metalness: 0 }), reversed));
+  const spec = frontGlassSpecular(glass);
+  const flag = (m: MeshPhysicalMaterial) => flagFade(m, FRONT_GLASS_FLAG_SIN.clear, FRONT_GLASS_FLAG_SIN.full);
+  const frontGlass = flag(physical({ color: srgb('#050506'), roughness: FRONT_GLASS_ROUGHNESS, ior: 1.5, specularIntensity: spec, metalness: 0 }));
+  const glare = reflectionOnly(overlay(flag(rectSpecularOnly(mrtOutput(new MeshPhysicalMaterial({ color: 0x000000, roughness: FRONT_GLASS_ROUGHNESS, ior: 1.5, specularIntensity: spec, metalness: 0 }), 'glare'))), reversed));
   glare.visible = glass > 0;
+  frontGlass.envMapIntensity = 0;
+  glare.envMapIntensity = 0;
+  // The glass's rounded rim: polished bare glass that mirrors the whole studio (set included), so the overhead
+  // gradient and the strips draw a thin bright line round the front at every angle.
+  const glassRim = physical({ color: srgb('#050506'), roughness: GLASS_RIM.roughness, ior: 1.5, specularIntensity: GLASS_RIM.specular, metalness: 0 });
 
   const glossy = (c: Color) => physical({ color: c, roughness: 0.6, specularIntensity: 0, clearcoat: 1, clearcoatRoughness: 0.02, metalness: 0 });
   const frosted = (c: Color) => physical({ color: c, roughness: 0.42, specularIntensity: 1, metalness: 0 });
   const backGlass = back === 'glossy' ? glossy(towardWhite(hex, BACK_LIFT.glossy)) : frosted(towardWhite(hex, BACK_LIFT.frosted));
   const backMat = opts.backMetal ? band : backGlass;
-  // The unibody's inlaid Ceramic Shield panel is a lighter tone of the finish.
-  const backPanel = frosted(towardWhite(hex, BACK_LIFT.panel));
+  // The unibody's inlaid Ceramic Shield panel (PANEL): the metal's own reflectance, desaturated, rougher, under a
+  // satin clearcoat, so it reads as the same colour in a different finish in every pose.
+  const backPanel = physical({
+    color: desaturate(bandF0(hex, material), PANEL.desaturate).multiplyScalar(PANEL.lift),
+    metalness: PANEL.metalness,
+    roughness: PANEL.roughness,
+    clearcoat: PANEL.clearcoat,
+    clearcoatRoughness: PANEL.clearcoatRoughness,
+  });
 
-  const ringColor = bandF0(darken(hex, 0.25), material);
-  const lensRing = physical({ color: ringColor, metalness: 1, roughness: 0.15 });
+  const lensRing = physical({ color: ringColorOf(hex, material), metalness: 1, roughness: LENS_RING.roughness });
   const plateauGlass = glossy(towardWhite(hex, BACK_LIFT.glossy));
   const plateau = opts.plateau === 'band' ? band : opts.plateau === 'lensRing' ? lensRing : plateauGlass;
 
   const lensBarrel = physical({ color: srgb('#1c1c1f'), metalness: 1, roughness: 0.5, side: FrontSide });
-  // Coated optics: near-black with a cool cast, glossy at the top, rougher deeper down.
-  const lensElements = [
-    [0.05, '#07080c'],
-    [0.17, '#0a0b12'],
-    [0.3, '#0c0d16'],
-  ].map(([r, c]) => physical({ color: srgb(c as string), roughness: r as number, metalness: 0, specularIntensity: 1, ior: 1.7 })) as PhoneMaterials['lensElements'];
-  const lensRetainer = physical({ color: srgb('#2c2c30'), metalness: 1, roughness: 0.3 });
+  // Coated optics: near-black with a cool cast, glossy at the top, rougher deeper down. Multi-coated lens glass
+  // reflects well under 1%, not the 6.7% of bare ior-1.7 glass: at full specular the key softbox showed as a white
+  // block inside every lens on the turn to the back.
+  // Coated optics seen through the cover: near-black domes stacked in the barrel, each reflecting the studio
+  // faintly through its own coating cast (violet, green, neutral), so the lens reads as 2-3 concentric dark rings
+  // with a small soft catchlight of the key on the curved top element, and parallaxes as the phone turns. The
+  // retaining ring between them is dark satin metal: a thin grey ring, never a bright one.
+  const lensElements = LENS_ELEMENTS.map((e) =>
+    physical({ color: srgb('#040406'), roughness: e.roughness, metalness: 0, ior: 1.7, specularIntensity: e.specular, specularColor: srgb(e.cast) }),
+  ) as PhoneMaterials['lensElements'];
+  const lensRetainer = physical({ color: srgb('#3a3a40'), metalness: 1, roughness: 0.3 });
+  const lensHood = physical({ color: srgb('#060607'), metalness: 0, roughness: 0.55, specularIntensity: 0.5 });
   const lensCover = reflectionOnly(
     overlay(
-      physical({
-        color: srgb('#050608'),
-        roughness: 0.02,
-        metalness: 0,
-        ior: 1.5,
-        // AR-coated sapphire reflects about 1%: a tint, not a mirror. In
-        // r186 the thin-film Fresnel REPLACES the base Fresnel (by
-        // `iridescence`, lights_fragment_begin). The spec's film IOR 1.8
-        // reflects 8–20% and turned every lens into a magenta disc straight
-        // on; a real AR film is MgF2-like (1.38): about 1–3%, still tinted,
-        // blended 60/40 with the plain coated Fresnel so it stays a cast.
-        specularIntensity: 0.3,
-        iridescence: 0.6,
-        iridescenceIOR: 1.38,
-        iridescenceThicknessRange: [250, 450],
-      }),
+      physical({ color: srgb('#000000'), roughness: LENS_COVER_ROUGHNESS, metalness: 0, ior: 1.5, specularIntensity: LENS_COVER_SPECULAR }),
       reversed,
     ),
   );
-  const flashRing = physical({ color: srgb('#0c0c0d'), roughness: 0.5, metalness: 0 });
-  const flash = physical({ color: srgb('#e6dfcd'), roughness: 0.55, metalness: 0, specularIntensity: 0.6 });
-  const sensor = physical({ color: srgb('#050506'), roughness: 0.08, metalness: 0, specularIntensity: 1 });
+  // Flash: a thin polished ring of the finish's metal round a frosted diffuser under a clear cover (the cover's
+  // clearcoat reflects the softboxes like the lens glass does; the diffuser under it is a pale warm grey, not cream).
+  const flashRing = physical({ color: ringColorOf(hex, material), metalness: 1, roughness: LENS_RING.roughness });
+  const flash = physical({ color: srgb(FLASH_DIFFUSER), roughness: 0.45, metalness: 0, specularIntensity: 0.4, clearcoat: 1, clearcoatRoughness: 0.04 });
+  // LiDAR / front camera glass: a dark violet-black disc under clear glass (clearcoat), so it reflects the studio
+  // like the lens covers; round 2's matte near-#000 read as a hole.
+  const sensor = physical({ color: srgb(SENSOR_COLOR), roughness: 0.35, metalness: 0, specularIntensity: 0.5, clearcoat: 1, clearcoatRoughness: 0.03 });
   const decal = physical({ color: srgb('#050505'), roughness: 0.9, metalness: 0 });
   for (const m of [flashRing, flash, sensor, decal]) {
     m.polygonOffset = true;
     m.polygonOffsetFactor = -1;
     m.polygonOffsetUnits = reversed ? 4 : -4;
   }
-  // Camera Control: sapphire over a dark sensor, read as dark glossy glass.
-  const cameraControl = physical({ color: srgb('#0b0b0c'), roughness: 0.05, metalness: 0, specularIntensity: 0.8 });
+  // Camera Control: a flush sapphire strip over a dark sensor tinted by the finish: glossy glass (clearcoat) that
+  // mirrors the softboxes, not a black slot.
+  const cameraControl = physical({
+    color: bandF0(hex, material).multiplyScalar(CAMERA_CONTROL_TINT),
+    roughness: 0.3,
+    metalness: 0,
+    specularIntensity: 0.6,
+    clearcoat: 1,
+    clearcoatRoughness: 0.03,
+  });
 
-  const screen = lodBias(mrtOutput(overlay(new MeshBasicMaterial({ map: null, toneMapped: false }), reversed), 'screen'));
+  const screen = screenLookup(lodBias(mrtOutput(overlay(new MeshBasicMaterial({ map: null, toneMapped: false }), reversed), 'screen')));
+  // The screen is the one overlay that writes depth (pulled forward by the same offset): the GPU's hidden-surface
+  // removal then skips shading the glass cap under it, which covers most of a FRONT phone. The glare drawn over it
+  // is at the same offset depth and passes the LESS_EQUAL test.
+  screen.depthWrite = true;
 
   const all: Material[] = [];
-  for (const m of [band, antenna, seam, frontGlass, glare, backGlass, backPanel, plateauGlass, lensRing, lensBarrel, ...lensElements, lensRetainer, lensCover, flashRing, flash, sensor, decal, cameraControl, screen]) {
+  for (const m of [band, antenna, seam, frontGlass, glassRim, glare, backGlass, backPanel, plateauGlass, lensRing, lensBarrel, ...lensElements, lensRetainer, lensHood, lensCover, flashRing, flash, sensor, decal, cameraControl, screen]) {
     if (!all.includes(m)) all.push(m);
   }
   return {
@@ -341,6 +396,7 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
     antenna,
     seam,
     frontGlass,
+    glassRim,
     glare,
     back: backMat,
     backPanel,
@@ -349,6 +405,7 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
     lensBarrel,
     lensElements,
     lensRetainer,
+    lensHood,
     lensCover,
     flashRing,
     flash,
@@ -360,9 +417,15 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   };
 }
 
-function darken(hex: string, t: number): string {
-  const c = new Color().setStyle(hex).convertLinearToSRGB().multiplyScalar(1 - t);
-  return '#' + c.convertSRGBToLinear().getHexString();
+/** The lens and flash rings: the finish's metal reflectance, darker and less saturated (LENS_RING). */
+function ringColorOf(hex: string, material: FrameMaterial): Color {
+  return desaturate(bandF0(hex, material), LENS_RING.desaturate).multiplyScalar(1 - LENS_RING.darken);
+}
+
+/** Mix a linear colour toward the grey of its own luminance by t. */
+function desaturate(c: Color, t: number): Color {
+  const L = luminance(c);
+  return c.clone().lerp(new Color(L, L, L), t);
 }
 
 // ---------------------------------------------------------------------------
@@ -382,15 +445,19 @@ export function materialsForDevice(
   finishHex: string,
   back: 'auto' | BackFinish,
   glass: number,
-  opts: Pick<MaterialOptions, 'reversedDepth'> = {},
+  opts: Pick<MaterialOptions, 'reversedDepth'> & { cached?: boolean } = {},
 ): PhoneMaterials {
   const unibody = isUnibody(device, body3d);
-  return materialsFor(finishHex, device.material, back === 'auto' ? body3d.back : back, glass, {
+  const resolved: MaterialOptions = {
     reversedDepth: opts.reversedDepth,
     polishedBand: POLISHED_BANDS.has(device.id),
     backMetal: unibody || device.family === 'ipad',
     plateau: unibody ? 'band' : body3d.plateau.kind === 'single' ? 'lensRing' : 'glass',
-  });
+  };
+  const backFinish = back === 'auto' ? body3d.back : back;
+  // Uncached: the caller owns the set and disposes `all` (the engine's phone LRU does).
+  if (opts.cached === false) return create(finishHex, device.material, backFinish, glass, resolved);
+  return materialsFor(finishHex, device.material, backFinish, glass, resolved);
 }
 
 /** The material (or per-group list) each part uses. */
@@ -409,7 +476,7 @@ export function materialForPart(part: PhonePart, m: PhoneMaterials): Material | 
       return list;
     }
     case 'lensElements':
-      return [...m.lensElements, m.lensRetainer];
+      return [...m.lensElements, m.lensRetainer, m.lensHood];
     case 'frontHardware': {
       const list: Material[] = [];
       list[FRONT_GROUP.lens] = m.sensor;
@@ -424,8 +491,12 @@ export function materialForPart(part: PhonePart, m: PhoneMaterials): Material | 
       return m.decal;
     case 'seam':
       return m.seam;
-    case 'frontGlass':
-      return m.frontGlass;
+    case 'frontGlass': {
+      const list: Material[] = [];
+      list[FRONT_GLASS_GROUP.flat] = m.frontGlass;
+      list[FRONT_GLASS_GROUP.rim] = m.glassRim;
+      return list;
+    }
     case 'screen':
       return m.screen;
     case 'glare':

@@ -26,6 +26,7 @@ import { MAX_CONTENT_SCALE, MIN_CONTENT_SCALE } from './contentTransform';
 import { compareTransitions } from './phone3d/model';
 import { allowOnly, applyPhone3dOp, NOT_IPHONE, Phone3dOpError, PHONE3D_OP_NAMES } from './phone3d/ops';
 import { DIRECT_STYLES, planDirect, type DirectStyle } from './phone3d/direct';
+import { phone3dActive } from './phone3d/placement';
 import { phone3dProblems } from './phone3d/validate';
 import { canHide, defaultLayerOrder, hideLayer, layerOrder, resetLayer, restack, textLayer, withLayerTransform, type LayerId, type Restack } from './canvasLayers';
 import type { Annotation, AudioItem, Background, CaptionCue, Chapter, Clip, ContentTransform, CursorSample, Project, TranscriptWord, WaitRange } from './types';
@@ -1028,6 +1029,11 @@ export const needsCursor = (ops: EditOp[]) => ops.some((o) => o && o.op === 'dir
 /** Sound files addAudio ops bring in (the CLI copies each into the bundle). */
 export const audioImports = (ops: EditOp[]) => [...new Set(ops.filter((o) => o.op === 'addAudio' && typeof o.file === 'string').map((o) => o.file as string))];
 
+/** Zoom ops: they still edit the project while the phone is 3D, but the zooms do not play until 3D is off. */
+const ZOOM_OPS = new Set(['addZoom', 'moveZoom', 'removeZoom', 'clearZooms', 'zoomSettings']);
+/** Added to a zoom op's note when the 3D phone is active, so an agent sees the edit has no visible effect. */
+export const ZOOM_3D_NOTE = 'zooms do not play while the phone is 3D (they play again with 3D off)';
+
 /** Apply ops in order; stops at the first failing op (nothing is written by callers). Validates the result. */
 export function applyOps(p: Project, ops: EditOp[], ctx: ApplyContext = {}): { project: Project; notes: string[] } {
   if (!Array.isArray(ops)) throw new OpError('edits must be an array of ops (or {"ops":[...]})');
@@ -1038,7 +1044,7 @@ export function applyOps(p: Project, ops: EditOp[], ctx: ApplyContext = {}): { p
     try {
       const r = applyOp(cur, o, ctx);
       cur = r.project;
-      notes.push(r.note);
+      notes.push(ZOOM_OPS.has(o.op) && phone3dActive(cur).active ? `${r.note}; ${ZOOM_3D_NOTE}` : r.note);
     } catch (e) {
       throw new OpError(`op #${i} (${o.op}): ${(e as Error).message}`, i);
     }

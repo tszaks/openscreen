@@ -4,10 +4,11 @@
 // so they make the same plan. Pure: no clock, no randomness.
 //
 // The rule it plans by: while something happens on screen (a tap, a typing
-// run, a zoom) the phone faces the viewer; it only moves in the free time
-// between. All times are OUTPUT seconds on the edited timeline.
+// run) the phone faces the viewer; it only moves in the free time between.
+// Zooms are not busy time: they do not play while the phone is 3D
+// (compositor.ts), so they can never clash with a move. All times are OUTPUT
+// seconds on the edited timeline.
 
-import { focusSegmentsFor } from '../focusSegments';
 import { isPhoneProject, rangesToOutput, tapsToOutput } from '../mobileProject';
 import { Timeline } from '../timeline';
 import type { CursorSample, Project } from '../types';
@@ -29,7 +30,7 @@ export interface DirectOptions {
   scenes?: readonly number[];
   /** true: clear the existing moves first; false: keep them (and plan around them). */
   replace: boolean;
-  /** cursor.json samples (autofocus zooms are busy time, D5). */
+  /** cursor.json samples: the self-check's warnings use them, as the editor's do (D5). */
   cursor?: readonly CursorSample[];
 }
 
@@ -94,7 +95,7 @@ export const VISIBLE_DEG = 8;
 /** Self-check: re-plan rounds before offenders are just dropped. */
 export const MAX_ROUNDS = 4;
 /** Warnings a planned shot must not cause (every code a move can cause). */
-const SHOT_CODES: readonly WarningCode[] = ['tap-angle', 'tap-back', 'off-canvas', 'overlap', 'over-zoom', 'past-end', 'pose-jump', 'too-fast'];
+const SHOT_CODES: readonly WarningCode[] = ['tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast'];
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const s1 = (x: number) => `${x.toFixed(1)} s`;
@@ -161,7 +162,6 @@ function readInputs(p: Project, opts: DirectOptions): Inputs {
     if (t.kind === 'typing') raw.push({ start: t.t - TAP_BEFORE, end: t.t + dur + TYPING_PAD });
     else raw.push({ start: t.t - TAP_BEFORE, end: Math.max(t.t + TAP_AFTER, t.settleT !== undefined ? t.settleT + SETTLE_PAD : -Infinity, t.t + dur + DURATION_PAD) });
   }
-  for (const z of focusSegmentsFor(p, opts.cursor ?? [])) raw.push({ start: z.inStart, end: z.outEnd });
   if (!opts.replace) for (const tr of p.phone3d?.transitions ?? []) raw.push({ start: tr.start, end: tr.end });
   const busy = mergeBusy(raw, D);
   const waits = rangesToOutput(p.waits ?? [], tl).map((w) => ({ start: w.start, end: w.end }));
@@ -198,7 +198,8 @@ export function edgeOnOffset(base: Readonly<Pose>, direction: 1 | -1, duration =
   const key = shotKeys('turn-to-back', 'front').keys[0];
   const b = shotBase(base);
   const from = b.turn;
-  const to = from + 180 * direction;
+  // The first key's own turn (the three-quarter back view it eases to), not an assumed 180.
+  const to = from + (key.to.turn ?? 0) * direction;
   // The edge-on angle (90 + 180k) strictly between from and to.
   const lo = Math.min(from, to);
   const target = 90 + 180 * Math.ceil((lo - 90) / 180 + 1e-12);
@@ -260,9 +261,9 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
   const overCap = (what: string, duration: number) => {
     const cap = `${Math.round(MOVING_CAP[style] * 100)}% of the take`;
     const left = budget - used;
-    if (budget < duration) return `${what} takes ${duration} s, more than the moving-time cap (${cap}, ${below(budget, duration)})`;
-    if (left <= 1e-9) return `${what} takes ${duration} s, and the other planned shots already use all of the moving-time cap (${cap}, ${s1(budget)})`;
-    return `${what} takes ${duration} s, more than the ${below(left, duration)} left of the moving-time cap (${cap}, ${s1(budget)}) after the other planned shots`;
+    if (budget < duration) return `${what} takes ${r3(duration)} s, more than the moving-time cap (${cap}, ${below(budget, duration)})`;
+    if (left <= 1e-9) return `${what} takes ${r3(duration)} s, and the other planned shots already use all of the moving-time cap (${cap}, ${s1(budget)})`;
+    return `${what} takes ${r3(duration)} s, more than the ${below(left, duration)} left of the moving-time cap (${cap}, ${s1(budget)}) after the other planned shots`;
   };
   const tapNote = inp.firstTap !== undefined ? `first tap at ${s1(inp.firstTap)}` : 'no taps';
 
@@ -287,8 +288,8 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
   } else if (room < SHORT_INTRO_MIN) {
     misses.intro =
       room <= 0
-        ? 'the phone must face front from 0.0 s (a tap, zoom or kept move starts there), so no intro fits'
-        : `the phone must face front from ${below(room, SHORT_INTRO_MIN)} (the first tap, zoom or kept move), under the ${SHORT_INTRO_MIN} s an intro needs`;
+        ? 'the phone must face front from 0.0 s (a tap or kept move starts there), so no intro fits'
+        : `the phone must face front from ${below(room, SHORT_INTRO_MIN)} (the first tap or kept move), under the ${SHORT_INTRO_MIN} s an intro needs`;
   }
 
   // Outro: a one-way hero-layback that ends just before the video does.
@@ -572,7 +573,7 @@ function missingCauses(opts: DirectOptions, inp: Inputs, checked: Checked, turni
   const intro = turning ? misses.spinIn : misses.intro;
   if (intro) out.push(intro);
   if (opts.style === 'subtle') out.push('subtle plans no moves after the intro');
-  else if (!inp.windows.length) out.push('there is no free time between taps, zooms and kept moves');
+  else if (!inp.windows.length) out.push('there is no free time between taps and kept moves');
   else for (const c of [misses.middle, misses.outro]) if (c) out.push(c);
   if (checked.dropped.length) {
     const n = checked.dropped.length;
@@ -582,8 +583,8 @@ function missingCauses(opts: DirectOptions, inp: Inputs, checked: Checked, turni
 }
 
 /**
- * The Auto 3D plan for `p` (§2.6): busy time (taps, typing, zooms, and kept
- * moves) → free windows → intro, outro and middle shots within the density
+ * The Auto 3D plan for `p` (§2.6): busy time (taps, typing and kept moves;
+ * zooms do not play in 3D, so they are not busy) → free windows → intro, outro and middle shots within the density
  * caps → a scene-change wipe → ops, in this order: `phone3d` (on, base pose,
  * lighting, motion blur), `clearTransitions` when replacing, one `shot` per
  * shot in time order (float last for subtle). Then a self-check: the ops are

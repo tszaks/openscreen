@@ -11,6 +11,7 @@ import { move } from './helpers/phone3dFixtures';
 import { defaultPhone3D, type Phone3D } from '../src/shared/phone3d/model';
 import { renderRoi, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
 import { projectCanvasSize } from '../src/shared/mobileProject';
+import { focusSegmentsFor } from '../src/shared/focusSegments';
 import { planScreenTexture } from '../src/renderer/src/phone3d/screenTexture';
 import type { Blit3D, Render3DArgs } from '../src/renderer/src/phone3d/view';
 import type { Project } from '../src/shared/types';
@@ -84,11 +85,11 @@ function inputsFor(h: Harness, p: Project, extra: Partial<HarnessInputs> = {}): 
 }
 
 /** Renders `p` at t once and returns the log lines of that render, the compositor and the harness. */
-async function renderOnce(p: Project, t = 0.5, extra: Partial<HarnessInputs> = {}, engine?: (h: Harness) => unknown) {
+async function renderOnce(p: Project, t = 0.5, extra: Partial<HarnessInputs> = {}, engine?: (h: Harness) => unknown, zooms = false) {
   const h = await createHarness();
   try {
     loader.engine = engine ? engine(h) : null;
-    const c = h.compositor(p, projectCanvasSize(p));
+    const c = h.compositor(p, projectCanvasSize(p), zooms ? focusSegmentsFor(p) : undefined);
     const start = h.log.length;
     h.render(c, t, inputsFor(h, p, extra));
     return { log: h.log.slice(start), c, h, engine: loader.engine as ReturnType<typeof fakeEngine> | null };
@@ -204,6 +205,19 @@ describe('3D active with an engine', () => {
     expect(tx).toBeCloseTo(fx - Math.floor(fx), 9);
     expect(ty).toBeCloseTo(fy - Math.floor(fy), 9);
     expect(r.engine!.calls[0].scale).toBe(1);
+  });
+
+  it('never zooms the 3D screen (look round 4): inside a zoom the flat frame crops, the 3D texture shows the whole recording', async () => {
+    const t = 5.5; // inside the fixture's manual zoom (hold 5-6.2 s, scale 1.5)
+    const flat = await renderOnce(base(), t, {}, undefined, true);
+    const r = await renderOnce(with3d(base()), t, {}, (h) => fakeEngine(h, 1080, 1920), true);
+    const p = base();
+    const full = [0, 0, p.recording.sourceSize.width, p.recording.sourceSize.height];
+    const flatSrc = args(flat.log.find((l) => l.startsWith('canvas#0.drawImage(video:screen,'))!).slice(1, 5).map(Number);
+    expect(flatSrc).not.toEqual(full); // the flat phone is zoomed here (the test can fail)
+    const tex = r.engine!.calls[0].tex;
+    const texSrc = args(r.log.find((l) => l.startsWith(`${tex}.drawImage(video:screen,`))!).slice(1, 5).map(Number);
+    texSrc.forEach((v, i) => expect(v).toBeCloseTo(full[i], 6));
   });
 
   it('cursor and ripple radii on the texture map back to the flat ones (pxScale, §3.6), at ss 1 and ss 2', async () => {

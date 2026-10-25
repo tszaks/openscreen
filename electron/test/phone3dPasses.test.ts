@@ -8,14 +8,24 @@ import {
   halton,
   JITTER,
   MAX_SAMPLES,
+  MOTION_STEP_PX,
   mrtOutput,
+  slotOffset,
+  travelRefPx,
   lodBias,
   needsRealloc,
   planSamples,
   planTiles,
-  TILE_MAX_PX,
+  TILE_BYTES_PER_PX,
+  planGlare,
+  GLARE_SAMPLES,
+  tileMaxPx,
   TILE_MAX_SIDE,
+  screenSteadiness,
+  SCREEN_STEADY_FLOOR,
+  tentShutter,
 } from '../src/renderer/src/phone3d/passes';
+import { tapGapAt } from '../src/shared/taps';
 import { planScreenTexture, screenUvMatrix } from '../src/renderer/src/phone3d/screenTexture';
 import { blurKernel, catcherFrame } from '../src/renderer/src/phone3d/shadow';
 import {
@@ -26,7 +36,9 @@ import {
   scene3d,
   screenQuadAt,
   shadowPointsWorld,
-  subFrameTimes,
+  applyHomography,
+  projectWorld,
+  screenUvMap,
   project as projectPt,
   type Quad,
 } from '../src/shared/phone3d/projection';
@@ -51,34 +63,115 @@ describe('sample plan (§3.7 step 4)', () => {
 
   it('live preview / draft: one sample, no jitter, no motion', () => {
     const p = planSamples({ t: 2, travelPx: 300, motion: { samples: 12, shutterSec: 1 / 60 }, full: false });
-    expect(p).toEqual({ n: 1, nMotion: 1, times: [2], jitter: [[0, 0]], screenFromFirst: false });
+    expect(p).toEqual({ n: 1, nMotion: 1, times: [2], jitter: [[0, 0]], weights: [1] });
   });
 
-  it('a still phone in export: 8 jittered AA samples at the same time, the screen from sample 0 only', () => {
+  it('a still phone in export: 8 jittered AA samples at the same time', () => {
     const p = planSamples({ t: 2, travelPx: 0.3, motion: { samples: 12, shutterSec: 1 / 60 }, full: true });
     expect(p.n).toBe(AA_SAMPLES);
     expect(p.nMotion).toBe(1);
     expect(p.times.every((x) => x === 2)).toBe(true);
-    expect(p.screenFromFirst).toBe(true);
+    expect(p.weights).toEqual(new Array(AA_SAMPLES).fill(1 / AA_SAMPLES));
     expect(planSamples({ t: 2, travelPx: 50, motion: null, full: true }).nMotion).toBe(1);
   });
 
-  it('moving: the user samples are a minimum, adjacent copies ≤ 1.5 px apart, capped at 64; times span the shutter', () => {
+  it('moving: the shutter is a tent, not a box: samples stay evenly spread in time, their weights rise to the middle and fade to 0 at both ends, and sum to 1', () => {
     const sh = 1 / 60;
+    const p = planSamples({ t: 1, travelPx: 40, motion: { samples: 12, shutterSec: sh }, full: true });
+    expect(p.weights.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 12);
+    const mid = Math.floor(p.n / 2);
+    expect(p.weights[mid]).toBeGreaterThan(1.7 / p.n);
+    expect(p.weights[0]).toBeLessThan(0.1 / p.n);
+    expect(p.weights[p.n - 1]).toBeLessThan(0.1 / p.n);
+    // Rising then falling (allowing the stratified jitter between neighbours).
+    for (let k = 1; k < mid - 1; k++) expect(p.weights[k + 1]).toBeGreaterThan(p.weights[k - 1]);
+    expect(tentShutter(0)).toBe(0);
+    expect(tentShutter(0.5)).toBe(1);
+    expect(tentShutter(1)).toBe(0);
+    expect(tentShutter(0.25)).toBe(0.5);
+    // The weighted spread of the times is a tent's (σ = width/√24), 0.71× the box's (width/√12).
+    const mean = p.times.reduce((a, x, k) => a + x * p.weights[k], 0);
+    const sd = Math.sqrt(p.times.reduce((a, x, k) => a + (x - mean) ** 2 * p.weights[k], 0));
+    expect(sd / (sh / Math.sqrt(24))).toBeGreaterThan(0.9);
+    expect(sd / (sh / Math.sqrt(24))).toBeLessThan(1.1);
+  });
+
+  it('screen steadiness: held still facing the viewer or within 0.15 s of a tap; turned away with no tap near, half the blur (the floor)', () => {
+    expect(screenSteadiness(1, Infinity)).toBe(1);
+    expect(screenSteadiness(0.9, Infinity)).toBe(1);
+    // Look round 4: never the full smear; the content moves at most half as far as the body (readable mid-spin).
+    expect(SCREEN_STEADY_FLOOR).toBe(0.5);
+    expect(screenSteadiness(0.8, Infinity)).toBe(SCREEN_STEADY_FLOOR);
+    expect(screenSteadiness(0.5, Infinity)).toBe(SCREEN_STEADY_FLOOR);
+    expect(screenSteadiness(-1, Infinity)).toBe(SCREEN_STEADY_FLOOR);
+    expect(screenSteadiness(0.5, 0)).toBe(1);
+    expect(screenSteadiness(0.5, 0.15)).toBe(1);
+    expect(screenSteadiness(0.5, 0.3)).toBe(SCREEN_STEADY_FLOOR);
+    const mid = screenSteadiness(0.88, Infinity);
+    expect(mid).toBeGreaterThan(SCREEN_STEADY_FLOOR);
+    expect(mid).toBeLessThan(1);
+    expect(screenSteadiness(-1, 0.1)).toBe(1);
+    expect(tapGapAt([], 2)).toBe(Infinity);
+    expect(tapGapAt([{ t: 1 }, { t: 3, duration: 1 }], 2)).toBe(1);
+    expect(tapGapAt([{ t: 1 }, { t: 3, duration: 1 }], 3.5)).toBe(0);
+    expect(tapGapAt([{ t: 1 }, { t: 3, duration: 1 }], 4.2)).toBeCloseTo(0.2, 12);
+  });
+
+  it('screenUvMap: the projected corners of the screen rect map back to the mesh uv corners, portrait and landscape, at any pose', () => {
+    for (const orientation of ['portrait', 'landscape'] as const) {
+      const base = orientation === 'landscape' ? phoneProject({ width: 2622, height: 1206 }) : phoneProject();
+      const p = with3d(base, { pose: { ...FRONT, turn: 35, tilt: -12, rotate: 7, size: 0.8 } });
+      const s = scene3d(p, projectCanvasSize(p))!;
+      expect(s.home.orientation).toBe(orientation);
+      const cam = camAt(s, 0);
+      const H = screenUvMap(s, cam);
+      const w = s.screenMm.width;
+      const h = s.screenMm.height;
+      const z = s.body3d.depthMm / 2;
+      for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1], [0.25, 0.7]]) {
+        const [x, y] = projectWorld(modelToWorld([(u - 0.5) * w, (v - 0.5) * h, z], cam), cam);
+        const back = applyHomography(H, x, y)!;
+        expect(back.x, `${orientation} ${u},${v}`).toBeCloseTo(u, 6);
+        expect(back.y, `${orientation} ${u},${v}`).toBeCloseTo(v, 6);
+      }
+    }
+  });
+
+  it('moving: the user samples are a minimum, copies MOTION_STEP_PX apart on average, capped at 64; each sample at a fixed-random place in its own slot of the shutter', () => {
+    const sh = 1 / 60;
+    expect(MOTION_STEP_PX).toBe(1);
     expect(planSamples({ t: 1, travelPx: 3, motion: { samples: 12, shutterSec: sh }, full: true }).nMotion).toBe(12);
     const fast = planSamples({ t: 1, travelPx: 45, motion: { samples: 12, shutterSec: sh }, full: true });
-    expect(fast.nMotion).toBe(30);
-    expect(fast.n).toBe(30);
-    expect(fast.screenFromFirst).toBe(false);
-    expect(45 / fast.nMotion).toBeLessThanOrEqual(1.5);
-    expect(fast.times).toEqual(subFrameTimes(1, sh, 30));
-    expect(Math.min(...fast.times)).toBeGreaterThan(1 - sh / 2);
-    expect(Math.max(...fast.times)).toBeLessThan(1 + sh / 2);
+    expect(fast.nMotion).toBe(45);
+    expect(fast.n).toBe(45);
+    // Stratified: sample k lies in [k, k + 1) / n of the shutter, so the times are ordered and span it.
+    fast.times.forEach((x, k) => {
+      const u = (x - (1 - sh / 2)) / sh;
+      expect(u).toBeGreaterThanOrEqual(k / 45 - 1e-12);
+      expect(u).toBeLessThan((k + 1) / 45 + 1e-12);
+    });
+    // Not evenly spaced (the stack of copies that read as ghosts), but the same every time for the same frame.
+    const gaps = fast.times.slice(1).map((x, k) => x - fast.times[k]);
+    expect(Math.max(...gaps) - Math.min(...gaps)).toBeGreaterThan(0.3 * (sh / 45));
+    expect(planSamples({ t: 1, travelPx: 45, motion: { samples: 12, shutterSec: sh }, full: true })).toEqual(fast);
+    expect(planSamples({ t: 1 + 1 / 30, travelPx: 45, motion: { samples: 12, shutterSec: sh }, full: true }).times.map((x) => x - 1 / 30)).not.toEqual(fast.times);
     expect(planSamples({ t: 1, travelPx: 1e4, motion: { samples: 2, shutterSec: sh }, full: true }).n).toBe(MAX_SAMPLES);
     expect(planSamples({ t: 1, travelPx: 1, motion: { samples: 1, shutterSec: sh }, full: true }).nMotion).toBe(2);
   });
 
-  it('no strobing (§6.3): on a fast 360° spin every sample plan keeps adjacent hull copies ≤ 2 px apart', () => {
+  it('slotOffset is a fixed hash in [0, 1); travelRefPx counts a 4K canvas at the 1080 reference', () => {
+    const xs = Array.from({ length: 200 }, (_, k) => slotOffset(2.5, k));
+    expect(xs.every((x) => x >= 0 && x < 1)).toBe(true);
+    expect(slotOffset(2.5, 3)).toBe(xs[3]);
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    expect(mean).toBeGreaterThan(0.4);
+    expect(mean).toBeLessThan(0.6);
+    expect(travelRefPx(40, 1080)).toBe(40);
+    expect(travelRefPx(40, 2160)).toBe(20);
+    expect(travelRefPx(40, 720)).toBe(40);
+  });
+
+  it('no strobing (§6.3): on a fast 360° spin every sample plan keeps hull copies 1 px apart on average and about two slots apart at worst', () => {
     const p = with3d(phoneProject(), { transitions: [move('spin', 1, 1.6, { turn: 360 }, { easing: { kind: 'linear' } })] });
     const s = scene3d(p, projectCanvasSize(p))!;
     const sh = 0.5 / 30;
@@ -89,23 +182,62 @@ describe('sample plan (§3.7 step 4)', () => {
       // Largest per-step move of any hull corner between adjacent sample times.
       const pts = bodyPointsMm(s, true);
       let worst = 0;
+      const sum = new Array(pts.length).fill(0);
       for (let k = 1; k < plan.times.length; k++) {
         const a = camAt(s, plan.times[k - 1]);
         const b = camAt(s, plan.times[k]);
-        for (const q of pts) {
+        pts.forEach((q, i) => {
           const [ax, ay] = projectPt(q, a);
           const [bx, by] = projectPt(q, b);
-          worst = Math.max(worst, Math.hypot(bx - ax, by - ay));
-        }
+          const d = Math.hypot(bx - ax, by - ay);
+          worst = Math.max(worst, d);
+          sum[i] += d;
+        });
       }
-      expect(worst).toBeLessThanOrEqual(2);
+      // n copies over at most the shutter's whole path: MOTION_STEP_PX apart on average (wider only past the 64 cap,
+      // at 600°/s, twice the recipes' peak), and two slots apart at worst (+ 12%: a corner nearer the camera moves
+      // faster than the path's average).
+      const step = Math.max(MOTION_STEP_PX, travel / MAX_SAMPLES);
+      expect(worst).toBeLessThanOrEqual(2.25 * step);
+      expect(Math.max(...sum) / plan.times.length).toBeLessThanOrEqual(step + 0.02);
+    }
+  });
+});
+
+describe('glass sheen samples (planGlare)', () => {
+  it('still: sample 0 only, standing for all N; draft: the one sample', () => {
+    expect(planGlare({ n: 8, nMotion: 1 })).toEqual([8, 0, 0, 0, 0, 0, 0, 0]);
+    expect(planGlare({ n: 1, nMotion: 1 })).toEqual([1]);
+  });
+  it('moving: every sample draws it once (it continues the border round the screen, which every sample draws)', () => {
+    for (const n of [2, 8, 13, 45, 64]) expect(planGlare({ n, nMotion: n })).toEqual(new Array(n).fill(1));
+  });
+  it('moving: at most GLARE_SAMPLES draws, evenly spaced, whose weights add up to N', () => {
+    for (const n of [2, 8, 12, 13, 30, 36, 63, 64]) {
+      const w = planGlare({ n, nMotion: n });
+      expect(w).toHaveLength(n);
+      expect(w.reduce((a, b) => a + b, 0)).toBe(n);
+      const drawn = w.flatMap((x, k) => (x > 0 ? [k] : []));
+      expect(drawn.length).toBeLessThanOrEqual(GLARE_SAMPLES);
+      expect(drawn[0]).toBe(0);
+      const step = Math.ceil(n / GLARE_SAMPLES);
+      drawn.forEach((k, i) => expect(k).toBe(i * step));
     }
   });
 });
 
 describe('tiles (§3.7 step 8)', () => {
-  it('a 1080×1920 preview ROI is one tile', () => {
-    expect(planTiles(1000, 1500, 1, 4)).toEqual([{ x: 0, y: 0, w: 1000, h: 1500, px: 0, py: 0, pw: 1000, ph: 1500 }]);
+  it('a 1080×1920 preview ROI is one tile, with MSAA (live) and without (full quality)', () => {
+    for (const b of [TILE_BYTES_PER_PX.msaa, TILE_BYTES_PER_PX.full])
+      expect(planTiles(1000, 1500, 1, 4, b)).toEqual([{ x: 0, y: 0, w: 1000, h: 1500, px: 0, py: 0, pw: 1000, ph: 1500 }]);
+  });
+
+  it('a full-quality 4K ROI (no MSAA target) needs fewer tiles than an MSAA one, each within 120 MB of targets', () => {
+    const full = planTiles(1972, 3840, 1, 6, TILE_BYTES_PER_PX.full);
+    const ms = planTiles(1972, 3840, 1, 6, TILE_BYTES_PER_PX.msaa);
+    expect(full.length).toBeLessThan(ms.length);
+    for (const t of full) expect(t.pw * t.ph * TILE_BYTES_PER_PX.full).toBeLessThanOrEqual(120e6);
+    for (const t of ms) expect(t.pw * t.ph * TILE_BYTES_PER_PX.msaa).toBeLessThanOrEqual(120e6);
   });
 
   for (const [w, h, ss, ov] of [
@@ -115,13 +247,13 @@ describe('tiles (§3.7 step 8)', () => {
     [5100, 9600, 3, 3],
   ] as const) {
     it(`${w}×${h} at ss ${ss}: cores tile the area exactly once, each window within the limits`, () => {
-      const tiles = planTiles(w, h, ss, ov);
+      const tiles = planTiles(w, h, ss, ov, TILE_BYTES_PER_PX.msaa);
       expect(tiles.length).toBeGreaterThan(1);
       const cover = new Map<string, number>();
       let area = 0;
       for (const t of tiles) {
         area += t.w * t.h;
-        expect(t.pw * t.ph).toBeLessThanOrEqual(TILE_MAX_PX);
+        expect(t.pw * t.ph).toBeLessThanOrEqual(tileMaxPx(TILE_BYTES_PER_PX.msaa));
         expect(Math.max(t.pw, t.ph)).toBeLessThanOrEqual(TILE_MAX_SIDE);
         expect(t.x % ss).toBe(0);
         expect(t.y % ss).toBe(0);
@@ -275,9 +407,9 @@ describe('material patches (§3.5, §3.6)', () => {
     const once = compile(m);
     mrtOutput(m, 'screen');
     expect(compile(m)).toBe(once);
-    expect(m.customProgramCacheKey()).toContain('mrt:screen');
+    expect(m.customProgramCacheKey()).toBe('mrt-screen');
     const b = compile(lodBias(new THREE.MeshBasicMaterial()));
-    expect(b).toContain('texture( map, vMapUv, -0.500 )');
+    expect(b).toContain('texture( map, vMapUv, -0.5 )');
     expect(b).not.toContain('#include <map_fragment>');
   });
 });

@@ -9,12 +9,12 @@
 // way Engine.gpuBytes counts them, at the heaviest frame of a turn.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { grownSize, Passes } from '../src/renderer/src/phone3d/passes';
-import { ShadowPass, SHADOW_SLOTS } from '../src/renderer/src/phone3d/shadow';
-import { MAX_SCREEN_TEXTURE, obliqueScaleCap, planBands, planScreenTexture, SCREEN_BAND_PX, ScreenTexture, screenCanvasSize, screenRoom, textureSide } from '../src/renderer/src/phone3d/screenTexture';
-import { planShadowSlots, renderPhone3D, type Blit3D, type Render3DArgs, type Render3DQuality } from '../src/renderer/src/phone3d/view';
+import { grownSize, Passes, planSamples } from '../src/renderer/src/phone3d/passes';
+import { ShadowPass } from '../src/renderer/src/phone3d/shadow';
+import { MAX_SCREEN_TEXTURE, planBands, planScreenTexture, SCREEN_BAND_PX, ScreenTexture, screenCanvasSize, screenRoom, textureLimit, textureSide } from '../src/renderer/src/phone3d/screenTexture';
+import { renderPhone3D, shadowSamples, type Blit3D, type Render3DArgs, type Render3DQuality } from '../src/renderer/src/phone3d/view';
 import type { Engine } from '../src/renderer/src/phone3d/engine';
-import { scene3d, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
+import { camAt, scene3d, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
 import { defaultPhone3D, FRONT, type Phone3D } from '../src/shared/phone3d/model';
 import { normalizeProject, type Project } from '../src/shared/types';
 import { move, phoneProject, with3d } from './helpers/phone3dFixtures';
@@ -40,6 +40,7 @@ function fakeEngine(maxSide = 8192) {
   let target: THREE.WebGLRenderTarget | null = null;
   const scene = new THREE.Scene();
   const renderer = {
+    capabilities: { maxTextureSize: maxSide },
     getContext: () => ({ isContextLost: () => false }),
     initTexture: () => undefined,
     copyTextureToTexture: (src: THREE.Texture, dst: THREE.DataTexture, region: unknown, at: THREE.Vector2) => {
@@ -89,14 +90,15 @@ function fakeEngine(maxSide = 8192) {
     shadow,
     kit: {
       phone: () => ({ root: new THREE.Group(), screen: new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial()), dispose() {} }),
-      lights: () => new THREE.Group(),
       environment: () => null,
       envStrength: () => 1,
+      lights: () => new THREE.Group(),
+      placeLights: () => {},
     },
+    lights: null,
     phones: cache(),
     envs: cache(),
-    rigs: cache(),
-    current: { phone: null, rig: null },
+    current: { phone: null },
     stats: { renders: 0, lastMs: 0, samples: 0, tiles: 0, roi: { x: 0, y: 0, w: 0, h: 0 }, texture: { w: 0, h: 0 }, gpuBytes: 0 },
     maxSide: () => maxSide,
     sizeCanvas: (w: number, h: number) => {
@@ -156,63 +158,102 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('shadow slots (§3.7 steps 5 and 8)', () => {
-  it('still: one slot at sample 0; moving: min(SHADOW_SLOTS, N) slots, each cast from the middle of its samples', () => {
-    expect(planShadowSlots({ n: 8, nMotion: 1 })).toEqual({ count: 1, at: [0], of: Array(8).fill(0) });
-    for (const n of [2, 5, 6, 7, 12, 36, 64]) {
-      const p = planShadowSlots({ n, nMotion: n });
-      expect(p.count).toBe(Math.min(SHADOW_SLOTS, n));
-      expect(p.of).toHaveLength(n);
-      // Every slot serves a contiguous run of samples, in order, and is cast from a sample inside its own run.
-      for (let k = 1; k < n; k++) expect(p.of[k] - p.of[k - 1]).toBeGreaterThanOrEqual(0);
-      expect(new Set(p.of).size).toBe(p.count);
-      p.at.forEach((k, i) => expect(p.of[k]).toBe(i));
-    }
+describe('shadow samples (§3.7 steps 5 and 8)', () => {
+  it('still: sample 0 alone casts; moving: every sub-sample casts its own pose', () => {
+    expect(shadowSamples({ n: 8, nMotion: 1 })).toEqual([0]);
+    for (const n of [2, 7, 12, 36, 64]) expect(shadowSamples({ n, nMotion: n })).toEqual(Array.from({ length: n }, (_, k) => k));
   });
 });
 
 describe('renderPhone3D frame loop', () => {
-  it('a moving 4K frame renders each shadow slot once, before the tiles, whatever the tile count', () => {
+  it('a moving 4K frame casts one drop silhouette per sub-sample plus one contact silhouette, and blurs once, before the tiles, whatever the tile count', () => {
     const s = sceneFor(moving(), true);
     const { engine, calls, shadow } = fakeEngine();
     let checkedTiles = 0;
     for (const t of [1.6, 1.8, 2.0]) {
       calls.length = 0;
-      const before = shadow.maskRenders;
+      const masks = shadow.maskRenders;
+      const sil = shadow.silhouettes;
       const { out } = frame(engine, args(s, t));
-      const plan = planShadowSlots({ n: out.samples, nMotion: out.samples });
-      expect(out.samples).toBeGreaterThan(SHADOW_SLOTS); // a real moving frame: more samples than slots
-      expect(shadow.maskRenders - before).toBe(Math.min(SHADOW_SLOTS, out.samples));
-      // Silhouettes all come before the first scene draw (no tile re-renders a mask).
+      expect(out.samples).toBeGreaterThan(8); // a real moving frame: more samples than the AA minimum
+      expect(shadow.maskRenders - masks).toBe(1);
+      expect(shadow.silhouettes - sil).toBe(out.samples + 1); // a drop cast per pose, one contact cast (middle pose)
+      // Silhouettes all come before the first scene draw (no tile casts one again).
       const firstScene = calls.findIndex((c) => c.kind === 'scene');
-      expect(calls.filter((c) => c.kind === 'shadow')).toHaveLength(plan.count);
+      expect(calls.filter((c) => c.kind === 'shadow')).toHaveLength(out.samples + 1); // drop per pose + one contact
       expect(calls.slice(firstScene).some((c) => c.kind === 'shadow')).toBe(false);
       // N scene draws per tile.
       const scenes = calls.filter((c) => c.kind === 'scene');
       expect(scenes).toHaveLength(out.samples * out.tiles);
       checkedTiles = Math.max(checkedTiles, out.tiles);
     }
-    expect(checkedTiles).toBeGreaterThan(1); // the case the bug lived in: several tiles
+    expect(checkedTiles).toBeGreaterThan(1); // the case the per-tile bug lived in: several tiles
   });
 
-  it('each sample of every tile draws the catcher with its own slot’s masks, placed at that slot’s pose', () => {
+  it('every sample of every tile draws the one frame catcher, which holds every sample’s own catcher area', async () => {
+    const { catcherFrame, frameCatcher } = await import('../src/renderer/src/phone3d/shadow');
     const s = sceneFor(moving(), true);
     const { engine, calls } = fakeEngine();
     const { out } = frame(engine, args(s, 1.8));
-    const slots = planShadowSlots({ n: out.samples, nMotion: out.samples });
     const scenes = calls.filter((c) => c.kind === 'scene');
-    // Slot textures by first use in tile 0 (sample order), then every tile must repeat the same sequence.
-    const slotTex = slots.at.map((k) => scenes[k].contact);
-    expect(new Set(slotTex).size).toBe(slots.count);
-    for (let tile = 0; tile < out.tiles; tile++) {
-      for (let k = 0; k < out.samples; k++) {
-        const c = scenes[tile * out.samples + k];
-        expect(c.contact).toBe(slotTex[slots.of[k]]);
-        expect(c.corners).toEqual(scenes[slots.at[slots.of[k]]].corners);
-      }
+    for (const c of scenes) {
+      expect(c.contact).toBe(scenes[0].contact);
+      expect(c.corners).toEqual(scenes[0].corners);
     }
-    // Different slots are cast at different poses (the catcher moves with the phone).
-    expect(scenes[slots.at[0]].corners).not.toEqual(scenes[slots.at[slots.count - 1]].corners);
+    // The union really grows past the middle sample's own area while moving, and holds every sample's.
+    const plan = planSamples({ t: 1.8, travelPx: 100, motion: { samples: 12, shutterSec: 0.5 / 30 }, full: true });
+    const cams = plan.times.map((tt) => camAt(s, tt));
+    const all = frameCatcher(s, cams, Math.floor(cams.length / 2));
+    const mid = catcherFrame(s, cams[Math.floor(cams.length / 2)]);
+    expect((all.u1 - all.u0) * (all.v1 - all.v0)).toBeGreaterThan((mid.u1 - mid.u0) * (mid.v1 - mid.v0));
+    for (const c of cams) {
+      const f = catcherFrame(s, c);
+      expect(f.u0).toBeGreaterThanOrEqual(all.u0 - 1e-9);
+      expect(f.u1).toBeLessThanOrEqual(all.u1 + 1e-9);
+      expect(f.v0).toBeGreaterThanOrEqual(all.v0 - 1e-9);
+      expect(f.v1).toBeLessThanOrEqual(all.v1 + 1e-9);
+    }
+    expect(out.samples).toBeGreaterThan(1);
+  });
+
+  it('full quality renders every sample plain (no MSAA target at all at 4K); a single-sample frame renders with MSAA', () => {
+    const s = sceneFor({}, true);
+    const { engine, calls, passes } = fakeEngine();
+    frame(engine, args(s, 0.5));
+    const scenes = calls.filter((c) => c.kind === 'scene');
+    expect(scenes.length).toBeGreaterThan(8);
+    expect(scenes.every((c) => c.target === passes.plain)).toBe(true);
+    expect(passes.msaa).toBeNull();
+    calls.length = 0;
+    const s1080 = sceneFor({}, false);
+    const { out } = frame(engine, args(s1080, 0.5, { full: false, motion: null }));
+    const one = calls.filter((c) => c.kind === 'scene');
+    expect(one).toHaveLength(out.tiles); // one sample per tile
+    expect(one.every((c) => c.target === passes.msaa)).toBe(true);
+    expect(passes.msaa).not.toBeNull();
+  });
+
+  it('the glass sheen is drawn on the samples planGlare picks, with their weights (still: sample 0 × N); never inside the flag (FRONT)', async () => {
+    const { planGlare } = await import('../src/renderer/src/phone3d/passes');
+    const tilted = { pose: { ...FRONT, tilt: 20 } } as Partial<Phone3D>;
+    for (const [patch, t, inFlag] of [[{}, 0.5, true], [tilted, 0.5, false], [moving(), 1.8, false]] as const) {
+      const s = sceneFor(patch as Partial<Phone3D>, false);
+      const { engine } = fakeEngine();
+      const glare = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      (engine.kit as { phone: unknown }).phone = () => ({ root: new THREE.Group(), screen: new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial()), glare, dispose() {} });
+      const seen: number[] = [];
+      const r = engine.renderer as unknown as { render: (sc: THREE.Scene, c: THREE.Camera) => void };
+      const orig = r.render;
+      r.render = (sc, c) => {
+        if (sc === engine.scene) seen.push(glare.visible ? (glare.material.userData.glareWeight?.value ?? 1) : 0);
+        orig(sc, c);
+      };
+      const { out } = frame(engine, args(s, t));
+      const want = Array.from({ length: out.tiles }, () => planGlare({ n: out.samples, nMotion: out.samples > 8 ? out.samples : 1 })).flat();
+      // At FRONT the front glass mirrors the flag (materials.ts FRONT_GLASS_FLAG): the shader would add exactly 0.
+      expect(seen).toEqual(inFlag ? want.map(() => 0) : want);
+      if (!inFlag) expect(seen.some((w) => w > 0)).toBe(true);
+    }
   });
 
   it('a still frame renders its shadow once, and a repeat of the same frame (paused preview) reuses it', () => {
@@ -222,7 +263,7 @@ describe('renderPhone3D frame loop', () => {
       const { out: a } = frame(engine, args(s, 0.5));
       expect(a.samples).toBe(8);
       expect(shadow.maskRenders).toBe(1);
-      expect(shadow.slotCount).toBe(1); // a still phone never makes the moving-frame slots
+      expect(shadow.silhouettes).toBe(2); // 8 jittered samples, one pose: one drop and one contact silhouette
       frame(engine, args(s, 0.5));
       expect(shadow.maskRenders).toBe(1);
     }
@@ -276,6 +317,18 @@ describe('renderPhone3D frame loop', () => {
     expect(() => a.draw(() => undefined)).toThrow(/latest frame/);
     expect(b.draw(() => undefined)).toBe(true);
     expect(() => b.draw(() => undefined)).toThrow(/once/);
+  });
+
+  it('the DoF target exists only once a frame blurs: with DoF off it is never made', () => {
+    for (const k4 of [false, true]) {
+      const { engine, passes } = fakeEngine();
+      const off = { dof: { on: false, amount: 0.35, background: 0 } };
+      frame(engine, args(sceneFor(off, k4), 0.5));
+      frame(engine, args(sceneFor({ ...off, pose: { ...FRONT, turn: 40, tilt: 20 } }, k4), 0.5));
+      expect(passes.dofOut).toBeNull();
+      frame(engine, args(sceneFor({ pose: { ...FRONT, turn: 40, tilt: 20 } }, k4), 0.5));
+      expect(passes.dofOut).not.toBeNull();
+    }
   });
 
   it('shadow off: no masks at all', () => {
@@ -417,52 +470,53 @@ describe('screen texture bands (§3.6, §3.9)', () => {
   });
 });
 
-describe('oblique cap from ss 2 (§3.6, §3.9)', () => {
-  it('FRONT is never capped (1:1 at every ss); an oblique screen is capped at ss × the largest size from ss 2 only', () => {
-    expect(obliqueScaleCap(1, [1, 2])).toBe(Infinity);
-    expect(obliqueScaleCap(2, [0.8, 1.3])).toBeCloseTo(2.6, 12);
+describe('oblique density (§3.6, owner decision 11)', () => {
+  it('FRONT is 1:1 at every ss; an oblique screen gets the density it needs at every ss, clamped only by the texture limit', () => {
+    expect(textureLimit(16384)).toBe(MAX_SCREEN_TEXTURE);
+    expect(textureLimit(4096)).toBe(4096);
     for (const ss of [1, 2, 3] as const) {
       const front = sceneFor({ supersample: ss }, true);
       const fq = screenQuadAt(front, 0.5).quad;
-      const capped = planScreenTexture(fq, front.home.screen, ss, 8192, obliqueScaleCap(ss, [1]));
-      expect(capped.aligned).toBe(true);
-      expect(capped).toEqual(planScreenTexture(fq, front.home.screen, ss, 8192));
-      if (ss <= 2) expect(capped.scale).toBe(ss); // (at ss 3 the 4K screen hits the 8192 texture limit first)
-      // A turned phone whose near edge projects larger than FRONT.
+      const f = planScreenTexture(fq, front.home.screen, ss, 8192);
+      expect(f.aligned).toBe(true);
+      if (ss <= 2) expect(f.scale).toBe(ss); // (at ss 3 the 4K screen hits the 8192 texture limit first)
+      // A turned phone whose near edge projects larger than FRONT gets more than ss texels per canvas px.
       const s = sceneFor({ supersample: ss, ...moving() }, true);
       let grew = 0;
+      let most = 0;
       for (let i = 30; i <= 90; i++) {
         const q = screenQuadAt(s, i / 30).quad;
         const free = planScreenTexture(q, s.home.screen, ss, 8192);
-        const cap = planScreenTexture(q, s.home.screen, ss, 8192, obliqueScaleCap(ss, [1]));
         if (free.aligned) continue;
-        if (ss === 1) expect(cap).toEqual(free);
-        else expect(cap.scale).toBe(Math.min(free.scale, ss));
         if (free.scale > ss * 1.02) grew++;
+        most = Math.max(most, free.scale / ss);
+        // The only clamp: a 4096 GPU limit caps the texture side, never anything else.
+        const small = planScreenTexture(q, s.home.screen, ss, 4096);
+        expect(Math.max(small.w, small.h)).toBeLessThanOrEqual(4096);
+        if (Math.max(free.w, free.h) <= 4094) expect(small).toEqual(free);
       }
-      if (ss <= 2) expect(grew).toBeGreaterThan(0); // the turn really has frames the cap acts on
+      // This fixture's turn peaks at about 1.07× FRONT at its near edge; nothing holds it back to 1.0.
+      if (ss <= 2) expect(grew).toBeGreaterThan(0);
+      if (ss <= 2) expect(most).toBeGreaterThan(1.05);
     }
   });
 
-  it('from ss 2 the room holds every frame of a turn: the texture is made once', () => {
-    for (const ss of [2, 3] as const) {
+  it('the room (FRONT × ss × largest size × 1.12) holds most frames of a turn: the texture is made at most twice', () => {
+    for (const ss of [1, 2] as const) {
       const s = sceneFor({ supersample: ss, ...moving() }, true);
       const { engine, screen } = fakeEngine();
       for (let i = 0; i <= 120; i += 2) frame(engine, args(s, i / 30));
-      expect(screen.reallocs).toBe(1);
-      // And it is the FRONT need's rung (the room has no perspective allowance from ss 2), within the GPU limit.
-      // (At 4K, ss 3 steps down to 2: the ROI's long side × 3 is over 8192.)
-      const eff = 2;
+      expect(screen.reallocs).toBeLessThanOrEqual(2);
       const f = s.home.screen;
-      expect(screen.size).toEqual({ w: textureSide(Math.ceil(f.w * eff) + 1), h: textureSide(Math.ceil(f.h * eff) + 1) });
+      expect(screen.size!.w).toBeGreaterThanOrEqual(Math.ceil(f.w * ss * 1.12));
     }
   });
 });
 
 describe('GPU memory at 4K (§3.9 table method, decimal MB)', () => {
   /** WP4a's parts the stand-in does not have, as §3.9 budgets them: a 512 HalfFloat PMREM (1536 × 2048 × 8 B),
-   *  the RectAreaLight LTC tables (2 × 64² × 16 B), and geometry up to 10 MB. */
-  const WP4A = 3 * 512 * 4 * 512 * 8 + 2 * 64 * 64 * 16 + 10e6;
+   *  geometry up to 10 MB, and the RectAreaLight LTC tables (two 64 × 64 RGBA float textures). */
+  const WP4A = 3 * 512 * 4 * 512 * 8 + 10e6 + 2 * 64 * 64 * 16;
 
   /** The heaviest frame of a 200° turn at 30 fps (t 0..4 s, the move 1..3 s), counted bytes plus WP4a's parts. */
   function peak(patch: Partial<Phone3D>, layout: 'fill' | 'social4k') {

@@ -8,7 +8,7 @@ import type { FocusSegment } from './autofocus';
 import type { Annotation, CaptionCue, Chapter, Project, TranscriptWord } from './types';
 import type { Timeline } from './timeline';
 import { clipSpans } from './playback';
-import { compareTransitions, MIN_TRANSITION, type PoseTransition } from './phone3d/model';
+import { compareTransitions, tooShort, type PoseTransition } from './phone3d/model';
 
 type Bias = 'start' | 'end';
 
@@ -151,7 +151,7 @@ export function remapTransitions(list: PoseTransition[], oldTl: Timeline, newTl:
       if (end === null) return [];
       const len = tr.end - tr.start;
       const start = Math.max(0, end - len);
-      return end - start < MIN_TRANSITION ? [] : [{ ...tr, start, end }];
+      return tooShort(start, end) ? [] : [{ ...tr, start, end }];
     })
     .sort(compareTransitions);
 }

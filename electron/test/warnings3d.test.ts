@@ -2,7 +2,7 @@
 // fix clears its warning when applied through applyOps (as the editor's Fix
 // button and an agent's `apply` do).
 import { describe, expect, it } from 'vitest';
-import { applyOps, type EditOp } from '../src/shared/agentOps';
+import { applyOps, ZOOM_3D_NOTE, type EditOp } from '../src/shared/agentOps';
 import { FRONT, type Phone3D, type Pose, type PoseTransition } from '../src/shared/phone3d/model';
 import { EDGES, OFF_CANVAS_ADDED_PX, OFF_CANVAS_FRACTION, offCanvasAdded, offCanvasMeter, projectWarnings, WARNING_CODES, type Warning } from '../src/shared/phone3d/warnings';
 import type { Project } from '../src/shared/types';
@@ -43,7 +43,7 @@ describe('projectWarnings: scope', () => {
   });
 
   it('knows exactly the spec codes', () => {
-    expect([...WARNING_CODES]).toEqual(['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'over-zoom', 'past-end', 'pose-jump', 'too-fast', 'floor-flat']);
+    expect([...WARNING_CODES]).toEqual(['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat', 'zoom-3d']);
   });
 
   it('never blocks applyOps: a project full of warnings still takes edits', () => {
@@ -92,18 +92,38 @@ describe('tap-angle / tap-back', () => {
     const p = take({ transitions: [move('a', 1, 2, { turn: 50 })] }, [5]);
     const [w] = only(p, 'tap-angle');
     expect(w).toMatchObject({ at: 5, transitionId: 'a' });
-    expect(w.message).toMatch(/50° off front during the tap at 5\.00 s/);
+    expect(w.message).toMatch(/50° off front at 5\.00 s, at the tap at 5\.00 s/);
     expect(w.fix).toEqual([{ op: 'setPose', at: 5, turn: 0, tilt: 0 }]);
     expectCleared(p, w);
   });
 
-  it('a move that swings past 35° in the middle of a tap: the fix pulls its end before the tap', () => {
+  it('a move that swings past 35° in the middle of a tap: the fix moves the whole move before the tap window (same speed)', () => {
     // Lands on 30° (fine) but overshoots to ~50° on the way.
     const swing = move('a', 3, 6, { turn: 30 }, { easing: { kind: 'bezier', x1: 0.2, y1: 2, x2: 0.5, y2: 1.6 } });
     const p = take({ transitions: [swing] }, [5]);
     const [w] = only(p, 'tap-angle');
-    expect(w.fix).toEqual([{ op: 'editTransition', id: 'a', end: 4.7 }]);
+    expect(w.fix).toEqual([{ op: 'editTransition', id: 'a', by: -1.3 }]);
     expectCleared(p, w);
+  });
+
+  it('names the moment that fails: a spin still turning 0.3 s before the tap is reported there, not at the tap', () => {
+    // A 200° spin-in ending at 1.2 s, tap at 0.96 s: at 0.96 s the phone is about 20° off, at 0.66 s about 80°.
+    const spin = move('a', 0, 1.2, { turn: 0 }, { from: { turn: -200, tilt: 0, rotate: 0, size: 1, x: 0, y: 0, light: 0, focus: 1 }, easing: { kind: 'bezier', x1: 0.42, y1: 0, x2: 0.58, y2: 1 } });
+    const p = take({ transitions: [spin] }, [0.96]);
+    const [w] = only(p, 'tap-angle');
+    expect(w.message).toMatch(/off front at 0\.66 s, 0\.30 s before the tap at 0\.96 s/);
+    expect(w.message).toMatch(/from 0\.3 s before a tap to 0\.3 s after it/);
+  });
+
+  it('a fix never speeds a move up past 300°/s to clear a tap (round 2 offered a 200° spin squeezed into 0.66 s)', () => {
+    const spin = move('a', 0, 1.2, { turn: 0 }, { from: { turn: -200, tilt: 0, rotate: 0, size: 1, x: 0, y: 0, light: 0, focus: 1 }, easing: { kind: 'bezier', x1: 0.42, y1: 0, x2: 0.58, y2: 1 } });
+    const p = take({ transitions: [spin] }, [0.96]);
+    const [w] = only(p, 'tap-angle');
+    // The spin starts at 0, so it cannot move earlier; pulling its end to 0.66 s would turn it at about 520°/s.
+    for (const op of w.fix ?? []) expect(op).not.toMatchObject({ op: 'editTransition', end: expect.any(Number) });
+    // Control: the same spin with room before it is moved earlier whole instead.
+    const later = take({ transitions: [{ ...spin, start: 1, end: 2.2 }] }, [1.96]);
+    expect(only(later, 'tap-angle')[0].fix).toEqual([{ op: 'editTransition', id: 'a', by: -0.54 }]);
   });
 
   it('a move that starts inside the tap window is moved after it', () => {
@@ -313,33 +333,6 @@ describe('overlap', () => {
   });
 });
 
-describe('over-zoom', () => {
-  it('a move during a manual zoom (no fix)', () => {
-    let p = take({ transitions: [move('a', 6, 7, { turn: 20 })] });
-    p = applyOps(p, [{ op: 'addZoom', at: 5, x: 0.5, y: 0.5 }], { newId: () => 'z' }).project;
-    const [w] = only(p, 'over-zoom');
-    expect(w).toMatchObject({ transitionId: 'a', at: 6 });
-    expect(w.fix).toBeUndefined();
-  });
-
-  it('sees the tap zooms the editor plays (focusSegmentsFor), and the cursor’s autofocus zooms', () => {
-    const p = take({ transitions: [move('a', 4.8, 5.4, { turn: 10 })] }, [5]);
-    expect(only(p, 'over-zoom')).toEqual([]);
-    p.zoom = { ...p.zoom, fromTaps: true };
-    expect(only(p, 'over-zoom').length).toBe(1);
-    const q = take({ transitions: [move('a', 12, 12.6, { turn: 10 })] });
-    q.zoom = { ...q.zoom, autofocus: true };
-    const cursor = [{ time: 12.2, x: 0.5, y: 0.5, kind: 'clickDown' as const }];
-    expect(projectWarnings(q).filter((w) => w.code === 'over-zoom')).toEqual([]);
-    expect(projectWarnings(q, { cursor }).filter((w) => w.code === 'over-zoom').length).toBe(1);
-  });
-
-  it('negative: a move clear of every zoom', () => {
-    const p = applyOps(take({ transitions: [move('a', 9, 10, { turn: 20 })] }), [{ op: 'addZoom', at: 5, x: 0.5, y: 0.5 }], { newId: () => 'z' }).project;
-    expect(only(p, 'over-zoom')).toEqual([]);
-  });
-});
-
 describe('past-end', () => {
   it('a move that ends after the video: the fix shifts it back by D − end', () => {
     const p = take({ transitions: [move('a', 19.5, 21, { turn: 20 })] });
@@ -418,6 +411,34 @@ describe('floor-flat', () => {
     expect(only(take({ shadow: { on: true, kind: 'floor', opacity: 0.4, softness: 0.5 }, camera: { fov: 22, elevation: 12 } }), 'floor-flat')).toEqual([]);
     expect(only(take(), 'floor-flat')).toEqual([]);
     expect(only(take({ shadow: { on: false, kind: 'floor', opacity: 0.4, softness: 0.5 } }), 'floor-flat')).toEqual([]);
+  });
+});
+
+describe('zoom-3d', () => {
+  it('names each manual zoom while the phone is 3D (zooms do not play there), with no fix', () => {
+    const p = applyOps(take(), [{ op: 'addZoom', at: 4, scale: 2 }, { op: 'addZoom', at: 11, scale: 1.5 }]).project;
+    const ws = only(p, 'zoom-3d');
+    expect(ws.map((w) => w.at)).toEqual([4, 11]);
+    for (const w of ws) {
+      expect(w.end).toBeGreaterThan(w.at!);
+      expect(w.fix).toBeUndefined();
+      expect(w.message).toContain('does not play while the phone is 3D');
+    }
+  });
+
+  it('negative: no manual zooms, or 3D off (the zooms play)', () => {
+    expect(only(take(), 'zoom-3d')).toEqual([]);
+    const off = applyOps(take({ enabled: false }), [{ op: 'addZoom', at: 4 }]).project;
+    expect(projectWarnings(off)).toEqual([]);
+  });
+
+  it('zoom ops still apply, and their notes say the zooms do not play while the phone is 3D', () => {
+    const ops: EditOp[] = [{ op: 'addZoom', at: 4 }, { op: 'zoomSettings', autofocus: true }, { op: 'clearZooms' }];
+    const on = applyOps(take(), ops);
+    expect(on.notes.every((n) => n.endsWith(ZOOM_3D_NOTE))).toBe(true);
+    const off = applyOps(take({ enabled: false }), ops);
+    expect(off.notes.some((n) => n.includes(ZOOM_3D_NOTE))).toBe(false);
+    expect(off.project.zoom).toEqual(on.project.zoom);
   });
 });
 

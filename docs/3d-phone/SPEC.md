@@ -20,7 +20,7 @@ This spec is built on the "parity" proposal, with every judge finding fixed and 
 | D10 | `frames` writes to `os.tmpdir()/openscreen-frames/<bundle>-<stamp>/` by default, not into the bundle. | J1/J2/J3 |
 | D11 | The flat-identity gate compares **exports** (`ffmpeg -f framemd5`) from main and from the branch. It does not use `frames`, which main does not have. A mockCanvas draw-call log is captured from main's compositor before any compositor edit. | J2 |
 | D12 | Sign rule: **+tilt leans the top away (layback)**. Every recipe uses this rule, and a test pins it. `turn-to-back` is a round trip by default and ends at 360. | J3 (risk sign bug, one-way outro) |
-| D13 | Lighting is **procedural, in two parts (revised)**. (1) The 2 or 3 hero softboxes are `RectAreaLight`s (`RectAreaLightUniformsLib.init()` from `three/examples/jsm/lights`). LTC gives analytically sharp softbox edges at any resolution, and in r186 it covers clearcoat too (`lights_physical_pars_fragment` evaluates `LTC_Uv(Ncc, …)`). (2) A PMREM environment (`fromScene(envScene, 0, near, far, { size: 512 })`) holds only the fill: a dim vertical gradient dome (2 to 6%), a floor bounce tinted by the project's mean background colour, and a faint wide strip behind and above the camera so the front glass shows a diagonal sheen at FRONT. The hero boxes are NOT in the PMREM scene (no double counting). The `light` channel rotates the RectAreaLight group and `scene.environmentRotation` together. No HDRI is shipped. A CC0 Poly Haven HDRI is a later option only if the judge harness says the procedural look loses. | all three; critique: soft, sparse lighting |
+| D13 | **Restored in look round 3 (see "Look round 3" at the end of §3.4): the hero softboxes are RectAreaLights again, the set round the phone is the PMREM, the light channel turns both.** Round 2 had moved every box into the PMREM; a flat metal face mirrors one direction of an infinitely far environment at every point, so the backs and the turn-90 side read as one flat tone. Original text: Lighting is **procedural, in two parts (revised)**. (1) The 2 or 3 hero softboxes are `RectAreaLight`s (`RectAreaLightUniformsLib.init()` from `three/examples/jsm/lights`). LTC gives analytically sharp softbox edges at any resolution, and in r186 it covers clearcoat too (`lights_physical_pars_fragment` evaluates `LTC_Uv(Ncc, …)`). (2) A PMREM environment (`fromScene(envScene, 0, near, far, { size: 512 })`) holds only the fill: a dim vertical gradient dome (2 to 6%), a floor bounce tinted by the project's mean background colour, and a faint wide strip behind and above the camera so the front glass shows a diagonal sheen at FRONT. The hero boxes are NOT in the PMREM scene (no double counting). The `light` channel rotates the RectAreaLight group and `scene.environmentRotation` together. No HDRI is shipped. A CC0 Poly Haven HDRI is a later option only if the judge harness says the procedural look loses. | all three; critique: soft, sparse lighting |
 | D14 | Band geometry is a **swept profile** along the continuous-corner outline with **hard creases** (the ring is duplicated at each crease) and a 0.08 to 0.12 mm fillet at each chamfer edge that catches a 1 to 2 px glint at 1080p. A dark recessed seam separates glass and band on both faces. Tangents run along the outline for brushed anisotropy. Shadow is a silhouette rendered from the light, with two blur widths that mirror `DEFAULT_FRAME_SHADOW`. | look; critique: missing edge glints |
 | D15 | The 3D pass composites at the **`content` layer slot**. `decor()` skips `drawDeviceFrame` and keeps keystrokes. The camera bubble, text, title and captions stay flat on top. No new LayerId. | all three |
 | D16 | Hit-testing uses an **exact homography of the screen plane**. This is the same result as a raycast against that plane, but it is pure shared math with no three import. A vitest test checks it against three's camera. Selection uses the convex hull of the projected body. | parity |
@@ -305,13 +305,13 @@ Options: `{ style: 'subtle'|'hero'|'bold'; scenes?: number[] /*SOURCE s; absent 
 - `tl = new Timeline(p.recording.duration, p.clips)`
 - taps from `tapsToOutput`, waits from `rangesToOutput`
 - scenes mapped from source through the timeline the way taps are mapped
-- zooms from `focusSegmentsFor(p, opts.cursor ?? [])` (D5), the same list the editor draws
+- zooms are NOT an input since look round 4: they do not play while the phone is 3D (`compositor.ts`), so they cannot clash with a move (`cursor` still feeds the self-check's `projectWarnings`, D5)
 - D = `tl.outputDuration`
 
 1. **Busy intervals.**
    - A tap is busy over `[t−0.6, max(t+0.8, settleT_out+0.3, t+duration+0.4)]`.
    - A typing run is busy from its first tap to its last tap, plus 0.8.
-   - Each zoom is busy over `[inStart, outEnd]`.
+   - Zooms are not busy (fix round 1 of look round 4): a zoom never plays on the 3D screen, so blocking a shot for one left shots out for a clash that cannot happen.
    - Intervals closer than 1.2 s merge.
    - **Rule:** during busy time, facing ≥ cos 12°.
 2. **Free windows** are the complement of busy time, each shrunk by 0.15 s at both ends. A window that overlaps a wait is `quiet`.
@@ -335,7 +335,7 @@ Options: `{ style: 'subtle'|'hero'|'bold'; scenes?: number[] /*SOURCE s; absent 
    1. `{op:'phone3d', enabled:true, pose: base, light:{preset: subtle ? 'soft' : 'studio'}, motionBlur:{on:true}}`
    2. `{op:'clearTransitions'}` when `replace`
    3. one `{op:'shot', recipe, at, duration, direction, intensity}` per shot
-9. **Self-check.** Apply the ops to a copy (`applyOps`, which validates) and run `projectWarnings(copy, { cursor })`. Remove any shot that causes `tap-angle`, `off-canvas`, `overlap` or `over-zoom`, then repeat (at most 4 rounds). A planned project has zero warnings. If `applyOps` throws (it must not; see D21), the planner drops the last shot and retries, and a test fails on any such retry.
+9. **Self-check.** Apply the ops to a copy (`applyOps`, which validates) and run `projectWarnings(copy, { cursor })`. Remove any shot that causes `tap-angle`, `off-canvas` or `overlap` (look round 4 removed `over-zoom`), then repeat (at most 4 rounds). A planned project has zero warnings. If `applyOps` throws (it must not; see D21), the planner drops the last shot and retries, and a test fails on any such retry.
    - Off-canvas is judged per moment and per edge (left, top, right, bottom) against the same project without the shots: a shot is blamed when any edge goes past the 2% margin and more than 0.5 px further past that edge than without the shots. A big overflow at one edge never excuses a new one at another. Inside moves the check reads every 60 fps frame.
    - A shot blamed only for off-canvas gets one more try in the other direction (the lean mirrored) before it is dropped.
 10. **Always visible (owner decision 12).** A settle alone is only a quick 8° lean (its spring lands in about 0.2 s). So when the style's own moves do not fit (hero: no turning shot, that is no spin-in, hero-layback or turn-to-back; subtle: no shot at all) and there are no kept moves, the base pose becomes `POSED_REST` `{turn:-8, tilt:5}` (9.4°, inside the 12° rule) and the shots are planned on it, after a check that it stays inside 12° during busy time and adds no warning or edge overflow over the style's own base. Bold already rests at that angle. If the shots planned on the posed base include the style's own moves (a shot that pushed the phone off the canvas from straight on may fit from the posed angle), the style's moves fit and the plan has no note. Otherwise the plan carries `note`, built from the same self-check run as the shots it returns (so its reasons and its dropped count describe that plan): one line that says why the style's moves do not fit and what the phone does instead ("No moving shot fits: …" or "No turning shot fits: …"). Each reason in it comes from the planner check that actually refused that shot: the take length (a spin-in needs a 4 s take, a middle move 6 s), the free time the check reads (the spin-in's first window, the usable middle gap beside the planned shots, the free time at the end), the 1 s rest between shots, the moving-time cap, or the self-check dropping it. A stated shortfall is shown with enough decimals to read as under its limit (1.95 s, not 2.0 s). Every plan with no moving shot has a `note`. The `direct` op's note and the CLI's `direct` output (`note`) show it.
@@ -366,11 +366,12 @@ export interface Warning { code: string; message: string; at?: number; end?: num
 | `tap-back` | facing < 0 during a tap: the taps are invisible | same |
 | `off-canvas` | `bodyBounds` (sampled at 15 Hz plus every keyframe) more than 2% of the short side outside the canvas | `setPose` with clamped x/y/size |
 | `overlap` | `tr[i].end > tr[i+1].start + 1e-3` (later wins) | `editTransition {id: later, start: earlier.end}` |
-| `over-zoom` | a move intersects a zoom `[inStart, outEnd]` | — |
+| ~~`over-zoom`~~ | removed in look round 4: zooms do not play on the 3D screen (compositor.ts), so a move can no longer run during one | — |
 | `past-end` | `end > outputDuration` | `editTransition {by: D − end}` |
 | `pose-jump` | an explicit `from` differs from the resolved pose before it by > 1° or 0.5%, using `poseDelta` (turn and rotate modulo 360, so a D21 rebase is not a jump) | `editTransition {from:null}` |
 | `too-fast` | `poseSpeed` > 600°/s, or > 360°/s with motion blur off | — |
 | `floor-flat` | floor shadow with `camera.elevation < 4` (invisible) | `phone3d {camera:{elevation:12}}` |
+| `zoom-3d` | a manual zoom while the phone is 3D: it does not play (the screen always shows the whole recording). One per zoom, at its `inStart`. Zoom ops on a 3D project also add "zooms do not play while the phone is 3D" to their `changes` note; the editor's Zoom tab shows the same notice, fades the zoom lane and turns off Option-click and Add Zoom Here | — (the zooms play again with 3D off; removing them is the user's call) |
 
 Warnings never block `applyOps`. A test applies each `fix` and checks the warning is gone. There is one positive and one negative test per code.
 
@@ -404,7 +405,7 @@ Tests: Shift keeps the drag-start pose stable on the locked axis. Alt does not r
 |---|---|
 | `loader.ts` | `ensurePhone3d(): Promise<Engine>`, `engineSync(): Engine \| null`, `onEngineReady(cb)`. A dynamic `import('./engine')` that Vite code-splits. |
 | `engine.ts` | Module singleton: one `WebGLRenderer` (WebGL2, `alpha`, `premultipliedAlpha`, `antialias:false`, `preserveDrawingBuffer:false`, `reversedDepthBuffer: true`, which three uses only when `capabilities.reversedDepthBuffer` is true), one canvas resized with hysteresis, render targets, a `generation` counter, context-loss state, `gpuName()` (from `WEBGL_debug_renderer_info`). `render(job) → { canvas, roi } \| { lost: true }`. |
-| `environment.ts` | `studioLights(preset)`: the hero softboxes as `RectAreaLight`s (`RectAreaLightUniformsLib.init()` once). `studioEnv(preset, bgMean)`: PMREM of the fill scene only (gradient dome 2-6%, floor bounce tinted by the mean background colour, faint wide strip behind and above the camera) via `fromScene(envScene, 0, near, far, { size: 512 })` (about 25 MB HalfFloat). Cached per (preset, bgMean quantized to 16 levels) (LRU 4). |
+| `environment.ts` | (Look round 3: `studioLights`/`placeStudio` for the RectAreaLight softboxes, `studioScene`/`studioEnv` for the set; see §3.4.) Original: `studioLights(preset)`: the hero softboxes as `RectAreaLight`s (`RectAreaLightUniformsLib.init()` once). `studioEnv(preset, bgMean)`: PMREM of the fill scene only (gradient dome 2-6%, floor bounce tinted by the mean background colour, faint wide strip behind and above the camera) via `fromScene(envScene, 0, near, far, { size: 512 })` (about 25 MB HalfFloat). Cached per (preset, bgMean quantized to 16 levels) (LRU 4). |
 | `geometry.ts` | `buildPhone(device, body3d): Group` in mm, cached by device id (LRU 3). |
 | `materials.ts` | `materialsFor(hex, device.material, back, glass)` (LRU 6), `bandF0(hex, material)`, the `mrtOutput(mat, role)` patch (§3.5) and the screen `lodBias` patch (§3.6). |
 | `screenTexture.ts` | Offscreen 2D canvas plus `CanvasTexture`: 1:1 sizing with hysteresis, `repeat`/`offset`, mipmaps, anisotropy. |
@@ -422,7 +423,7 @@ export interface Body3D {
              rMm: number; heightMm: number;
              lenses: { x: number; y: number; rMm: number }[];           // plateau fractions
              flash?: { x: number; y: number }; sensor?: { x: number; y: number } };
-  buttonDepth: number;                // fraction of depth, 0.62
+  buttonDepth: number;                // fraction of depth, 0.4 (look round 2; was 0.62)
   antennaLines: number[];             // fractions of height
   extraButtons?: SideButton[];        // e.g. the iPad top button missing from devices.ts
 }
@@ -483,6 +484,126 @@ One reflection lobe per real surface: real cover glass is one AR-coated surface,
 **`bandF0(hex, material)`** in materials.ts: the finish hexes in devices.ts are marketing swatches (Black #2E2E30, Space Black #403E3D, Deep Blue #3A4659), which as metal F0 give 3 to 5% reflectance, a near-black mirror that reads as matte plastic. So: convert the hex to linear (`Color.setStyle` with ColorManagement on); mix it toward the base metal F0 (titanium (0.54, 0.50, 0.45), steel (0.56, 0.57, 0.58), aluminium (0.91, 0.92, 0.92)) until its luminance reaches a floor (0.18 for titanium and steel, 0.30 for anodised aluminium); keep the hue. Swatches already above the floor are kept. The black, silver and orange finishes are pinned with turntable stills in the review harness.
 
 `envMapIntensity = light.intensity`, and each RectAreaLight's intensity is scaled by `light.intensity` too. Every lit material gets the `mrtOutput(mat, 'lit')` patch (§3.5); none is tone mapped in its own shader.
+
+**Look round 2 (judged changes; they override the table above where they differ).**
+- Light: one PMREM environment (`environment.ts studioRadiance`) holds everything: an overhead gradient, a front fill on the camera's side, a white bounce card below, two dark flags at the sides, and the preset's softboxes painted in with soft edges (`lighting.ts LIGHT_PRESETS`: `boxes` in degrees, `set` levels). No RectAreaLights and nothing bright on the camera axis, so a metal back keeps its colour from turn 90 to 180 (measured: within 14% for Deep Blue, Silver, Cosmic Orange). The light channel turns the environment (`aimStudio`).
+- Shadow: cast along `projection.ts shadowLightDir`: the project's key (the pose's `light` channel does not turn it), its sideways offset capped at `SHADOW_OFFSET` = the 2D frame shadow's offsetY × body long side, so edge-on it is a contact shadow, not a slab.
+- Front glass: border and screen sheen share `FRONT_GLASS_ROUGHNESS` 0.2 and `frontGlassSpecular(glass)` (0.6 at 0.25): one sheet, no halo at the screen edge. The sheen is drawn on every moving sample.
+- Lens cover: AR glass, specular 0.4 (about 1.5%), roughness 0.08, no iridescence; elements carry faint violet/green casts and a catchlight from a small lamp near the camera.
+- 17 Pro unibody panel: diffuse colour = the metal's lifted F0 × 0.85, roughness 0.36, in a 0.05 mm metal seam (no black keyline). Plateaus rise on a smoothstep fillet over the measured inset (no vertical undercut). Buttons are crowned, `buttonDepth` 0.4.
+- Shots: cubic ease-in-outs, peak under 300°/s at default lengths (spin-in 1.6 s, hero-layback 2.3 s with a 0.8 s hold, turn-to-back 2.4 s passing the back at half speed); motion samples 1 px apart at the 1080 reference, stratified in time.
+
+**Look round 3 (judged changes; they override round 2 where they differ).**
+- Light (D13 again): the preset's `boxes` are `RectAreaLight`s `LIGHT_DISTANCE` (2.6) body long sides from the phone's centre, sized by their angular size, facing it (`environment.ts studioLights`, `placeStudio`, per sample). The PMREM holds only the set (overhead gradient, front fill, bounce card, flags). The light channel turns the box group and `scene.environmentRotation` together. Studio adds a tall strip 60° right of the camera (a reflection that crosses the screen glass and the three-quarter back). The LTC tables are counted in the memory budget.
+- Front glass: border and screen sheen still one sheet (roughness 0.15); it mirrors the softboxes only (`envMapIntensity` 0: the set reflected over the whole screen is a grey veil), at anti-reflective strength by default (`frontGlassSpecular(0.25)` = 0.35, about 1.4%).
+- Materials: anodised aluminium roughness 0.3; unibody panel roughness 0.5, specular 0.6, nearly edge to edge (4.2 mm margin, 5 mm below the plateau's rise); lens elements with violet, green and amber coatings; flash = polished ring of the finish's metal round a pale frosted diffuser under a clear coat; LiDAR = a dark violet-black disc under a clear coat; Camera Control = a flush (0.06 mm) sapphire strip tinted by the finish.
+- Geometry: a full-width plateau (17 Pro, Pro Max, Air) is part of the body. The band's back half, the back seam and glass edge move back by the plateau height across the top of the back, so the plateau's sides are the band. Its lower edge is one smootherstep rise across the full width over the measured top inset (`geometry.ts fullBarRise`); the band, the rise and the back share vertices on every rise row.
+- Motion blur (§3.7 step 4): sample times stay stratified 1 px apart; each sample is weighed by a tent shutter (`passes.ts tentShutter`, weights sum to 1; the shadow silhouettes use the same weights), so a smear fades at both ends instead of printing two copies. The screen CONTENT is held where the frame's centre pose put it (`screenSteadiness`: facing ≥ 0.9, or within 0.15 s of a tap, easing out by facing 0.8 / 0.3 s; `projection.ts screenUvMap`), so taps land on crisp UI while the body and the screen's edge still blur.
+- Shots: holds drift instead of freezing, joined to the moves either side at matching speed (`shots.ts driftEasings`). hero-layback 2.4 s (out 0.58, drift 0.8 through about 2.5° and 0.8% size, back 0.72, settle 0.3). turn-to-back 3.7 s: 150° in 1.4 s, a 0.7 s drift to 162°, then on to 360° in 1.6 s (peak about 215°/s); `return: stay` rests on the three-quarter back.
+- Tap warnings name the moment that fails ("off front at 0.66 s, 0.30 s before the tap at 0.96 s"). A fix may not add another warning or turn any move faster than `COMFORT_DEG_S` (300°/s) unless it already did; whole-move shifts come before shortening. The agent CLI `export` refuses while a `tap-angle` or `tap-back` warning stands, unless `--force`.
+- Touch indicator on the 3D screen: firmer dark edge and fuller fill (`tapIndicator.ts PHONE3D_TOUCH`); flat projects unchanged.
+
+**Look round 4 (judged changes; they override round 3 where they differ).** Every judge in round 3 scored metal, glass and shadow 2 of 5: coloured finishes read as flat clay, the back as a sticker on a folded plate, the lenses as flat violet discs, the screen as a flat print, and the phone floated. Root causes and fixes:
+- Light. Round 3's set was bright and even round the camera axis (top 0.8, horizon 0.45): a metal back mirrors that region, so every coloured finish was one even tone. Now the set is dark (top 0.3, horizon 0.04, front 0.02, floor card 0.15, flags 1) and the boxes carry the light: a wide box above the camera axis (lower edge 15°: a back facing the viewer falls off from a bright top), a white bounce card below it (downward faces and the step's edge catch a line), a brighter overhead strip (faces tilted up), a tall strip 60° left of the camera at 1.2 body lengths (a highlight slides across a three-quarter back), and a broad box behind on the key side at 1.6 (a back turned past three-quarters falls off in a gradient). A box may set its own `distance` (`lighting.ts SoftBox.distance`); a nearer box is seen from more different angles across a flat face, so its highlight falls off instead of filling the face. A unit test pins the dark set and the boxes above and below the camera.
+- Metal. Anodised aluminium is a sealed dyed oxide: metal reflectance with roughness 0.34 under a clear seal (`ALUMINIUM_SEAL`: clearcoat 1, roughness 0.1) that draws crisp white lines of the boxes on the satin colour. Steel and titanium keep no coat.
+- Back of the 17 Pro. The plateau rises on a crisp machined step (`geometry.ts stepProfile`: a 0.35 mm foot fillet, a 60° wall, a 0.9 mm rounded top edge; 2.1 mm across for the 2.55 mm plateau) instead of round 3's 4.8 mm smootherstep ramp. The panel runs 1.5 mm from the body outline (about 0.8 mm of flat metal beside it) and 2.5 mm below the step, with a 0.12 mm edge. Its material is the metal's own reflectance (metalness 0.7, a touch desaturated, roughness 0.46, satin clearcoat), so it tracks the aluminium's brightness in every pose: same colour, a different finish (measured: 2-15% lighter on Deep Blue and Cosmic Orange at turns 150 and 180, within 2% on Silver). No logo: the task forbids any Apple logo or asset, so the judges' logo request is not done.
+- Lenses. The rings are thinner (glass radius 0.83 of the ring, was 0.78) and a deeper, less saturated shade of the finish (`LENS_RING`). Inside: a matte black hood, a thin dark retaining ring, and three coated elements that shade as domes (`LENS_DOME`: normals tilt up to 45° at the rim) on their true shallow depth, so a softbox reflects as small curved violet and green crescents ring inside ring; round 3's nearly flat elements mirrored one straight box edge across a flat violet disc.
+- Front glass. Bare cover glass by default (`frontGlassSpecular(0.25)` = 1, 4% straight on; glass 1 → 4): a softbox reflects as a faint sheet that slides over the screen as the phone turns and tilts. The rounded rim (0.3 mm, the most the narrowest bezels allow) is polished glass that mirrors the whole studio (`GLASS_RIM`): a thin bright line round the front. (Corrected in fix round 1: round 4 said "at FRONT no box is near the axis; the GGX tails leave about 3e-4 linear". That was wrong. The box above the camera (azimuth 35, elevation 24, lower edge 15°) reflected in the top of a FRONT screen and lifted dark UI by up to 93 levels: 26.7 dB against flat at the default glass, against the 40 dB gate of §3.5/§6.2. No gate ran it, because every FRONT check used glass 0. Soft at the default azimuth and studio with the key mirrored to +35 veiled the whole screen.) Since fix round 1 the front glass (border and glare) fades by the angle between the screen's normal and the camera's axis (`materials.ts FRONT_GLASS_FLAG`, smoothstep on the sine): the studio's black flag round the lens. Fix round 2 widened it from 5°/20° to **nothing within 13°, full from 25°**: the 5° flag fixed only FRONT with the camera level, and review measured a grey veil where the screen must still be read: bold's resting pose BOLD_BASE (9.4°, where the phone sits for every tap) 31.2 dB light UI / 18.9 dB dark UI against glass 0 (maxDiff 48 levels, the Dynamic Island grey), FRONT under camera elevation 9° and 14° 22.6 and 16.4 dB dark, a 12° turn (the §2.6 busy-time limit) 16.2 dB dark. 13° covers the busy-time rule (12°), BOLD_BASE, the spin-in's landing (turn 4) and the floor fix's camera elevation (`warnings.ts FLOOR_FIX_ELEVATION`, 12°), with 1° so a pose exactly on 12° is not on the edge; the hero layback (about 28.6°) still shows the full sheen. Turns between 13° and 25° show part of it. So the screen is the glass-0 screen exactly for every preset and key azimuth at FRONT, at BOLD_BASE, at FRONT under the floor fix elevation, at BOLD_BASE under the floor fix elevation (the layback cancels part of the elevation: about 10.6°) and at a 12° turn. Not covered: a pose more than 13° off the camera's axis that the user picks while UI must be read (outside Auto 3D's busy-time rule); it shows the sheen by design. A sample inside the flag skips the glare draw (`projection.ts screenAxisSin`, the same number as the shader's). Measured (GPU harness): FRONT screen against flat at the default glass 86.0 dB (social 9:16), 77.1 dB (landscape), 76.0 dB (classic moved), 0 px different from glass 0; all 5 presets × key azimuth −90, −35, 0, 35, 90, 180: 0 px different from glass 0, worst 86.0 dB. Without the flag the same gates read 26.7 / 34.5 / 28.2 dB and worst 25.1 dB, so they fail first. Fix round 2 gates (GPU harness `front.glassSweep.{boldBase,floorFixElevation,boldBaseFloorFix,busyLimitTurn12}.screenIsGlass0`: the projected screen quad's interior, edges pulled in 4 px and the rounded corners skipped, light and dark UI, 5 presets × 6 key azimuths): 0 px different from glass 0 in all four. With the 5° flag all four fail (worst 18.3 dB whole frame, about a million pixels differ). CPU test `projection3d.test.ts` checks each of those poses, and the hero lean, on every layout against `FRONT_GLASS_FLAG_SIN`, and fails with 5°/20°. Outside the screen, the default glass still differs from glass 0 at those poses by at most 1 level on up to about 3,100 pixels. `motion.stillScreenEqualsDraft` is strict again (0 px differ); round 4 had loosened it to one level without the owner.
+- Shadow. Two casts per pose (`shadow.ts`): the drop layer along the key, its offset capped at `SHADOW_OFFSET` = 0.08 of the body long side (owner decision 7: twice the 2D frame's 0.04, which hid the shadow behind the phone on a flat backdrop), and the contact layer cast straight onto the catcher (`projection.ts contactPointsWorld`), so a tight shade hugs the outline while the drop shadow falls away from the key. The catcher area holds both. Key elevation stays 32.
+- Screen motion blur. `SCREEN_STEADY_FLOOR` 0.5: the screen content smears at most half as far as the body, so the UI stays readable through the spin-in's peak.
+- Zoom. Zooms do not play on the 3D screen (`compositor.ts`: the zoom camera is the identity when the 3D phone draws); a real screen never crops its own content while the phone turns. They come back unchanged when 3D is off (flat identity holds). The `over-zoom` warning is gone with the conflict it described.
+- Tap mark on the 3D screen: 0.75 × the size, a light fill, a faint hairline and a soft shadow, and kept inside the screen (`TouchIndicatorOptions.inside`); flat projects unchanged.
+- Shots. `turn-to-back` with `return: stay` has its own keys (1.8 s): one ease to 3% past the three-quarter back, a soft settle onto it; it lands, so leave about 0.5 s after it. Every turn-to-back eases the phone back 10% (size) as it turns and returns to the base size on the front.
+
+- Budgets (owner decision 10, median of 3, measured on the final look round 4 code with the WP4b GPU harness's budgets and memory suites; Apple M4 Max, not measured on 8 GB). Round 4 is faster than round 3 (one budgets run of round 3's last commit a504979: 4K moving p95 975 ms, 1080 moving p95 123 ms) because six of the twelve boxes are painted into the set; it still FAILS the 4K moving budget (701 ms against 200), 1080 moving (93 against 45), 4K still (62.5 against 60), preview without DoF (7.1 against 4) and 4K ss 2 still memory (610 MiB against 560). The cost is the six RectAreaLights evaluated per sample (up to 64 adaptive samples at 4K). Open for the owner: fewer lights or fewer samples trade look for speed.
+
+| Measure | runs 1 / 2 / 3 | median | budget | result |
+|---|---|---|---|---|
+| Preview 1080, 3D pass p95 (ms) | 7.1 / 6.7 / 7.1 | 7.1 | <= 4 | FAIL |
+| Preview 1080 with DoF, 3D pass p95 (ms) | 6.6 / 6.7 / 7.3 | 6.7 | <= 7 | PASS |
+| Export 1080 still, 3D pass p50 (ms) | 14.5 / 14.8 / 14.1 | 14.5 | <= 20 | PASS |
+| Export 1080 moving, 3D pass p95 (ms) | 95.1 / 93.0 / 86.0 | 93.0 | <= 45 | FAIL |
+| Export 4K still, 3D pass p50 (ms) | 78.2 / 62.5 / 61.6 | 62.5 | <= 60 | FAIL |
+| Export 4K moving, 3D pass p95, all frames (ms) | 848.7 / 633.1 / 700.9 | 700.9 | <= 200 (decision 10) | FAIL |
+| Export 4K moving, adaptive-N frames, max (ms) | 1460.2 / 1118.7 / 1342.7 | 1342.7 | <= 400 | FAIL |
+| Export 4K moving, 3D pass CPU p50 (ms) | 232 / 196.8 / 212.9 | 212.9 | (info) | PASS |
+| Export 4K still, 3D pass CPU p50 (ms) | 143.5 / 126.9 / 93 | 126.9 | (info) | PASS |
+| GPU memory 4K ss1, measured, still (MiB) | 389.5 / 387.1 / 388.7 | 388.7 | <= 400 | PASS |
+| GPU memory 4K ss1, measured, moving (MiB) | 351.6 / 348.7 / 358.2 | 351.6 | <= 400 | PASS |
+| GPU memory 4K ss2, measured, still (MiB) | 609.6 / 587.9 / 615 | 609.6 | <= 560 | FAIL |
+| GPU memory 4K ss2, measured, moving (MiB) | 393.5 / 409 / 375.8 | 393.5 | <= 560 | PASS |
+
+**Look round 4, fix round 1 (verification findings).** The round 4 text above called round 4 "faster than round 3"; that hid the real step back. Round 2's environment-only rig passed every speed budget on the same harness and machine, and the RectAreaLight rig (round 3, kept in round 4 as six lights) costs about 2 to 4 times as much. These are M4 Max numbers; the budgets are for an 8 GB M1, which would be slower again (not measured on 8 GB).
+
+| Measure (ms, median of 3) | round 2 (env only) | round 4 | fix round 1 | budget |
+|---|---|---|---|---|
+| Preview 1080, 3D pass p95 | 2.9 (2.9 / 3.3 / 2.0) | 7.1 | 4.4 | 4 |
+| Export 1080 moving p95 | 26.9 (30.8 / 26.9 / 25.5) | 93.0 | 75.2 | 45 |
+| Export 4K still p50 | 25.7 (23.5 / 28.8 / 25.7) | 62.5 | 37.7 | 60 |
+| Export 4K moving p95, all frames | 174.9 (174.9 / 155.7 / 176.4) | 700.9 | 324.0 | 200 |
+| Export 4K moving, adaptive-N max | 182.7 (182.7 / 173.2 / 188.1) | 1342.7 | 548.8 | 400 |
+
+Fix round 1 changes that change no look: metals (diffuse term exactly 0) and the glare skip each rect light's diffuse LTC integral (`passes.ts rectSpecularOnly`), the glare is not drawn inside the front glass flag, and the DoF target is made only by a frame that blurs. The 4K still and the preview gain most (the glare was a full six-light pass over the screen at FRONT). Round 4's three 4K moving runs spread 633-849 ms; fix round 1's agree within 2% (321.5 / 324.5 / 324.0), so part of round 4's gap may be run noise, not code.
+
+Fix round 1 bench (GPU harness, final code, median of 3; Apple M4 Max; not measured on 8 GB):
+
+| Measure | runs 1 / 2 / 3 | median | budget | result |
+|---|---|---|---|---|
+| Preview 1080, 3D pass p95 (ms) | 4.4 / 4.3 / 4.4 | 4.4 | <= 4 | FAIL |
+| Preview 1080 with DoF, 3D pass p95 (ms) | 4.3 / 4.6 / 4.4 | 4.4 | <= 7 | PASS |
+| Export 1080 still, 3D pass p50 (ms) | 10.2 / 9.4 / 9.0 | 9.4 | <= 20 | PASS |
+| Export 1080 moving, 3D pass p95 (ms) | 75.2 / 76.8 / 72.2 | 75.2 | <= 45 | FAIL |
+| Export 4K still, 3D pass p50 (ms) | 39.1 / 37.3 / 37.7 | 37.7 | <= 60 | PASS |
+| Export 4K moving, 3D pass p95, all frames (ms) | 321.5 / 324.5 / 324.0 | 324.0 | <= 200 (decision 10) | FAIL |
+| Export 4K moving, adaptive-N frames, max (ms) | 537.7 / 548.8 / 587.3 | 548.8 | <= 400 | FAIL |
+| Export 4K moving, 3D pass CPU p50 (ms) | 118.9 / 132 / 147.3 | 132 | (info) | PASS |
+| Export 4K still, 3D pass CPU p50 (ms) | 71.5 / 71 / 73.5 | 71.5 | (info) | PASS |
+| GPU memory 4K ss1, measured, still (MiB) | 386.5 / 387.1 / 391.7 | 387.1 | <= 400 | PASS |
+| GPU memory 4K ss1, measured, moving (MiB) | 365.5 / 351.6 / 350 | 351.6 | <= 400 | PASS |
+| GPU memory 4K ss2, measured, still (MiB) | 615.5 / 618.1 / 616.1 | 616.1 | <= 560 | FAIL |
+| GPU memory 4K ss2, measured, moving (MiB) | 391.3 / 346.3 / 407.7 | 391.3 | <= 560 | PASS |
+
+Where the moving cost goes (4K, per sample, GPU timer, min of 7; a back view at turn about 150): 10.7 ms with the round 4 rig; 5.7 ms with the rect lights left out of the clearcoat lobe; 3.5 ms with that and two rect lights; 2.8 ms with no rect lights. The clearcoat lobe of the sealed aluminium (round 4) is half the cost: three r186's `RE_Direct_RectArea_Physical` evaluates a second LTC integral per light for it. The adaptive frames of the bench's 200° turn reach 46-56 samples, so the 200 ms all-frames budget needs about 3.5 ms per sample.
+
+**Open for the owner (decision 10): pick a trade or relax the budget.** Each option measured with the budgets suite, three runs, median (the options were temporary shader switches for the measurement, not committed):
+
+| Option | preview p95 | 1080 moving p95 | 4K still p50 | 4K moving p95 all | 4K adaptive max | budgets failed |
+|---|---|---|---|---|---|---|
+| O0 as shipped (round 4 look) | 4.2 | 89.6 | 46.6 | 318.7 | 549.1 | preview, 1080 moving, 4K moving, adaptive |
+| O1 rect lights not in the clear seal (the seal mirrors the painted environment only) | 3.3 | 74.8 | 40.5 | 291.4 | 321.0 | 1080 moving, 4K moving |
+| O2 O1 + only the key and one flat-face box as rect lights (the rest painted into the PMREM) | 2.5 | 51.6 | 39.6 | 215.6 | 223.1 | 1080 moving (52/45), 4K moving (216/200) |
+| O4 no rect lights (round 2's environment-only rig) | 2.4 | 42.2 | 31.9 | 190.3 | 199.9 | none |
+
+O1's look against the shipped look: `/tmp/openscreen-3d/look/fix/trade/seal-AB-back.png` (the back is darker; the flash diffuser turns grey without the seal's reflection of the boxes). O4 is the rig round 2's judges rejected (flat faces read as one flat tone). The other lever, a lower adaptive-N cap at 4K, makes fast turns strobe at 4K and is not measured. WP4b's acceptance line "§6.5 budgets met" is NOT met and stays open until the owner picks.
+
+**GPU memory (decision 10), fix round 1.** 4K ss 2 still: 616 MiB against 560 (FAIL, open); ss 1 still 387 MiB against 400 (13 MiB margin). What grew since a06392b (ss 1 still 340, ss 2 still 578): the studio dome went from 96×48 to 512×256 segments (about 9 MB of vertex buffers while the PMREM is made) and six RectAreaLights with clearcoat make larger programs (with no rect lights the ss 1 still number drops about 20-25 MiB; run-to-run noise is about ±15 MiB). The avgC shadow target is 2 MB. The "still" number is a first-frames peak: the same frame repeated 30 more times reads 40-56 MiB lower, and the moving number after 121 frames is 391 MiB (ss 2), so most of the excess is memory the driver frees late, not memory the engine holds (counted: tile targets 117.5 MB, ss 2 screen texture 141 MB, shadow 20 MB, PMREM 25 MB). Options: count the steady state, or take O2/O4 (smaller programs). Not measured on 8 GB.
+
+GPU: ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Max, Unspecified Version). Not measured on 8 GB (no M1 8 GB here). Memory = macOS `footprint` of the GPU process, 3D at 4K (phone filling the 2160x3840 canvas) minus the same canvas drawn flat, in MiB (2^20 B); "still" is after the first 3 frames, "moving" after a 121-frame 200-degree turn. Times: GPU timer queries per 3D pass.
+
+**GPU memory, fix round 2 (correction and one more measured option; still open for the owner).** The fix round 1 text above calls the ss 2 still number "a first-frames peak" that the driver frees late. That does not hold: a probe that renders the same 4K ss 2 still 13 times and reads the footprint after the last one gives 653 / 640 / 648.5 MiB (three runs), and fix round 1's own 33-frame run gave 587. So "count the steady state" does NOT bring ss 2 under 560. The engine holds the same textures throughout (one screen texture allocation, 3502 × 7559 with mips, 141 MB; tile targets 116 MB). The footprint metric is also time-sensitive: 3 s and 9 s after the last frame the same process reads 127 and 22 MiB above the flat baseline (macOS compresses idle memory), so only numbers taken right after rendering are comparable. The 2D band size is not a lever (bands of 0.5, 2 and 8 Mpx: 649, 643, 655 MiB).
+
+| Option (4K ss 2, median of 3) | ss 2 still MiB (budget 560) | ss 2 moving MiB | ss 2 still, 13 frames | ss 2 moving frame, wall ms | look |
+|---|---|---|---|---|---|
+| as shipped (tile targets up to 120 MB) | 616.1 (fix round 1) | 391.3 | 648.5 | 488 (647 / 488 / 478) | - |
+| O5: at ss ≥ 2 the tile targets get 60 MB (twice the tiles) | 550.5 (541.0 / 551.9 / 550.5) PASS | 335.9 | 582 (one run) | 603 (603 / 474 / 699) | none expected (tiles only split the frame; no tile-identity gate measured yet) |
+
+O5 passes the measured 3-frame budget by 9.5 MiB, inside run-to-run noise (about ±15 MiB), and fails it after 13 frames; it costs about a quarter more time per ss 2 moving frame (ss 2 has no speed budget; ss 1 is untouched). It was a temporary switch for the measurement, not committed. Fix round 2 bench on the final code (the 13°/25° flag; GPU harness, median of 3; Apple M4 Max; not measured on 8 GB). The flag only skips more glare draws, so it cannot add GPU work; the speed numbers read a little higher than fix round 1's (1080 moving 87 against 75, 4K moving 346 against 324) and the review's single run on fix round 1's code read 85 and 303, so this is run-to-run spread on a shared machine, not a change. Every result (pass or fail) is the same as fix round 1's:
+
+| Measure | runs 1 / 2 / 3 | median | budget | result |
+|---|---|---|---|---|
+| Preview 1080, 3D pass p95 (ms) | 4.39 / 4.53 / 4.47 | 4.47 | <= 4 | FAIL |
+| Preview 1080 with DoF p95 (ms) | 4.52 / 4.48 / 4.5 | 4.5 | <= 7 | PASS |
+| Export 1080 still p50 (ms) | 9.83 / 11.11 / 9.23 | 9.83 | <= 20 | PASS |
+| Export 1080 moving p95 (ms) | 87.21 / 84.1 / 97.42 | 87.21 | <= 45 | FAIL |
+| Export 4K still p50 (ms) | 38.73 / 37.08 / 43.54 | 38.73 | <= 60 | PASS |
+| Export 4K moving p95, all frames (ms) | 345.71 / 349.56 / 322.55 | 345.71 | <= 200 | FAIL |
+| Export 4K moving, adaptive-N max (ms) | 538.02 / 640.9 / 571.14 | 571.14 | <= 400 | FAIL |
+| GPU memory 4K ss1 still (MiB) | 388.4 / 387 / 391.6 | 388.4 | <= 400 | PASS |
+| GPU memory 4K ss1 moving (MiB) | 352 / 352 / 346.8 | 352 | <= 400 | PASS |
+| GPU memory 4K ss2 still (MiB) | 614.1 / 611.5 / 618.6 | 614.1 | <= 560 | FAIL |
+| GPU memory 4K ss2 moving (MiB) | 394.5 / 414.9 / 410.3 | 410.3 | <= 560 | PASS |
+
+So acceptance item 7 stays open: the owner relaxes the ss 2 budget, takes O5 knowing its margin, or takes O2/O4 (smaller programs, about 20-25 MiB less). Harness probe: `memprobe` suite in the scratch GPU harness; numbers in `/tmp/openscreen-3d/wf3/look/fix2/`.
 
 ### 3.5 Colour management (D3)
 - `renderer.toneMapping = NoToneMapping`. Inside render targets three writes working-space linear and skips tone mapping anyway (D3).
@@ -657,7 +778,7 @@ Add to `OP_NAMES` and the `applyOp` switch in agentOps.ts. All are refused with 
 - `warnings`
 - `shotRecipes: [{name, duration, summary, use}]`
 
-`apply`, `polish` and `direct` print `warnings`. `export` still refuses on problems and prints warnings to stderr as progress lines. All of them compute warnings with the bundle's `cursor.json` (D5), so `validate` reports the same over-zoom warnings the editor shows.
+`apply`, `polish` and `direct` print `warnings`. `export` still refuses on problems and prints warnings to stderr as progress lines. All of them compute warnings with the bundle's `cursor.json` (D5), so `validate` reports the same warnings the editor shows (`zoom-3d` for manual zooms that do not play in 3D; the `over-zoom` warning is gone).
 
 **4K export (D18)**
 - `shared/exportArgs.ts`: new `presetCanvasSize(preset, exportPreset)`: App Store presets → the preset's size; `exportPreset === 'uhd4k'` → scale `2160 / min(preset.width, preset.height)`, both sides even; else the preset's size.
@@ -876,7 +997,7 @@ Each control's only write path is `apply3d`. Staff copy is terse.
      - `applyOps(old, [])` and `remapProject` are unchanged
    - `scripts/golden/flatIdentity.mjs` exports every fixture with main's build and with the branch build, then compares `ffmpeg -f framemd5`. Required: identical.
 2. **3D goldens** through `frames` on `test/fixtures/3d-golden`:
-   - FRONT (ss 1, phone still): screen quad within 0.25 px; screen PSNR ≥ 48 dB at glass 0 and ≥ 40 dB at the default; body IoU ≥ 0.97 against the 2D frame mask. With the 1:1 texel-aligned path (§3.6) the screen interior is expected to be exact, so 48 dB has margin. If, when WP4b's screen path first runs on the WP0 fixtures, a fixture cannot reach 48 dB, the cause is found first; only a measured, explained shortfall may set the gate to the measured value − 1 dB, and that is reported to the owner, never quietly lowered.
+   - FRONT (ss 1, phone still): screen quad within 0.25 px; screen PSNR ≥ 48 dB at glass 0 and ≥ 40 dB at the default (GPU harness `front.<layout>.screenPsnr.defaultGlass≥40`, and `front.glassSweep.*` over every light preset × key azimuth −90..180, since fix round 1); body IoU ≥ 0.97 against the 2D frame mask. With the 1:1 texel-aligned path (§3.6) the screen interior is expected to be exact, so 48 dB has margin. If, when WP4b's screen path first runs on the WP0 fixtures, a fixture cannot reach 48 dB, the cause is found first; only a measured, explained shortfall may set the gate to the measured value − 1 dB, and that is reported to the owner, never quietly lowered.
    - cursor and ripple radii on the 3D screen at FRONT match flat within 0.5 px (§3.6)
    - each recipe at 5 times: SSIM ≥ 0.98 and PSNR ≥ 38 dB against committed PNGs (Apple silicon only; golden protocol below)
    - **ROI border**: for every recipe at 5 times, wall and floor shadow, the alpha on the ROI's border pixels is < 1/255 (nothing is cut by the ROI)
@@ -997,7 +1118,7 @@ Each control's only write path is `apply3d`. Staff copy is terse.
   - [ ] Mesh bbox matches mm within 0.05.
   - [ ] Normals are unit length; hard normals at every crease; tangents are present.
   - [ ] `bandF0` keeps hue and meets the luminance floors; materials match the §3.4 table (no clearcoat on metal or front glass).
-  - [ ] RectAreaLights plus the 512 PMREM fill; the hero boxes are not in the PMREM scene.
+  - [ ] RectAreaLight softboxes plus the 512 PMREM set; the boxes are not in the PMREM scene (look round 3, D13).
   - [ ] No logo and no Apple asset.
   - [ ] Turntable stills of 17 Pro, 16, Air and SE, and of the black, silver and orange finishes, are signed off in the review harness. This sign-off releases the golden protocol (§6.2).
 
@@ -1015,7 +1136,7 @@ Each control's only write path is `apply3d`. Staff copy is terse.
   - [ ] `WEBGL_lose_context` recovers in preview and aborts export.
   - [ ] Flat projects do not load three.
   - [ ] The App Store preset renders flat.
-  - [ ] §6.5 budgets met, including 4K on the real 2160×3840 file, GPU memory ≤ 340 MB, and one engine render per exported frame.
+  - [ ] §6.5 budgets met, including 4K on the real 2160×3840 file, GPU memory ≤ 340 MB, and one engine render per exported frame. (Open since look round 3: see "Look round 4, fix round 1" and "GPU memory, fix round 2"; the owner picks a trade or relaxes decision 10. Fix round 2 re-measured, median of 3: still not met.)
 
 ### WP5: Editor UI (after WP2 op shapes and the WP3/WP4b Editor merges; can start on stubs)
 - **Owns:**
