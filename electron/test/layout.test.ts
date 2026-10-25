@@ -113,6 +113,16 @@ describe('title card', () => {
     expect(big.titlePx).toBeGreaterThan(lay.titlePx);
   });
 
+  it('lays the card out at the 1080-class size and scales it (decision 17): scale 2 is exactly twice scale 1', () => {
+    const m = mockCanvas();
+    const text = { title: 'Know exactly what you can spend', subtitle: 'One honest number.' };
+    const a = layoutTitleCard(m.ctx, { x: 0, y: 0, w: 800, h: 260 }, text);
+    const b = layoutTitleCard(m.ctx, { x: 0, y: 0, w: 1600, h: 520 }, text, { scale: 2 });
+    expect(b.titleLines).toEqual(a.titleLines);
+    expect(b.subtitleLines).toEqual(a.subtitleLines);
+    expect([b.titlePx, b.subtitlePx, b.blockHeight]).toEqual([a.titlePx * 2, a.subtitlePx * 2, a.blockHeight * 2]);
+  });
+
   it('draws with tight tracking and balanced save/restore', () => {
     const m = mockCanvas();
     drawTitleCard(m.ctx, { x: 0, y: 0, w: 800, h: 260 }, { title: 'Know exactly what you can spend', subtitle: 'One honest number.' });
