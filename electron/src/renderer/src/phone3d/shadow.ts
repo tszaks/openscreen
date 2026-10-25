@@ -25,8 +25,9 @@
 // once, into the frame's one catcher area (the union of every sample's), and
 // the silhouettes are averaged before the blur; the blur is linear, so that
 // is the average of the blurred shadows. So the masks are made once per
-// frame, before any tile, with one silhouette per sub-sample: no tile renders
-// a mask again, and a fast move's shadow is as smooth as the phone's blur.
+// frame, before any tile, with one drop silhouette per sub-sample (and one
+// contact silhouette from the middle pose): no tile renders a mask again, and
+// a fast move's shadow is as smooth as the phone's blur.
 import * as THREE from 'three';
 import {
   shadowCatcherCorners,
@@ -278,7 +279,7 @@ export class ShadowPass {
   private key = '';
   /** Blurred mask sets made so far (one per frame at most); stats and tests. */
   maskRenders = 0;
-  /** Silhouettes cast so far (two per distinct sub-sample pose of each frame whose masks were made: drop and contact). */
+  /** Silhouettes cast so far (per frame whose masks were made: one drop cast per sub-sample pose, one contact cast). */
   silhouettes = 0;
   private readonly silMat: THREE.ShaderMaterial;
   private readonly blurMat: THREE.ShaderMaterial;
@@ -415,21 +416,23 @@ export class ShadowPass {
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld(true);
     this.silScene.add(phone);
-    // Each pose casts twice: along its key (the drop layer) and straight onto the catcher (the contact layer), each
-    // silhouette added into its layer's sum with the pose's weight.
+    // Each pose casts along its key (the drop layer), added into the drop sum with the pose's weight; the middle pose
+    // also casts straight onto the catcher (the contact layer).
     const straight: [number, number, number] = frame.kind === 'wall' ? [0, 0, 1] : [0, 1, 0];
     for (const dst of [this.avg, this.avgC]) {
       r.setRenderTarget(dst);
       r.setClearColor(0x000000, 0);
       r.clear(true, false, false);
     }
+    // The contact layer is a tight halo blurred over a few texels: one cast from the middle pose serves the whole
+    // frame (a sub-frame's motion moves it less than its blur), so a moving frame casts n + 1 silhouettes, not 2n.
+    const mid = Math.floor(n / 2);
     for (let i = 0; i < n; i++) {
       place(i);
       phone.updateMatrixWorld(true);
-      for (const [L, dst] of [
-        [lights[i], this.avg],
-        [straight, this.avgC],
-      ] as const) {
+      const casts: [readonly [number, number, number], THREE.WebGLRenderTarget, number][] = [[lights[i], this.avg, weights ? weights[i] : 1 / n]];
+      if (i === mid) casts.push([straight, this.avgC, 1]);
+      for (const [L, dst, w] of casts) {
         (this.silMat.uniforms.uShadow.value as THREE.Matrix4).copy(planarShadowMatrix(frame.kind, frame.plane, L));
         r.setRenderTarget(this.sil);
         r.setClearColor(0x000000, 0);
@@ -437,7 +440,7 @@ export class ShadowPass {
         r.render(this.silScene, cam);
         this.silhouettes++;
         this.addMat.uniforms.uSrc.value = this.sil.texture;
-        this.addMat.uniforms.uW.value = weights ? weights[i] : 1 / n;
+        this.addMat.uniforms.uW.value = w;
         this.quad.material = this.addMat;
         r.setRenderTarget(dst);
         r.render(this.quadScene, this.quadCam);

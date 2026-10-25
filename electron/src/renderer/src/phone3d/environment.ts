@@ -57,8 +57,8 @@ const TOP_TO_DEG = 70;
 /** The floor card blends in over this many degrees below the horizon. */
 const FLOOR_BLEND_DEG = 15;
 const DOME_RADIUS = 10;
-/** Dome tessellation: about 2.8° per segment (the set is smooth gradients and broad flags). */
-const DOME_SEG = { w: 128, h: 64 };
+/** Dome tessellation: 0.7° per segment, so the painted strips (half-width 4-5°) keep their soft edges. */
+const DOME_SEG = { w: 512, h: 256 };
 export const PMREM_SIZE = 512;
 
 const deg = Math.PI / 180;
@@ -98,6 +98,7 @@ export function studioLights(preset: LightPreset): Group {
   const g = new Group();
   g.name = `studio:${preset}`;
   LIGHT_PRESETS[preset].boxes.forEach((box, i) => {
+    if (box.inEnv) return; // painted into the set (studioRadiance)
     const light = new RectAreaLight(new Color().setStyle(box.color), box.radiance, 1, 1);
     light.name = i === 0 ? 'key' : `box${i}`;
     light.userData.box = { dir: lightDir(box.azimuth, box.elevation), ...boxSize(box), radiance: box.radiance, distance: box.distance ?? LIGHT_DISTANCE };
@@ -140,6 +141,15 @@ const smoothstep = (a: number, b: number, x: number) => {
   const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return u * u * (3 - 2 * u);
 };
+/** How much of a painted box's half-size its soft edge takes. */
+export const ENV_BOX_FEATHER = 0.3;
+/** A painted box's profile across one axis: 1 inside, a cos² fall over the outer ENV_BOX_FEATHER, 0 at |t| ≥ 1. */
+const softBox = (t: number) => {
+  const a = Math.abs(t);
+  if (a >= 1) return 0;
+  const inner = 1 - ENV_BOX_FEATHER;
+  return a <= inner ? 1 : Math.cos((Math.PI / 2) * ((a - inner) / ENV_BOX_FEATHER)) ** 2;
+};
 /** Signed angle a − b, wrapped into (−180, 180]. */
 const angleDiff = (a: number, b: number) => ((((a - b) % 360) + 540) % 360) - 180;
 
@@ -174,6 +184,17 @@ export function studioRadiance(preset: LightPreset, bgMean: Rgb, dir: readonly [
   r *= keep;
   g *= keep;
   b *= keep;
+  // The boxes painted into the set (inEnv), with soft edges (ENV_BOX_FEATHER of each half-size); in the
+  // environment's own frame a box's azimuth is its offset from the key (the set turns with the rig).
+  for (const box of rig.boxes) {
+    if (!box.inEnv) continue;
+    const w = softBox(angleDiff(az, box.azimuth) / box.halfW) * softBox((el - box.elevation) / box.halfH);
+    if (w <= 0) continue;
+    const c = new Color().setStyle(box.color);
+    r += box.radiance * w * c.r;
+    g += box.radiance * w * c.g;
+    b += box.radiance * w * c.b;
+  }
   return [r, g, b];
 }
 

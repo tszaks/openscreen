@@ -166,7 +166,7 @@ describe('shadow samples (§3.7 steps 5 and 8)', () => {
 });
 
 describe('renderPhone3D frame loop', () => {
-  it('a moving 4K frame casts one silhouette pair (drop, contact) per sub-sample and blurs once, before the tiles, whatever the tile count', () => {
+  it('a moving 4K frame casts one drop silhouette per sub-sample plus one contact silhouette, and blurs once, before the tiles, whatever the tile count', () => {
     const s = sceneFor(moving(), true);
     const { engine, calls, shadow } = fakeEngine();
     let checkedTiles = 0;
@@ -177,10 +177,10 @@ describe('renderPhone3D frame loop', () => {
       const { out } = frame(engine, args(s, t));
       expect(out.samples).toBeGreaterThan(8); // a real moving frame: more samples than the AA minimum
       expect(shadow.maskRenders - masks).toBe(1);
-      expect(shadow.silhouettes - sil).toBe(2 * out.samples); // per pose: the drop cast and the contact cast
+      expect(shadow.silhouettes - sil).toBe(out.samples + 1); // a drop cast per pose, one contact cast (middle pose)
       // Silhouettes all come before the first scene draw (no tile casts one again).
       const firstScene = calls.findIndex((c) => c.kind === 'scene');
-      expect(calls.filter((c) => c.kind === 'shadow')).toHaveLength(2 * out.samples); // drop + contact per pose
+      expect(calls.filter((c) => c.kind === 'shadow')).toHaveLength(out.samples + 1); // drop per pose + one contact
       expect(calls.slice(firstScene).some((c) => c.kind === 'shadow')).toBe(false);
       // N scene draws per tile.
       const scenes = calls.filter((c) => c.kind === 'scene');

@@ -842,10 +842,26 @@ describe('studio environment (D13: one procedural environment holds all the ligh
     expect(lum(at('studio', DEFAULT_KEY_AZIMUTH, KEY_ELEVATION))).toBeLessThan(1.5 * lum(at('studio', DEFAULT_KEY_AZIMUTH + 90, KEY_ELEVATION)) + 0.2);
   });
 
+  it('boxes marked inEnv are painted into the set with soft edges (look round 4: lights only where a flat face needs one)', () => {
+    const env = LIGHT_PRESETS.studio.boxes.filter((b) => b.inEnv);
+    expect(env.length).toBeGreaterThan(0);
+    // The flat-face boxes stay RectAreaLights: the key, the box above the camera, the glass strip and the sweep.
+    expect(LIGHT_PRESETS.studio.boxes.filter((b) => !b.inEnv).length).toBeGreaterThanOrEqual(5);
+    expect(LIGHT_PRESETS.studio.boxes[0].inEnv).toBeUndefined();
+    const set = (az: number, el: number) => lum(studioRadiance('studio', [0, 0, 0], lightDir(az, el)));
+    for (const b of env) {
+      const lit = set(b.azimuth, b.elevation);
+      // At its centre the set carries the box's radiance (within the dome under it)...
+      expect(lit, `${b.azimuth},${b.elevation}`).toBeGreaterThan(0.85 * b.radiance);
+      // ...and it ends past its edge: 1.2 half-widths out the set is the dome again.
+      expect(set(b.azimuth + 1.2 * b.halfW, b.elevation), `${b.azimuth}`).toBeLessThan(lit - 0.8 * b.radiance);
+    }
+  });
+
   it('the softboxes are RectAreaLights round the phone: LIGHT_DISTANCE long sides out (or their own distance), facing it, sized by their angle, turned by the light channel', () => {
     for (const preset of LIGHT_PRESET_NAMES) {
       const rig = studioLights(preset);
-      const boxes = LIGHT_PRESETS[preset].boxes;
+      const boxes = LIGHT_PRESETS[preset].boxes.filter((b) => !b.inEnv);
       expect(rig.children.length, preset).toBe(boxes.length);
       const center = [100, -50, 20] as const;
       const unit = 300; // body long side, world units

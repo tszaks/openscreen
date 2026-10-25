@@ -58,6 +58,10 @@ export interface SoftBox {
   /** How far it stands from the phone's centre, body long sides (default LIGHT_DISTANCE). A nearer box is seen from
    *  more different angles across a flat face, so its highlight falls off across the face instead of filling it. */
   distance?: number;
+  /** Painted into the set (the PMREM) with soft edges instead of a RectAreaLight. For boxes that only curved
+   *  surfaces need (band edges, the step's fillet, lens domes): an environment box costs one texture fetch per
+   *  pixel, a RectAreaLight a full LTC evaluation per lobe, so the flat-face boxes stay lights and these do not. */
+  inEnv?: true;
 }
 
 export interface StudioSet {
@@ -73,7 +77,7 @@ export interface StudioSet {
 }
 
 export interface LightRig {
-  /** The softboxes, key first (RectAreaLights). */
+  /** The softboxes, key first (RectAreaLights, except those marked inEnv). */
   boxes: SoftBox[];
   set: StudioSet;
   /** The key: its elevation (the shadow's light) and relative strength. */
@@ -93,15 +97,15 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
     boxes: [
       { azimuth: 0, elevation: KEY_ELEVATION, halfW: 30, halfH: 22, radiance: 1.2, color: '#ffffff' },
       // A tall strip low on the key side: the streak that runs down the band in a three-quarter view.
-      { azimuth: -65, elevation: 6, halfW: 5, halfH: 42, radiance: 2.0, color: '#ffffff' },
-      { azimuth: 185, elevation: 14, halfW: 5, halfH: 34, radiance: 2.0, color: '#ffffff' },
-      { azimuth: -115, elevation: 14, halfW: 4, halfH: 34, radiance: 1.5, color: '#ffffff' },
-      { azimuth: 40, elevation: 64, halfW: 70, halfH: 16, radiance: 1.1, color: '#f4f6ff' },
+      { azimuth: -65, elevation: 6, halfW: 5, halfH: 42, radiance: 2.0, color: '#ffffff', inEnv: true },
+      { azimuth: 185, elevation: 14, halfW: 5, halfH: 34, radiance: 2.0, color: '#ffffff', inEnv: true },
+      { azimuth: -115, elevation: 14, halfW: 4, halfH: 34, radiance: 1.5, color: '#ffffff', inEnv: true },
+      { azimuth: 40, elevation: 64, halfW: 70, halfH: 16, radiance: 1.1, color: '#f4f6ff', inEnv: true },
       // A low wide box under the key: the broad soft highlight that slides across a back turned three-quarters
       // toward the key (the turn-to-back's end pose), well off the camera axis so FRONT stays clean.
       { azimuth: -5, elevation: 0, halfW: 10, halfH: 12, radiance: 0.9, color: '#ffffff' },
       // A small soft lamp just above and right of the camera: the round catchlight in the lens elements.
-      { azimuth: 50, elevation: 18, halfW: 5, halfH: 5, radiance: 2.5, color: '#ffffff' },
+      { azimuth: 50, elevation: 18, halfW: 5, halfH: 5, radiance: 2.5, color: '#ffffff', inEnv: true },
       // A tall strip right of the camera (60° from it): its reflection crosses the screen glass as the phone turns
       // toward it, and sweeps over the back in the three-quarter back view.
       { azimuth: 95, elevation: 12, halfW: 6, halfH: 36, radiance: 1.4, color: '#ffffff' },
@@ -115,7 +119,7 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
       { azimuth: -100, elevation: 18, halfW: 16, halfH: 32, radiance: 0.9, color: '#ffffff', distance: 1.6 },
       // A white bounce card low in front: the downward faces (the plateau step's rounded edge, the band's lower
       // chamfers) catch a thin line of it.
-      { azimuth: 35, elevation: -32, halfW: 30, halfH: 10, radiance: 1.2, color: '#ffffff' },
+      { azimuth: 35, elevation: -32, halfW: 30, halfH: 10, radiance: 1.2, color: '#ffffff', inEnv: true },
     ],
     set: { top: 0.3, horizon: 0.04, front: 0.02, floor: 0.15, flags: 1 },
     key: { elevation: KEY_ELEVATION, intensity: 1 },
