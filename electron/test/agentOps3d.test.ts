@@ -356,7 +356,7 @@ describe('shot op', () => {
     expect(() => applyOps(p, [{ op: 'shot', recipe: 'settle', at: 1, return: 'back' }], fresh())).toThrow(/return must be/);
     expect(() => applyOps(p, [{ op: 'shot', recipe: 'settle', at: 1, intensity: 3 }], fresh())).toThrow(/intensity must be 0\.25\.\.2/);
     expect(() => applyOps(p, [{ op: 'shot', recipe: 'settle', at: 1, direction: 2 }], fresh())).toThrow(/direction must be 1 or -1/);
-    expect(() => applyOps(p, [{ op: 'shot', recipe: 'turn-to-back', at: 1, duration: 0.15 }], fresh())).toThrow(/duration must be at least 0\.51 s for turn-to-back/);
+    expect(() => applyOps(p, [{ op: 'shot', recipe: 'turn-to-back', at: 1, duration: 0.15 }], fresh())).toThrow(/duration must be at least 0\.53 s for turn-to-back/);
     expect(() => applyOps(p, [{ op: 'shot', recipe: 'settle' }], fresh())).toThrow(/"at" must be a number/);
   });
 });

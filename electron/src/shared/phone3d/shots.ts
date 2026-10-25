@@ -18,11 +18,12 @@
 //                a 0.4 s settle back: one visible overshoot that lands.
 //   hero-layback 2.4 s: out in 0.58 s, a 0.8 s drift on through about 2.5°
 //                of turn, then back no faster than it went out to 8% past
-//                the pose, and a 0.32 s settle.
-//   turn-to-back 3.6 s: 165° to a three-quarter back view (1.45 s), a 0.7 s
-//                drift across the back (165 → 179°) so the viewer sees it,
-//                then on round to the front (1.45 s); peak about 215°/s.
-//                `return: stay` ends on the back at rest (stayEasing).
+//                the pose, and a 0.3 s settle.
+//   turn-to-back 3.7 s: 150° to a three-quarter back view (1.4 s), a 0.7 s
+//                drift on across it (150 → 162°) so the viewer sees the
+//                back and the plateau's side, then on round to the front
+//                (1.6 s); peak about 215°/s. `return: stay` comes to rest on
+//                the three-quarter back (stayEasing): a deliberate end pose.
 // Peak angular speed stays under 300°/s at the default durations
 // (test/shots.test.ts pins it), half the §2.7 too-fast line.
 
@@ -100,8 +101,8 @@ const scaled = (d: Partial<Pose>, k: number): Partial<Pose> => Object.fromEntrie
 const HERO_JOIN = driftEasings(HERO_LEAN.turn, HERO_T.out, HERO_LEAN.turn * HERO_DRIFT, HERO_T.hold, -HERO_LEAN.turn * (1 + HERO_DRIFT + SHOT_OVERSHOOT), HERO_T.back);
 
 /** turn-to-back: to a three-quarter back view, a slow drift across the back, then on round to the front. */
-const TTB = { out: 165, drift: 14, tilt: 8, light: 40 } as const;
-const TTB_T = { out: 1.45, hold: 0.7, on: 1.45 } as const;
+const TTB = { out: 150, drift: 12, tilt: 8, light: 40 } as const;
+const TTB_T = { out: 1.4, hold: 0.7, on: 1.6 } as const;
 const TTB_JOIN = driftEasings(TTB.out, TTB_T.out, TTB.drift, TTB_T.hold, 360 - TTB.out - TTB.drift, TTB_T.on);
 const ttbAt = (turn: number): Partial<Pose> => ({ turn, tilt: (TTB.tilt * turn) / TTB.out, light: (TTB.light * turn) / TTB.out });
 
@@ -141,7 +142,7 @@ export const SHOTS: Record<ShotRecipe, ShotSpec> = {
       { to: { turn: 360, tilt: 0, light: 0 }, frac: TTB_F[2], easing: TTB_JOIN.next, ret: true, fixed: ['turn'] },
     ],
     summary: 'Turns to a three-quarter view of the back, drifts slowly across it, then on round to the front (a full 360°).',
-    use: 'A long wait (3.6 s or more) or a scene change; keep taps out of it. Bold promos.',
+    use: 'A long wait (3.7 s or more) or a scene change; keep taps out of it. One-way (return: stay) as an outro that ends on the back. Bold promos.',
   },
   'hero-layback': {
     duration: HERO_T.out + HERO_T.hold + HERO_T.back + HERO_T.settle,
