@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { applyOps, type EditOp } from '../src/shared/agentOps';
 import { focusSegmentsFor } from '../src/shared/focusSegments';
 import { tapsToOutput } from '../src/shared/mobileProject';
-import { BOLD_BASE, BUSY_FACING_DEG, edgeOnOffset, MIDDLE_EVERY, MOVING_CAP, planDirect, POSED_REST, SHORT_INTRO_MIN, VISIBLE_DEG, type DirectOptions, type DirectStyle } from '../src/shared/phone3d/direct';
+import { BIG_EVERY, BIG_GAP, BIG_MOVES, BOLD_BASE, BUSY_FACING_DEG, edgeOnOffset, LONG_TAKE, MAX_TURN_TO_BACKS, MIDDLE_EVERY, MOVING_CAP, nearestAllowed, planDirect, POSED_REST, SHORT_INTRO_MIN, VISIBLE_DEG, type DirectOptions, type DirectStyle } from '../src/shared/phone3d/direct';
 import { FRONT, type Phone3D } from '../src/shared/phone3d/model';
 import { facing, poseInRange } from '../src/shared/phone3d/pose';
 import { bodyBounds, scene3d } from '../src/shared/phone3d/projection';
@@ -156,6 +156,16 @@ function checkPlan(p: Project, opts: DirectOptions, label: string) {
   const introLen = intro.reduce((a, s) => a + s.end - s.start, 0);
   expect(total, `${label}: moving time`).toBeLessThanOrEqual(Math.max(MOVING_CAP[opts.style] * D, introLen) + 1e-6);
   if (opts.style === 'subtle') expect(middle, `${label}: subtle has no middle moves`).toEqual([]);
+  // Owner decision 18 (restraint): at most one big move per BIG_EVERY s (start to start), never two within BIG_GAP s,
+  // at most MAX_TURN_TO_BACKS turn-to-backs.
+  const big = moving.filter((s) => BIG_MOVES.includes(s.recipe));
+  for (let i = 0; i < big.length; i++) {
+    for (let j = i + 1; j < big.length; j++) {
+      expect(big[j].start - big[i].start, `${label}: big moves ${i} and ${j} start ${BIG_EVERY[opts.style]} s apart`).toBeGreaterThanOrEqual(BIG_EVERY[opts.style] - 1e-6);
+      expect(big[j].start - big[i].end, `${label}: big moves ${i} and ${j} ${BIG_GAP} s apart`).toBeGreaterThanOrEqual(BIG_GAP - 1e-6);
+    }
+  }
+  expect(moving.filter((s) => s.recipe === 'turn-to-back').length, `${label}: turn-to-backs`).toBeLessThanOrEqual(MAX_TURN_TO_BACKS);
   // Shots never overlap each other and each fits the timeline.
   for (let i = 0; i < moving.length; i++) {
     expect(moving[i].start).toBeGreaterThanOrEqual(0);
@@ -269,14 +279,16 @@ describe('planDirect: rules', () => {
   });
 
   it('middle shots alternate direction by time order', () => {
-    const p = take(90, [tap(3), tap(45), tap(87)], [{ start: 5, end: 43 }, { start: 47, end: 85 }]);
+    // 150 s so hero's one big move per 30 s (owner decision 18) still leaves four middle moves.
+    const p = take(150, [tap(3), tap(75), tap(147)], [{ start: 5, end: 73 }, { start: 77, end: 145 }]);
     const ops = planDirect(p, { style: 'hero', replace: true }).ops.filter((o) => o.op === 'shot' && o.recipe === 'hero-layback' && o.return !== 'stay');
-    expect(ops.length).toBeGreaterThan(3);
+    expect(ops.length).toBeGreaterThanOrEqual(3);
     ops.forEach((o, i) => expect(o.direction).toBe(i % 2 === 0 ? 1 : -1));
   });
 
   it('scene-change wipe: the turn passes edge-on within 1/60 s of the cut', () => {
-    for (const s of [14.2, 27.75]) {
+    // Cuts at least 20 s after the spin-in: bold allows one big move per 20 s (owner decision 18).
+    for (const s of [24.2, 27.75]) {
       const p = take(40, [tap(3), tap(36)], [{ start: 6, end: 33 }]);
       const opts: DirectOptions = { style: 'bold', replace: true, scenes: [s] };
       const { plan, out } = checkPlan(p, opts, `wipe ${s}`);
@@ -326,28 +338,45 @@ describe('planDirect: rules', () => {
     for (const t of list) if (t.id !== 'mine') expect(t.end <= 19 || t.start >= 21).toBe(true);
   });
 
-  it('cursor samples: zooms are not busy time (they do not play while the phone is 3D), and the same samples give the same plan', () => {
-    const p = take(30);
+  it('cursor samples: zooms are not busy time, but no steep shot runs through one (owner decision 20); the same samples give the same plan', () => {
+    const p = take(70);
     p.zoom = { ...p.zoom, autofocus: true };
-    const cursor: CursorSample[] = [
-      { time: 9, x: 0.4, y: 0.5, kind: 'clickDown' },
-      { time: 9.1, x: 0.4, y: 0.5, kind: 'clickUp' },
-      { time: 21, x: 0.6, y: 0.3, kind: 'clickDown' },
+    const mid = (x: { start: number; end: number }) => (x.start + x.end) / 2;
+    const click = (t: number): CursorSample[] => [
+      { time: t, x: 0.4, y: 0.5, kind: 'clickDown' },
+      { time: t + 0.1, x: 0.4, y: 0.5, kind: 'clickUp' },
     ];
+    // Hero: a zoom right on the middle hero-layback (under the 35° limit). Zooms are not busy, so it stays.
+    const heroFree = planDirect(p, { style: 'hero', replace: true });
+    const lay = heroFree.shots.find((x) => x.recipe === 'hero-layback' && x.reason.startsWith('middle'))!;
+    expect(lay).toBeTruthy();
+    const cursor = click(mid(lay));
     const zooms = focusSegmentsFor(p, cursor);
-    expect(zooms.length).toBe(2);
+    expect(zooms.length).toBe(1);
     const fromFile = JSON.parse(JSON.stringify({ samples: cursor })).samples as CursorSample[];
     const a = planDirect(p, { style: 'hero', replace: true, cursor });
     const b = planDirect(p, { style: 'hero', replace: true, cursor: fromFile });
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    // The zooms change nothing: the same plan as with no cursor at all, and a shot runs through a zoom's time.
-    expect(JSON.stringify(planDirect(p, { style: 'hero', replace: true }))).toBe(JSON.stringify(a));
-    expect(a.shots.some((s) => zooms.some((z) => s.start < z.outEnd && s.end > z.inStart))).toBe(true);
-    checkPlan(p, { style: 'hero', replace: true, cursor }, 'cursor');
+    const overlaps = (x: { start: number; end: number }) => zooms.some((z) => x.start < z.outEnd && x.end > z.inStart);
+    expect(a.shots.some((x) => x.recipe === 'hero-layback' && x.start === lay.start && overlaps(x))).toBe(true);
+    const hero = checkPlan(p, { style: 'hero', replace: true, cursor }, 'cursor hero');
+    expect(projectWarnings(hero.out, { cursor }).filter((w) => w.code === 'zoom-angle')).toEqual([]);
+    // Bold: a zoom right on the middle turn-to-back. It leaves front by far more than 35°, so it moves off the zoom.
+    const boldFree = planDirect(p, { style: 'bold', replace: true });
+    const ttb = boldFree.shots.find((x) => x.recipe === 'turn-to-back')!;
+    expect(ttb).toBeTruthy();
+    const c2 = click(mid(ttb));
+    const z2 = focusSegmentsFor(p, c2);
+    const bold = checkPlan(p, { style: 'bold', replace: true, cursor: c2 }, 'cursor bold');
+    const steep = bold.plan.shots.filter((x) => x.recipe === 'turn-to-back' || x.recipe === 'spin-in');
+    expect(steep.some((x) => x.recipe === 'turn-to-back')).toBe(true);
+    expect(steep.some((x) => z2.some((z) => x.start < z.outEnd && x.end > z.inStart))).toBe(false);
+    expect(projectWarnings(bold.out, { cursor: c2 }).filter((w) => w.code === 'zoom-angle')).toEqual([]);
   });
 
   it('self-check: a shot that would push a large phone off the canvas is re-planned (turn-to-back → hero-layback)', () => {
-    const p = take(30, [tap(10)]);
+    // 60 s: room for a middle move one big-move spacing (20 s, owner decision 18) from the intro and the outro.
+    const p = take(60, [tap(10)]);
     p.style = { ...p.style, contentTransform: { scale: 1.24 } };
     const { plan } = checkPlan(p, { style: 'bold', replace: true }, 'large phone');
     expect(plan.check.rounds).toBeGreaterThan(0);
@@ -356,7 +385,7 @@ describe('planDirect: rules', () => {
   });
 
   it('self-check: an overflow the layout already has is not blamed on the shots, but a shot that pushes further out is', () => {
-    const p = take(30, [tap(10)]);
+    const p = take(60, [tap(10)]);
     p.style = { ...p.style, contentTransform: { scale: 1.3 } }; // the flat phone itself pokes 38 px past the canvas
     const plan = planDirect(p, { style: 'hero', replace: true });
     // The outro keeps within the layout's own overflow, so it stays; spin-in (65 px) and the middle
@@ -455,7 +484,7 @@ describe('planDirect: rules', () => {
 
   it('self-check: when neither direction fits, the shot is dropped', () => {
     // A phone scaled to the canvas width: a hero lean pokes past one side or the other, whichever way it leans.
-    const p = take(30, [tap(10)]);
+    const p = take(60, [tap(10)]);
     p.style = { ...p.style, contentTransform: { scale: 1.3 } };
     const plan = planDirect(p, { style: 'hero', replace: true });
     const middle = plan.check.dropped.filter((s) => s.reason.startsWith('middle'));
@@ -509,11 +538,161 @@ describe('planDirect: rules', () => {
     );
     const { plan, out } = checkPlan(p, { style: 'bold', replace: true, scenes: [10, 30, 64, 100] }, '120 s bold');
     const shots = plan.ops.filter((o): o is EditOp & { direction: number } => o.op === 'shot');
-    expect(shots.filter((o) => o.recipe === 'turn-to-back').length).toBeGreaterThan(5);
-    expect(new Set(shots.filter((o) => o.recipe === 'turn-to-back').map((o) => o.direction))).toEqual(new Set([1, -1]));
-    expect(shots.some((o) => o.recipe === 'hero-layback')).toBe(true);
+    // Owner decision 18: at most 3 turn-to-backs, and (a take over 90 s with scene changes) the middle moves go to
+    // the scene changes. Many big turns in a row stay in range: shots.test.ts runs 10 turn-to-backs in a row.
+    expect(shots.filter((o) => o.recipe === 'turn-to-back').length).toBe(3);
+    for (const s of plan.shots.filter((x) => x.reason.startsWith('middle') || x.reason.startsWith('scene'))) expect(s.reason, JSON.stringify(s)).toMatch(/^scene change at /);
+    expect(new Set(shots.filter((o) => o.recipe !== 'spin-in' && o.recipe !== 'settle').map((o) => o.direction))).toEqual(new Set([1, -1]));
     for (const tr of out.phone3d!.transitions) expect(Math.abs(tr.to.turn)).toBeLessThanOrEqual(560);
+    expect(plan.note).toMatch(/^This take is 120 s long: .* trim it to its best 15-45 s/);
   });
+});
+
+/** What a note says the phone does matches the plan's own ops and shots (item 4: posed rest vs styled plan). */
+function expectNoteTruthful(plan: ReturnType<typeof planDirect>, label: string): void {
+  const note = plan.note ?? '';
+  const at = `${label}: ${note}`;
+  const first = plan.ops[0] as EditOp & { pose?: unknown };
+  const pose = JSON.stringify(first.pose);
+  if (/The phone rests at a posed angle instead/.test(note)) expect(pose, at).toBe(JSON.stringify(POSED_REST));
+  if (/The phone stays straight on/.test(note)) expect(pose, at).toBe(JSON.stringify(FRONT));
+  if (/The phone rests at the bold angle/.test(note)) expect(pose, at).toBe(JSON.stringify(BOLD_BASE));
+  const shots = moving(plan);
+  if (/spin-in/.test(note) && /No (turning|moving) shot fits/.test(note)) expect(shots.some((x) => x.recipe === 'spin-in'), at).toBe(false);
+  if (/the closing move/.test(note)) expect(shots.some((x) => x.reason.startsWith('outro')), at).toBe(false);
+  if (/(a|for a) middle move/.test(note)) expect(shots.some((x) => !x.reason.startsWith('intro') && !x.reason.startsWith('outro')), at).toBe(false);
+}
+/** A seeded iPhone take of `D` output seconds with taps at `rate` per second, some waits and (optionally) scene changes. */
+function seededTake(seed: number, D: number, rate: number, withScenes: boolean): { p: Project; scenes?: number[] } {
+  const rnd = lcg(seed);
+  const taps: TapSuggestion[] = [];
+  const waits: { start: number; end: number }[] = [];
+  for (let t = 0.5 + rnd() * 3, i = 0; t < D - 0.5; i++) {
+    if (rnd() < 0.15) {
+      // A wait: a quiet stretch with no taps.
+      const len = 4 + rnd() * 20;
+      waits.push({ start: t + 0.5, end: Math.min(D, t + 0.5 + len) });
+      t += len + 1;
+      continue;
+    }
+    taps.push(tap(Math.round(t * 100) / 100, rnd() < 0.1 ? { kind: 'typing', duration: rnd() * 2 } : {}, i));
+    t += (0.3 + rnd() * 1.7) / rate;
+  }
+  const scenes = withScenes ? Array.from({ length: Math.max(1, Math.floor(D / 25)) }, () => Math.round(rnd() * D * 100) / 100).sort((a, b) => a - b) : undefined;
+  return { p: take(D, taps, waits), ...(scenes ? { scenes } : {}) };
+}
+
+describe('planDirect: restraint (owner decision 18)', () => {
+  it('nearestAllowed: the start in range nearest the wanted one, outside every open forbidden interval', () => {
+    expect(nearestAllowed(0, 10, [], 4)).toBe(4);
+    expect(nearestAllowed(0, 10, [{ start: 2, end: 6 }], 4.5)).toBe(6);
+    // A tie goes to the earlier start.
+    expect(nearestAllowed(0, 10, [{ start: 2, end: 6 }], 4)).toBe(2);
+    expect(nearestAllowed(0, 10, [{ start: 2, end: 5 }], 4)).toBe(5);
+    expect(nearestAllowed(0, 10, [{ start: 3, end: 6 }], 4)).toBe(3);
+    // Interval ends are allowed (one big move exactly the spacing away).
+    expect(nearestAllowed(5, 5, [{ start: -15, end: 5 }], 5)).toBe(5);
+    expect(nearestAllowed(0, 10, [{ start: -1, end: 11 }], 4)).toBeNull();
+    expect(nearestAllowed(0, 10, [{ start: -1, end: 4 }, { start: 4, end: 11 }], 7)).toBe(4);
+    expect(nearestAllowed(3, 2, [], 2)).toBeNull();
+  });
+
+  it('a 637 s take (the real take\'s shape: 69 taps, long waits): bold gives a calm plan and recommends a trim', () => {
+    const { p } = seededTake(637, 637, 0.25, false);
+    const D = new Timeline(p.recording.duration, p.clips).outputDuration;
+    expect(D).toBeGreaterThan(600);
+    for (const style of STYLES) {
+      const { plan } = checkPlan(p, { style, replace: true }, `637 s ${style}`);
+      const moves = moving(plan);
+      const big = moves.filter((s) => BIG_MOVES.includes(s.recipe));
+      // Calm: the phone holds still at least 85% of the time, big moves at most one per BIG_EVERY s.
+      const movingTime = moves.reduce((a, s) => a + s.end - s.start, 0);
+      expect(movingTime / D, style).toBeLessThan(0.15);
+      expect(big.length, style).toBeLessThanOrEqual(Math.floor(D / BIG_EVERY[style]) + 1);
+      expect(moves.filter((s) => s.recipe === 'turn-to-back').length, style).toBeLessThanOrEqual(MAX_TURN_TO_BACKS);
+      expect(plan.note, style).toMatch(/This take is \d+ s long: a social video reads best at 15-45 s, so trim it to its best 15-45 s \(trim, cut\) and run Auto 3D again; until then this plan spaces its moves out, at most one big move per (20|30) s\.$/);
+      if (style !== 'subtle') expect(big.length, `${style} still moves`).toBeGreaterThan(3);
+    }
+    const bold = planDirect(p, { style: 'bold', replace: true });
+    expect(bold.shots.filter((s) => s.recipe === 'turn-to-back').length).toBe(MAX_TURN_TO_BACKS);
+    // The old planner put 56 turn-to-backs in the real take; the cap holds however many waits there are.
+    // With scene changes, a long take moves only at them.
+    const scenes = [40.5, 101.2, 180.7, 260.3, 333.3, 410.9, 480.1, 555.5, 600.2];
+    const atScenes = checkPlan(p, { style: 'bold', replace: true, scenes }, '637 s bold, scenes').plan;
+    const middles = atScenes.shots.filter((s) => !s.reason.startsWith('intro') && !s.reason.startsWith('outro'));
+    expect(middles.length).toBeGreaterThan(0);
+    for (const m of middles) expect(m.reason, JSON.stringify(m)).toMatch(/^scene change at /);
+    expect(atScenes.note).toMatch(/until then this plan moves only at scene changes, at most one big move per 20 s\.$/);
+  }, 120_000);
+
+  it('the 6 s and 8 s golden takes still give a visible 3D result in every style (owner decision 12)', () => {
+    for (const name of ['ios-social', 'ios-16x9', 'ios-landscape'] as const) {
+      const { project, cursor } = loadGoldenFixture(name);
+      const D = new Timeline(project.recording.duration, project.clips).outputDuration;
+      expect(D).toBeLessThan(LONG_TAKE);
+      for (const style of STYLES) {
+        const { plan, out } = checkPlan(project, { style, replace: true, cursor }, `${name}/${style}`);
+        expect(maxOffFront(out), `${name}/${style} (D ${D.toFixed(2)})`).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
+        expect(plan.note ?? '', `${name}/${style}`).not.toMatch(/This take is/);
+      }
+    }
+  });
+
+  it('kept big moves count: planned big moves keep their distance, and three kept turn-to-backs leave no room for a fourth', () => {
+    const p = take(120, [tap(60)], [{ start: 2, end: 58 }, { start: 62, end: 118 }]);
+    const kept = applyOps(p, [{ op: 'shot', recipe: 'turn-to-back', at: 30 }], { newId: (() => { let n = 0; return () => `k${++n}`; })() }).project;
+    const plan = planDirect(kept, { style: 'bold', replace: false });
+    const keptStart = 30;
+    for (const s of moving(plan).filter((x) => BIG_MOVES.includes(x.recipe))) {
+      expect(Math.abs(s.start - keptStart), JSON.stringify(s)).toBeGreaterThanOrEqual(BIG_EVERY.bold - 1e-6);
+      expect(s.end <= keptStart - BIG_GAP + 1e-6 || s.start >= 30 + 3.7 - 1e-3 + BIG_GAP - 1e-6, JSON.stringify(s)).toBe(true);
+    }
+    let n = 0;
+    const three = applyOps(p, [10, 40, 90].map((at) => ({ op: 'shot', recipe: 'turn-to-back', at })), { newId: () => `k${++n}` }).project;
+    const more = planDirect(three, { style: 'bold', replace: false });
+    expect(more.shots.filter((s) => s.recipe === 'turn-to-back')).toEqual([]);
+    // Replacing them frees the cap again.
+    expect(planDirect(three, { style: 'bold', replace: true }).shots.filter((s) => s.recipe === 'turn-to-back').length).toBeGreaterThan(0);
+  });
+
+  it('scene changes come first: a cut takes its move before the closing move does', () => {
+    // 40 s bold: a turn-to-back hiding the cut at 24.2 s and a closing move at 38.5 s are under 20 s apart; the cut wins.
+    const p = take(40, [tap(3), tap(36)], [{ start: 6, end: 33 }]);
+    const plan = checkPlan(p, { style: 'bold', replace: true, scenes: [24.2] }, 'cut first').plan;
+    expect(plan.shots.map((s) => s.recipe)).toEqual(['spin-in', 'turn-to-back']);
+    expect(plan.shots[1].reason).toMatch(/^scene change at 24\.2 s hidden edge-on/);
+    // Without the cut the closing move is planned (and a middle move fits 20 s from both ends).
+    expect(planDirect(p, { style: 'bold', replace: true }).shots.some((s) => s.reason.startsWith('outro'))).toBe(true);
+  });
+
+  it('sweep: 160 takes of 10-400 s, every style: restraint caps hold, long takes recommend a trim and move only at scene changes', () => {
+    const tally = { long: 0, sceneOnly: 0, ttb3: 0, multiBig: 0 };
+    for (let seed = 1; seed <= 160; seed++) {
+      const rnd = lcg(seed * 7919);
+      const D = Math.round((10 + rnd() * 390) * 100) / 100;
+      const { p, scenes } = seededTake(seed * 31, D, 0.05 + rnd() * 0.8, rnd() < 0.5);
+      for (const style of STYLES) {
+        const label = `seed ${seed} ${style} D ${D}${scenes ? ` scenes ${scenes.length}` : ''}`;
+        const { plan } = checkPlan(p, { style, replace: true, scenes }, label);
+        expectNoteTruthful(plan, label);
+        const long = D > LONG_TAKE;
+        expect(/This take is \d+ s long/.test(plan.note ?? ''), `${label}: trim note iff long (${plan.note})`).toBe(long);
+        const middles = moving(plan).filter((s) => !s.reason.startsWith('intro') && !s.reason.startsWith('outro'));
+        if (long && scenes) {
+          for (const m of middles) expect(m.reason, label).toMatch(/^scene change at /);
+          if (middles.length) tally.sceneOnly++;
+        }
+        if (long) tally.long++;
+        if (moving(plan).filter((s) => s.recipe === 'turn-to-back').length === MAX_TURN_TO_BACKS) tally.ttb3++;
+        if (moving(plan).filter((s) => BIG_MOVES.includes(s.recipe)).length > 1) tally.multiBig++;
+      }
+    }
+    // The sweep reaches every branch (measured counts are well above these).
+    expect(tally.long).toBeGreaterThan(200);
+    expect(tally.sceneOnly).toBeGreaterThan(20);
+    expect(tally.ttb3).toBeGreaterThan(10);
+    expect(tally.multiBig).toBeGreaterThan(150);
+  }, 300_000);
 });
 
 describe('planDirect: always a visible 3D result (owner decision 12)', () => {
@@ -724,7 +903,10 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     expect(plan.note.startsWith('No moving shot fits'), `${label}: "No moving" iff no moving shot (${plan.note})`).toBe(moving(plan).length === 0);
     const dropped = plan.note.match(/the self-check dropped (\d+) shots? /);
     expect(dropped ? Number(dropped[1]) : 0, `${label}: the note's dropped count is the plan's (${plan.note})`).toBe(plan.check.dropped.length);
+    expectNoteTruthful(plan, label);
   }
+
+
 
   it('moved layouts, where straight on and the posed angle drop different shots: the note comes from the run whose shots the plan returns', () => {
     // Two takes found by a review sweep. Straight on, every shot pushes the moved phone off the canvas and is dropped;
@@ -736,7 +918,8 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     hero.style = { ...hero.style, contentTransform: { scale: 0.983, x: 0.63, y: 0.382 } };
     const h = checkPlan(hero, { style: 'hero', replace: true }, 'moved hero').plan;
     expect(h.ops[0]).toMatchObject({ op: 'phone3d', pose: POSED_REST });
-    expect(h.shots.map((s) => `${s.recipe} ${s.start}`)).toEqual(['hero-layback 4.637', 'hero-layback 12.403', 'hero-layback 20.168']);
+    // One big move per 30 s for hero (owner decision 18): the one middle hero-layback.
+    expect(h.shots.map((s) => `${s.recipe} ${s.start}`)).toEqual(['hero-layback 12.403']);
     expect(h.check.dropped.map((s) => s.recipe)).toEqual(['settle']);
     expect(h.note).toBeUndefined();
     const subtle = take(28.755, [tap(3.36, {}, 0), tap(23.223, {}, 1)], [], 'square');

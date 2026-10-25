@@ -8,6 +8,7 @@
 // again; a fix that would not clear its warning is not offered. Pure and
 // deterministic (no clock, no randomness).
 
+import { focusSegmentsFor } from '../focusSegments';
 import { tapsToOutput } from '../mobileProject';
 import { Timeline } from '../timeline';
 import type { CursorSample, Project } from '../types';
@@ -31,11 +32,14 @@ export interface Warning {
   fix?: EditOp[];
 }
 
-export const WARNING_CODES = ['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat', 'zoom-3d'] as const;
+export const WARNING_CODES = ['inactive', 'tap-angle', 'tap-back', 'zoom-angle', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat', 'zoom-3d'] as const;
 export type WarningCode = (typeof WARNING_CODES)[number];
 
 /** A tap must see the screen within this angle of straight on. */
 export const TAP_ANGLE_DEG = 35;
+/** During a zoom the screen must face within this angle of straight on (owner decision 20: the steep-angle limit,
+ *  the same as a tap's). */
+export const ZOOM_ANGLE_DEG = TAP_ANGLE_DEG;
 /** Seconds checked on each side of a tap (and after a swipe or typing run ends). */
 export const TAP_WINDOW = 0.3;
 /** Samples per second inside a tap window. */
@@ -181,10 +185,17 @@ function tapWarnings(c: Ctx): Found[] {
 /** Fix candidates for a tap warning, in order of preference. */
 function tapFixes(c: Ctx, w: Found): EditOp[][] {
   const chk = tapChecks(c).find((x) => `tap:${x.tapId}` === w.key);
-  if (!chk) return [];
+  return chk ? windowFixes(c, chk) : [];
+}
+
+/**
+ * Fix candidates for a window the screen must face through ([a, b], worst
+ * moment `worst`, the moment `t` it is about), in order of preference.
+ */
+function windowFixes(c: Ctx, chk: { t: number; a: number; b: number; worst: number }): EditOp[][] {
   const list = c.p3.transitions;
   const tr = culprit(list, chk.worst);
-  // Face front at the tap: the keyframe poseTargetAt edits gets turn = the whole turn nearest the move's
+  // Face front at the moment: the keyframe poseTargetAt edits gets turn = the whole turn nearest the move's
   // other end (so the move does not gain a spin) and tilt 0.
   const target = poseTargetAt(c.p3, chk.t);
   const ref = target.kind === 'to' ? resolveStarts(c.p3)[target.index].turn : target.kind === 'from' ? list[target.index].to.turn : target.pose.turn;
@@ -202,6 +213,69 @@ function tapFixes(c: Ctx, w: Found): EditOp[][] {
     out.push([pull], [face], [pull, face]);
   } else out.push([face]);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Zooms (owner decision 20: a zoom pushes the 3D camera in toward the screen, so the screen must face the viewer)
+
+interface ZoomCheck {
+  key: string;
+  /** The zoom's span (output s) and the moment it is at its focus. */
+  a: number;
+  b: number;
+  t: number;
+  worst: number;
+  minFacing: number;
+}
+
+function zoomChecks(c: Ctx): ZoomCheck[] {
+  const sample = floatSampler(c.p3);
+  const elev = c.p3.camera.elevation;
+  const out: ZoomCheck[] = [];
+  focusSegmentsFor(c.p, c.cursor).forEach((z, i) => {
+    const a = Math.max(0, z.inStart);
+    const b = Math.min(c.D, z.outEnd);
+    if (!(b >= a)) return;
+    const t = Math.min(b, Math.max(a, z.holdStart));
+    const n = Math.max(1, Math.ceil((b - a) * TAP_SAMPLE_HZ));
+    let minFacing = facingOf(sample(t), elev);
+    let worst = t;
+    for (let k = 0; k <= n; k++) {
+      const tt = a + ((b - a) * k) / n;
+      const f = facingOf(sample(tt), elev);
+      if (f < minFacing - 1e-6) {
+        minFacing = f;
+        worst = tt;
+      }
+    }
+    out.push({ key: `zoom:${i}:${r3(z.inStart)}`, a, b, t, worst, minFacing });
+  });
+  return out;
+}
+
+const COS_ZOOM = Math.cos(ZOOM_ANGLE_DEG * DEG);
+
+function zoomAngleWarnings(c: Ctx): Found[] {
+  const out: Found[] = [];
+  for (const chk of zoomChecks(c)) {
+    if (chk.minFacing >= COS_ZOOM) continue;
+    const tr = culprit(c.p3.transitions, chk.worst);
+    const deg = Math.acos(Math.max(-1, Math.min(1, chk.minFacing))) / DEG;
+    out.push({
+      code: 'zoom-angle',
+      key: chk.key,
+      message: `The phone is ${Math.round(deg)}° off front at ${s2(chk.worst)}, during the zoom at ${s2(chk.a)}–${s2(chk.b)} (the screen must face within ${ZOOM_ANGLE_DEG}° while a zoom plays)`,
+      at: r3(chk.a),
+      end: r3(chk.b),
+      ...(tr ? { transitionId: tr.id } : {}),
+    });
+  }
+  return out;
+}
+
+function zoomFixes(c: Ctx, w: Found): EditOp[][] {
+  const chk = zoomChecks(c).find((x) => x.key === w.key);
+  return chk ? windowFixes(c, chk) : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -778,6 +852,7 @@ type Check = (c: Ctx) => Found[];
 const CHECKS: Partial<Record<WarningCode, Check>> = {
   'tap-angle': tapWarnings,
   'tap-back': tapWarnings,
+  'zoom-angle': zoomAngleWarnings,
   overlap: overlapWarnings,
   'past-end': pastEndWarnings,
   'pose-jump': poseJumpWarnings,
@@ -795,7 +870,7 @@ function cleared(w: Found, fixed: Project, cursor: readonly CursorSample[]): boo
 }
 
 /** Warnings a fix must not add (cheap to re-check; off-canvas has its own fixes). */
-const SIDE_CHECKS: readonly Check[] = [tapWarnings, overlapWarnings, pastEndWarnings, poseJumpWarnings];
+const SIDE_CHECKS: readonly Check[] = [tapWarnings, zoomAngleWarnings, overlapWarnings, pastEndWarnings, poseJumpWarnings];
 
 /**
  * A fix that clears one warning must not make the project worse: no new
@@ -831,6 +906,7 @@ function firstFix(c: Ctx, w: Found, candidates: Iterable<EditOp[]>): EditOp[] | 
 const FIXERS: Partial<Record<WarningCode, (c: Ctx, w: Found) => Iterable<EditOp[]>>> = {
   'tap-angle': tapFixes,
   'tap-back': tapFixes,
+  'zoom-angle': zoomFixes,
   'off-canvas': offCanvasFixes,
   overlap: overlapFixes,
   'past-end': pastEndFixes,
@@ -867,6 +943,7 @@ export function projectWarnings(p: Project, opts: { cursor?: readonly CursorSamp
   if (!c) return [];
   const found: Found[] = [
     ...tapWarnings(c),
+    ...zoomAngleWarnings(c),
     ...offCanvasWarnings(c),
     ...overlapWarnings(c),
     ...pastEndWarnings(c),

@@ -392,7 +392,8 @@ describe('direct op', () => {
   it('reads ctx.scenes only when scenes is not false', () => {
     const p = tapped();
     p.waits = [{ start: 13, end: 21 }];
-    const ctx = { newId, scenes: [16] };
+    // A cut 20 s or more after the spin-in (bold's one big move per 20 s, owner decision 18) takes a turn-to-back.
+    const ctx = { newId, scenes: [25] };
     const withScenes = applyOp(p, { op: 'direct', style: 'bold' }, ctx);
     const without = applyOp(p, { op: 'direct', style: 'bold', scenes: false }, ctx);
     expect(withScenes.note).toMatch(/1 scene change/);
@@ -419,7 +420,7 @@ describe('direct op', () => {
     expect(p3of(r.project).transitions).toEqual([]);
     expect(p3of(r.project).pose).toEqual(P({ turn: -8, tilt: 5 }));
     // With shots, the note lists them and adds nothing else.
-    expect(applyOp(tapped(), { op: 'direct', style: 'hero', scenes: false }, fresh()).note).toMatch(/^Auto 3D \(hero; scene changes off\): spin-in 0\.00–1\.60 s(, [a-z-]+ \d+\.\d\d–\d+\.\d\d s)+$/);
+    expect(applyOp(tapped(), { op: 'direct', style: 'hero', scenes: false }, fresh()).note).toMatch(/^Auto 3D \(hero; scene changes off\): spin-in 0\.00–1\.60 s(, [a-z-]+ \d+\.\d\d–\d+\.\d\d s)*$/);
   });
 
   it('refuses a bad style or unknown field', () => {

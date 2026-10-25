@@ -19,7 +19,8 @@ import { facing, facingOf } from './pose';
 import { applyPhone3dOp, NOT_IPHONE } from './ops';
 import { SHOTS, shotBase, shotKeys } from './shots';
 import { phone3dProblems } from './validate';
-import { offCanvasAdded, offCanvasMeter, projectWarnings, type Warning, type WarningCode } from './warnings';
+import { offCanvasAdded, offCanvasMeter, projectWarnings, TAP_ANGLE_DEG, type Warning, type WarningCode } from './warnings';
+import { focusSegmentsFor } from '../focusSegments';
 
 export type DirectStyle = 'subtle' | 'hero' | 'bold';
 export const DIRECT_STYLES: readonly DirectStyle[] = ['subtle', 'hero', 'bold'];
@@ -47,7 +48,7 @@ export interface DirectPlan {
   /** What the self-check did: re-plan rounds, shots it dropped, and retries after a refused apply (must stay 0). */
   check: { rounds: number; dropped: PlannedShot[]; retries: number };
   /** Present when the style's own moves do not fit (no moving shot at all, or hero with no turning shot): why,
-   *  and what the phone does instead (one line). */
+   *  and what the phone does instead (one line); and on a take over LONG_TAKE s, a trim recommendation after it. */
   note?: string;
 }
 
@@ -92,10 +93,28 @@ export const POSED_REST: Pose = { ...BOLD_BASE };
 /** Every plan on a layout that has room for it turns the phone at least this far off straight on: settle's lean
  *  (8°, subtle), a turning shot, or the posed rest (9.4°, held all take). */
 export const VISIBLE_DEG = 8;
+/** Owner decision 18 (restraint). The big moves: each one is an event, so they are rationed. */
+export const BIG_MOVES: readonly ShotRecipe[] = ['spin-in', 'turn-to-back', 'hero-layback'];
+/** At most one big move per this many seconds (start to start): bold one per 20 s, the calmer styles one per 30 s. */
+export const BIG_EVERY: Record<DirectStyle, number> = { subtle: 30, hero: 30, bold: 20 };
+/** Never two big moves closer than this (one's end to the next one's start). */
+export const BIG_GAP = 6;
+/** At most this many turn-to-backs in a video (kept ones count); more only when asked for with a `shot` op. */
+export const MAX_TURN_TO_BACKS = 3;
+/** A take longer than this gets a note recommending a trim, and its middle moves go to scene changes. */
+export const LONG_TAKE = 90;
+/** The length a social video reads best at, which the long-take note recommends. */
+export const TRIM_TO: readonly [number, number] = [15, 45];
+/** During a zoom the phone stays within this angle of straight on (owner decision 20; the steep-angle limit). */
+export const ZOOM_ANGLE_DEG = TAP_ANGLE_DEG;
 /** Self-check: re-plan rounds before offenders are just dropped. */
 export const MAX_ROUNDS = 4;
+/** Shots that leave front by more than ZOOM_ANGLE_DEG on their own: they never overlap a zoom. */
+const STEEP: readonly ShotRecipe[] = ['spin-in', 'turn-to-back'];
 /** Warnings a planned shot must not cause (every code a move can cause). */
-const SHOT_CODES: readonly WarningCode[] = ['tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast'];
+const SHOT_CODES: readonly WarningCode[] = ['tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'zoom-angle'];
+/** Warnings that can be one-sided (an edge, or a lean that adds to a posed base): a shot first tries the mirror. */
+const MIRROR_CODES: readonly WarningCode[] = ['off-canvas', 'zoom-angle'];
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const s1 = (x: number) => `${x.toFixed(1)} s`;
@@ -143,6 +162,11 @@ function mergeBusy(list: Span[], D: number): Span[] {
   return out.map((s) => ({ start: Math.max(0, s.start), end: Math.min(D, s.end) }));
 }
 
+/** A big move already on the timeline or planned (owner decision 18 rations them). */
+interface Big extends Span {
+  recipe: ShotRecipe;
+}
+
 interface Inputs {
   D: number;
   busy: Span[];
@@ -150,6 +174,23 @@ interface Inputs {
   firstTap?: number;
   scenes: number[];
   waits: Span[];
+  /** Zoom spans (inStart..outEnd, merged): the phone stays within ZOOM_ANGLE_DEG there (owner decision 20). */
+  zooms: Span[];
+  /** Kept big shots (replace: false), one per shot: the moves of one recipe that follow straight on. */
+  keptBig: Big[];
+}
+
+/** The kept moves' big shots: consecutive moves with the same big recipe and no hold between them are one shot. */
+function keptBigShots(p: Project): Big[] {
+  const out: Big[] = [];
+  for (const tr of p.phone3d?.transitions ?? []) {
+    const recipe = tr.recipe;
+    if (!recipe || !BIG_MOVES.includes(recipe)) continue;
+    const last = out[out.length - 1];
+    if (last && last.recipe === recipe && tr.start <= last.end + 1e-3) last.end = Math.max(last.end, tr.end);
+    else out.push({ start: tr.start, end: tr.end, recipe });
+  }
+  return out;
 }
 
 function readInputs(p: Project, opts: DirectOptions): Inputs {
@@ -187,7 +228,42 @@ function readInputs(p: Project, opts: DirectOptions): Inputs {
     .map((s) => tl.outputTime(s))
     .filter((t): t is number => t !== null && t > 0 && t < D)
     .sort((a, b) => a - b);
-  return { D, busy, windows, firstTap: taps[0]?.t, scenes, waits };
+  const zooms = mergeSpans(focusSegmentsFor(p, opts.cursor ?? []).map((z) => ({ start: z.inStart, end: z.outEnd })));
+  return { D, busy, windows, firstTap: taps[0]?.t, scenes, waits, zooms, keptBig: opts.replace ? [] : keptBigShots(p) };
+}
+
+/** Overlapping or touching spans merged, sorted. */
+function mergeSpans(list: Span[]): Span[] {
+  const out: Span[] = [];
+  for (const s of [...list].sort((a, b) => a.start - b.start)) {
+    const last = out[out.length - 1];
+    if (last && s.start <= last.end) last.end = Math.max(last.end, s.end);
+    else out.push({ ...s });
+  }
+  return out;
+}
+
+/**
+ * The start in [lo, hi] nearest `want` that lies outside every open interval
+ * of `forbidden` (null when none does). Interval ends are allowed, so a move
+ * may start exactly a cap's distance from another.
+ */
+export function nearestAllowed(lo: number, hi: number, forbidden: readonly Span[], want: number): number | null {
+  if (hi < lo) return null;
+  const bad = forbidden.filter((f) => f.end > f.start && f.end > lo && f.start < hi).sort((x, y) => x.start - y.start);
+  const free: Span[] = [];
+  let cur = lo;
+  for (const f of bad) {
+    if (f.start >= cur) free.push({ start: cur, end: Math.min(f.start, hi) });
+    cur = Math.max(cur, f.end);
+  }
+  if (cur <= hi) free.push({ start: cur, end: hi });
+  let best: number | null = null;
+  for (const x of free) {
+    const v = Math.min(x.end, Math.max(x.start, want));
+    if (best === null || Math.abs(v - want) < Math.abs(best - want) - 1e-12) best = v;
+  }
+  return best;
 }
 
 /** Free time from 0 to the first busy start (the whole take with nothing busy). */
@@ -251,10 +327,41 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
   const misses: Misses = {};
   let used = 0;
   const reserved: Span[] = [];
+  // Owner decision 18: big moves are rationed (one per BIG_EVERY s, never two within BIG_GAP s, at most
+  // MAX_TURN_TO_BACKS turn-to-backs); the kept ones count.
+  const P = BIG_EVERY[style];
+  const bigs: Big[] = inp.keptBig.map((b) => ({ ...b }));
+  let turnBacks = bigs.filter((b) => b.recipe === 'turn-to-back').length;
   const reserve = (d: Draft) => {
     shots.push(d);
     used += d.duration;
     reserved.push({ start: d.start - SHOT_GAP, end: d.start + d.duration + SHOT_GAP });
+    if (BIG_MOVES.includes(d.recipe)) bigs.push({ start: d.start, end: d.start + d.duration, recipe: d.recipe });
+    if (d.recipe === 'turn-to-back') turnBacks++;
+  };
+  /** Starts (open intervals) a big move of `duration` may not use: within P of another big move's start, or within
+   *  BIG_GAP of another big move. */
+  const bigForbidden = (duration: number): Span[] =>
+    bigs.flatMap((b) => [
+      { start: b.start - P, end: b.start + P },
+      { start: b.start - BIG_GAP - duration, end: b.end + BIG_GAP },
+    ]);
+  /** Starts a steep move (more than ZOOM_ANGLE_DEG off front: spin-in, turn-to-back) of `duration` may not use: it
+   *  would overlap a zoom (owner decision 20). */
+  const zoomForbidden = (duration: number): Span[] => inp.zooms.map((z) => ({ start: z.start - duration, end: z.end }));
+  const forbiddenFor = (recipe: ShotRecipe, duration: number): Span[] => [...bigForbidden(duration), ...(STEEP.includes(recipe) ? zoomForbidden(duration) : [])];
+  const allowedAt = (forbidden: readonly Span[], start: number) => nearestAllowed(start, start, forbidden, start) === start;
+  /** Why a big move of `duration` may not start at `start` (one clause), or null. */
+  const bigRefusal = (what: string, recipe: ShotRecipe, start: number, duration: number): string | null => {
+    for (const b of bigs) {
+      if (Math.abs(start - b.start) < P - 1e-9) return `${what} would start ${below(Math.abs(start - b.start), P)} from the ${b.recipe} at ${s1(b.start)} (${style} allows one big move per ${P} s)`;
+      if (start < b.end + BIG_GAP - 1e-9 && start + duration > b.start - BIG_GAP + 1e-9) return `${what} would come within ${BIG_GAP} s of the ${b.recipe} at ${s1(b.start)} (never two big moves within ${BIG_GAP} s)`;
+    }
+    if (STEEP.includes(recipe)) {
+      const z = inp.zooms.find((x) => start < x.end - 1e-9 && start + duration > x.start + 1e-9);
+      if (z) return `${what} would turn the phone more than ${ZOOM_ANGLE_DEG}° off front during the zoom at ${s1(z.start)}–${s1(z.end)}`;
+    }
+    return null;
   };
   /** The moving-time cap refused a `what` of `duration` seconds: the cap itself is too small, or the other planned
    *  shots use it up. */
@@ -270,14 +377,20 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
   // Intro (always allowed: it opens the video; the moving-time cap applies to the rest).
   const room = introRoom(inp);
   const w0 = windows.find((w) => w.atZero);
+  const spinDuration = w0 ? Math.min(SHOTS['spin-in'].duration, w0.len - INTRO_GUARD, w0.end) : 0;
+  let spinRefused: string | null = null;
   if (style !== 'subtle') {
     // The first free window's shrunk length (what the spin-in gate reads); a window too short to keep has room - inset.
     const firstLen = w0 ? w0.len : Math.max(0, room - WINDOW_INSET);
     if (D < INTRO_MIN_OUTPUT) misses.spinIn = `the take is ${below(D, INTRO_MIN_OUTPUT)}, under the ${INTRO_MIN_OUTPUT} s a spin-in needs`;
     else if (firstLen < SPIN_IN_MIN) misses.spinIn = `the phone must face front from ${s1(room)}, which leaves a spin-in ${below(firstLen, SPIN_IN_MIN)}, under the ${SPIN_IN_MIN.toFixed(1)} s it needs`;
+    else if (w0) {
+      spinRefused = bigRefusal('a spin-in', 'spin-in', 0, spinDuration);
+      if (spinRefused) misses.spinIn = spinRefused;
+    }
   }
-  if (w0 && style !== 'subtle' && D >= INTRO_MIN_OUTPUT && w0.len >= SPIN_IN_MIN && !excluded.has('spin-in@0')) {
-    reserve({ key: 'spin-in@0', recipe: 'spin-in', start: 0, duration: Math.min(SHOTS['spin-in'].duration, w0.len - INTRO_GUARD, w0.end), ret: 'front', direction: 1, reason: `intro; ${tapNote}` });
+  if (w0 && style !== 'subtle' && D >= INTRO_MIN_OUTPUT && w0.len >= SPIN_IN_MIN && !spinRefused && !excluded.has('spin-in@0')) {
+    reserve({ key: 'spin-in@0', recipe: 'spin-in', start: 0, duration: spinDuration, ret: 'front', direction: 1, reason: `intro; ${tapNote}` });
   } else if (w0 && w0.len >= SETTLE_MIN && !excluded.has('settle@0')) {
     reserve({ key: 'settle@0', recipe: 'settle', start: 0, duration: Math.min(SHOTS.settle.duration, w0.len - INTRO_GUARD, w0.end), ret: 'front', direction: 1, reason: `intro; ${tapNote}` });
   } else if (room >= SHORT_INTRO_MIN && !excluded.has('settle@0')) {
@@ -292,6 +405,106 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
         : `the phone must face front from ${below(room, SHORT_INTRO_MIN)} (the first tap or kept move), under the ${SHORT_INTRO_MIN} s an intro needs`;
   }
 
+  // Middle: windows with a scene change first, then quiet ones, then longer ones, one shot per window per round;
+  // what is left of a window on either side of its shot (MIDDLE_REST away) goes back into the pool for the next
+  // round. Moves at scene changes are planned before the closing move (owner decision 18: the plan focuses its moves
+  // on scene changes), the rest after it. A long take (over LONG_TAKE s) with scene changes moves only at them.
+  type Free = Span & { quiet: boolean; len: number; scene: boolean };
+  const free = (a: number, b: number): Free => ({
+    start: a,
+    end: b,
+    len: b - a,
+    quiet: inp.waits.some((w) => w.start < b && w.end > a),
+    scene: inp.scenes.some((t) => t >= a && t <= b),
+  });
+  const sceneOnly = D > LONG_TAKE && inp.scenes.length > 0;
+  const maxMiddle = Math.floor(D / MIDDLE_EVERY);
+  let middle = 0;
+  /** The longest free gap a middle move could use (before the last pass's first move), the shortest middle move the
+   *  moving-time cap refused, and whether the restraint rules (or the scene-only rule) refused one that fit. */
+  let longest = 0;
+  let capped: number | undefined;
+  let restrained = false;
+  let offScene = false;
+  const middlePass = (atScenes: boolean) => {
+    let pool: Free[] = [];
+    for (const w of windows) {
+      let parts: Span[] = [{ start: w.start, end: w.end }];
+      for (const r of reserved) parts = parts.flatMap((x) => (r.end <= x.start || r.start >= x.end ? [x] : [{ start: x.start, end: r.start }, { start: r.end, end: x.end }]));
+      for (const x of parts) if (x.end - x.start > 0) pool.push(free(x.start, x.end));
+    }
+    if (!atScenes) longest = Math.max(0, ...pool.map((x) => x.len));
+    while (pool.length && middle < maxMiddle) {
+      pool.sort((a, b) => Number(b.scene) - Number(a.scene) || Number(b.quiet) - Number(a.quiet) || b.len - a.len || a.start - b.start);
+      const next: Free[] = [];
+      for (const x of pool) {
+        if (middle >= maxMiddle) break;
+        if ((atScenes || sceneOnly) && !x.scene) {
+          if (sceneOnly && x.len >= LAYBACK_MIN) offScene = true;
+          continue;
+        }
+        const options: ShotRecipe[] =
+          style === 'bold' && x.len >= TURN_TO_BACK_MIN && turnBacks < MAX_TURN_TO_BACKS ? ['turn-to-back', 'hero-layback'] : x.len >= LAYBACK_MIN ? ['hero-layback'] : [];
+        for (const recipe of options) {
+          const key = `${recipe}@${r3(x.start)}`;
+          const duration = SHOTS[recipe].duration;
+          if (excluded.has(key) || duration > x.len) continue;
+          if (used + duration > budget + 1e-9) {
+            capped = Math.min(capped ?? Infinity, duration);
+            continue;
+          }
+          const forbidden = forbiddenFor(recipe, duration);
+          const why = x.quiet ? `quiet wait in ${s1(x.start)}–${s1(x.end)}` : `free ${s1(x.start)}–${s1(x.end)}`;
+          let reason = `middle; ${why}`;
+          let start: number | null = null;
+          let lo = 0;
+          let hi = 0;
+          let scene: number | undefined;
+          if (recipe === 'turn-to-back') {
+            // Scene-change wipe: a cut inside the window that the turn can pass edge-on in either direction
+            // (the direction is set later by time order), from starts the restraint rules allow.
+            const offs = [edgeOnOffset(base, 1, duration), edgeOnOffset(base, -1, duration)];
+            scene = inp.scenes.find((t) => offs.every((o) => t - o >= x.start - 1e-9 && t - o + duration <= x.end + 1e-9 && allowedAt(forbidden, t - o)));
+            if (scene !== undefined) {
+              const starts = offs.map((o) => scene! - o);
+              lo = Math.min(...starts);
+              hi = Math.max(...starts);
+              start = starts[0];
+              reason = `scene change at ${s1(scene)} hidden edge-on; ${why}`;
+            }
+          } else {
+            // A lean at a scene change: it reaches the hero angle as the cut happens.
+            const out = SHOTS[recipe].keys[0].frac[1] * duration;
+            const cut = inp.scenes.find((t) => t - out >= x.start - 1e-9 && t - out + duration <= x.end + 1e-9 && allowedAt(forbidden, t - out));
+            if (cut !== undefined) {
+              start = cut - out;
+              reason = `scene change at ${s1(cut)}; ${why}`;
+            }
+          }
+          if (start === null) {
+            if (atScenes || sceneOnly) {
+              restrained = true;
+              continue;
+            }
+            start = nearestAllowed(x.start, x.end - duration, forbidden, x.start + (x.len - duration) / 2);
+            if (start === null) {
+              restrained = true;
+              continue;
+            }
+          }
+          if (scene === undefined) lo = hi = start;
+          reserve({ key, recipe, start, duration, ret: 'front', direction: 1, reason, ...(scene !== undefined ? { scene } : {}) });
+          middle++;
+          if (lo - MIDDLE_REST - x.start > 0) next.push(free(x.start, lo - MIDDLE_REST));
+          if (x.end - (hi + duration + MIDDLE_REST) > 0) next.push(free(hi + duration + MIDDLE_REST, x.end));
+          break;
+        }
+      }
+      pool = next;
+    }
+  };
+  if (style !== 'subtle' && inp.scenes.length) middlePass(true);
+
   // Outro: a one-way hero-layback that ends just before the video does.
   if (style !== 'subtle') {
     const tail = windows[windows.length - 1];
@@ -304,78 +517,22 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
       const inTail = start >= tail.start;
       const clash = shots.find((d) => !(start >= d.start + d.duration + SHOT_GAP || start + OUTRO_DURATION <= d.start - SHOT_GAP));
       const fits = used + OUTRO_DURATION <= budget + 1e-9;
-      if (inTail && !clash && fits) {
+      const dense = bigRefusal('the closing move', 'hero-layback', start, OUTRO_DURATION);
+      if (inTail && !clash && fits && !dense) {
         reserve({ key: 'outro', recipe: 'hero-layback', start, duration: OUTRO_DURATION, ret: 'stay', direction: 1, reason: 'outro; ends on a hero angle' });
       } else {
         const why: string[] = [];
         if (!inTail) why.push(`the closing move would start at ${s1(start)}, before the free time at the end (from ${s1(tail.start)})`);
         if (clash) why.push(`the closing move would start ${below(start - (clash.start + clash.duration), SHOT_GAP)} after the intro ends, under the ${SHOT_GAP.toFixed(1)} s rest between shots`);
         if (!fits) why.push(overCap('the closing move', OUTRO_DURATION));
+        if (dense) why.push(dense);
         misses.outro = why.join(', and ');
       }
     }
   }
 
-  // Middle: quiet windows first, then longer ones, one shot per window per
-  // round; what is left of a window on either side of its shot (MIDDLE_REST
-  // away) goes back into the pool for the next round.
   if (style !== 'subtle') {
-    type Free = Span & { quiet: boolean; len: number };
-    const free = (a: number, b: number): Free => ({ start: a, end: b, len: b - a, quiet: inp.waits.some((w) => w.start < b && w.end > a) });
-    let pool: Free[] = [];
-    for (const w of windows) {
-      let parts: Span[] = [{ start: w.start, end: w.end }];
-      for (const r of reserved) parts = parts.flatMap((x) => (r.end <= x.start || r.start >= x.end ? [x] : [{ start: x.start, end: r.start }, { start: r.end, end: x.end }]));
-      for (const x of parts) if (x.end - x.start > 0) pool.push(free(x.start, x.end));
-    }
-    let middle = 0;
-    const maxMiddle = Math.floor(D / MIDDLE_EVERY);
-    /** The longest free gap a middle shot could use (first round: before any middle shot), and the shortest middle
-     *  shot the moving-time cap refused. */
-    const longest = Math.max(0, ...pool.map((x) => x.len));
-    let capped: number | undefined;
-    while (pool.length && middle < maxMiddle) {
-      pool.sort((a, b) => Number(b.quiet) - Number(a.quiet) || b.len - a.len || a.start - b.start);
-      const next: Free[] = [];
-      for (const x of pool) {
-        if (middle >= maxMiddle) break;
-        const options: ShotRecipe[] = style === 'bold' && x.len >= TURN_TO_BACK_MIN ? ['turn-to-back', 'hero-layback'] : x.len >= LAYBACK_MIN ? ['hero-layback'] : [];
-        for (const recipe of options) {
-          const key = `${recipe}@${r3(x.start)}`;
-          const duration = SHOTS[recipe].duration;
-          if (excluded.has(key) || duration > x.len) continue;
-          if (used + duration > budget + 1e-9) {
-            capped = Math.min(capped ?? Infinity, duration);
-            continue;
-          }
-          let start = x.start + (x.len - duration) / 2;
-          let lo = start;
-          let hi = start;
-          const why = x.quiet ? `quiet wait in ${s1(x.start)}–${s1(x.end)}` : `free ${s1(x.start)}–${s1(x.end)}`;
-          let reason = `middle; ${why}`;
-          let scene: number | undefined;
-          if (recipe === 'turn-to-back') {
-            // Scene-change wipe: a cut inside the window that the turn can pass edge-on in either direction
-            // (the direction is set later by time order).
-            const offs = [edgeOnOffset(base, 1, duration), edgeOnOffset(base, -1, duration)];
-            scene = inp.scenes.find((t) => offs.every((o) => t - o >= x.start - 1e-9 && t - o + duration <= x.end + 1e-9));
-            if (scene !== undefined) {
-              const starts = offs.map((o) => scene! - o);
-              lo = Math.min(...starts);
-              hi = Math.max(...starts);
-              start = starts[0];
-              reason = `scene change at ${s1(scene)} hidden edge-on; ${why}`;
-            }
-          }
-          reserve({ key, recipe, start, duration, ret: 'front', direction: 1, reason, ...(scene !== undefined ? { scene } : {}) });
-          middle++;
-          if (lo - MIDDLE_REST - x.start > 0) next.push(free(x.start, lo - MIDDLE_REST));
-          if (x.end - (hi + duration + MIDDLE_REST) > 0) next.push(free(hi + duration + MIDDLE_REST, x.end));
-          break;
-        }
-      }
-      pool = next;
-    }
+    middlePass(false);
     if (!middle) {
       if (maxMiddle === 0) misses.middle = `a middle move needs a take of ${MIDDLE_EVERY} s or more (this one is ${below(D, MIDDLE_EVERY)})`;
       else if (capped !== undefined) misses.middle = overCap('a middle move', capped);
@@ -385,7 +542,8 @@ function draftShots(opts: DirectOptions, inp: Inputs, base: Pose, excluded: Read
           longest > 0
             ? `the longest free gap${beside} is ${below(longest, LAYBACK_MIN)}, under the ${LAYBACK_MIN} s a middle move needs`
             : `no free time is left${beside} for a middle move`;
-      }
+      } else if (restrained) misses.middle = `every free gap a middle move fits in is within ${P} s of another big move or under a zoom (${style} allows one big move per ${P} s)`;
+      else if (offScene) misses.middle = `the take is over ${LONG_TAKE} s, so middle moves go only to scene changes, and no scene change falls in a free gap`;
     }
   }
 
@@ -457,12 +615,17 @@ interface Checked {
 /**
  * The plan's shots for `base`, self-checked: the ops are applied to a copy and
  * any shot that causes a warning is re-planned without (at most MAX_ROUNDS
- * rounds), then dropped. A shot blamed for off-canvas first gets one more try
- * in the other direction (the lean mirrored), since an edge is on one side.
+ * rounds), then dropped. A shot blamed only for off-canvas or zoom-angle
+ * first gets one more try in the other direction (the lean mirrored), since
+ * an edge is on one side and a lean can add to or cancel a posed base.
  */
 function selfChecked(p: Project, opts: DirectOptions, inp: Inputs, base: Pose): Checked {
   const excluded = new Set<string>();
+  // Each shot keeps the direction it was first checked with, so dropping another shot (which shifts the
+  // alternation) never turns a shot that fit back into the side that did not; `mirrored` = the shots already
+  // given their one try the other way.
   const forced = new Map<string, 1 | -1>();
+  const mirrored = new Set<string>();
   const dropped: PlannedShot[] = [];
   const droppedFor = new Set<WarningCode>();
   let retries = 0;
@@ -489,6 +652,7 @@ function selfChecked(p: Project, opts: DirectOptions, inp: Inputs, base: Pose): 
       drafts = drafts.slice(0, -1);
       continue;
     }
+    for (const d of drafts) if (!forced.has(d.key)) forced.set(d.key, d.direction);
     const bad = new Map<Draft, Set<WarningCode>>();
     const blame = (d: Draft, code: WarningCode) => bad.set(d, (bad.get(d) ?? new Set<WarningCode>()).add(code));
     for (const w of projectWarnings(tried.project, { cursor: opts.cursor })) {
@@ -505,8 +669,9 @@ function selfChecked(p: Project, opts: DirectOptions, inp: Inputs, base: Pose): 
     }
     if (!bad.size) return { ops, drafts, misses, rounds, dropped, droppedFor, retries, baseProject, baseline, baseOverflow };
     for (const [d, codes] of bad) {
-      // Only an off-canvas problem can be one-sided; settle has no turn to mirror.
-      if (rounds < MAX_ROUNDS && codes.size === 1 && codes.has('off-canvas') && d.recipe !== 'settle' && !forced.has(d.key)) {
+      // Only an off-canvas or zoom-angle problem can be one-sided; settle has no turn to mirror.
+      if (rounds < MAX_ROUNDS && [...codes].every((c) => MIRROR_CODES.includes(c)) && d.recipe !== 'settle' && !mirrored.has(d.key)) {
+        mirrored.add(d.key);
         forced.set(d.key, d.direction === 1 ? -1 : 1);
         continue;
       }
@@ -583,6 +748,17 @@ function missingCauses(opts: DirectOptions, inp: Inputs, checked: Checked, turni
 }
 
 /**
+ * Owner decision 18: a take over LONG_TAKE s is not a social video yet. The
+ * note recommends a trim to its best TRIM_TO seconds, and says where this plan
+ * put its moves (scene changes, when there are any).
+ */
+function longTakeNote(inp: Inputs, style: DirectStyle): string | undefined {
+  if (inp.D <= LONG_TAKE) return undefined;
+  const where = inp.scenes.length ? 'this plan moves only at scene changes' : 'this plan spaces its moves out';
+  return `This take is ${Math.round(inp.D)} s long: a social video reads best at ${TRIM_TO[0]}-${TRIM_TO[1]} s, so trim it to its best ${TRIM_TO[0]}-${TRIM_TO[1]} s (trim, cut) and run Auto 3D again; until then ${where}, at most one big move per ${BIG_EVERY[style]} s.`;
+}
+
+/**
  * The Auto 3D plan for `p` (§2.6): busy time (taps, typing and kept moves;
  * zooms do not play in 3D, so they are not busy) → free windows → intro, outro and middle shots within the density
  * caps → a scene-change wipe → ops, in this order: `phone3d` (on, base pose,
@@ -632,7 +808,8 @@ export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
   // A note whenever the style's own moves did not fit: no moving shot at all, or (hero) no turning shot. It is built
   // from the run whose shots the plan returns, so its reasons and its dropped count describe this plan.
   const someMove = checked.drafts.length > 0;
-  const note = rest ? `${someMove ? 'No turning shot fits' : 'No moving shot fits'}: ${missingCauses(opts, inp, checked, someMove).join('; ')}. ${rest}` : undefined;
+  const fit = rest ? `${someMove ? 'No turning shot fits' : 'No moving shot fits'}: ${missingCauses(opts, inp, checked, someMove).join('; ')}. ${rest}` : undefined;
+  const note = [fit, longTakeNote(inp, opts.style)].filter(Boolean).join(' ') || undefined;
   const shots = [...checked.drafts.map(toShot), ...(opts.style === 'subtle' ? [{ recipe: 'float' as const, start: 0, end: r3(inp.D), reason: 'subtle; idle float' }] : [])];
   return { ops: checked.ops, shots, check: { rounds: checked.rounds, dropped: checked.dropped, retries: checked.retries }, ...(note ? { note } : {}) };
 }

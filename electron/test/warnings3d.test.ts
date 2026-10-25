@@ -43,7 +43,7 @@ describe('projectWarnings: scope', () => {
   });
 
   it('knows exactly the spec codes', () => {
-    expect([...WARNING_CODES]).toEqual(['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat', 'zoom-3d']);
+    expect([...WARNING_CODES]).toEqual(['inactive', 'tap-angle', 'tap-back', 'zoom-angle', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat', 'zoom-3d']);
   });
 
   it('never blocks applyOps: a project full of warnings still takes edits', () => {
@@ -443,6 +443,35 @@ describe('floor-flat', () => {
     expect(only(take({ shadow: { on: true, kind: 'floor', opacity: 0.4, softness: 0.5 }, camera: { fov: 22, elevation: 12 } }), 'floor-flat')).toEqual([]);
     expect(only(take(), 'floor-flat')).toEqual([]);
     expect(only(take({ shadow: { on: false, kind: 'floor', opacity: 0.4, softness: 0.5 } }), 'floor-flat')).toEqual([]);
+  });
+});
+
+describe('zoom-angle (owner decision 20: during a zoom the screen faces within the steep-angle limit)', () => {
+  it('a phone held 50° off front through a manual zoom: zoom-angle, named after the move; the fix clears it', () => {
+    const p = applyOps(take({ transitions: [move('a', 1, 2, { turn: 50 })] }), [{ op: 'addZoom', at: 6, scale: 2 }]).project;
+    const [w] = only(p, 'zoom-angle');
+    expect(w).toMatchObject({ transitionId: 'a' });
+    expect(w.at).toBeLessThanOrEqual(6);
+    expect(w.end).toBeGreaterThan(6);
+    expect(w.message).toMatch(/50° off front at .* during the zoom at .*\(the screen must face within 35° while a zoom plays\)/);
+    expectCleared(p, w);
+  });
+
+  it('a turn that sweeps through a zoom: the fix moves the whole move off the zoom (same speed)', () => {
+    const p = applyOps(take({ transitions: [move('a', 5, 7, { turn: 360 })] }), [{ op: 'addZoom', at: 6, scale: 2 }]).project;
+    const [w] = only(p, 'zoom-angle');
+    expect(w.fix).toEqual([{ op: 'editTransition', id: 'a', by: expect.any(Number) }]);
+    expectCleared(p, w);
+  });
+
+  it('negative: a hero lean (about 30°) during a zoom, a steep pose with no zoom, and tap zooms only where taps are', () => {
+    const lean = applyOps(take({ transitions: [move('a', 1, 2, { turn: -24, tilt: 16 })] }), [{ op: 'addZoom', at: 6, scale: 2 }]).project;
+    expect(only(lean, 'zoom-angle')).toEqual([]);
+    expect(only(take({ transitions: [move('a', 1, 2, { turn: 50 })] }), 'zoom-angle')).toEqual([]);
+    // Zoom to taps: a tap zoom at 12 s, the phone steep only at 3-4 s: no zoom-angle (tap-angle has its own window).
+    const taps = take({ transitions: [move('a', 3, 3.5, { turn: 50 }), move('b', 3.5, 4, { turn: 0 })] }, [12]);
+    taps.zoom = { ...taps.zoom, fromTaps: true };
+    expect(only(taps, 'zoom-angle')).toEqual([]);
   });
 });
 
