@@ -300,7 +300,8 @@ export async function downscale4k({ out = DEFAULT_OUT, only, times = DEFAULT_TIM
       cpSync(bundle, dir, { recursive: true });
       agent(['apply', dir, JSON.stringify([{ op: 'exportSettings', preset: res }])], env);
       log({ stage: 'frames', fixture: name, res });
-      side[res] = agent(['frames', dir, '--at', times.join(','), '--out', join(run, `${name}-${res}-frames`), ...(app ? ['--app', app] : [])], env);
+      // --debug: the text boxes and device frame edges this check reads (left out of a normal frames run's stdout).
+      side[res] = agent(['frames', dir, '--at', times.join(','), '--debug', '--out', join(run, `${name}-${res}-frames`), ...(app ? ['--app', app] : [])], env);
     }
     const { w, h } = side.p1080.size;
     const big = side.uhd4k.size;

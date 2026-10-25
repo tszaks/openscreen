@@ -43,6 +43,23 @@ describe('frames arguments', () => {
       app: '/A.app',
     });
     expect(parseFramesArgs(['--moves', 'b']).select).toEqual({ kind: 'moves' });
+    // A time range for --moves and --every (owner decision 18), and --debug.
+    expect(parseFramesArgs(['b', '--moves', '--from', '10', '--to', '25.5s']).select).toEqual({ kind: 'moves', from: 10, to: 25.5 });
+    expect(parseFramesArgs(['b', '--every', '1', '--from', '3']).select).toEqual({ kind: 'every', step: 1, from: 3 });
+    expect(parseFramesArgs(['b', '--at', '1', '--debug']).debug).toBe(true);
+    expect(parseFramesArgs(['b', '--at', '1']).debug).toBeUndefined();
+  });
+
+  it('refuses a bad range (exit 2): --from/--to with --at, a negative time, --to not after --from', () => {
+    for (const argv of [
+      ['b', '--at', '1', '--from', '2'],
+      ['b', '--moves', '--from', '-1'],
+      ['b', '--moves', '--to', 'x'],
+      ['b', '--moves', '--from', '5', '--to', '5'],
+      ['b', '--moves', '--from', '6', '--to', '5'],
+    ]) {
+      expect(usage(() => parseFramesArgs(argv)).code, argv.join(' ')).toBe(2);
+    }
   });
 
   it('needs exactly one of --at, --every, --moves (exit 2)', () => {
@@ -137,6 +154,40 @@ describe('frames times', () => {
   it('--moves on a project with no moves and no taps is a usage error', () => {
     expect(usage(() => planFrameTimes(cut(), { kind: 'moves' })).code).toBe(2);
   });
+
+  it('--moves --from/--to: only the moves and taps inside the range; a range with none is a usage error', () => {
+    const p = with3d(cut(), { transitions: [move('m1', 1, 2, { turn: 30 }), move('m2', 5, 7.5, { turn: 0 })] });
+    p.taps = [{ id: 't3', t: 6, x: 0.5, y: 0.5, kind: 'tap', confidence: 1 }] as typeof p.taps; // output 4
+    expect(planFrameTimes(p, { kind: 'moves', from: 3.5, to: 6.5 })).toEqual({ frames: [f(4, 120), f(5, 150), f(6.25, 188)], past: [], fps: 30 });
+    expect(planFrameTimes(p, { kind: 'moves', from: 5 }).frames.map((x) => x.frame)).toEqual([150, 188, 225]);
+    expect(usage(() => planFrameTimes(p, { kind: 'moves', from: 2.5, to: 3.5 })).message).toMatch(/no 3D move or tap between 2\.5 s and 3\.5 s/);
+  });
+
+  it('--every --from/--to: from the range start, inside the range', () => {
+    expect(planFrameTimes(cut(), { kind: 'every', step: 1, from: 2.5, to: 5 }).frames).toEqual([f(2.5, 75), f(3.5, 105), f(4.5, 135)]);
+  });
+
+  it('--moves with more frames than a run renders samples them evenly (first and last kept) and says so, instead of refusing', () => {
+    // A 400 s take with a move every second: 1200 move times + 0 taps, far over MAX_FRAMES.
+    const p = phoneProject({ duration: 400, presetId: 'social-9x16' });
+    const moves = Array.from({ length: 399 }, (_, i) => move(`m${i}`, i + 0.2, i + 0.8, { turn: i % 2 ? 0 : 20 }));
+    const big = with3d(p, { transitions: moves });
+    const r = planFrameTimes(big, { kind: 'moves' });
+    expect(r.frames).toHaveLength(MAX_FRAMES);
+    const all = moves.flatMap((m) => [m.start, (m.start + m.end) / 2, m.end]).map((t) => Math.round(t * 30));
+    expect(r.frames[0].frame).toBe(Math.min(...all));
+    expect(r.frames.at(-1)!.frame).toBe(Math.max(...all));
+    // Evenly spread: the gaps between picked frames differ by at most one source step.
+    const gaps = r.frames.slice(1).map((x, i) => x.frame - r.frames[i].frame);
+    expect(Math.max(...gaps) / Math.min(...gaps)).toBeLessThan(3);
+    expect(r.note).toMatch(new RegExp(`^--moves found ${all.length} frames, more than the ${MAX_FRAMES} a run renders, so it rendered ${MAX_FRAMES} evenly spread`));
+    // A range brings it under the cap: no sampling, no note.
+    const part = planFrameTimes(big, { kind: 'moves', from: 10, to: 40 });
+    expect(part.note).toBeUndefined();
+    expect(part.frames.length).toBe(90);
+    // --every still refuses: its step is the caller's to choose.
+    expect(usage(() => planFrameTimes(big, { kind: 'every', step: 1 })).code).toBe(2);
+  });
 });
 
 describe('framesCmd with a stand-in app', () => {
@@ -172,7 +223,7 @@ console.log(JSON.stringify({ ok: true, out, stills, size: { w: 1080, h: 1920 }, 
     const p = phoneProject({ presetId: 'social-9x16' });
     const dir = join(scratch, 'fc.openscreen');
     mkdirSync(dir, { recursive: true });
-    const r = await framesCmd(['b', '--at', '4.75,4.25,1,99', '--out', join(scratch, 'fc-out'), '--app', app], { resolveBundle: () => ({ dir, project: p }) });
+    const r = await framesCmd(['b', '--at', '4.75,4.25,1,99', '--out', join(scratch, 'fc-out'), '--app', app, '--debug'], { resolveBundle: () => ({ dir, project: p }) });
     const argv = JSON.parse(readFileSync(seen, 'utf8')) as string[];
     // 1 s → frame 30; 4.25 s → frame 128 (4.2667 s); 4.75 s → frame 143 (4.7667 s); every digit of i / 30.
     expect(argv[argv.indexOf('--frames') + 1]).toBe([30 / 30, 128 / 30, 143 / 30].map(String).join(','));
@@ -197,6 +248,10 @@ console.log(JSON.stringify({ ok: true, out, stills, size: { w: 1080, h: 1920 }, 
       { t: 4.75, frame: 143, at: 4.766667, path: join(scratch, 'fc-out', 'f-143.png'), pose: null, facing: null, textBoxes: [], deviceFrame: null },
       { t: 99, error: 'past the end' },
     ]);
+    // Without --debug the same run prints no text boxes and no device frame (the edges are thousands of points).
+    const plain = await framesCmd(['b', '--at', '4.75,4.25,1,99', '--out', join(scratch, 'fc-out'), '--app', app], { resolveBundle: () => ({ dir, project: p }) });
+    expect(plain.files).toEqual((r.files as Record<string, unknown>[]).map(({ textBoxes: _tb, deviceFrame: _df, ...rest }) => rest));
+    expect(JSON.stringify(plain)).not.toMatch(/edges|textBoxes|deviceFrame/);
   });
 });
 

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { exportFrameCount, frameFileName, framesOutputPath, MAX_FRAMES, parseHeadlessArgs, sheetLayout, snapToExportFrame } from '../src/shared/headless';
-import { holdPreview, runFrames, type FramesCompositor, type FramesRun } from '../src/renderer/src/headlessFrames';
+import { EXPORT_SOFTWARE_FROM, holdPreview, runFrames, type FramesCompositor, type FramesRun } from '../src/renderer/src/headlessFrames';
 import type { TextBox } from '../src/shared/textBoxes';
 import { frameEdges, scaleFrameEdges } from '../src/shared/frameEdges';
 import { titleLineBoxes } from '../src/renderer/src/titleLineBoxes';
@@ -166,11 +166,19 @@ const boxesAt = (t: number): TextBox[] => [
 
 function fakeComp(W = 1080, H = 1920, over: { contentRect?: Rect; screen?: Rect; drew3d?: boolean; boxes?: (t: number) => TextBox[] } = {}) {
   const renders: { t: number; input: unknown }[] = [];
+  /** For each full-canvas readback (the export's getImageData), how many renders came before it. */
+  const readbacks: number[] = [];
+  const ctx = {
+    getImageData: (x: number, y: number, w: number, h: number) => {
+      expect([x, y, w, h]).toEqual([0, 0, W, H]);
+      readbacks.push(renders.length);
+    },
+  };
   const comp: FramesCompositor = {
     contentRect: over.contentRect ?? null,
     screenMap: over.screen ? { screen: over.screen } : null,
     drew3d: over.drew3d ?? false,
-    canvas: { toBlob: (cb: (b: Blob) => void) => cb(new Blob([`frame@${renders.at(-1)?.t}`])) } as unknown as HTMLCanvasElement,
+    canvas: { toBlob: (cb: (b: Blob) => void) => cb(new Blob([`frame@${renders.at(-1)?.t}`])), getContext: () => ctx } as unknown as HTMLCanvasElement,
     canvasSize: { width: W, height: H },
     render: (t, input) => renders.push({ t, input }),
     get textBoxes() {
@@ -178,7 +186,7 @@ function fakeComp(W = 1080, H = 1920, over: { contentRect?: Rect; screen?: Rect;
       return last ? (over.boxes ?? boxesAt)(last.t) : [];
     },
   };
-  return { comp, renders };
+  return { comp, renders, readbacks };
 }
 
 function fakeRun(over: Partial<FramesRun> = {}) {
@@ -261,10 +269,13 @@ describe('runFrames', () => {
   });
 
   it('draws each time at its export frame (round(t·fps) / fps), once per frame, so a still is never a picture between frames', async () => {
-    const { comp, renders } = fakeComp();
+    const { comp, renders: all, readbacks } = fakeComp();
     // 4.25 and 4.26 s are both frame 128 at 30 fps (4.2667 s); 7.99 s is the last frame, 239.
     const { run, written, seeks } = fakeRun({ times: [4.25, 4.26, 7.99, 8] });
     const r = await runFrames(comp, run);
+    // Frame 128 is past EXPORT_SOFTWARE_FROM, so the export's draw-and-readback cycles run first (next test).
+    expect(readbacks.length).toBe(EXPORT_SOFTWARE_FROM);
+    const renders = all.slice(EXPORT_SOFTWARE_FROM);
     expect(renders.map((x) => x.t)).toEqual([128 / 30, 239 / 30]);
     expect(renders.map((x) => (x.input as { keystrokes: string[] }).keystrokes[0])).toEqual([`${128 / 30}/${128 / 30 + 1}`, `${239 / 30}/${239 / 30 + 1}`]);
     expect(seeks).toEqual([128 / 30 + 1, 239 / 30 + 1]);
@@ -277,6 +288,28 @@ describe('runFrames', () => {
       { t: 7.99, frame: 239, at: 239 / 30, path: '/out/f-0007.967.png', textBoxes: boxesAt(239 / 30), deviceFrame: null },
       { t: 8, error: 'past the end' },
     ]);
+  });
+
+  it('R2: before its first still at or past export frame 101 the canvas gets the export\'s draw-and-readback cycles, once', async () => {
+    // Export frame 100 is the last the export draws on an accelerated canvas: no cycles for stills up to it.
+    const early = fakeComp();
+    await runFrames(early.comp, fakeRun({ times: [0, 1, 100 / 30] }).run);
+    expect(early.readbacks).toEqual([]);
+    expect(early.renders).toHaveLength(3);
+    // Stills at 2 s (frame 60), 101/30 (frame 101) and 5 s (frame 150): frame 60 is drawn first on the fresh canvas,
+    // then 101 cycles (each a draw, then a full readback), then frames 101 and 150; no more cycles after that.
+    const late = fakeComp();
+    const p3 = { ss: 2 as const, quality: 'full' as const, motionBlur: { samples: 12, shutter: 0.5 }, fps: 30, strict: true };
+    const { run } = fakeRun({ times: [2, 101 / 30, 5], inputsAt: (outT, srcT) => ({ frame: {} as CanvasImageSource, cursor: null, ripples: [], keystrokes: [`${outT}/${srcT}`], render3d: p3 }) });
+    await runFrames(late.comp, run);
+    expect(late.readbacks).toEqual(Array.from({ length: EXPORT_SOFTWARE_FROM }, (_, k) => k + 2));
+    expect(late.renders).toHaveLength(EXPORT_SOFTWARE_FROM + 3);
+    expect(late.renders.map((x) => x.t)).toEqual([2, ...Array(EXPORT_SOFTWARE_FROM).fill(101 / 30), 101 / 30, 5]);
+    // The cycles draw the 3D pass at draft quality (only the draw matters, not its quality); the stills at full.
+    const r3 = (i: number) => (late.renders[i].input as { render3d: typeof p3 }).render3d;
+    expect(r3(1)).toEqual({ ...p3, quality: 'draft', ss: 1, motionBlur: null });
+    expect(r3(EXPORT_SOFTWARE_FROM + 1)).toEqual(p3);
+    expect(r3(EXPORT_SOFTWARE_FROM + 2)).toEqual(p3);
   });
 
   it('awaits ready() before frame 0 and reports the GPU', async () => {

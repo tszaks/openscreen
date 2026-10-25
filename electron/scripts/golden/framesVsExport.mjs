@@ -195,7 +195,9 @@ export async function framesVsExport({ out = DEFAULT_OUT, bundle, at, min = DEFA
   mkdirSync(tapDir);
   const wrapper = writeWrapper(tapDir, ffmpeg, wanted);
   log({ stage: 'export', frames: wanted });
-  const exported = agent(['export', src, '--out', join(run, 'export.mp4'), ...appArgs], { ...env, FFMPEG_BIN: wrapper, OPENSCREEN_FFMPEG: wrapper });
+  // --force: this check compares pixels, so a 3D quality warning (FIXTURE_3D_OPS turns the phone 35.8° off front at
+  // the 3.4 s tap: tap-angle) must not stop the export it compares against.
+  const exported = agent(['export', src, '--out', join(run, 'export.mp4'), '--force', ...appArgs], { ...env, FFMPEG_BIN: wrapper, OPENSCREEN_FFMPEG: wrapper });
   const { w, h } = frames.size;
   const stills = drawn.map((f) => {
     const base = { t: f.t, frame: f.frame, facing: f.facing ?? null };
