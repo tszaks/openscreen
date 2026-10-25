@@ -9,6 +9,7 @@
 //   move     one block on the 3D lane (a PoseTransition)
 //   keyframe a move's Start or End
 
+import { parseScrubInput } from '../../../shared/scrub';
 import type { EditOp } from '../../../shared/agentOps';
 import { BEZIER_PRESETS, ease, springSettleTime } from '../../../shared/phone3d/easing3d';
 import {
@@ -484,9 +485,12 @@ export function durationBase(list: readonly PoseTransition[], ids: readonly stri
  * saved then (absolute from pointerdown, like the lane), never to the lengths
  * of the newest render, which already hold the earlier steps.
  */
-export function durationDragOps(base: DurationBase, delta: number): EditOp[] {
-  return base.map((m) => ({ op: 'editTransition', id: m.id, end: m.start + Math.max(MIN_TRANSITION, m.len + delta) }));
+export function durationDragOps(base: DurationBase, delta: number, maxLen = MAX_DURATION_FIELD): EditOp[] {
+  return base.map((m) => ({ op: 'editTransition', id: m.id, end: m.start + Math.min(maxLen, Math.max(MIN_TRANSITION, m.len + delta)) }));
 }
+
+/** The Duration field's top end (s): each move is kept inside it on its own. */
+export const MAX_DURATION_FIELD = 60;
 
 /** True when the selected moves' lengths differ (the Duration field shows "–"). */
 export function durationsMixed(list: readonly PoseTransition[], ids: readonly string[]): boolean {
@@ -511,6 +515,58 @@ export function beginDuration(list: readonly PoseTransition[], ids: readonly str
  */
 export function durationStepOps(list: readonly PoseTransition[], ids: readonly string[], g: DurationGesture, value: number, info: { delta: number; typed: boolean }): EditOp[] {
   return g.mixed && !info.typed ? durationDragOps(g.base, info.delta) : durationOps(list, ids, value);
+}
+
+// ---------------------------------------------------------------------------
+// A "–" field (Track)
+
+/**
+ * Whether a change of the field is a typed number (sets every move) or a
+ * relative change (a drag, a step on "–", Escape putting the value back).
+ * `editing`: the text input is open. `key`: the key being handled, with the
+ * input's text when it went down (null: no key, i.e. a blur).
+ */
+export function changeIsTyped(editing: boolean, key: { key: string; draft: string | null } | null): boolean {
+  if (!editing) return false;
+  if (!key) return true; // blur: the typed text is accepted
+  if (key.key === 'Escape') return false;
+  if (key.key === 'ArrowUp' || key.key === 'ArrowDown') return key.draft !== null && parseScrubInput(key.draft) !== null;
+  return true;
+}
+
+/**
+ * The range a "–" field's own number may move in: one range width of room on
+ * each side of [min, max], because it shows the first move's value while a
+ * drag or an arrow key adds the same change to every move (each move is kept
+ * in range on its own). A field stopped at the first move's range end would
+ * stop the others too, and dragging back would not give them their values.
+ */
+export function mixedFieldRange(min: number, max: number): [number, number] {
+  const span = max - min;
+  return [min - span, max + span];
+}
+
+/**
+ * The range a Track's field gets. A gesture that starts on a "–" field keeps
+ * the wide range until it ends (`held`), even after every move reaches the
+ * same range end and the field stops being mixed: else the field would clamp
+ * its running value to the small range and a move would jump back mid-drag.
+ */
+export function trackFieldRange(min: number, max: number, mixed: boolean, held: boolean): [number, number] {
+  return mixed || held ? mixedFieldRange(min, max) : [min, max];
+}
+
+/** Where the last press (or keyboard focus) landed: the 3D lane, the transcript, or anywhere else. */
+export type PressScope = 'lane3d' | 'transcript' | 'other';
+
+/**
+ * Whether selected 3D moves own the keys (⌫ removes them): the last press was
+ * on the 3D lane, or the 3D tab is open and the last press was not in the
+ * transcript. A move selection left behind never takes ⌫ from the words the
+ * transcript has selected.
+ */
+export function movesHaveFocus(scope: PressScope, activeTab: string): boolean {
+  return scope === 'lane3d' || (activeTab === 'three' && scope !== 'transcript');
 }
 
 /** What one press of ⌫ removes, first match wins. */

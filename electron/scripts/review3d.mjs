@@ -106,14 +106,21 @@ export function keptRuns(clips) {
  * only where the wait is kept) wins, then the earliest.
  * When no window is free, falls back to the start of the first run long enough (free: false); when no run is
  * `len` long, to the start of the longest run (free: false, fits: false: the take would be shorter than `len`).
+ * A gesture inside a cut (between two runs) is not in the video and blocks nothing.
  */
 export function quietWindow(taps, waits, len, clips) {
   const pad = 0.5;
   const eps = 1e-9;
   const runs = keptRuns(clips);
+  // Only the part of a gesture that is still in the video counts: a tap inside a cut is not seen, so it must not
+  // block a window at the edge of the run next to it. A swipe that runs on out of a cut counts from the run's start.
   const spans = taps
     .map((x) => (typeof x === 'number' ? { t: x, duration: 0 } : { t: x.t, duration: Math.max(0, x.duration ?? 0) }))
-    .map(({ t, duration }) => ({ a: t - pad, b: t + duration + pad }))
+    .flatMap(({ t, duration }) =>
+      runs
+        .filter((r) => t + duration >= r.start - eps && t <= r.end + eps)
+        .map((r) => ({ a: Math.max(t, r.start) - pad, b: Math.min(t + duration, r.end) + pad })),
+    )
     .sort((x, y) => x.a - y.a);
   const free = (s) => spans.every((g) => g.b <= s + eps || g.a >= s + len - eps);
   const inWait = (s) => waits.reduce((m, w) => m + Math.max(0, Math.min(w.end, s + len) - Math.max(w.start, s)), 0);
@@ -136,16 +143,18 @@ export function bundleTaps(projectJson, infoItems = []) {
   return all.filter((x) => Number.isFinite(x?.t)).map((x) => ({ t: x.t, duration: Number.isFinite(x.duration) ? x.duration : 0 }));
 }
 
-/** Sides whose shapes (width / height) differ by at most this share are centre-cropped to one shape; more is padded. */
+/** Shapes further apart than this share are still cropped to one shape, but the page logs how much was cut. */
 export const CROP_LIMIT = 0.12;
 /** Width of every placed pair file. */
 export const PAIR_WIDTH = 1080;
+/** Frame rate of every placed pair clip. */
+export const PAIR_FPS = 30;
 
 /**
  * The one canvas both sides of a blinded pair are re-encoded to, so neither the container, the size nor the
- * shape tells the sides apart. Shapes within CROP_LIMIT: both are centre-cropped to the narrower shape (no bars).
- * Further apart: both are fitted and padded to the narrower shape, and `leak` is true (the bars show which side
- * had the other shape: crop the reference to the shape of ours before judging).
+ * shape tells the sides apart: both are centre-cropped to the narrower shape. Bars (letterboxing one side) would
+ * show which side had the other shape, so there are none; when the shapes differ by more than CROP_LIMIT,
+ * `cut` (the share of the wider side's width that is cropped away) says how much is lost.
  */
 export function pairCanvas(a, b, width = PAIR_WIDTH) {
   const ra = a.w / a.h;
@@ -153,16 +162,17 @@ export function pairCanvas(a, b, width = PAIR_WIDTH) {
   const aspect = Math.min(ra, rb);
   const diff = Math.abs(ra - rb) / Math.max(ra, rb);
   const h = 2 * Math.round(width / aspect / 2);
-  const mode = diff <= CROP_LIMIT ? 'crop' : 'pad';
-  return { w: width, h, aspect, diff: Math.round(diff * 1000) / 1000, mode, leak: mode === 'pad' };
+  return { w: width, h, aspect, diff: Math.round(diff * 1000) / 1000, mode: 'crop', leak: false, cut: Math.round(diff * 1000) / 1000, wide: diff > CROP_LIMIT };
 }
 
-/** The ffmpeg filter that puts one side on the pair canvas. */
+/**
+ * The ffmpeg filter that puts one side on the pair canvas. It first drops everything a file carries besides its
+ * pixels (frame side data such as an ICC profile, display matrix or HDR metadata, and frame metadata such as EXIF),
+ * and it tags both sides with the same colour description, so the re-encoded files differ only in their pixels.
+ */
 export function pairFilter(c) {
-  const fit = c.mode === 'crop'
-    ? `crop='min(iw,ih*${c.aspect.toFixed(6)})':'min(ih,iw/${c.aspect.toFixed(6)})',scale=${c.w}:${c.h}:flags=lanczos`
-    : `scale=${c.w}:${c.h}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${c.w}:${c.h}:(ow-iw)/2:(oh-ih)/2:color=0x101010`;
-  return `${fit},setsar=1`;
+  const fit = `crop='min(iw,ih*${c.aspect.toFixed(6)})':'min(ih,iw/${c.aspect.toFixed(6)})',scale=${c.w}:${c.h}:flags=lanczos`;
+  return `sidedata=mode=delete,metadata=mode=delete,${fit},setsar=1,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709`;
 }
 
 /** The layout preset (all of them draw the 3D phone) whose canvas shape is nearest a reference's. */
@@ -440,11 +450,45 @@ function ffmpeg(args) {
 
 /** A still's or a clip's display size (a 90° rotation tag swaps it, as ffmpeg's decoder does), or null. */
 export async function mediaSize(file) {
+  const info = await mediaInfo(file);
+  return info ? { w: info.w, h: info.h } : null;
+}
+
+/** Display size and duration (seconds; null for a still) of a still or a clip, or null when ffmpeg cannot read it. */
+export async function mediaInfo(file) {
   const { stderr } = await ffmpeg(['-i', file]);
   const m = stderr.match(/Stream #\d+:\d+.*Video:.*?\b(\d{1,5})x(\d{1,5})\b/);
   if (!m) return null;
   const turned = Math.abs(Number(stderr.match(/rotation of (-?[\d.]+) degrees/)?.[1] ?? 0)) % 180 === 90;
-  return turned ? { w: Number(m[2]), h: Number(m[1]) } : { w: Number(m[1]), h: Number(m[2]) };
+  const d = stderr.match(/Duration: (\d+):(\d+):([\d.]+)/);
+  const duration = d && VIDEO.has(extname(file).toLowerCase()) ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : null;
+  return { ...(turned ? { w: Number(m[2]), h: Number(m[1]) } : { w: Number(m[1]), h: Number(m[2]) }), duration };
+}
+
+/**
+ * What a judge could tell a placed pair file by, besides its pixels: the extension, the pixel size, the frame
+ * count and rate, the stream description and container tags (ffmpeg's view, bitrates left out) and, for a PNG,
+ * its chunk list. Both sides of a pair must give the same fingerprint (test/review3d.test.ts checks it).
+ */
+export async function pairFingerprint(file) {
+  const { stderr } = await ffmpeg(['-i', file]);
+  const lines = stderr
+    .split('\n')
+    .filter((l) => /^\s*(Stream #|Duration:|Metadata:|\w+\s*:)/.test(l) && !/^\s*Input #/.test(l))
+    .map((l) => l.replace(/\d+ kb\/s/g, '').replace(/bitrate: \S+/g, '').trim())
+    .filter((l) => !/^(encoder|creation_time)\s*:/.test(l));
+  let chunks = null;
+  if (extname(file).toLowerCase() === '.png') {
+    const b = readFileSync(file);
+    chunks = [];
+    for (let i = 8; i + 8 <= b.length; ) {
+      const len = b.readUInt32BE(i);
+      const type = b.toString('latin1', i + 4, i + 8);
+      if (type !== 'IDAT' || chunks[chunks.length - 1] !== 'IDAT') chunks.push(type);
+      i += 12 + len;
+    }
+  }
+  return { ext: extname(file).toLowerCase(), lines, chunks };
 }
 
 const stamp = (d = new Date()) => {
@@ -646,7 +690,8 @@ ${bench ? `<h2 style="margin-top:14px">Bench (${esc(opts.bench)})</h2><table><tr
 
 /**
  * Re-encodes both sides of each pair into pairs/ as one container (PNG for stills, H.264 mp4 for clips, no
- * sound, no metadata) at one size and shape (pairCanvas), under names that do not give the side away.
+ * sound, no metadata, one colour description) at one size and shape (pairCanvas), clips at one frame rate and
+ * cut to the shorter side's length, under names that do not give the side away.
  * A still paired with a clip is refused: the kind alone would tell the sides apart.
  */
 async function placePairs(out, pairs) {
@@ -656,22 +701,24 @@ async function placePairs(out, pairs) {
   for (const p of pairs) {
     const video = [p.L, p.R].map((f) => VIDEO.has(extname(f).toLowerCase()));
     if (video[0] !== video[1]) throw new Usage(`${p.id}: one side is a clip and the other a still, so judges could tell them apart; pair clips with clips and stills with stills`);
-    const [sl, sr] = await Promise.all([mediaSize(p.L), mediaSize(p.R)]);
+    const [sl, sr] = await Promise.all([mediaInfo(p.L), mediaInfo(p.R)]);
     if (!sl || !sr) throw new Error(`${p.id}: ffmpeg could not read ${!sl ? p.L : p.R}`);
     const canvas = pairCanvas(sl, sr);
     const vf = pairFilter(canvas);
+    // Both clips last as long as the shorter one, in whole frames, so the length gives nothing away either.
+    const len = video[0] ? Math.floor(Math.min(sl.duration ?? Infinity, sr.duration ?? Infinity) * PAIR_FPS) / PAIR_FPS : null;
     const put = async (f, side) => {
       const dst = join(dir, `${p.id}-${side}${video[0] ? '.mp4' : '.png'}`);
       const enc = video[0]
-        ? ['-vf', `${vf},format=yuv420p`, '-an', '-r', '30', '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-movflags', '+faststart']
+        ? ['-vf', `${vf},fps=${PAIR_FPS},format=yuv420p`, ...(Number.isFinite(len) && len > 0 ? ['-t', len.toFixed(3)] : []), '-an', '-sn', '-dn', '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-g', String(PAIR_FPS), '-color_range', 'tv', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709', '-movflags', '+faststart']
         : ['-vf', `${vf},format=rgb24`, '-frames:v', '1', '-update', '1'];
-      const r = await ffmpeg(['-loglevel', 'error', '-y', '-i', f, ...enc, '-map_metadata', '-1', '-fflags', '+bitexact', dst]);
+      const r = await ffmpeg(['-loglevel', 'error', '-y', '-i', f, ...enc, '-map_metadata', '-1', '-map_chapters', '-1', '-fflags', '+bitexact', '-flags:v', '+bitexact', dst]);
       if (!r.ok) throw new Error(`${p.id}: ffmpeg could not re-encode ${f}: ${r.stderr.trim().slice(-300)}`);
       return dst;
     };
     const L = await put(p.L, 'L');
     const R = await put(p.R, 'R');
-    if (canvas.leak) log({ warning: 'pair-shape', pair: p.id, message: `the two sides differ in shape by ${Math.round(canvas.diff * 100)}%: padding shows which is which; crop the reference to the other's shape` });
+    if (canvas.wide) log({ warning: 'pair-crop', pair: p.id, message: `the two sides differ in shape by ${Math.round(canvas.diff * 100)}%: both are cropped to the narrower shape, so the wider one loses that share of its width` });
     placed.push({ ...p, L, R, canvas });
   }
   return placed;

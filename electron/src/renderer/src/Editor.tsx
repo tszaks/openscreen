@@ -24,6 +24,8 @@ import {
   addMoveOp,
   chipFor,
   deleteTarget,
+  movesHaveFocus,
+  type PressScope,
   duplicateOp,
   EASE_LABEL,
   EASE_MENU,
@@ -434,8 +436,27 @@ export function Editor({
     label: string;
     moved: boolean;
   } | null>(null);
-  /** The 3D lane had the last press (⌘A selects every move). */
-  const laneFocus3d = useRef(false);
+  /** Where the last press (or keyboard focus) landed: the 3D lane, the
+   *  transcript, or anywhere else. Keys act on the selection of the place the
+   *  user is working in: ⌘A on the lane selects every move, and ⌫ removes
+   *  selected 3D moves only from the lane or the 3D tab, never while the
+   *  transcript (and its word selection) has the focus. */
+  const pressScope = useRef<PressScope>('other');
+  useEffect(() => {
+    const scopeOf = (t: EventTarget | null): PressScope => {
+      const el = t instanceof Element ? t : null;
+      if (el?.closest('.lane-3d')) return 'lane3d';
+      if (el?.closest('[data-scope="transcript"]')) return 'transcript';
+      return 'other';
+    };
+    const onPress = (e: Event) => (pressScope.current = scopeOf(e.target));
+    window.addEventListener('pointerdown', onPress, true);
+    window.addEventListener('focusin', onPress, true);
+    return () => {
+      window.removeEventListener('pointerdown', onPress, true);
+      window.removeEventListener('focusin', onPress, true);
+    };
+  }, []);
   // The layers on the preview (shared/canvasLayers): which is selected
   // (accent outline and corner handles) and which hovered (a thin outline),
   // the cursor for what the pointer is over, and while one is dragged, how
@@ -2132,7 +2153,7 @@ export function Editor({
       }
       // ⌘A on the 3D lane selects every move; ⌘D duplicates the selected move.
       if (e.metaKey && !e.shiftKey && !e.altKey && isPhone && proj.phone3d) {
-        if (e.key === 'a' && laneFocus3d.current && moves3d.length) {
+        if (e.key === 'a' && pressScope.current === 'lane3d' && moves3d.length) {
           e.preventDefault();
           selectMoves(moves3d.map((m) => m.id), activeKey);
           return;
@@ -2202,7 +2223,7 @@ export function Editor({
           layer: !!selectedLayer,
           layerHides: !!selectedLayer && canHide(selectedLayer),
           moves: liveSel.length,
-          movesFocused: laneFocus3d.current || activeTab === 'three',
+          movesFocused: movesHaveFocus(pressScope.current, activeTab),
           words: editTranscript && !!wordSel,
           tap: !!selectedTap,
           music: !!selectedMusic,
@@ -3756,7 +3777,7 @@ export function Editor({
               {importCaptionsButton('ghost', 'sm')}
             </div>
             {editTranscript && (
-              <div className="edit-hint">
+              <div className="edit-hint" data-scope="transcript">
                 {wordSel ? (
                   <Button size="sm" variant="danger" onClick={cutSelectedWords} title="Cut the selected words' span from the video">
                     Cut selected words
@@ -3768,7 +3789,7 @@ export function Editor({
                 )}
               </div>
             )}
-            <div className="list">
+            <div className="list" data-scope="transcript">
               {proj.captions.map((c) => (
                 <div className="cue" key={c.id} onClick={() => !editTranscript && seekOutput(c.start)}>
                   <span className="t">{fmtTime(c.start)}</span>
@@ -4331,7 +4352,6 @@ export function Editor({
           style={{ width: `${tlZoom * 100}%`, gridTemplateRows: laneRows }}
           onClick={seekTimeline}
           onContextMenu={timelineMenu}
-          onPointerDownCapture={(e) => (laneFocus3d.current = !!(e.target as HTMLElement).closest?.('.lane-3d'))}
         >
           <div className="tl-ruler">
             <div

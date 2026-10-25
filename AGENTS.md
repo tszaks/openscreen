@@ -41,7 +41,7 @@ osa import ~/Desktop/demo.mov       # or start from a video you already have
 osa review latest                   # contact sheets + review.json — LOOK at the sheet PNGs
 osa info latest                     # clips, captions, taps, style, … (times, ids, indexes)
 osa polish latest --style clean --title "Headline" --subtitle "Sub"
-osa direct latest --style hero      # iPhone takes: 3D phone shots around the taps (see "3D phone")
+osa direct latest --style hero      # iPhone takes: a few 3D shots around the taps and zooms (see "3D phone")
 osa apply latest edits.json         # precise edits (see below)
 osa frames latest --moves --sheet   # still PNGs from the real renderer — LOOK at sheet.png
 osa validate latest                 # problems (must be 0) and warnings (aim for 0)
@@ -147,7 +147,7 @@ same code (`applyOps3d`), so the editor refuses what the CLI refuses:
 | Option-click timeline: manual zoom | `manualZooms[]` (center, scale, timings) | `addZoom {at, x, y, scale?, hold?}` |
 | Move / retarget / rescale a zoom | `manualZooms[i]` | `moveZoom {index, at?, x?, y?, scale?, hold?}` |
 | Right-click zoom: remove | `manualZooms` | `removeZoom {index}`, `clearZooms` |
-| Zoom tab: Auto-focus, Dwell, Zoom to taps, Zoom depth | `zoom.autofocus/dwell/fromTaps/depth` | `zoomSettings {…}` |
+| Zoom tab: Auto-focus, Dwell, Zoom to taps, Zoom depth (with the 3D phone on: the camera push-in) | `zoom.autofocus/dwell/fromTaps/depth` | `zoomSettings {…}` |
 | Cursor tab: show, opacity, size, trail, colour | `style.cursorShow/cursorOpacity/cursorSize/cursorTrail/cursorHex` | `cursor {show?, opacity? (0..1), size?, trail?, hex?}` |
 | Audio tab: click sounds, voice cleanup | `audio.clickSounds/voiceCleanup` | `audio {clickSounds?, voiceCleanup?}` |
 | Add Music or Voiceover… (Audio tab, timeline right-click) | `tracks[t].items` | `addAudio {file, start?, volume?, fadeIn?, fadeOut?, loop?, sourceIn?, sourceOut?, fit?, name?}` |
@@ -273,6 +273,31 @@ exactly as it always did. Edit it only with the ops below (or `direct`).
 | `app-store` | an App Store layout preset | none: App Store previews stay flat (Apple needs the exact screen); use a social preset for 3D |
 | `mac-iphone` | a Mac + iPhone take | none: the phone layer stays flat |
 | `frameless-layout` | a layout preset with no device frame | pick a framed layout preset |
+
+### Zooms in 3D
+
+A zoom (Zoom to taps, auto-focus, or a manual zoom; the same list the flat
+editor plays) pushes the 3D camera in toward the zoom centre on the phone's
+screen, with the zoom's own timing and easing. The phone keeps its pose and
+stays whole; the screen stays 1:1 and sharp. Nothing new to set: the Zoom tab
+and the zoom ops (`zoomSettings`, `addZoom`, `moveZoom`, `removeZoom`) drive
+it. A flat project is unchanged. `info.zooms` lists every zoom that plays
+(output `start`, `focus`, `end`, `source`), so you can place shots off them.
+
+A zoom says "look here", so the screen must face the viewer while it plays:
+
+- During every zoom the phone stays within **35° of front** (the tap rule).
+  A move that leans further gives `zoom-angle` (the zoom's span and the worst
+  moment), with a `fix` list.
+- Steep shots (`spin-in`, `turn-to-back`) never overlap a zoom.
+  `hero-layback` leans about 40° at Normal intensity: end its lean (the
+  first 1.4 s at its default length) before the zoom starts, so only its
+  swing back to front runs into the zoom.
+- A tap zoom starts just before its tap and ends about a second after it,
+  so a gap between two taps is also a gap between their zooms. Auto-focus
+  and manual zooms can sit anywhere: `apply --dry-run` lists every
+  `zoom-angle` before anything is written.
+- Auto 3D (`direct`) follows these rules by itself.
 
 ### Pose: units and signs
 
@@ -526,7 +551,29 @@ should get one big move, set that wait's clip back to normal speed before
 `direct` (`clipSpeed {index, speed: 1}`; `info` lists the clips), or add the
 shot by hand. Do not run `direct` first and polish after: a move keeps its
 length when its footage speeds up, so it no longer fits the wait.
-Remove shots you do not want with `removeTransition`.
+
+World class means restraint: most of the video is the phone holding a calm
+pose. `direct` keeps the restraint rule (6) by itself. When you add or keep
+shots by hand, keep the same limits: at most one big move (`spin-in`,
+`turn-to-back`, `hero-layback`) per 30 s (per 20 s with `--style bold`),
+never two within 6 s, at most 3 `turn-to-back`s, and no steep angle during a
+zoom (`info.zooms`). No warning checks the counts, so count them yourself,
+**by shot, not by row**:
+
+- One shot writes 2 to 4 rows in `info.transitions` (spin-in 2, hero-layback
+  4 or one-way 2, turn-to-back 3 or one-way 2, settle 2), and every row
+  carries the shot's `recipe`. The rows of one shot follow each other with
+  no gap: each row's `start` is the `end` of the row before it. So a new
+  shot begins at a row whose `recipe` differs from the row before, or whose
+  `start` is later than the row before's `end`. Example: rows `spin-in`
+  0–1.05, `spin-in` 1.05–1.4, `hero-layback` 21.4–21.97, 21.97–22.78,
+  22.78–23.5, 23.5–23.8 are 2 shots (one spin-in, one layback), not 6.
+- `direct`'s `shots` lists one entry per shot it planned (not the ones you
+  add by hand).
+- To remove a shot, remove **all** of its rows in one `apply`, by `id`
+  (`[{"op":"removeTransition","id":"…"}, …]`; ids do not shift, indexes
+  do). Removing one row leaves half a shot, for example a spin-in with no
+  settle.
 
 ### Warnings
 
@@ -556,8 +603,10 @@ An export renders every frame (minutes); `frames` renders the few that
 matter in seconds, with the export's own code. Use `frames --moves --sheet
 --draft` while iterating and **look at `sheet.png`**: is the screen readable
 at every tap, does each move read as one idea, does anything leave the
-canvas? Each file's `facing` is 1 when the screen is straight at the camera
-and below 0 when it shows its back. Then `frames --moves` at full quality
+canvas, is the phone near front during every zoom? Each file's `facing` is 1
+when the screen is straight at the camera and below 0 when it shows its back.
+On a long video, `--from S --to E` limits the stills to a range of output
+seconds. Then `frames --moves` at full quality
 (motion blur, anti-aliasing) before the one export. For a 4K hero file on a
 layout preset: `apply [{"op":"exportSettings","preset":"uhd4k"}]` (the
 editor's Export menu › Resolution › 4K), check `info.export.canvas`, then
@@ -565,7 +614,9 @@ export.
 
 ### Example: "make this world class" (an iPhone take)
 
-Run each block in one call (shell state does not carry over between calls):
+Run each block in one call (shell state does not carry over between calls).
+Put your checkout in place of `/abs/path` in `osa`, and your bundle's
+absolute path in `B`:
 
 ```sh
 osa() { node /abs/path/electron/scripts/openscreen-agent.mjs "$@"; }
@@ -588,18 +639,21 @@ osa info "$B"                             # taps in output seconds (via clips): 
 osa frames "$B" --moves --sheet --draft   # LOOK at sheet.png
 ```
 
-`direct` planned no shot after the intro, but the video has two gaps of
-2.4 s or more between taps (14.06–17.19 and 20.66–23.59 output seconds).
-Fix what the sheet shows and fill those gaps, in one `fixes.json` (times are
-output seconds, after the cuts):
+`direct` planned no shot after the intro: once each tap's busy time is
+taken off, no free window is long enough for a `hero-layback` (2.4 s). Do
+not add one by hand: restraint (see "Auto 3D") is at most one big move
+per 30 s (per 20 s with `--style bold`), this is a 26 s video made with
+`--style hero`, and the spin-in is its one big move. The quiet middle gets
+`float` (a slow drift, not a move) instead.
+Fix what the sheet shows in one `fixes.json`, saved in the folder you run
+the commands from (times are output seconds, after the cuts):
 
 ```json
 [
   {"op": "editTransition", "index": 0, "end": 1.05},
   {"op": "editTransition", "index": 1, "start": 1.05, "end": 1.4},
   {"op": "setPose", "index": 1, "end": "to", "turn": -8, "tilt": 5, "size": 0.92},
-  {"op": "shot", "recipe": "hero-layback", "at": 15.0},
-  {"op": "shot", "recipe": "hero-layback", "at": 21.4, "direction": -1},
+  {"op": "shot", "recipe": "float"},
   {"op": "phone3d", "light": {"preset": "contrast"}, "dof": {"background": 0.3}}
 ]
 ```
@@ -610,20 +664,22 @@ and smaller. After
 `direct`, the rest pose is the End of the intro's last move (index 1: each
 intro recipe writes the move and a settle) **and of every planned shot
 that returns to rest**, so edit those Ends. Here `direct` planned only the
-intro, so one edit is enough, and the two shots after it start from the new
-rest and return to it (ops run in order). When `direct` did plan later shots,
+intro, so one edit is enough (a shot you add by hand after it starts from
+the new rest and returns to it: ops run in order). When `direct` did plan
+later shots,
 the `setPose` note names each one that still holds the old pose and gives the
 ops to apply (see "Which keyframe a pose edit changes"). A
 `setPose {target:"base"}` here would show nowhere.
 
 Check the edits with `--dry-run` before you apply them. Times copied from
-another take, or from before a cut, put moves on top of taps; the dry run
-says so (`tap-back`, `tap-angle`, `overlap`) and changes nothing:
+another take, or from before a cut, put moves on top of taps or zooms; the
+dry run says so (`tap-back`, `tap-angle`, `zoom-angle`, `overlap`) and
+changes nothing:
 
 ```sh
 osa() { node /abs/path/electron/scripts/openscreen-agent.mjs "$@"; }
 B=/abs/path/rec-1792855925414.openscreen
-osa apply "$B" fixes.json --dry-run       # warnings: [] (on this take); else move the shot into a gap and retry
+osa apply "$B" fixes.json --dry-run       # warnings: [] (on this take); else fix the op it names and retry
 osa apply "$B" fixes.json                 # read `changes` and `warnings` in the output
 osa validate "$B"                         # problems: [] — warnings: [] (or apply each `fix`)
 osa frames "$B" --moves --sheet           # full quality: LOOK again
@@ -631,10 +687,13 @@ osa export "$B" --out /abs/promo.mp4      # probe: duration, size, fps
 osa review /abs/promo.mp4                 # watch what viewers will see; iterate
 ```
 
-A world-class result: the screen faces front at every tap; one idea per
-move; moves only in waits or at scene changes; an intro under 1.8 s; at most
-a third of the runtime moving; springs for settles and cinematic for big
-turns; motion blur on; 0 warnings; 4K only for the hero file.
+A world-class result: the screen faces front at every tap and through every
+zoom; restraint (at
+most one big move per 30 s (per 20 s with `--style bold`), counted by shot;
+a calm pose between); one idea per move; moves only in waits or at scene changes;
+an intro under 1.8 s; at most a third of the runtime moving; springs for
+settles and cinematic for big turns; motion blur on; 0 warnings; 4K only
+for the hero file.
 
 ## Caveats
 

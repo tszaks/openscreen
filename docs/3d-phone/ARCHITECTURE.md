@@ -129,13 +129,16 @@ call `setProj` directly.
 ## Auto 3D
 
 `planDirect(p, {style, replace, scenes, cursor})` finds busy time (taps,
-typing runs, every zoom from `focusSegmentsFor`), keeps the phone within 12°
-of front during it, and places recipes (`shots.ts`) in the free windows:
-intro, outro, middle shots, a turn passing edge-on at a scene change. It
-returns ops (`phone3d`, `clearTransitions`, one `shot` each), applies them to
-a copy, drops any shot that causes a warning, and re-plans (up to 4 rounds).
-The editor and the CLI pass the same inputs (the bundle's `cursor.json` and
-the shared scene cache), so they make the same plan.
+typing runs and kept moves; zooms do not play in 3D, so they are not busy),
+keeps the phone within 12° of front during it, and places recipes
+(`shots.ts`) in the free windows: intro, outro, middle shots, a turn passing
+edge-on at a scene change, within the density caps (one middle shot per 6 s
+of output, at most 35% moving). It returns ops (`phone3d`,
+`clearTransitions`, one `shot` each), applies them to a copy, drops any shot
+that causes a warning, and re-plans (up to 4 rounds). The editor and the CLI
+pass the same inputs (the bundle's `cursor.json` and the shared scene cache),
+so they make the same plan. Owner decision 18 (restraint caps, the long-take
+note) is not in the planner yet; AGENTS.md gives the caps as advice.
 
 ## Rendering
 
@@ -153,9 +156,11 @@ Per output frame (`view.ts`):
    anti-aliasing samples) in export and `frames`; 1 in the live preview and
    `--draft`. Motion samples grow with how far the hull travels, so fast
    turns streak instead of ghosting.
-3. **Screen texture**: the compositor draws the recording (crop, zoom, taps,
+3. **Screen texture**: the compositor draws the recording (crop, taps,
    cursor, ripples, island) into an offscreen canvas at one texel per render
-   pixel; at FRONT the 3D screen is the flat screen.
+   pixel; at FRONT the 3D screen is the flat screen. Zooms do not play on
+   the 3D screen (look round 4); owner decision 20 (a zoom pushes the 3D
+   camera in) is not built yet.
 4. **Shadow**: the silhouette is cast onto the catcher (a wall 1 mm behind the
    phone, or a floor), blurred with the 2D frame shadow's two widths.
 5. **Scene** into a 2-attachment half-float MSAA target: attachment 0 holds

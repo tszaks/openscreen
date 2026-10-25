@@ -173,11 +173,48 @@ process.stdout.write(JSON.stringify(c === 'ops' ? { ok: true, ops: ${JSON.string
       expect(r.stdout).not.toContain('READY:');
     });
 
+    /** The block's lines that find the checkout (everything before `CLI=`), then print $OS. */
+    const finder = (skillMd = '') => {
+      const b = block();
+      const lines = b.slice(0, b.indexOf('\nCLI=')).replace(/^SKILL_MD=''/m, `SKILL_MD='${skillMd}'`);
+      return `${lines}\nprintf %s "$OS"`;
+    };
+
     it('install-skill.mjs links the real skill so Step 0 resolves this checkout', () => {
       mkdirSync(join(home, '.claude'));
       run();
-      const os = execFileSync('/bin/zsh', ['-c', `${block().split('\n')[0]}; printf %s "$OS"`], { env: { ...process.env, HOME: home }, cwd: tmpdir(), encoding: 'utf8' });
+      const os = execFileSync('/bin/zsh', ['-c', finder()], { env: { ...process.env, HOME: home }, cwd: tmpdir(), encoding: 'utf8' });
       expect(os).toBe(CHECKOUT);
+    });
+
+    it('shows one line per installed home (Claude Code, Codex), each on its own', () => {
+      const lines = block().split('\n');
+      expect(lines.filter((l) => l.includes('~/.claude/skills/openscreen/SKILL.md'))).toHaveLength(1);
+      expect(lines.filter((l) => l.includes('~/.codex/skills/openscreen/SKILL.md'))).toHaveLength(1);
+      expect(lines.findIndex((l) => l.includes('~/.claude/'))).not.toBe(lines.findIndex((l) => l.includes('~/.codex/')));
+      // The install lines a person runs are shown separately too, one per tool.
+      const skill = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
+      expect(skill).toMatch(/^ln -s <checkout>\/skills\/openscreen ~\/\.claude\/skills\/openscreen$/m);
+      expect(skill).toMatch(/^ln -s <checkout>\/skills\/openscreen ~\/\.codex\/skills\/openscreen$/m);
+      expect(skill).toContain('node <checkout>/electron/scripts/install-skill.mjs');
+    });
+
+    for (const shell of ['/bin/zsh', '/bin/bash']) {
+      it(`${shell}: finds the checkout with no skill installed, from the path the agent read SKILL.md from`, () => {
+        const { co, cli } = fakeCheckout(true);
+        const skillMd = join(co, 'skills', 'openscreen', 'SKILL.md');
+        const filled = block().replace(/^SKILL_MD=''/m, `SKILL_MD='${skillMd}'`);
+        const r = spawnSync(shell, ['-c', filled], { env: { ...process.env, HOME: home, TMPDIR: home }, cwd: tmpdir(), encoding: 'utf8' });
+        expect(r.stdout.trim().split('\n').at(-1), r.stderr).toBe(`READY: node ${realpathSync(cli)}`);
+        expect(existsSync(join(home, '.claude'))).toBe(false);
+      });
+    }
+
+    it('finds the checkout with no skill installed and no path, when the current folder is inside the checkout (git)', () => {
+      const { co } = fakeCheckout(true);
+      spawnSync('git', ['init', '-q'], { cwd: co });
+      const os = execFileSync('/bin/zsh', ['-c', finder()], { env: { ...process.env, HOME: home }, cwd: join(co, 'skills'), encoding: 'utf8' });
+      expect(os).toBe(realpathSync(co));
     });
 
     it("the READY probe's patterns match the real CLI's ops and help", async () => {

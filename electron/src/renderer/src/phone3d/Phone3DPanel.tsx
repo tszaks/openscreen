@@ -4,7 +4,7 @@
 // - home: the 3D phone switch and Auto 3D, warnings, Pose (with the target
 //   chip that says what a change edits), Shots, then Look, Lighting, Shadow
 //   & focus, Float and Export quality
-// - one move selected: its name, the pinned Keyframe block (Start / End with
+// - one move selected: its name, the Keyframe block pinned above the scrolling body (Start / End with
 //   typeable times, Duration, the Easing pop-up and the curve popover), and
 //   its Pose with Animate lighting / Animate focus
 // - many moves selected: the same, with values that differ shown as "–"
@@ -327,8 +327,9 @@ export function Phone3DPanel(props: Phone3DPanelProps) {
   const p3: Phone3D | undefined = proj.phone3d;
   const moves = p3?.transitions ?? [];
   const sel = selected.filter((id) => moves.some((m) => m.id === id));
-  if (p3 && sel.length === 1) return <MoveView {...props} p3={p3} id={sel[0]} />;
-  if (p3 && sel.length > 1) return <MultiView {...props} p3={p3} ids={sel} />;
+  // Keyed by the selection, so a view's own state (an open Animate row) never carries over to other moves.
+  if (p3 && sel.length === 1) return <MoveView key={sel[0]} {...props} p3={p3} id={sel[0]} />;
+  if (p3 && sel.length > 1) return <MultiView key={sel.join(' ')} {...props} p3={p3} ids={sel} />;
   return <HomeView {...props} p3={p3} begin={hold} end={seal} playhead={playhead} apply3d={apply3d} />;
 }
 
@@ -948,60 +949,60 @@ function MoveView(props: Phone3DPanelProps & { p3: Phone3D; id: string }) {
           {I.trash}
         </button>
       </div>
-      <div className="inspector-body p3-movebody">
-        <section className="section p3-sticky" aria-label="Keyframe">
-          <header className="section-head">
-            <h3>Keyframe</h3>
-            <div className="section-actions">
-              <button type="button" className="p3-textbtn" title="Swap the Start and End poses" onClick={() => apply3d({ op: 'editTransition', id, swap: true })}>
-                Swap Start / End
-              </button>
-            </div>
-          </header>
-          <div className="section-body">
-            <div className="kf-toggle">
-              <KeyframeHalf
-                which="Start"
-                on={isStart}
-                time={m.start}
-                hollow={linked}
-                onPick={() => {
-                  props.onSelect([id], 'start');
-                  props.onSeek(m.start);
-                }}
-                onType={(t) => apply3d({ op: 'editTransition', id, start: Math.max(0, t) })}
-              />
-              <KeyframeHalf
-                which="End"
-                on={!isStart}
-                time={m.end}
-                hollow={false}
-                onPick={() => {
-                  props.onSelect([id], 'end');
-                  props.onSeek(m.end);
-                }}
-                onType={(t) => apply3d({ op: 'editTransition', id, end: t })}
-              />
-            </div>
-            <div className="mt-row" ref={rowRef}>
-              {durField}
-              <button
-                ref={popupBtn}
-                type="button"
-                className="p3-popup"
-                title="Easing"
-                onClick={() => props.openMenu(easingMenu(popupBtn.current!, m.easing.kind, pickEasing, onEaseHover))}
-              >
-                <CurveGlyph e={m.easing} dur={dur} />
-                <span className="p3-popup-name">{EASE_LABEL[m.easing.kind]}</span>
-                {I.updown}
-              </button>
-              <button ref={curveBtn} type="button" className={`mt-curve${tpop ? ' on' : ''}`} title="Edit the curve" aria-expanded={tpop} onClick={() => setTpop((o) => !o)}>
-                <CurveGlyph e={m.easing} w={34} h={18} dur={dur} />
-              </button>
-            </div>
+      <section className="section p3-sticky" aria-label="Keyframe">
+        <header className="section-head">
+          <h3>Keyframe</h3>
+          <div className="section-actions">
+            <button type="button" className="p3-textbtn" title="Swap the Start and End poses" onClick={() => apply3d({ op: 'editTransition', id, swap: true })}>
+              Swap Start / End
+            </button>
           </div>
-        </section>
+        </header>
+        <div className="section-body">
+          <div className="kf-toggle">
+            <KeyframeHalf
+              which="Start"
+              on={isStart}
+              time={m.start}
+              hollow={linked}
+              onPick={() => {
+                props.onSelect([id], 'start');
+                props.onSeek(m.start);
+              }}
+              onType={(t) => apply3d({ op: 'editTransition', id, start: Math.max(0, t) })}
+            />
+            <KeyframeHalf
+              which="End"
+              on={!isStart}
+              time={m.end}
+              hollow={false}
+              onPick={() => {
+                props.onSelect([id], 'end');
+                props.onSeek(m.end);
+              }}
+              onType={(t) => apply3d({ op: 'editTransition', id, end: t })}
+            />
+          </div>
+          <div className="mt-row" ref={rowRef}>
+            {durField}
+            <button
+              ref={popupBtn}
+              type="button"
+              className="p3-popup"
+              title="Easing"
+              onClick={() => props.openMenu(easingMenu(popupBtn.current!, m.easing.kind, pickEasing, onEaseHover))}
+            >
+              <CurveGlyph e={m.easing} dur={dur} />
+              <span className="p3-popup-name">{EASE_LABEL[m.easing.kind]}</span>
+              {I.updown}
+            </button>
+            <button ref={curveBtn} type="button" className={`mt-curve${tpop ? ' on' : ''}`} title="Edit the curve" aria-expanded={tpop} onClick={() => setTpop((o) => !o)}>
+              <CurveGlyph e={m.easing} w={34} h={18} dur={dur} />
+            </button>
+          </div>
+        </div>
+      </section>
+      <div className="inspector-body p3-movebody">
         <Section title="Pose">
           {isStart && (
             <label className="row switch-row p3-linkrow">
@@ -1049,7 +1050,11 @@ function MoveView(props: Phone3DPanelProps & { p3: Phone3D; id: string }) {
                   soft={[-180, 180]}
                   origin={az}
                   title={`Light angle at this keyframe. The tick is the resting angle (Look › Lighting, ${minus(az)}°).`}
-                  onBegin={begin}
+                  onBegin={() => {
+                    // A drag that brings the End back to the Start's angle must not take the field away mid-drag.
+                    setLightShown(true);
+                    begin();
+                  }}
                   onCommit={seal}
                   onChange={(v) => setPose({ light: Math.max(-180, Math.min(180, v - az)) })}
                 />
@@ -1075,7 +1080,10 @@ function MoveView(props: Phone3DPanelProps & { p3: Phone3D; id: string }) {
                   origin={100}
                   disabled={!p3.dof.on}
                   title="100% is the Depth of field amount. 0% is sharp."
-                  onBegin={begin}
+                  onBegin={() => {
+                    setFocusShown(true);
+                    begin();
+                  }}
                   onCommit={seal}
                   onChange={(v) => setPose({ focus: v / 100 })}
                 />
@@ -1139,7 +1147,14 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
         ? names.join(' and ')
         : `${names.length} kinds of move`;
   const starts = resolveStarts(p3);
-  const lightAnimated = list.every((m) => m.to.light !== starts[moves.indexOf(m)].light);
+  const startOf = (m: (typeof moves)[number]) => starts[moves.indexOf(m)];
+  const lightAnimated = list.some((m) => m.to.light !== startOf(m).light);
+  const focusAnimated = list.some((m) => m.to.focus !== startOf(m).focus);
+  // Open rows stay open for this selection: switched on by hand, or while a
+  // drag runs (a drag that brings every End back to its Start's value must
+  // not take the field away under the pointer).
+  const [lightShown, setLightShown] = useState(false);
+  const [focusShown, setFocusShown] = useState(false);
   const az = p3.light.azimuth;
   const pick = (k: EasingName) => {
     const e = k === 'bezier' ? (() => {
@@ -1169,66 +1184,66 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
           {I.trash}
         </button>
       </div>
-      <div className="inspector-body p3-movebody">
-        <section className="section p3-sticky" aria-label="Keyframe">
-          <header className="section-head">
-            <h3>Keyframe</h3>
-            <div className="section-actions">
-              <button type="button" className="p3-textbtn" title="Swap the Start and End poses of each move" onClick={() => apply3d(ids.map((x) => ({ op: 'editTransition', id: x, swap: true })))}>
-                Swap Start / End
-              </button>
-            </div>
-          </header>
-          <div className="section-body">
-            <div className="kf-toggle">
-              <KeyframeHalf which="Start" on={isStart} time={0} hollow={false} mixed onPick={() => props.onSelect(ids, 'start')} />
-              <KeyframeHalf which="End" on={!isStart} time={0} hollow={false} mixed onPick={() => props.onSelect(ids, 'end')} />
-            </div>
-            <p className="hint kf-help">Changes apply to all {n} moves.</p>
-            <div className="mt-row">
-              <Track
-                label="Duration"
-                unit="s"
-                plain
-                value={+durs[0].toFixed(2)}
-                min={0.1}
-                max={60}
-                step={0.01}
-                mixed={mixedDur}
-                title="Typing sets every move's duration; Start stays put."
-                onBegin={() => {
-                  hold();
-                  durGesture.current = beginDuration(moves, ids);
-                }}
-                onCommit={() => {
-                  seal();
-                  durGesture.current = null;
-                }}
-                onChange={(v, info) => apply3d(durationStepOps(moves, ids, durGesture.current ?? beginDuration(moves, ids), v, info))}
-              />
-              <button
-                ref={popupBtn}
-                type="button"
-                className="p3-popup"
-                title="Easing for every selected move"
-                onClick={() => props.openMenu(easingMenu(popupBtn.current!, mixedEase ? null : list[0].easing.kind, pick, props.onEaseHover))}
-              >
-                {!mixedEase && <CurveGlyph e={list[0].easing} />}
-                <span className="p3-popup-name">{mixedEase ? 'Mixed' : EASE_LABEL[list[0].easing.kind]}</span>
-                {I.updown}
-              </button>
-              <button type="button" className="mt-curve" title={mixedEase ? 'The curves differ' : 'Open one move to edit its curve'} disabled>
-                {mixedEase ? (
-                  <svg width="34" height="18" viewBox="0 0 34 18" aria-hidden="true">
-                    <path d="M3 15 L31 3" stroke="currentColor" strokeWidth="1.4" strokeDasharray="2 3" strokeLinecap="round" />
-                  </svg>
-                ) : (
-                  <CurveGlyph e={list[0].easing} w={34} h={18} dur={durs[0]} />
-                )}
-              </button>
-            </div>
+      <section className="section p3-sticky" aria-label="Keyframe">
+        <header className="section-head">
+          <h3>Keyframe</h3>
+          <div className="section-actions">
+            <button type="button" className="p3-textbtn" title="Swap the Start and End poses of each move" onClick={() => apply3d(ids.map((x) => ({ op: 'editTransition', id: x, swap: true })))}>
+              Swap Start / End
+            </button>
           </div>
-        </section>
+        </header>
+        <div className="section-body">
+          <div className="kf-toggle">
+            <KeyframeHalf which="Start" on={isStart} time={0} hollow={false} mixed onPick={() => props.onSelect(ids, 'start')} />
+            <KeyframeHalf which="End" on={!isStart} time={0} hollow={false} mixed onPick={() => props.onSelect(ids, 'end')} />
+          </div>
+          <p className="hint kf-help">Changes apply to all {n} moves.</p>
+          <div className="mt-row">
+            <Track
+              label="Duration"
+              unit="s"
+              plain
+              value={+durs[0].toFixed(2)}
+              min={0.1}
+              max={60}
+              step={0.01}
+              mixed={mixedDur}
+              title="Typing sets every move's duration; Start stays put."
+              onBegin={() => {
+                hold();
+                durGesture.current = beginDuration(moves, ids);
+              }}
+              onCommit={() => {
+                seal();
+                durGesture.current = null;
+              }}
+              onChange={(v, info) => apply3d(durationStepOps(moves, ids, durGesture.current ?? beginDuration(moves, ids), v, info))}
+            />
+            <button
+              ref={popupBtn}
+              type="button"
+              className="p3-popup"
+              title="Easing for every selected move"
+              onClick={() => props.openMenu(easingMenu(popupBtn.current!, mixedEase ? null : list[0].easing.kind, pick, props.onEaseHover))}
+            >
+              {!mixedEase && <CurveGlyph e={list[0].easing} />}
+              <span className="p3-popup-name">{mixedEase ? 'Mixed' : EASE_LABEL[list[0].easing.kind]}</span>
+              {I.updown}
+            </button>
+            <button type="button" className="mt-curve" title={mixedEase ? 'The curves differ' : 'Open one move to edit its curve'} disabled>
+              {mixedEase ? (
+                <svg width="34" height="18" viewBox="0 0 34 18" aria-hidden="true">
+                  <path d="M3 15 L31 3" stroke="currentColor" strokeWidth="1.4" strokeDasharray="2 3" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <CurveGlyph e={list[0].easing} w={34} h={18} dur={durs[0]} />
+              )}
+            </button>
+          </div>
+        </div>
+      </section>
+      <div className="inspector-body p3-movebody">
         <Section title="Pose">
           <PoseRows
             pose={poses[0]}
@@ -1248,12 +1263,13 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
           <div className="p3-anim">
             <Switch
               label="Animate lighting"
-              checked={lightAnimated}
+              checked={lightAnimated || lightShown}
               onChange={(v) => {
-                if (!v) apply3d(list.map((m) => ({ op: 'setPose', id: m.id, end: 'to', light: starts[moves.indexOf(m)].light })));
+                setLightShown(v);
+                if (!v && lightAnimated) apply3d(list.map((m) => ({ op: 'setPose', id: m.id, end: 'to', light: startOf(m).light })));
               }}
             />
-            {lightAnimated && (
+            {(lightAnimated || lightShown) && (
               <div className="p3-tracks">
                 <Track
                   label="Angle"
@@ -1264,9 +1280,43 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
                   soft={[-180, 180]}
                   origin={az}
                   mixed={mixed.has('light')}
-                  onBegin={beginPose}
+                  title={mixed.has('light') ? 'These moves differ. Drag to change each by the same amount; type to set all.' : undefined}
+                  onBegin={() => {
+                    setLightShown(true);
+                    beginPose();
+                  }}
                   onCommit={endPose}
                   onChange={(v, info) => poseStep('light', v - az, info)}
+                />
+              </div>
+            )}
+            <Switch
+              label="Animate focus"
+              hint={p3.dof.on ? undefined : 'Depth of field is off'}
+              checked={focusAnimated || focusShown}
+              onChange={(v) => {
+                setFocusShown(v);
+                if (!v && focusAnimated) apply3d(list.map((m) => ({ op: 'setPose', id: m.id, end: 'to', focus: startOf(m).focus })));
+              }}
+            />
+            {(focusAnimated || focusShown) && (
+              <div className="p3-tracks">
+                <Track
+                  label="Focus"
+                  unit="%"
+                  value={Math.round(poses[0].focus * 100)}
+                  min={0}
+                  max={200}
+                  origin={100}
+                  disabled={!p3.dof.on}
+                  mixed={mixed.has('focus')}
+                  title={mixed.has('focus') ? 'These moves differ. Drag to change each by the same amount; type to set all.' : '100% is the Depth of field amount. 0% is sharp.'}
+                  onBegin={() => {
+                    setFocusShown(true);
+                    beginPose();
+                  }}
+                  onCommit={endPose}
+                  onChange={(v, info) => poseStep('focus', v / 100, { delta: info.delta / 100, typed: info.typed })}
                 />
               </div>
             )}

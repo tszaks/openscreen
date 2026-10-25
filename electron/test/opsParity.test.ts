@@ -195,16 +195,67 @@ describe('ops parity: the rest pose after Auto 3D and the worked example', () =>
     expect(AGENTS).not.toMatch(/rest pose is the End of the intro \(and of each later move\), so\s+edit that End/);
   });
 
-  it('the worked example checks its fixes with --dry-run before it applies them, and uses no turn-to-back', () => {
+  it('the worked example checks its fixes with --dry-run before it applies them, and keeps the restraint it advises', () => {
     const ex = section(AGENTS, '### Example: "make this world class" (an iPhone take)');
     const dry = ex.indexOf('apply "$B" fixes.json --dry-run');
     const real = ex.search(/apply "\$B" fixes\.json\s+#/);
     expect(dry, 'a dry run of fixes.json').toBeGreaterThan(-1);
     expect(real, 'the real apply').toBeGreaterThan(dry);
-    const fixes = JSON.parse(ex.match(/```json\n([\s\S]*?)```/)![1]);
-    // Every op in it is a real op, and its shots are laybacks placed in the gaps the text names.
+    const fixes = JSON.parse(ex.match(/```json\n([\s\S]*?)```/)![1]) as { op: string; recipe?: string; at?: number }[];
     for (const o of fixes) expect(OP_NAMES as readonly string[]).toContain(o.op);
-    expect(fixes.filter((o: { op: string }) => o.op === 'shot').map((o: { recipe: string }) => o.recipe)).toEqual(['hero-layback', 'hero-layback']);
+    // Restraint (owner decision 18; advice in AGENTS.md until direct enforces it): one big move per 20 s for
+    // `--style bold`, per 30 s for every other style, never two within 6 s, at most 3 turn-to-backs. The big
+    // moves are the shots direct planned (the example's own comment) plus the ones fixes.json adds.
+    const style = ex.match(/osa direct "\$B" --style (\w+)/)?.[1];
+    expect(style, 'the example runs direct with a style').toBeDefined();
+    const every = style === 'bold' ? 20 : 30;
+    const planned = ex.match(/osa direct "\$B" --style \w+\s+# shots: ([^\n]*)/)?.[1];
+    expect(planned, 'the direct line says which shots it planned').toBeDefined();
+    const BIG = ['spin-in', 'turn-to-back', 'hero-layback'];
+    const big = [
+      ...[...planned!.matchAll(/([a-z-]+) ([\d.]+)–/g)].filter((m) => BIG.includes(m[1])).map((m) => ({ recipe: m[1], at: Number(m[2]) })),
+      ...fixes.filter((o) => o.op === 'shot' && BIG.includes(o.recipe!)).map((o) => ({ recipe: o.recipe!, at: o.at ?? 0 })),
+    ].sort((a, b) => a.at - b.at);
+    expect(big.length, 'the intro spin-in counts').toBeGreaterThan(0);
+    for (let i = 1; i < big.length; i++) {
+      expect(big[i].at - big[i - 1].at, `big move at ${big[i].at} s keeps the --style ${style} limit`).toBeGreaterThanOrEqual(every);
+    }
+    expect(big.filter((b) => b.recipe === 'turn-to-back').length).toBeLessThanOrEqual(3);
+    // The prose states the same rule the Auto 3D section and the skill state (not a separate "promo" limit).
+    const flat = (md: string) => md.replace(/\s+/g, ' ');
+    const RULE = 'per 30 s (per 20 s with `--style bold`)';
+    expect(flat(section(AGENTS, '### Auto 3D (`direct`)'))).toContain(RULE);
+    expect(flat(ex)).toContain(RULE);
+    expect(flat(SKILL)).toContain(RULE);
+    for (const md of [AGENTS, SKILL]) expect(flat(md)).not.toMatch(/20 s for a bold promo|for a promo one more|or per 20 s for a bold/);
+  });
+
+  it('the restraint advice counts shots, not rows, and that rule finds each shot in info.transitions', () => {
+    // One shot writes 2 to 4 rows that all carry its recipe; counting rows would read one spin-in as two big moves.
+    const shots = [
+      { op: 'shot', recipe: 'spin-in', at: 0 },
+      { op: 'shot', recipe: 'hero-layback', at: 4 },
+      { op: 'shot', recipe: 'hero-layback', at: 9 },
+      { op: 'shot', recipe: 'turn-to-back', at: 14 },
+      { op: 'shot', recipe: 'turn-to-back', at: 20, return: 'stay' },
+    ];
+    const p = applyOps(defaultProject({ screenVideoFile: 'screen.mov', sourceKind: 'iosDevice', sourceSize: { width: 1206, height: 2622 }, duration: 30 }), [
+      { op: 'phone3d', enabled: true },
+      ...shots,
+    ]).project;
+    const rows = p.phone3d!.transitions.map((t) => ({ start: Math.round(t.start * 100) / 100, end: Math.round(t.end * 100) / 100, recipe: t.recipe }));
+    expect(rows.length).toBeGreaterThan(shots.length);
+    // The documented rule: a new shot begins where the recipe changes or the row starts after the previous row's end.
+    const found: string[] = [];
+    rows.forEach((r, i) => {
+      const prev = rows[i - 1];
+      if (!prev || prev.recipe !== r.recipe || r.start > prev.end) found.push(r.recipe!);
+    });
+    expect(found).toEqual(shots.map((o) => o.recipe));
+    const flat = (md: string) => md.replace(/\s+/g, ' ');
+    expect(flat(AGENTS)).toContain('by shot, not by row');
+    expect(flat(SKILL)).toContain('shots, not rows');
+    for (const md of [AGENTS, SKILL]) expect(flat(md)).not.toMatch(/count the big moves in `info\.transitions`/);
   });
 });
 
@@ -212,6 +263,25 @@ describe('ops parity: the 3D numbers in AGENTS.md match the code', () => {
   it('every warning code is in the warnings table', () => {
     const table = section(P3D, '### Warnings');
     for (const code of WARNING_CODES) expect(table, `warning ${code}`).toMatch(new RegExp(`\\| \`${code}\` \\|`));
+  });
+
+  it('every code in the warnings table is one the code gives (a row whose meaning starts "retired" is the only exception)', () => {
+    const rows = section(P3D, '### Warnings').split('\n').map((l) => l.match(/^\| `([a-z0-9-]+)` \| (.*)$/)).filter((m) => m !== null);
+    expect(rows.length).toBeGreaterThan(5);
+    for (const [, code, rest] of rows) {
+      if (/^retired\b/.test(rest)) {
+        expect(WARNING_CODES as readonly string[], `${code} is retired in the doc`).not.toContain(code);
+        continue;
+      }
+      expect(WARNING_CODES as readonly string[], `the doc's warning ${code}`).toContain(code);
+    }
+    // Neither SKILL.md nor AGENTS.md may name a warning code the code does not have.
+    const SKILL = readFileSync(join(E, '..', 'skills', 'openscreen', 'SKILL.md'), 'utf8');
+    for (const [name, md] of [['AGENTS.md', AGENTS], ['SKILL.md', SKILL]] as const) {
+      for (const m of md.matchAll(/`((?:zoom|tap|off|pose|past|too|floor)-[a-z0-9]+)`/g)) {
+        expect(WARNING_CODES as readonly string[], `${name} names \`${m[1]}\``).toContain(m[1]);
+      }
+    }
   });
 
   it('every shot recipe row states its real default length (and the one-way length)', () => {
@@ -269,6 +339,20 @@ describe('ops parity: every CLI command is documented', () => {
     expect(parsed.length).toBeGreaterThanOrEqual(8);
     const framesRow = COMMANDS.split('\n').find((l) => l.startsWith('| `frames '))!;
     for (const f of parsed) expect(framesRow, `frames ${f}`).toContain(f);
+  });
+
+  it('the direct and frames rows list no flag the CLI does not parse', () => {
+    const flagsOf = (body: string) => [...body.matchAll(/(?:flag|bool)\(args, '(--[\w-]+)'\)/g)].map((m) => m[1]);
+    const rowFlags = (cmd: string) => {
+      const row = COMMANDS.split('\n').find((l) => l.startsWith(`| \`${cmd} `))!;
+      return [...row.split(' | ')[0].matchAll(/--[a-z][\w-]*/g)].map((m) => m[0]);
+    };
+    const direct = flagsOf(fnBody(SRC('src/node/agentCli.ts'), 'parseDirectArgs'));
+    const frames = flagsOf(fnBody(SRC('src/node/framesCmd.ts'), 'parseFramesArgs'));
+    expect(rowFlags('direct').length).toBeGreaterThanOrEqual(4);
+    expect(rowFlags('frames').length).toBeGreaterThanOrEqual(8);
+    for (const f of rowFlags('direct')) expect(direct, `direct ${f} in AGENTS.md`).toContain(f);
+    for (const f of rowFlags('frames')) expect(frames, `frames ${f} in AGENTS.md`).toContain(f);
   });
 });
 
