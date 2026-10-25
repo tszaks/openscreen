@@ -166,7 +166,8 @@ const I = {
 function LightSphere({ name, azimuth }: { name: LightPreset; azimuth: number }) {
   const P = LIGHT_PRESETS[name];
   const id = `p3-sph-${name}`;
-  const base = Math.round(28 + P.ambient * 500);
+  // The set's camera-side fill sets the sphere's base tone (look round 4's rig has no single ambient term).
+  const base = Math.round(28 + P.set.front * 150);
   return (
     <svg width="36" height="36" viewBox="0 0 36 36" aria-hidden="true">
       <defs>
@@ -182,11 +183,11 @@ function LightSphere({ name, azimuth }: { name: LightPreset; azimuth: number }) 
           const el = (b.elevation * Math.PI) / 180;
           const x = 18 + Math.sin(az) * Math.cos(el) * 11;
           const y = 18 - Math.sin(el) * 11;
-          const r = 4 + b.w * b.h * 4.5;
+          const r = 4 + (b.halfW * b.halfH) / 150; // half sizes in degrees
           const vis = Math.cos(az) > -0.2 ? 1 : 0.55; // boxes behind the phone read as rims
           return (
             <radialGradient key={i} id={`${id}-${i}`} cx={x.toFixed(1)} cy={y.toFixed(1)} r={r.toFixed(1)} gradientUnits="userSpaceOnUse">
-              <stop offset="0" stopColor={b.color} stopOpacity={Math.min(1, b.intensity * 0.95 * vis).toFixed(2)} />
+              <stop offset="0" stopColor={b.color} stopOpacity={Math.min(1, b.radiance * 0.8 * vis).toFixed(2)} />
               <stop offset="1" stopColor={b.color} stopOpacity="0" />
             </radialGradient>
           );

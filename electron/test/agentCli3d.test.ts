@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { defaultFramesDir, framesCmd, parseFramesArgs, planFrameTimes, poseInfo } from '../src/node/framesCmd';
+import { defaultFramesDir, exportFps, framesCmd, parseFramesArgs, planFrameTimes, poseInfo } from '../src/node/framesCmd';
 import { exportGuard, main, parseDirectArgs } from '../src/node/agentCli';
 import { needsScenes, projectWarnings } from '../src/node/phone3dPlan';
 import { readCursorSamples } from '../src/node/bundleFiles';
@@ -332,5 +332,44 @@ describe('export guard', () => {
     ok.device.frame = true;
     ok.taps = [{ id: 't', t: 5, x: 0.5, y: 0.5, kind: 'tap', confidence: 1 }];
     expect(() => exportGuard(projectWarnings(ok), false)).not.toThrow();
+  });
+});
+
+describe('info.export: the frame rate the export writes', () => {
+  /** `main(['info', dir])` with stdout captured: the one JSON object it prints. */
+  async function info(p: ReturnType<typeof phoneProject>): Promise<Record<string, any>> {
+    const dir = mkdtempSync(join(scratch, 'info-'));
+    writeFileSync(join(dir, 'project.json'), JSON.stringify(p));
+    const { main } = await import('../src/node/agentCli');
+    let text = '';
+    const write = process.stdout.write;
+    process.stdout.write = ((s: string) => ((text += s), true)) as typeof process.stdout.write;
+    try {
+      expect(await main(['info', dir])).toBe(0);
+    } finally {
+      process.stdout.write = write;
+    }
+    return JSON.parse(text);
+  }
+
+  it("is the layout preset's own rate on a preset (what frames and the export use), else outputFPS", async () => {
+    const social = { ...phoneProject({ presetId: 'social-9x16' }), outputFPS: 60 };
+    const onPreset = await info(social);
+    expect(onPreset.export.fps).toBe(30);
+    expect(onPreset.export.fps).toBe(exportFps(social));
+    const plain = { ...phoneProject({ presetId: 'none' }), outputFPS: 60 };
+    expect((await info(plain)).export.fps).toBe(60);
+  });
+});
+
+describe('export probe: the frame rate', () => {
+  it('parseFfmpegFps reads the video stream rate, ignores audio and tbr, null when absent', async () => {
+    const { parseFfmpegFps } = await import('../src/node/media');
+    const mp4 = `  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1080x1920, 5123 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)`;
+    expect(parseFfmpegFps(mp4)).toBe(30);
+    expect(parseFfmpegFps('  Stream #0:0: Video: h264, yuv420p, 1080x1920, 29.97 fps, 29.97 tbr')).toBe(29.97);
+    expect(parseFfmpegFps('  Stream #0:0: Video: gif, bgra, 540x960, 15 tbr, 100 tbn')).toBeNull();
+    expect(parseFfmpegFps('  Stream #0:0: Audio: aac, 48000 Hz, 60 fps')).toBeNull();
   });
 });

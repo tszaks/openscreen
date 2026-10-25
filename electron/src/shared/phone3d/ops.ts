@@ -343,7 +343,15 @@ function setPoseOp(p: Project, o: EditOp) {
   }
   if (kind === 'base') {
     p3.pose = fullFrom(p3.pose, patch);
-    return { project: withP3(p, p3), note: 'setPose edited the base pose' };
+    // The base pose shows only when there are no moves, or where a linked first move starts. When the first
+    // move has its own Start (Auto 3D's spin-in does), the phone never shows it: say so, and what to edit.
+    const hidden = list.length > 0 && !!list[0].from;
+    return {
+      project: withP3(p, p3),
+      note: hidden
+        ? `setPose edited the base pose, which shows nowhere: the first move ${list[0].id} has its own Start, and the phone holds each move's End after it. To change the pose the video rests at, edit the End of the move before that moment (setPose {at} in the hold, or {id, end:"to"})`
+        : 'setPose edited the base pose',
+    };
   }
   const tr = { ...list[index] };
   let note: string;
@@ -352,11 +360,39 @@ function setPoseOp(p: Project, o: EditOp) {
     tr.from = fullFrom(tr.from ?? resolveStarts(p3)[index], patch);
     note = `setPose edited Start of ${tr.id}${linked ? ' (now explicit, no longer linked)' : ''}`;
   } else {
+    const old = tr.to;
     tr.to = fullFrom(tr.to, patch);
-    note = `setPose edited End of ${tr.id}`;
+    note = `setPose edited End of ${tr.id}${laterSameEnd(list, index, old, patch)}`;
   }
   p3.transitions = list.map((x, i) => (i === index ? tidy(tr) : x));
   return { project: withP3(p, p3), note };
+}
+
+/**
+ * When a move's End changes, the later moves that still hold its old End (Auto 3D bakes the rest pose into the
+ * End of every shot that returns to rest, and bold's turns into an explicit Start): the phone goes back to the
+ * old pose after each of them. Names them, with the ops that give them the new pose, so one rest pose is one
+ * more apply. A pose a whole number of turns away counts as the same (a turn-to-back ends at old + 360°), and
+ * keeps its whole turns in the op.
+ */
+function laterSameEnd(list: readonly PoseTransition[], index: number, old: Pose, patch: Partial<Pose>): string {
+  const turnsAway = (a: Pose): number | null => {
+    const k = Math.round((a.turn - old.turn) / 360);
+    return POSE_KEYS.every((key) => Math.abs(a[key] - old[key] - (key === 'turn' ? 360 * k : 0)) < 1e-6) ? k : null;
+  };
+  const hits: { t: PoseTransition; i: number; end: 'from' | 'to'; k: number }[] = [];
+  list.forEach((t, i) => {
+    if (i <= index) return;
+    const kf = t.from ? turnsAway(t.from) : null;
+    if (kf !== null) hits.push({ t, i, end: 'from', k: kf });
+    const kt = turnsAway(t.to);
+    if (kt !== null) hits.push({ t, i, end: 'to', k: kt });
+  });
+  if (!hits.length) return '';
+  const ops = hits.map(({ i, end, k }) => JSON.stringify({ op: 'setPose', index: i, end, ...patch, ...(patch.turn !== undefined ? { turn: patch.turn + 360 * k } : {}) }));
+  const names = hits.map(({ t, i, end }) => `${end === 'to' ? 'End' : 'Start'} of ${t.id} (index ${i})`).join(', ');
+  const was = (Object.keys(patch) as (keyof Pose)[]).map((k) => `${k} ${+old[k].toFixed(2)}`).join(', ');
+  return `; ${names} still ${hits.length === 1 ? 'holds' : 'hold'} the old pose (${was}), so the phone goes back to it there. For one rest pose, apply: [${ops.join(',')}]`;
 }
 
 function addTransitionOp(p: Project, o: EditOp, newId: () => string) {

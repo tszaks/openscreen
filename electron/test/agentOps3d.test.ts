@@ -138,6 +138,18 @@ describe('setPose', () => {
     expect(p3of(p).transitions[1].to).toMatchObject({ tilt: 10, focus: 0 });
   });
 
+  it('a base edit says when it shows nowhere (the first move has its own Start), and when it shows', () => {
+    const explicitFirst = with3d(phoneProject(), { transitions: [{ ...move('a', 0, 1.6, {}), from: P({ turn: -200 }) }, move('b', 6, 7, { tilt: 10 })] });
+    const hidden = applyOps(explicitFirst, [{ op: 'setPose', target: 'base', turn: -8, tilt: 5 }], fresh());
+    expect(hidden.notes[0]).toMatch(/shows nowhere: the first move a has its own Start/);
+    expect(hidden.notes[0]).toContain('setPose {at}');
+    // And it really is invisible: every moment samples the same pose as before the edit.
+    for (const t of [0, 0.8, 1.6, 4, 6.5, 9]) expect(poseAt(p3of(hidden.project), t)).toEqual(poseAt(p3of(explicitFirst), t));
+    // A linked first move starts from the base, and no moves at all holds it: plain note.
+    expect(applyOps(twoMoves(), [{ op: 'setPose', target: 'base', size: 0.8 }], fresh()).notes[0]).toBe('setPose edited the base pose');
+    expect(applyOps(phoneProject(), [{ op: 'setPose', target: 'base', size: 0.8 }], fresh()).notes[0]).toBe('setPose edited the base pose');
+  });
+
   it('target:"base" edits the base pose even when moves exist; id + end picks a keyframe directly', () => {
     let p = run(twoMoves(), [{ op: 'setPose', target: 'base', size: 0.8 }]);
     expect(p3of(p).pose.size).toBe(0.8);

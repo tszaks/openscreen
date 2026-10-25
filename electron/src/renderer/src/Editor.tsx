@@ -122,7 +122,6 @@ import { DevicePanel } from './mobile/DevicePanel';
 import { LayoutSection } from './mobile/LayoutSection';
 import { AudioTrackLane } from './AudioTrackLane';
 import { phoneLayerOn, phoneTimeForSource } from '../../shared/phoneLayer';
-import { phone3dActive } from '../../shared/phone3d/placement';
 import { CAMERA_CANVASES, cameraDefaults, editorFeatures, isCameraProject, withCameraCanvas, type CameraCanvas } from '../../shared/justMe';
 import {
   MAX_OVERLAY_SIZE,
