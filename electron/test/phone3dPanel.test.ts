@@ -13,6 +13,8 @@ import {
   chipFor,
   clock,
   dragTimes,
+  durationBase,
+  durationDragOps,
   durationOps,
   easeCaption,
   easingOps,
@@ -309,6 +311,48 @@ describe('many moves at once', () => {
     if ('project' in r) for (const m of r.project.phone3d!.transitions.filter((x) => ids.includes(x.id))) expect(isFitted(m)).toBe(true);
     const d = durationOps(p.phone3d!.transitions, ids, 0.9);
     expect(d.every((x) => x.op === 'editTransition' && typeof x.end === 'number')).toBe(true);
+  });
+});
+
+describe('a mixed Duration drag', () => {
+  // Track sends `delta` = the total change since pointerdown. One render per
+  // pointermove: each step is applied to the project the step before made.
+  function drag(p: Project, ids: string[], deltas: number[], withBase: boolean): Project {
+    const base = durationBase(p.phone3d!.transitions, ids);
+    for (const d of deltas) {
+      const now = withBase ? base : durationBase(p.phone3d!.transitions, ids);
+      const r = applyOps3d(p, durationDragOps(now, d));
+      if (!('project' in r)) throw new Error('refused');
+      p = r.project;
+    }
+    return p;
+  }
+  const mk = () =>
+    phoneProject({
+      transitions: [
+        { id: 'a', start: 1, end: 1.6, to: { ...FRONT, turn: 20 }, easing: { kind: 'smooth' } },
+        { id: 'b', start: 5, end: 6.2, to: { ...FRONT, turn: -20 }, easing: { kind: 'smooth' } },
+      ],
+    });
+  const lens = (p: Project) => p.phone3d!.transitions.map((m) => +(m.end - m.start).toFixed(6));
+  const steps = Array.from({ length: 10 }, (_, i) => +(0.01 * (i + 1)).toFixed(2));
+
+  it('ends at the lengths from pointerdown plus the last delta, however many steps it took', () => {
+    const p = drag(mk(), ['a', 'b'], steps, true);
+    expect(lens(p)).toEqual([0.7, 1.3]);
+    expect(p.phone3d!.transitions.map((m) => m.start)).toEqual([1, 5]); // Start stays put
+    // Same answer in one step: the result does not depend on how renders batch.
+    expect(lens(drag(mk(), ['a', 'b'], [0.1], true))).toEqual([0.7, 1.3]);
+  });
+
+  it('would build up if the delta were added to the newest lengths (guards the base)', () => {
+    expect(lens(drag(mk(), ['a', 'b'], steps, false))).not.toEqual([0.7, 1.3]);
+  });
+
+  it('never makes a move shorter than 0.1 s, and dragging back restores it', () => {
+    const p = drag(mk(), ['a', 'b'], [-0.4, -0.8, 0], true);
+    expect(lens(p)).toEqual([0.6, 1.2]);
+    expect(lens(drag(mk(), ['a', 'b'], [-0.8], true))).toEqual([0.1, 0.4]);
   });
 });
 

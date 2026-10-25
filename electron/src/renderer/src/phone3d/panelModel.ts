@@ -427,6 +427,23 @@ export function durationOps(list: readonly PoseTransition[], ids: readonly strin
     .map((m) => (keepEnd ? { op: 'editTransition', id: m.id, start: Math.max(0, m.end - len) } : { op: 'editTransition', id: m.id, end: m.start + len }));
 }
 
+/** Each selected move's start and length, saved when a mixed Duration drag begins. */
+export type DurationBase = ReadonlyArray<{ id: string; start: number; len: number }>;
+
+export function durationBase(list: readonly PoseTransition[], ids: readonly string[]): DurationBase {
+  return list.filter((m) => ids.includes(m.id)).map((m) => ({ id: m.id, start: m.start, len: m.end - m.start }));
+}
+
+/**
+ * A drag on a mixed ("–") Duration field adds the same change to every move.
+ * `delta` is the total change since pointerdown, so it is added to the lengths
+ * saved then (absolute from pointerdown, like the lane), never to the lengths
+ * of the newest render, which already hold the earlier steps.
+ */
+export function durationDragOps(base: DurationBase, delta: number): EditOp[] {
+  return base.map((m) => ({ op: 'editTransition', id: m.id, end: m.start + Math.max(MIN_TRANSITION, m.len + delta) }));
+}
+
 // ---------------------------------------------------------------------------
 // The lane
 

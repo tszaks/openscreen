@@ -40,6 +40,9 @@ import {
   bezierFrom,
   chipFor,
   clock,
+  durationBase,
+  type DurationBase,
+  durationDragOps,
   durationOps,
   EASE_LABEL,
   EASE_MENU,
@@ -1110,6 +1113,7 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
   const mixedDur = !durs.every((d) => Math.abs(d - durs[0]) < 0.005);
   const popupBtn = useRef<HTMLButtonElement>(null);
   const base = useRef<ReturnType<typeof keyPoses> | null>(null);
+  const durBase = useRef<DurationBase | null>(null);
   const names = [...new Set(list.map((m) => moveName(moves, m.id)))];
   const all = samePart(moves, list[0].id);
   const sub =
@@ -1176,9 +1180,17 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
                 step={0.01}
                 mixed={mixedDur}
                 title="Typing sets every move's duration; Start stays put."
-                onBegin={hold}
-                onCommit={seal}
-                onChange={(v, info) => apply3d(mixedDur && !info.typed ? list.map((m) => ({ op: 'editTransition', id: m.id, end: m.start + Math.max(0.1, m.end - m.start + info.delta) })) : durationOps(moves, ids, v))}
+                onBegin={() => {
+                  hold();
+                  durBase.current = durationBase(moves, ids);
+                }}
+                onCommit={() => {
+                  seal();
+                  durBase.current = null;
+                }}
+                onChange={(v, info) =>
+                  apply3d(mixedDur && !info.typed ? durationDragOps(durBase.current ?? durationBase(moves, ids), info.delta) : durationOps(moves, ids, v))
+                }
               />
               <button
                 ref={popupBtn}
