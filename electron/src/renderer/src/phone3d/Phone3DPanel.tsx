@@ -254,15 +254,19 @@ function usePinned(anchor: React.RefObject<HTMLElement | null>, open: boolean, p
       const pop = popRef.current;
       if (!a || !pop) return;
       if (place === 'below') {
+        // Under the chevron that opened it, its arrow on the chevron, kept 16 px inside the window.
         const w = pop.offsetWidth;
-        const left = Math.min(window.innerWidth - w - 8, Math.max(8, a.right - w));
-        setPos({ left, top: a.bottom + 10, arrow: a.left + a.width / 2 - left - 6 });
+        const cx = a.left + a.width / 2;
+        const left = Math.max(8, Math.min(window.innerWidth - w - 16, cx - w + 62));
+        setPos({ left, top: a.bottom + 10, arrow: cx - left - 6 });
       } else {
         const insp = anchor.current?.closest('.inspector')?.getBoundingClientRect();
         const w = pop.offsetWidth;
         const h = pop.offsetHeight;
         const cy = a.top + a.height / 2;
-        const top = Math.max(60, Math.min(cy - 34, window.innerHeight - h - 8));
+        // Kept above the timeline, as the approved mockups place it.
+        const floor = document.querySelector('.ed-timeline')?.getBoundingClientRect().top ?? window.innerHeight;
+        const top = Math.max(60, Math.min(cy - 34, floor - h - 8));
         setPos({ left: (insp?.left ?? a.left) - w - 12, top, arrow: cy - top - 6 });
       }
     };
@@ -333,9 +337,10 @@ function HomeView(props: Phone3DPanelProps & { p3: Phone3D | undefined; begin: (
   const chip = chipFor(shown, playhead, { editing: props.editing, autoKey: props.autoKey, fps });
   const listed = warnings.filter((w) => w.code !== 'inactive');
   const autoRef = useRef<HTMLDivElement>(null);
+  const chevRef = useRef<HTMLButtonElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const [autoOpen, setAutoOpen] = useState(false);
-  const { popRef, pos } = usePinned(autoRef, autoOpen, 'below');
+  const { popRef, pos } = usePinned(chevRef, autoOpen, 'below');
   useDismiss(autoOpen, [popRef, autoRef], () => setAutoOpen(false));
 
   const settings = (patch: Record<string, unknown>) => apply3d({ op: 'phone3d', ...patch });
@@ -385,9 +390,9 @@ function HomeView(props: Phone3DPanelProps & { p3: Phone3D | undefined; begin: (
             </>
           )}
         </Button>
-        <Button className="split-toggle" aria-label="Auto 3D options" aria-expanded={autoOpen} onClick={() => setAutoOpen((o) => !o)}>
+        <button ref={chevRef} type="button" className="btn btn-secondary btn-md split-toggle" aria-label="Auto 3D options" aria-expanded={autoOpen} onClick={() => setAutoOpen((o) => !o)}>
           {I.chevD}
-        </Button>
+        </button>
       </div>
       <button
         ref={moreRef}
@@ -906,6 +911,7 @@ function MoveView(props: Phone3DPanelProps & { p3: Phone3D; id: string }) {
         <Track
           label="Duration"
           unit="s"
+          plain
           value={+dur.toFixed(2)}
           min={0.1}
           max={60}
@@ -1163,6 +1169,7 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
               <Track
                 label="Duration"
                 unit="s"
+                plain
                 value={+durs[0].toFixed(2)}
                 min={0.1}
                 max={60}

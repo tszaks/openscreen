@@ -140,6 +140,7 @@ export function ShotGallery({
         />
         <Track
           label="Length"
+          plain
           value={options.length ?? 0}
           unit="s"
           min={0}

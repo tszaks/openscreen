@@ -277,7 +277,8 @@
   color: var(--label-4);
   cursor: default;
 }
-.kf-nav .p3-autokey.on {
+.kf-nav .p3-autokey.on,
+.kf-nav .p3-autokey.on:hover:not(:disabled) {
   background: var(--accent-tint-strong);
   color: var(--accent-text);
 }
@@ -359,7 +360,7 @@
 .p3-track .scrub-label {
   color: var(--label-2);
 }
-.p3-track .scrub-unit.tight {
+.p3-track.tight .scrub-unit {
   margin-left: -2px;
 }
 .p3-fill,
@@ -732,6 +733,10 @@
   gap: 6px;
   margin-top: 2px;
 }
+.mt-row .p3-track .scrub {
+  gap: 4px;
+  padding: 0 8px;
+}
 .mt-curve {
   display: grid;
   place-items: center;
@@ -856,10 +861,9 @@
   background: var(--glass-strong);
   border-radius: 2px;
 }
+/* The curve popover: the Auto 3D popover's size, its arrow on the right (pointing at the timing row). */
 .p3-pop.tpop {
-  width: 340px;
-  padding: var(--s3);
-  gap: var(--s2);
+  width: 300px;
 }
 .p3-pop.tpop::before {
   top: var(--arrow-y, 40px);
@@ -1119,10 +1123,13 @@
   touch-action: none;
 }
 .lane-3d .lane-note {
-  position: absolute;
+  /* Sticky, so it stays in view however far the zoomed timeline is scrolled. */
+  position: sticky;
   left: 10px;
-  top: 50%;
-  transform: translateY(-50%);
+  display: inline-block;
+  height: 100%;
+  padding-left: 10px;
+  line-height: var(--lane-3d-h, 36px);
   font-size: var(--text-caption);
   color: var(--label-3);
   white-space: nowrap;
@@ -1211,6 +1218,9 @@
   height: 1px;
   background: var(--p3-key);
   pointer-events: none;
+}
+.dense-mark.sel {
+  background: var(--accent);
 }
 .dense-mark {
   position: absolute;

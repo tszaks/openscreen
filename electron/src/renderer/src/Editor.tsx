@@ -1139,7 +1139,7 @@ export function Editor({
     }
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState < 2) return;
+    if (!video || !canvas) return;
     previewing3d.current = true;
     const comp = new CanvasCompositor(preview3d.project, canvasSize, segments);
     const dur = Math.max(0.1, preview3d.end - preview3d.start);
@@ -1151,15 +1151,16 @@ export function Editor({
       comp.render(t, frameInputsAt(t, video.currentTime));
       ctx.drawImage(comp.canvas, 0, 0);
     };
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      draw(preview3d.start + dur * 0.4);
-      return;
-    }
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
     let raf = 0;
-    const t0 = performance.now();
+    let t0 = -1;
     const tick = (now: number) => {
-      const sec = ((now - t0) / 1000) % (dur + 0.6);
-      draw(preview3d.start + Math.min(dur, sec));
+      // A video still seeking (the playhead just moved) has no frame yet: wait for it.
+      if (video.readyState >= 2) {
+        if (t0 < 0) t0 = now;
+        draw(still ? preview3d.start + dur * 0.4 : preview3d.start + Math.min(dur, ((now - t0) / 1000) % (dur + 0.6)));
+        if (still) return;
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -4395,7 +4396,7 @@ export function Editor({
               playhead={playhead}
               tapTimes={outTaps.map((t) => t.t)}
               fps={fps3d}
-              dimmed={!!proj.phone3d?.enabled && !gate3d.active}
+              dimmed={!!proj.phone3d?.enabled && gate3d.reason === 'app-store'}
               onSelect={selectMoves}
               onBegin={() => historyRef.current.hold()}
               onRetime={(id, times) => apply3d({ op: 'editTransition', id, start: times.start, end: times.end })}

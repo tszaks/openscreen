@@ -465,8 +465,9 @@ export function frameWindow(moves: readonly PoseTransition[]): { start: number; 
   if (!moves.length) return null;
   const a = Math.min(...moves.map((m) => m.start));
   const b = Math.max(...moves.map((m) => m.end + springShortfall(m)));
-  const pad = Math.max(0.12, (b - a) * 0.12);
-  return { start: Math.max(0, a - pad), end: b + pad };
+  // A little more room before than after (the approved mockups: 0.24 s and 0.16 s for one short move).
+  const pad = Math.max(0.16, (b - a) * 0.12);
+  return { start: Math.max(0, a - pad * 1.5), end: b + pad };
 }
 
 export type KeyShape = 'full' | 'left' | 'right';
@@ -498,7 +499,7 @@ export interface LaneBlock {
 export interface LaneLayout {
   blocks: LaneBlock[];
   /** Moves too narrow to draw (zoomed out): a tick at their middle, lane pixels. */
-  ticks: number[];
+  ticks: { id: string; x: number }[];
   keys: LaneKey[];
 }
 
@@ -514,7 +515,7 @@ export function laneLayout(list: readonly PoseTransition[], o: { pxPerSec: numbe
   const X = (t: number) => t * o.pxPerSec;
   const vis = (a: number, b: number) => (o.x1 === undefined || X(a) <= o.x1 + 40) && (o.x0 === undefined || X(b) >= o.x0 - 40);
   const blocks: LaneBlock[] = [];
-  const ticks: number[] = [];
+  const ticks: LaneLayout['ticks'] = [];
   const keys: Omit<LaneKey, 'shape' | 'hit'>[] = [];
   const single = o.selected.length === 1;
   for (const g of shotGroups(list)) {
@@ -524,7 +525,7 @@ export function laneLayout(list: readonly PoseTransition[], o: { pxPerSec: numbe
       const x = X(m.start);
       const w = X(m.end) - x;
       if (w < TICK_MAX) {
-        ticks.push(x + w / 2);
+        ticks.push({ id: m.id, x: x + w / 2 });
         return;
       }
       const name = m.recipe ? RECIPE_LABEL[m.recipe] : EASE_LABEL[m.easing.kind];

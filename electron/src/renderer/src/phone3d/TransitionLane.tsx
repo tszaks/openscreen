@@ -232,8 +232,8 @@ export function TransitionLane(props: TransitionLaneProps) {
       }}
     >
       {!moves.length && <span className="lane-note">Option-click or press T to add a move</span>}
-      {layout.ticks.map((x, i) => (
-        <div key={`t${i}`} className="dense-mark" style={{ left: x }} />
+      {layout.ticks.map((t) => (
+        <div key={t.id} className={`dense-mark${selected.includes(t.id) ? ' sel' : ''}`} style={{ left: t.x }} />
       ))}
       {layout.blocks.map((b) => {
         const m = byId.get(b.id)!;

@@ -27,6 +27,8 @@ export interface TrackProps {
   mixed?: boolean;
   /** Shown instead of the value (e.g. "Auto"), in the placeholder colour. */
   placeholder?: string;
+  /** No fill (a length in seconds is not a share of anything). */
+  plain?: boolean;
   disabled?: boolean;
   title?: string;
   /** Every change while dragging, stepping or typing. `delta` is the change from where the gesture began. */
@@ -39,7 +41,7 @@ export interface TrackProps {
 
 const at = (q: number) => `calc(${(q * 100).toFixed(2)}% - ${(q * 2).toFixed(2)}px)`;
 
-export function Track({ label, value, unit, min, max, step = 1, soft, origin, digits, mixed, placeholder, disabled, title, onChange, onBegin, onCommit }: TrackProps) {
+export function Track({ label, value, unit, min, max, step = 1, soft, origin, digits, mixed, placeholder, plain, disabled, title, onChange, onBegin, onCommit }: TrackProps) {
   const [lo, hi] = soft ?? [min, max];
   const ref = origin ?? (lo < 0 && hi > 0 ? 0 : lo);
   const pos = (v: number) => (hi > lo ? (Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo) : 0);
@@ -51,7 +53,7 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
   const gesture = useRef<{ start: number } | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const dp = digits ?? (step >= 1 ? 0 : Math.min(3, Math.ceil(-Math.log10(step) - 1e-9)));
-  const showFill = !mixed && !placeholder;
+  const showFill = !mixed && !placeholder && !plain;
   return (
     <div
       ref={root}
