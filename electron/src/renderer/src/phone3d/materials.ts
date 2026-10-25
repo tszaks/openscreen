@@ -170,8 +170,9 @@ const srgb = (hex: string) => new Color().setStyle(hex);
  * Ceramic Shield panel reads a step lighter than the aluminium around it.
  */
 /** The lens elements under the cover, top to bottom: roughness, specular (× the 6.7% F0 of ior 1.7 glass) and the
- *  coating's cast. Saturated casts (violet, green, amber) so each element's reflection of a softbox reads as the
- *  coloured glint of coated optics, ring inside ring (round 2's pale casts read as flat dark discs). */
+ *  coating's cast. A near-black stack with faint, nearly neutral casts that reflects only the room's lights
+ *  (OPTICS_KNEE): look v2 round 1's saturated violet and green casts mirrored the whole room and drew violet blobs
+ *  and bars inside every lens. */
 export const LENS_ELEMENTS = [
   { roughness: 0.04, specular: 0.6, cast: '#c9c0ff' },
   { roughness: 0.1, specular: 0.45, cast: '#bfe8d4' },
@@ -284,7 +285,9 @@ function physical(params: ConstructorParameters<typeof MeshPhysicalMaterial>[0],
   return params?.metalness === 1 ? rectSpecularOnly(m) : m;
 }
 
-/** Anodised aluminium roughness (the 17 Pro unibody, the 16/17 bands). */
+/** Anodised aluminium roughness (the 17 Pro unibody, the 16/17 bands). Look v2 round 1's 0.16 read as polished
+ *  copper or chrome and swept hard black and white bands of the room across the plateau in 27° of turn (all three
+ *  judges); bead-blasted anodised aluminium gives soft, wide highlights in its own colour. */
 export const ALUMINIUM_ROUGHNESS = 0.3;
 
 function bandMaterial(hex: string, material: FrameMaterial, polished: boolean): MeshPhysicalMaterial {

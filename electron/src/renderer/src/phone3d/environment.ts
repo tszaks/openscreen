@@ -159,9 +159,12 @@ const softBox = (t: number) => {
 /** Signed angle a − b, wrapped into (−180, 180]. */
 const angleDiff = (a: number, b: number) => ((((a - b) % 360) + 540) % 360) - 180;
 
-/** How each preset takes the HDRI (owner decision 15): a gain (scene-linear) and a tint (sRGB). The studio
- *  panorama is the room every preset stands in; the presets differ by how bright and what colour it is, and by
- *  their softboxes (lighting.ts). */
+/** How each preset takes the HDRI (owner decision 15): a gain (scene-linear) and a tint (sRGB), and how strong its
+ *  softboxes are against it (`boxes`, × each box's radiance). The studio panorama is the room every preset stands
+ *  in; the presets differ by how bright and what colour it is, and by their softboxes (lighting.ts).
+ *  Studio (look v2 round 2): the boxes at full strength washed every back evenly and pushed Cosmic Orange past
+ *  the tone curve's knee (red at 95%: one flat salmon tone); at half, under a brighter room, the back keeps its
+ *  colour and shows the room's gradients. */
 export const HDRI_LOOK: Record<LightPreset, { gain: number; tint: string; boxes: number }> = {
   studio: { gain: 0.5, tint: '#f3f6ff', boxes: 0.5 },
   soft: { gain: 0.6, tint: '#ffffff', boxes: 1 },

@@ -17,7 +17,12 @@ import STUDIO_HDR from './assets/studio.hdr?inline';
 export const HDRI = {
   /** Poly Haven asset id (assets/SOURCE.md). */
   id: 'studio_small_09',
-  /** Panorama turn, degrees, so its main lights stand where the key does (picked by looking). */
+  /** Panorama turn, degrees, picked by looking (look v2 round 2; round 1 had 270). With a colour-coded debug
+   *  panorama, a back at turn 150-180 mirrors a window about 40° wide and 45° tall round the horizon, and the
+   *  turn-to-back's end pose mirrors the band above it. At 133 that end pose sees the first octabox's edge (a soft
+   *  gradient across the plateau and the panel) and the turns sweep the cyclorama's edge across the back; at 270
+   *  the end pose mirrored the even white cyclorama (one flat tone), at 153 the octabox washed Cosmic Orange to
+   *  salmon, at 113 the back went flat and dark. */
   yawDeg: 133,
 } as const;
 
