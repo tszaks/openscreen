@@ -327,8 +327,9 @@ export function Phone3DPanel(props: Phone3DPanelProps) {
   const p3: Phone3D | undefined = proj.phone3d;
   const moves = p3?.transitions ?? [];
   const sel = selected.filter((id) => moves.some((m) => m.id === id));
-  if (p3 && sel.length === 1) return <MoveView {...props} p3={p3} id={sel[0]} />;
-  if (p3 && sel.length > 1) return <MultiView {...props} p3={p3} ids={sel} />;
+  // Keyed by the selection, so a view's own state (an open Animate row) never carries over to other moves.
+  if (p3 && sel.length === 1) return <MoveView key={sel[0]} {...props} p3={p3} id={sel[0]} />;
+  if (p3 && sel.length > 1) return <MultiView key={sel.join(' ')} {...props} p3={p3} ids={sel} />;
   return <HomeView {...props} p3={p3} begin={hold} end={seal} playhead={playhead} apply3d={apply3d} />;
 }
 
@@ -1049,7 +1050,11 @@ function MoveView(props: Phone3DPanelProps & { p3: Phone3D; id: string }) {
                   soft={[-180, 180]}
                   origin={az}
                   title={`Light angle at this keyframe. The tick is the resting angle (Look › Lighting, ${minus(az)}°).`}
-                  onBegin={begin}
+                  onBegin={() => {
+                    // A drag that brings the End back to the Start's angle must not take the field away mid-drag.
+                    setLightShown(true);
+                    begin();
+                  }}
                   onCommit={seal}
                   onChange={(v) => setPose({ light: Math.max(-180, Math.min(180, v - az)) })}
                 />
@@ -1075,7 +1080,10 @@ function MoveView(props: Phone3DPanelProps & { p3: Phone3D; id: string }) {
                   origin={100}
                   disabled={!p3.dof.on}
                   title="100% is the Depth of field amount. 0% is sharp."
-                  onBegin={begin}
+                  onBegin={() => {
+                    setFocusShown(true);
+                    begin();
+                  }}
                   onCommit={seal}
                   onChange={(v) => setPose({ focus: v / 100 })}
                 />
@@ -1139,7 +1147,14 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
         ? names.join(' and ')
         : `${names.length} kinds of move`;
   const starts = resolveStarts(p3);
-  const lightAnimated = list.every((m) => m.to.light !== starts[moves.indexOf(m)].light);
+  const startOf = (m: (typeof moves)[number]) => starts[moves.indexOf(m)];
+  const lightAnimated = list.some((m) => m.to.light !== startOf(m).light);
+  const focusAnimated = list.some((m) => m.to.focus !== startOf(m).focus);
+  // Open rows stay open for this selection: switched on by hand, or while a
+  // drag runs (a drag that brings every End back to its Start's value must
+  // not take the field away under the pointer).
+  const [lightShown, setLightShown] = useState(false);
+  const [focusShown, setFocusShown] = useState(false);
   const az = p3.light.azimuth;
   const pick = (k: EasingName) => {
     const e = k === 'bezier' ? (() => {
@@ -1248,12 +1263,13 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
           <div className="p3-anim">
             <Switch
               label="Animate lighting"
-              checked={lightAnimated}
+              checked={lightAnimated || lightShown}
               onChange={(v) => {
-                if (!v) apply3d(list.map((m) => ({ op: 'setPose', id: m.id, end: 'to', light: starts[moves.indexOf(m)].light })));
+                setLightShown(v);
+                if (!v && lightAnimated) apply3d(list.map((m) => ({ op: 'setPose', id: m.id, end: 'to', light: startOf(m).light })));
               }}
             />
-            {lightAnimated && (
+            {(lightAnimated || lightShown) && (
               <div className="p3-tracks">
                 <Track
                   label="Angle"
@@ -1264,9 +1280,43 @@ function MultiView(props: Phone3DPanelProps & { p3: Phone3D; ids: string[] }) {
                   soft={[-180, 180]}
                   origin={az}
                   mixed={mixed.has('light')}
-                  onBegin={beginPose}
+                  title={mixed.has('light') ? 'These moves differ. Drag to change each by the same amount; type to set all.' : undefined}
+                  onBegin={() => {
+                    setLightShown(true);
+                    beginPose();
+                  }}
                   onCommit={endPose}
                   onChange={(v, info) => poseStep('light', v - az, info)}
+                />
+              </div>
+            )}
+            <Switch
+              label="Animate focus"
+              hint={p3.dof.on ? undefined : 'Depth of field is off'}
+              checked={focusAnimated || focusShown}
+              onChange={(v) => {
+                setFocusShown(v);
+                if (!v && focusAnimated) apply3d(list.map((m) => ({ op: 'setPose', id: m.id, end: 'to', focus: startOf(m).focus })));
+              }}
+            />
+            {(focusAnimated || focusShown) && (
+              <div className="p3-tracks">
+                <Track
+                  label="Focus"
+                  unit="%"
+                  value={Math.round(poses[0].focus * 100)}
+                  min={0}
+                  max={200}
+                  origin={100}
+                  disabled={!p3.dof.on}
+                  mixed={mixed.has('focus')}
+                  title={mixed.has('focus') ? 'These moves differ. Drag to change each by the same amount; type to set all.' : '100% is the Depth of field amount. 0% is sharp.'}
+                  onBegin={() => {
+                    setFocusShown(true);
+                    beginPose();
+                  }}
+                  onCommit={endPose}
+                  onChange={(v, info) => poseStep('focus', v / 100, { delta: info.delta / 100, typed: info.typed })}
                 />
               </div>
             )}

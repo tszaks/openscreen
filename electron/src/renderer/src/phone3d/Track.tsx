@@ -7,6 +7,7 @@
 
 import React, { useRef } from 'react';
 import { ScrubField } from '../components/ScrubField';
+import { parseScrubInput } from '../../../shared/scrub';
 import { minus } from './panelModel';
 
 export interface TrackProps {
@@ -31,7 +32,13 @@ export interface TrackProps {
   plain?: boolean;
   disabled?: boolean;
   title?: string;
-  /** Every change while dragging, stepping or typing. `delta` is the change from where the gesture began. */
+  /**
+   * Every change while dragging, stepping or typing. `delta` is the change
+   * from where the gesture began. `typed` is true only for a number typed into
+   * the field (Enter, blur, or an arrow key on a typed number): that sets
+   * every move. A drag, an arrow key on "–" and Escape (which puts the value
+   * back) are not typed, so a mixed field changes each move by `delta`.
+   */
   onChange: (value: number, info: { delta: number; typed: boolean }) => void;
   /** The first change of a gesture (the editor holds one undo step). */
   onBegin?: () => void;
@@ -52,8 +59,19 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
   const tight = unit === '°' || unit === '%';
   const gesture = useRef<{ start: number } | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  // The key being handled right now and the field's text when it went down
+  // (read by onChange, which the field calls inside that key's handler).
+  const keyNow = useRef<{ key: string; draft: string | null } | null>(null);
   const dp = digits ?? (step >= 1 ? 0 : Math.min(3, Math.ceil(-Math.log10(step) - 1e-9)));
   const showFill = !mixed && !placeholder && !plain;
+  // A "–" field shows the first move's value inside the field, but a drag or
+  // an arrow key adds to every move from where each one was. So the field
+  // itself must not stop at the first move's range end: it gets one range
+  // width of room on each side, each move is kept in range on its own
+  // (panelModel), and a typed number is kept in range here.
+  const span = max - min;
+  const fieldMin = mixed ? min - span : min;
+  const fieldMax = mixed ? max + span : max;
   return (
     <div
       ref={root}
@@ -62,6 +80,16 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
       // ScrubField commits only a gesture that changed the value; a new press always starts afresh.
       onPointerDownCapture={() => {
         gesture.current = null;
+      }}
+      onKeyDownCapture={(e) => {
+        const input = root.current?.querySelector<HTMLInputElement>('.scrub-input');
+        const k = { key: e.key, draft: input ? input.value : null };
+        keyNow.current = k;
+        // Not a microtask: React runs capture and bubble handlers from two
+        // native listeners, and microtasks run between them.
+        setTimeout(() => {
+          if (keyNow.current === k) keyNow.current = null;
+        }, 0);
       }}
     >
       {showFill && (
@@ -74,19 +102,19 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
       <ScrubField
         label={label}
         value={value}
-        min={min}
-        max={max}
+        min={fieldMin}
+        max={fieldMax}
         step={step}
         unit={mixed || placeholder ? undefined : unit}
         disabled={disabled}
         format={(v) => (mixed ? '–' : placeholder ?? minus(v.toFixed(dp)))}
-        onChange={(v) => {
+        onChange={(raw) => {
           if (!gesture.current) {
             gesture.current = { start: value };
             onBegin?.();
           }
-          // A typed value arrives while the field still shows its text input.
-          const typed = !!root.current?.querySelector('.scrub-input');
+          const typed = changeIsTyped(!!root.current?.querySelector('.scrub-input'), keyNow.current);
+          const v = typed ? Math.min(max, Math.max(min, raw)) : raw;
           onChange(v, { delta: v - gesture.current.start, typed });
         }}
         onCommit={() => {
@@ -96,6 +124,20 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
       />
     </div>
   );
+}
+
+/**
+ * Whether a change of the field is a typed number (sets every move) or a
+ * relative change (a drag, a step on "–", Escape putting the value back).
+ * `editing`: the text input is open. `key`: the key being handled, with the
+ * input's text when it went down (null: no key, i.e. a blur).
+ */
+export function changeIsTyped(editing: boolean, key: { key: string; draft: string | null } | null): boolean {
+  if (!editing) return false;
+  if (!key) return true; // blur: the typed text is accepted
+  if (key.key === 'Escape') return false;
+  if (key.key === 'ArrowUp' || key.key === 'ArrowDown') return key.draft !== null && parseScrubInput(key.draft) !== null;
+  return true;
 }
 
 /** A read-only value in the same shape (a fitted spring's "Settles 0.80 s"). */

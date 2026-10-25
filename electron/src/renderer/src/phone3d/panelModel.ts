@@ -484,9 +484,12 @@ export function durationBase(list: readonly PoseTransition[], ids: readonly stri
  * saved then (absolute from pointerdown, like the lane), never to the lengths
  * of the newest render, which already hold the earlier steps.
  */
-export function durationDragOps(base: DurationBase, delta: number): EditOp[] {
-  return base.map((m) => ({ op: 'editTransition', id: m.id, end: m.start + Math.max(MIN_TRANSITION, m.len + delta) }));
+export function durationDragOps(base: DurationBase, delta: number, maxLen = MAX_DURATION_FIELD): EditOp[] {
+  return base.map((m) => ({ op: 'editTransition', id: m.id, end: m.start + Math.min(maxLen, Math.max(MIN_TRANSITION, m.len + delta)) }));
 }
+
+/** The Duration field's top end (s): each move is kept inside it on its own. */
+export const MAX_DURATION_FIELD = 60;
 
 /** True when the selected moves' lengths differ (the Duration field shows "–"). */
 export function durationsMixed(list: readonly PoseTransition[], ids: readonly string[]): boolean {
