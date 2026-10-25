@@ -105,11 +105,15 @@ Run these in order. Each step is done when its check holds.
    degrees off front), `subtle` for tutorials. Read each `shots[].reason`
    and the `note`. **Restraint** is yours to keep: `direct` does not cap
    big moves (on a long take, `bold` plans dozens). Aim for at most one big
-   move (`spin-in`, `turn-to-back`, `hero-layback`) per 30 s, or per 20 s
-   for a bold promo, never two within 6 s, at most 3 `turn-to-back`s; the
-   phone holds a calm pose the rest of the time. No warning checks this:
-   count the big moves in `info.transitions` and remove extras with
-   `removeTransition`. A take over 90 s is too long for this: do step 3
+   move (`spin-in`, `turn-to-back`, `hero-layback`) per 30 s (per 20 s with
+   `--style bold`), never two within 6 s, at most 3 `turn-to-back`s; the
+   phone holds a calm pose the rest of the time. No warning checks this, so
+   count **shots, not rows**: one shot writes 2 to 4 rows in
+   `info.transitions`, all with its `recipe`, each starting at the `end` of
+   the row before; a new shot begins where the `recipe` changes or a gap
+   opens (`direct`'s `shots` also lists one entry per planned shot). To
+   remove a shot, remove every one of its rows by `id` in one `apply`
+   (one row alone leaves half a shot). A take over 90 s is too long for this: do step 3
    again (best 15–45 s) rather than trimming shots.
    **Placing a shot yourself** (only when the video is short and has no
    shot after the intro): pick a gap between taps of at least the shot's
@@ -165,8 +169,8 @@ fixes you made, the final warnings (0), and the output path.
 
 - Only the best moments, inside the target length (social: 15–30 s).
 - The screen faces front at every tap (facing near 1), readable.
-- Restraint: at most one big move per 30 s (bold: per 20 s), never two
-  within 6 s; the phone holds a calm pose (float is fine) the rest of the time.
+- Restraint: at most one big move per 30 s (per 20 s with `--style bold`),
+  counted by shot, never two within 6 s; the phone holds a calm pose (float is fine) the rest of the time.
 - One idea per move; nothing moves while something happens on screen.
 - Moves sit in waits or at scene changes.
 - The intro is under 1.8 s; at most about a third of the runtime moves.

@@ -508,10 +508,25 @@ take with many waits, bold plans a lot of motion (a 637 s take gets dozens
 of `turn-to-back`s). World class means restraint: most of the video is the
 phone holding a calm pose. Cut a long take to its best 15–45 s first (`trim`,
 `cut`), then run `direct`. When you add or keep shots, aim for at most one
-big move (`spin-in`, `turn-to-back`, `hero-layback`) per 30 s, or per 20 s
-for a bold promo, never two within 6 s, and at most 3 `turn-to-back`s. No
-warning checks these limits: count the big moves in `info.transitions`
-(`recipe`) and remove extras with `removeTransition`.
+big move (`spin-in`, `turn-to-back`, `hero-layback`) per 30 s (per 20 s with
+`--style bold`), never two within 6 s, and at most 3 `turn-to-back`s. No
+warning checks these limits, so count them yourself, **by shot, not by
+row**:
+
+- One shot writes 2 to 4 rows in `info.transitions` (spin-in 2, hero-layback
+  4 or one-way 2, turn-to-back 3 or one-way 2, settle 2), and every row
+  carries the shot's `recipe`. The rows of one shot follow each other with
+  no gap: each row's `start` is the `end` of the row before it. So a new
+  shot begins at a row whose `recipe` differs from the row before, or whose
+  `start` is later than the row before's `end`. Example: rows `spin-in`
+  0–1.05, `spin-in` 1.05–1.4, `hero-layback` 21.4–21.97, 21.97–22.78,
+  22.78–23.5, 23.5–23.8 are 2 shots (one spin-in, one layback), not 6.
+- `direct`'s `shots` lists one entry per shot it planned (not the ones you
+  add by hand).
+- To remove a shot, remove **all** of its rows in one `apply`, by `id`
+  (`[{"op":"removeTransition","id":"…"}, …]`; ids do not shift, indexes
+  do). Removing one row leaves half a shot, for example a spin-in with no
+  settle.
 
 ### Warnings
 
@@ -576,12 +591,11 @@ osa frames "$B" --moves --sheet --draft   # LOOK at sheet.png
 ```
 
 `direct` planned no shot after the intro: once each tap's busy time is
-taken off, no free window is long enough for a `hero-layback` (2.4 s). A
-layback still fits in the last gap between taps (20.66–23.59 output
-seconds) if it is placed by hand, clear of the taps (the dry run below
-checks that). Keep it to one: the spin-in is a big move, and for a promo one
-more may come after 20 s (see "Auto 3D": restraint). The quiet middle gets
-`float` (a slow drift, not a move) instead of a second layback.
+taken off, no free window is long enough for a `hero-layback` (2.4 s). Do
+not add one by hand: restraint (see "Auto 3D") is at most one big move
+per 30 s (per 20 s with `--style bold`), this is a 26 s video made with
+`--style hero`, and the spin-in is its one big move. The quiet middle gets
+`float` (a slow drift, not a move) instead.
 Fix what the sheet shows in one `fixes.json`, saved in the folder you run
 the commands from (times are output seconds, after the cuts):
 
@@ -591,7 +605,6 @@ the commands from (times are output seconds, after the cuts):
   {"op": "editTransition", "index": 1, "start": 1.05, "end": 1.4},
   {"op": "setPose", "index": 1, "end": "to", "turn": -8, "tilt": 5, "size": 0.92},
   {"op": "shot", "recipe": "float"},
-  {"op": "shot", "recipe": "hero-layback", "at": 21.4, "direction": -1},
   {"op": "phone3d", "light": {"preset": "contrast"}, "dof": {"background": 0.3}}
 ]
 ```
@@ -602,8 +615,9 @@ and smaller. After
 `direct`, the rest pose is the End of the intro's last move (index 1: each
 intro recipe writes the move and a settle) **and of every planned shot
 that returns to rest**, so edit those Ends. Here `direct` planned only the
-intro, so one edit is enough, and the layback after it starts from the new
-rest and returns to it (ops run in order). When `direct` did plan later shots,
+intro, so one edit is enough (a shot you add by hand after it starts from
+the new rest and returns to it: ops run in order). When `direct` did plan
+later shots,
 the `setPose` note names each one that still holds the old pose and gives the
 ops to apply (see "Which keyframe a pose edit changes"). A
 `setPose {target:"base"}` here would show nowhere.
@@ -615,7 +629,7 @@ says so (`tap-back`, `tap-angle`, `overlap`) and changes nothing:
 ```sh
 osa() { node /abs/path/electron/scripts/openscreen-agent.mjs "$@"; }
 B=/abs/path/rec-1792855925414.openscreen
-osa apply "$B" fixes.json --dry-run       # warnings: [] (on this take); else move the shot into a gap and retry
+osa apply "$B" fixes.json --dry-run       # warnings: [] (on this take); else fix the op it names and retry
 osa apply "$B" fixes.json                 # read `changes` and `warnings` in the output
 osa validate "$B"                         # problems: [] — warnings: [] (or apply each `fix`)
 osa frames "$B" --moves --sheet           # full quality: LOOK again
@@ -623,8 +637,9 @@ osa export "$B" --out /abs/promo.mp4      # probe: duration, size, fps
 osa review /abs/promo.mp4                 # watch what viewers will see; iterate
 ```
 
-A world-class result: the screen faces front at every tap; restraint (one
-big move per 30 s, or 20 s for a bold promo; a calm pose between); one idea per move; moves only in waits or at scene changes;
+A world-class result: the screen faces front at every tap; restraint (at
+most one big move per 30 s (per 20 s with `--style bold`), counted by shot;
+a calm pose between); one idea per move; moves only in waits or at scene changes;
 an intro under 1.8 s; at most a third of the runtime moving; springs for
 settles and cinematic for big turns; motion blur on; 0 warnings; 4K only
 for the hero file.
