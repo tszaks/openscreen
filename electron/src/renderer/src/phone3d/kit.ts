@@ -1,7 +1,7 @@
 // The phone kit the engine renders (SPEC §3.1-§3.4, D13): the procedural
 // phone from geometry.ts with materials.ts' finish, lit by environment.ts'
 // one studio rig: the hero softboxes (RectAreaLights round the phone) and the
-// set (overhead gradient, front fill, bounce card and flags) in one PMREM.
+// studio HDRI room (owner decision 15) in one PMREM.
 // The engine owns what this makes (its LRUs dispose it), so nothing here
 // goes through the module caches the turntable tool uses.
 import * as THREE from 'three';

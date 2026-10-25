@@ -1,22 +1,17 @@
-// Procedural studio lighting (D13, spec §3.1): ONE light rig, in two parts
-// that never light the same thing twice.
+// Studio lighting (spec §3.1; owner decision 15): ONE light rig, in two parts.
 //
 // - The hero softboxes (lighting.ts boxes: the key, the rim strips, the
-//   overhead strip, the lens catchlight) are RectAreaLights at a finite
-//   distance round the phone (LIGHT_DISTANCE body long sides, or the box's
-//   own nearer distance). A light at a
-//   finite distance is what models a FLAT face: each point of the 17 Pro's
-//   back sees the box from its own angle, so a broad soft highlight sweeps
-//   across the back and the band as the phone turns. Round 2 painted the
-//   boxes into the infinitely far environment instead, and a flat metal face
-//   mirrors one direction of an infinite environment at every point: the
-//   backs and the turn-90 side read as one flat tone (look judges round 2).
-// - The set (the overhead gradient, the front fill, the white bounce card
-//   below, the dark side flags) is the PMREM environment (512): the room the
-//   phone stands in. Since look round 4 it is dark round the camera axis
-//   (metal reads by bright and dark zones; round 3's bright even set made
-//   every coloured finish one flat tone), with enough overhead gradient and
-//   floor card that no face goes black between the boxes.
+//   lens catchlight) are RectAreaLights at a finite distance round the phone
+//   (LIGHT_DISTANCE body long sides, or the box's own nearer distance): they
+//   draw the crisp highlights that sweep over the back and the band.
+// - The room is ONE CC0 studio HDRI (hdri.ts, assets/SOURCE.md) through PMREM:
+//   a dome that samples the panorama (turned by HDRI.yawDeg), × the preset's
+//   gain and tint (HDRI_LOOK), under the preset's side flags and a little of
+//   the backdrop's colour on the floor, plus the boxes painted into the set
+//   (inEnv). The materials read it as a room of finite size (passes.ts
+//   roomEnv), so flat faces show its structure. Look rounds 1-4 painted a
+//   procedural set instead; judges read the metal as painted plastic and the
+//   glass as a grey veil (decision 15).
 //
 // The light channel turns both together: the rig's group and
 // scene.environmentRotation (placeStudio, aimStudio), by the key azimuth
@@ -48,12 +43,13 @@ import { DEFAULT_KEY_AZIMUTH, FLAGS, LIGHT_DISTANCE, LIGHT_PRESETS, type SoftBox
 import type { LightPreset } from '../../../shared/phone3d/model';
 import { HDRI, hdriTexture } from './hdri';
 
-/** How much the bounce card takes on the background's mean colour (the rest is white). */
+/** How much the floor takes on the background's mean colour (a bounce off the coloured backdrop). */
 const FLOOR_TINT = 0.06;
 /** The floor card blends in over this many degrees below the horizon. */
 const FLOOR_BLEND_DEG = 15;
 const DOME_RADIUS = 10;
-/** Dome tessellation: 0.7° per segment, so the painted strips (half-width 4-5°) keep their soft edges. */
+/** Dome tessellation: 0.7° per segment, so the painted strips (half-width 4-5°) keep their soft edges (the panorama
+ *  itself is read per pixel). */
 const DOME_SEG = { w: 512, h: 256 };
 export const PMREM_SIZE = 512;
 

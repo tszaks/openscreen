@@ -183,13 +183,14 @@ export const LENS_COVER_SPECULAR = 1;
  * grey-white halo). The glare is added on top of the screen after its
  * texture lookup (mrtOutput 'glare'), so the screen pixels themselves stay
  * exact.
- * The glass mirrors the softboxes only (envMapIntensity 0): the set round the
- * phone is the room's fill, and a fill reflected across the whole screen is a
- * grey veil, not a sheen (round 2 kept it under 25% by making the glass weak,
- * and the judges saw no reflection at any angle). A softbox draws a
- * soft-edged reflection that slides across the front as the phone turns, its
- * edges crossing the screen. On white UI the sheen is lost in the white, as on
- * a real phone; on dark UI and the border it shows.
+ * The glass mirrors the studio ROOM (the HDRI, passes.ts roomEnv) through a
+ * knee (FRONT_GLASS_KNEE: the room's dim walls fade, its lights stay), never
+ * the softboxes (noRectLights): look round 4's 60°-wide key softbox mirrored at
+ * 4% was a uniform grey veil over the screen and the island at every angle
+ * past the flag (owner decision 15). Polished (FRONT_GLASS_ROUGHNESS 0.04),
+ * Schlick Fresnel: 4% straight on, rising toward grazing. On white UI the
+ * sheen is lost in the white, as on a real phone; on dark UI and the border
+ * the studio's lights show as shapes that slide as the phone turns.
  * Facing the camera the glass mirrors the studio's black flag round the lens
  * (FRONT_GLASS_FLAG), so the screen at FRONT is exact for every preset and key
  * azimuth. Look round 4 relied on placing no box near the camera axis, and
