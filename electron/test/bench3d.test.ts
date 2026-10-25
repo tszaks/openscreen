@@ -77,13 +77,16 @@ describe('bench3d: checks', () => {
     expect(byName(ctx, 'e1080still: WebGL contexts').pass).toBe(false);
   });
 
-  it('4K moving: p95 over all frames against 200 ms, and adaptive-N frames (more samples than the base) against 400 ms', () => {
-    const ok = checksFrom({ e4kmoving: run([...Array(19).fill(150), 380], 12) });
+  it('4K moving: p95 over all frames against its budget, and adaptive-N frames (more samples than the base) against theirs (owner decision 16: 800 / 1500 ms)', () => {
+    expect([BUDGETS.export4kMovingP95Ms, BUDGETS.export4kAdaptiveMaxMs]).toEqual([800, 1500]);
+    const ok = checksFrom({ e4kmoving: run([...Array(19).fill(BUDGETS.export4kMovingP95Ms - 50), BUDGETS.export4kAdaptiveMaxMs - 20], 12) });
     expect(byName(ok, 'export 4K moving (all frames) 3D pass p95').pass).toBe(true);
-    const slow = run([...Array(19).fill(150), 450], 12);
+    const over = checksFrom({ e4kmoving: run(Array(20).fill(BUDGETS.export4kMovingP95Ms + 1), 12) });
+    expect(byName(over, 'export 4K moving (all frames) 3D pass p95').pass).toBe(false);
+    const slow = run([...Array(19).fill(150), BUDGETS.export4kAdaptiveMaxMs + 50], 12);
     slow.frames3d[19].samples = 40;
     const cs = checksFrom({ e4kmoving: slow });
-    expect(byName(cs, 'export 4K moving, adaptive-N frames max')).toMatchObject({ value: 450, pass: false });
+    expect(byName(cs, 'export 4K moving, adaptive-N frames max')).toMatchObject({ value: BUDGETS.export4kAdaptiveMaxMs + 50, pass: false });
   });
 
   it('the flat check needs the detector control to have seen the chunk on a 3D export', () => {
@@ -97,14 +100,17 @@ describe('bench3d: checks', () => {
 
   it('GPU memory: 3D peak minus flat peak, median of runs, in MiB', () => {
     const MiB = 1024 * 1024;
-    const cs = checksFrom({ memory: { flat: [500 * MiB, 520 * MiB, 510 * MiB], defaults: [900 * MiB, 905 * MiB, 2000 * MiB], ss2: [1100 * MiB] } });
+    expect([BUDGETS.gpu4kMiB, BUDGETS.gpu4kSs2MiB]).toEqual([400, 700]); // owner decision 16
+    const cs = checksFrom({ memory: { flat: [500 * MiB, 520 * MiB, 510 * MiB], defaults: [900 * MiB, 905 * MiB, 2000 * MiB], ss2: [1300 * MiB] } });
     expect(byName(cs, 'GPU memory, 4K defaults')).toMatchObject({ value: 395, pass: true });
-    expect(byName(cs, 'GPU memory, 4K supersample 2')).toMatchObject({ value: 590, pass: false });
+    expect(byName(cs, 'GPU memory, 4K supersample 2')).toMatchObject({ value: 790, pass: false });
+    expect(byName(checksFrom({ memory: { flat: [510 * MiB], defaults: [900 * MiB], ss2: [1200 * MiB] } }), 'GPU memory, 4K supersample 2')).toMatchObject({ value: 690, pass: true });
     expect(byName(checksFrom({ memory: { flat: [], defaults: [1], ss2: [] } }), 'GPU memory, 4K defaults').pass).toBeNull();
   });
 
   it('preview: fps is "not measured" when the window itself runs under 55 fps; the pass budget uses live frames', () => {
-    const capped = checksFrom({ preview: { dof: { fps: 30, idleFps: 30, pass: { p95: 6 } }, plain: { fps: 60, idleFps: 60, pass: { p95: 5 } } } });
+    expect(BUDGETS.previewPassMs).toBe(8); // owner decision 16
+    const capped = checksFrom({ preview: { dof: { fps: 30, idleFps: 30, pass: { p95: 6 } }, plain: { fps: 60, idleFps: 60, pass: { p95: 9 } } } });
     expect(byName(capped, 'preview 1080×1920 frame rate (DoF on)')).toMatchObject({ value: null, pass: null });
     expect(byName(capped, 'preview 1080×1920 frame rate (DoF on)').note).toMatch(/30 fps/);
     expect(byName(capped, 'preview 1080×1920 frame rate (DoF off)').pass).toBe(true);
