@@ -643,22 +643,24 @@
   margin: 0 0 0 -6px;
 }
 /* The Keyframe block stays pinned while Pose scrolls under it (AwesomePost f13). */
-.inspector-body .section.p3-sticky {
-  position: sticky;
-  top: 0;
-  z-index: 6;
+/* The Keyframe block sits above the scrolling body (not over it), so rows never
+   show through it: a translucent sticky block let them read through wherever
+   its backdrop blur did not render (the vibrant window). */
+.section.p3-sticky {
+  flex: none;
+  /* The same scrollbar gutter as the body under it, so both share one right edge. */
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
   padding-top: 10px;
   padding-bottom: 12px;
-  /* The inspector's own tint, frosted, so rows scrolling under it blur away. */
-  background: var(--sidebar-tint);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  backdrop-filter: blur(24px) saturate(1.6);
   box-shadow: 0 1px 0 var(--separator);
+  position: relative;
+  z-index: 1;
 }
 .p3-sticky .section-body {
   gap: 6px;
 }
-.p3-sticky + .section {
+.p3-movebody > .section:first-child {
   padding-top: 10px;
 }
 .kf-toggle {
