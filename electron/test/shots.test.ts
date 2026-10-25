@@ -97,10 +97,23 @@ describe('shot timing (look round 2: no whips)', () => {
     }
   });
 
-  it('hero-layback holds its pose at least 0.8 s and returns no faster than it went out', () => {
+  it('hero-layback holds at least 0.8 s without ever freezing (a slow drift, joined at matching speed), and returns no faster than it went out', () => {
     const list = expandShot('hero-layback', { start: 0 }, FRONT, ids()).transitions;
-    const [out, back] = list;
-    expect(back.start - out.end).toBeGreaterThanOrEqual(0.8 - 1e-9);
+    const [out, drift, back] = list;
+    expect(drift.end - drift.start).toBeGreaterThanOrEqual(0.8 - 1e-9);
+    const p3 = { pose: FRONT, transitions: list };
+    const h = 1 / 480;
+    const speed = (t: number) => rotationAngle(poseRotation(poseAt(p3, t - h)), poseRotation(poseAt(p3, t + h))) / (2 * h);
+    // Round 2 held the pose dead still for 0.8 s. Now every moment of the hold moves, slowly (2-6°/s).
+    for (let t = drift.start; t <= drift.end; t += 0.02) {
+      expect(speed(t), `t ${t.toFixed(2)}`).toBeGreaterThan(1.5);
+      expect(speed(t), `t ${t.toFixed(2)}`).toBeLessThan(8);
+    }
+    // No kick at either join: the speed just before and just after match.
+    for (const at of [drift.start, drift.end]) expect(Math.abs(speed(at - 0.002) - speed(at + 0.002))).toBeLessThan(1);
+    // About 2.5° more turn and under 1% of size through the hold.
+    expect(drift.to.turn - out.to.turn).toBeCloseTo(-2.5, 1);
+    expect(Math.abs(drift.to.size - out.to.size)).toBeLessThan(0.01);
     const vOut = peakIn(list, FRONT, out.start, out.end);
     const vBack = peakIn(list, FRONT, back.start, list[list.length - 1].end);
     expect(vBack).toBeLessThanOrEqual(vOut * 1.02);
@@ -117,23 +130,35 @@ describe('shot timing (look round 2: no whips)', () => {
     // The settle takes about 0.4 s.
     expect(spin[1].end - spin[1].start).toBeCloseTo(0.4, 9);
     const hero = expandShot('hero-layback', { start: 0 }, FRONT, ids()).transitions;
-    expect(hero[1].to.turn).toBeCloseTo(24 * SHOT_OVERSHOOT, 9);
-    expect(hero[2].to).toEqual({ ...FRONT });
+    expect(hero[2].to.turn).toBeCloseTo(24 * SHOT_OVERSHOOT, 9);
+    expect(hero[3].to).toEqual({ ...FRONT });
   });
 
-  it('turn-to-back never stops on the bare back: it passes it at half speed, and "stay" comes to rest there', () => {
+  it('turn-to-back lets the back be seen: about 0.7 s drifting slowly across a three-quarter back view, no hitch, no stop; "stay" comes to rest there', () => {
     const list = expandShot('turn-to-back', { start: 0 }, FRONT, ids()).transitions;
-    expect(list[0].end).toBe(list[1].start);
+    const [out, drift, on] = list;
+    expect(out.end).toBe(drift.start);
+    expect(drift.end).toBe(on.start);
     const p3 = { pose: FRONT, transitions: list };
-    const h = 1 / 240;
-    const at = list[0].end;
-    const vBack = rotationAngle(poseRotation(poseAt(p3, at - h)), poseRotation(poseAt(p3, at + h))) / (2 * h);
-    const peak = peakIn(list, FRONT, 0, list[1].end);
-    expect(vBack).toBeGreaterThan(0.25 * peak);
-    expect(vBack).toBeLessThan(0.45 * peak);
+    const h = 1 / 480;
+    const speed = (t: number) => rotationAngle(poseRotation(poseAt(p3, t - h)), poseRotation(poseAt(p3, t + h))) / (2 * h);
+    // The back faces the viewer (turn 165..179) for the whole drift, moving at about 20°/s, never stopped.
+    expect(drift.end - drift.start).toBeCloseTo(0.7, 9);
+    for (let t = drift.start; t <= drift.end; t += 0.02) {
+      expect(poseAt(p3, t).turn).toBeGreaterThanOrEqual(165 - 1e-9);
+      expect(poseAt(p3, t).turn).toBeLessThanOrEqual(179 + 1e-9);
+      expect(speed(t)).toBeGreaterThan(15);
+      expect(speed(t)).toBeLessThan(25);
+    }
+    // One speed curve: it slows into the drift and picks up out of it with no jump (round 2: two eases met at
+    // 25°/0.2 s on the back and read as a hitch).
+    for (const at of [drift.start, drift.end]) expect(Math.abs(speed(at - 0.005) - speed(at + 0.005))).toBeLessThan(2);
+    // Slower than round 2's 270°/s peak, and the whole turn takes 3 s or more.
+    expect(peakIn(list, FRONT, 0, on.end)).toBeLessThan(230);
+    expect(on.end - out.start).toBeGreaterThanOrEqual(3);
     const stay = expandShot('turn-to-back', { start: 0, ret: 'stay' }, FRONT, ids()).transitions;
     const ps = { pose: FRONT, transitions: stay };
-    const end = stay[0].end;
+    const end = stay[stay.length - 1].end;
     expect(rotationAngle(poseRotation(poseAt(ps, end - 2 * h)), poseRotation(poseAt(ps, end))) / (2 * h)).toBeLessThan(2);
   });
 });
@@ -155,31 +180,30 @@ describe('expandShot', () => {
 
   it('turn-to-back is a round trip that ends at +360 by default; return "stay" ends on the back', () => {
     const rt = expandShot('turn-to-back', { start: 2 }, FRONT, ids()).transitions;
-    expect(rt).toHaveLength(2);
-    expect(rt.map((t) => [t.start, t.end])).toEqual([
-      [2, 2 + 0.5 * 2.4],
-      [2 + 0.5 * 2.4, 2 + 2.4],
-    ]);
-    expect(rt[0].to).toMatchObject({ turn: 180, tilt: 6, light: 40 });
-    expect(rt[1].to).toMatchObject({ turn: 360, tilt: 0, light: 0 });
+    expect(rt).toHaveLength(3);
+    const ends = [2 + 1.45, 2 + 2.15, 2 + 3.6];
+    rt.forEach((t, i) => expect(t.end).toBeCloseTo(ends[i], 9));
+    expect(rt[0].to).toMatchObject({ turn: 165, tilt: 8, light: 40 });
+    expect(rt[1].to.turn).toBe(179);
+    expect(rt[2].to).toMatchObject({ turn: 360, tilt: 0, light: 0 });
     expect(rt.every((t) => !t.from)).toBe(true); // linked: continues from wherever the phone is
 
     const stay = expandShot('turn-to-back', { start: 2, ret: 'stay' }, FRONT, ids()).transitions;
-    expect(stay).toHaveLength(1);
-    expect(stay[0].to.turn).toBe(180);
-    // The outbound key fills the shot; the default length is the outbound part of the recipe's.
-    expect(defaultShotDuration('turn-to-back', 'stay')).toBeCloseTo(0.5 * 2.4, 9);
-    expect(stay[0].end - stay[0].start).toBeCloseTo(0.5 * 2.4, 9);
-    // Ending the shot, the outbound key comes to rest on the back (its stay easing), not at half speed.
-    expect(stay[0].easing).toEqual(SHOTS['turn-to-back'].keys[0].stayEasing);
-    expect(rt[0].easing).toEqual(SHOTS['turn-to-back'].keys[0].easing);
+    expect(stay).toHaveLength(2);
+    expect(stay[1].to.turn).toBe(179);
+    // The outbound keys fill the shot; the default length is the outbound part of the recipe's.
+    expect(defaultShotDuration('turn-to-back', 'stay')).toBeCloseTo(2.15, 9);
+    expect(stay[1].end - stay[0].start).toBeCloseTo(2.15, 9);
+    // Ending the shot, the drift comes to rest on the back (its stay easing) instead of drifting on.
+    expect(stay[1].easing).toEqual(SHOTS['turn-to-back'].keys[1].stayEasing);
+    expect(rt[1].easing).toEqual({ kind: 'linear' });
     const custom = expandShot('turn-to-back', { start: 0, ret: 'stay', duration: 2 }, FRONT, ids()).transitions;
-    expect([custom[0].start, custom[0].end]).toEqual([0, 2]);
-    expect(shotKeys('hero-layback', 'stay').keys[0].frac).toEqual([0, 1]);
+    expect([custom[0].start, custom[custom.length - 1].end]).toEqual([0, 2]);
+    expect(shotKeys('hero-layback', 'stay').keys.map((k) => k.frac[1])).toEqual([expect.any(Number), 1]);
   });
 
   it('hero-layback leans the top away (+tilt) and swings back past the pose, then settles; its tilt is positive', () => {
-    const [out, back, settle] = expandShot('hero-layback', { start: 0 }, FRONT, ids()).transitions;
+    const [out, , back, settle] = expandShot('hero-layback', { start: 0 }, FRONT, ids()).transitions;
     expect(out.to.tilt).toBeGreaterThan(0);
     expect(out.to).toMatchObject({ turn: -24, tilt: 16, rotate: -4, size: 0.92, light: -25 });
     expect(back.to.turn).toBeGreaterThan(0);
@@ -206,14 +230,14 @@ describe('expandShot', () => {
     const half = expandShot('hero-layback', { start: 0, intensity: 0.5 }, FRONT, ids()).transitions[0].to;
     expect(half).toMatchObject({ turn: -12, tilt: 8, rotate: -2, size: 0.96, light: -12.5 });
     const ttb = expandShot('turn-to-back', { start: 0, intensity: 0.5 }, FRONT, ids()).transitions;
-    expect(ttb[0].to).toMatchObject({ turn: 180, tilt: 3, light: 20 });
-    expect(ttb[1].to.turn).toBe(360);
+    expect(ttb[0].to).toMatchObject({ turn: 165, tilt: 4, light: 20 });
+    expect(ttb[2].to.turn).toBe(360);
     const soft = expandShot('spin-in', { start: 0, intensity: 0.5 }, FRONT, ids()).transitions[0].from!;
     expect(soft).toMatchObject({ turn: -100, focus: 1.8 });
     const mirrored = expandShot('hero-layback', { start: 0, direction: -1 }, FRONT, ids()).transitions[0].to;
     expect(mirrored).toMatchObject({ turn: 24, rotate: 4, tilt: 16, light: -25 });
     const back = expandShot('turn-to-back', { start: 0, direction: -1 }, FRONT, ids()).transitions;
-    expect(back.map((t) => t.to.turn)).toEqual([-180, -360]);
+    expect(back.map((t) => t.to.turn)).toEqual([-165, -179, -360]);
   });
 
   it('every recipe lands inside POSE_RANGE, from FRONT and from turn ±700, at any intensity and direction', () => {
@@ -238,11 +262,11 @@ describe('expandShot', () => {
 
   it('D21: a far-wound turn is rebased into [-180, 180] with an explicit Start that is the same angle', () => {
     const before = pose({ turn: 700, tilt: 3 });
-    const [first, second] = expandShot('turn-to-back', { start: 0 }, before, ids()).transitions;
+    const [first, , last] = expandShot('turn-to-back', { start: 0 }, before, ids()).transitions;
     expect(first.from).toMatchObject({ turn: -20, tilt: 3 });
     expect(poseDelta(first.from!, before).turn).toBe(0);
-    expect(first.to.turn).toBe(160);
-    expect(second.to.turn).toBe(340);
+    expect(first.to.turn).toBe(145);
+    expect(last.to.turn).toBe(340);
     // Nothing to rebase: no explicit Start.
     expect(expandShot('hero-layback', { start: 0 }, pose({ turn: 170 }), ids()).transitions[0].from).toBeUndefined();
   });
@@ -264,7 +288,7 @@ describe('expandShot', () => {
     const a = expandShot('turn-to-back', { start: 1.5, intensity: 1.3, direction: -1 }, pose({ turn: 250 }), ids());
     const b = expandShot('turn-to-back', { start: 1.5, intensity: 1.3, direction: -1 }, pose({ turn: 250 }), ids());
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-    expect(a.transitions.map((t) => t.id)).toEqual(['s1', 's2']);
+    expect(a.transitions.map((t) => t.id)).toEqual(['s1', 's2', 's3']);
   });
 
   it('a linked round trip played from `before` is continuous: no jump at any key', () => {

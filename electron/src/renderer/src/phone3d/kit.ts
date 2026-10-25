@@ -1,13 +1,13 @@
 // The phone kit the engine renders (SPEC §3.1-§3.4, D13): the procedural
 // phone from geometry.ts with materials.ts' finish, lit by environment.ts'
-// one studio environment (softboxes, overhead gradient, bounce card and
-// flags, all in one PMREM). The engine owns what this makes (its LRUs
-// dispose it), so nothing here goes through the module caches the turntable
-// tool uses.
+// one studio rig: the hero softboxes (RectAreaLights round the phone) and the
+// set (overhead gradient, front fill, bounce card and flags) in one PMREM.
+// The engine owns what this makes (its LRUs dispose it), so nothing here
+// goes through the module caches the turntable tool uses.
 import * as THREE from 'three';
 import type { LightPreset } from '../../../shared/phone3d/model';
 import type { Scene3D } from '../../../shared/phone3d/projection';
-import { createStudioEnv } from './environment';
+import { createStudioEnv, placeStudio, studioLights } from './environment';
 import { createPhone, disposePhone } from './geometry';
 import { applyMaterials, materialsForDevice } from './materials';
 
@@ -39,7 +39,12 @@ export interface PhoneLook {
 export interface PhoneKit {
   /** The phone for this scene's device and look. Every material in it has an mrtOutput patch. */
   phone(s: Scene3D, look: PhoneLook, renderer: THREE.WebGLRenderer): PhoneModel;
-  /** The studio environment (all of the light) for a preset and the background's mean linear colour, owned by the caller. */
+  /** The preset's hero softboxes (a group of RectAreaLights in the rig's own frame; placeLights puts them round the phone). */
+  lights(preset: LightPreset): THREE.Group;
+  /** Centres the rig on the phone (world), sizes it for a body long side of `unit` world units, turns it to the key
+   *  azimuth (degrees) and scales its radiance by phone3d.light.intensity. */
+  placeLights(rig: THREE.Group, center: readonly [number, number, number], unit: number, azimuthDeg: number, intensity: number): void;
+  /** The studio set (the environment round the phone) for a preset and the background's mean linear colour, owned by the caller. */
   environment(preset: LightPreset, bgMean: readonly [number, number, number], renderer: THREE.WebGLRenderer): { texture: THREE.Texture; dispose(): void } | null;
   /** scene.environmentIntensity = light.intensity × this. */
   envStrength(preset: LightPreset): number;
@@ -72,6 +77,8 @@ export const STUDIO_KIT: PhoneKit = {
       },
     };
   },
+  lights: (preset) => studioLights(preset),
+  placeLights: (rig, center, unit, azimuthDeg, intensity) => placeStudio(rig, center, unit, azimuthDeg, intensity),
   environment(preset, bgMean, renderer) {
     const target = createStudioEnv(renderer, preset, bgMean);
     return { texture: target.texture, dispose: () => target.dispose() };

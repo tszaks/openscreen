@@ -26,7 +26,7 @@ import type { Annotation, CaptionCue, Point, Project, Size } from '../../shared/
 import { cameraAt, type AutofocusOptions, type FocusSegment } from '../../shared/autofocus';
 import { getFinish, type DeviceModel, type Orientation } from '../../shared/devices';
 import type { ExportPreset } from '../../shared/exportPresets';
-import type { TapSuggestion } from '../../shared/taps';
+import { tapGapAt, type TapSuggestion } from '../../shared/taps';
 import { Timeline } from '../../shared/timeline';
 import { isPhoneProject, layoutPreset, presetAllowsZoom, resolveDevice, tapsToOutput } from '../../shared/mobileProject';
 import {
@@ -429,6 +429,7 @@ export class CanvasCompositor {
         time,
         look: { hex: getFinish(phone.device, this.project.device.finishId).hex, back: s3.p3.back, glass: s3.p3.glass },
         bgMean: this.backgroundMean(),
+        tapGap: tapGapAt(phone.taps, time),
         quality: {
           ss: q?.ss ?? 1,
           full: q?.quality === 'full',

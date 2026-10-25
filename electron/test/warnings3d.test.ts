@@ -92,18 +92,38 @@ describe('tap-angle / tap-back', () => {
     const p = take({ transitions: [move('a', 1, 2, { turn: 50 })] }, [5]);
     const [w] = only(p, 'tap-angle');
     expect(w).toMatchObject({ at: 5, transitionId: 'a' });
-    expect(w.message).toMatch(/50° off front during the tap at 5\.00 s/);
+    expect(w.message).toMatch(/50° off front at 5\.00 s, at the tap at 5\.00 s/);
     expect(w.fix).toEqual([{ op: 'setPose', at: 5, turn: 0, tilt: 0 }]);
     expectCleared(p, w);
   });
 
-  it('a move that swings past 35° in the middle of a tap: the fix pulls its end before the tap', () => {
+  it('a move that swings past 35° in the middle of a tap: the fix moves the whole move before the tap window (same speed)', () => {
     // Lands on 30° (fine) but overshoots to ~50° on the way.
     const swing = move('a', 3, 6, { turn: 30 }, { easing: { kind: 'bezier', x1: 0.2, y1: 2, x2: 0.5, y2: 1.6 } });
     const p = take({ transitions: [swing] }, [5]);
     const [w] = only(p, 'tap-angle');
-    expect(w.fix).toEqual([{ op: 'editTransition', id: 'a', end: 4.7 }]);
+    expect(w.fix).toEqual([{ op: 'editTransition', id: 'a', by: -1.3 }]);
     expectCleared(p, w);
+  });
+
+  it('names the moment that fails: a spin still turning 0.3 s before the tap is reported there, not at the tap', () => {
+    // A 200° spin-in ending at 1.2 s, tap at 0.96 s: at 0.96 s the phone is about 20° off, at 0.66 s about 80°.
+    const spin = move('a', 0, 1.2, { turn: 0 }, { from: { turn: -200, tilt: 0, rotate: 0, size: 1, x: 0, y: 0, light: 0, focus: 1 }, easing: { kind: 'bezier', x1: 0.42, y1: 0, x2: 0.58, y2: 1 } });
+    const p = take({ transitions: [spin] }, [0.96]);
+    const [w] = only(p, 'tap-angle');
+    expect(w.message).toMatch(/off front at 0\.66 s, 0\.30 s before the tap at 0\.96 s/);
+    expect(w.message).toMatch(/from 0\.3 s before a tap to 0\.3 s after it/);
+  });
+
+  it('a fix never speeds a move up past 300°/s to clear a tap (round 2 offered a 200° spin squeezed into 0.66 s)', () => {
+    const spin = move('a', 0, 1.2, { turn: 0 }, { from: { turn: -200, tilt: 0, rotate: 0, size: 1, x: 0, y: 0, light: 0, focus: 1 }, easing: { kind: 'bezier', x1: 0.42, y1: 0, x2: 0.58, y2: 1 } });
+    const p = take({ transitions: [spin] }, [0.96]);
+    const [w] = only(p, 'tap-angle');
+    // The spin starts at 0, so it cannot move earlier; pulling its end to 0.66 s would turn it at about 520°/s.
+    for (const op of w.fix ?? []) expect(op).not.toMatchObject({ op: 'editTransition', end: expect.any(Number) });
+    // Control: the same spin with room before it is moved earlier whole instead.
+    const later = take({ transitions: [{ ...spin, start: 1, end: 2.2 }] }, [1.96]);
+    expect(only(later, 'tap-angle')[0].fix).toEqual([{ op: 'editTransition', id: 'a', by: -0.54 }]);
   });
 
   it('a move that starts inside the tap window is moved after it', () => {

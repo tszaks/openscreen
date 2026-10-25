@@ -28,7 +28,7 @@ import { importVideoFile } from './importVideo';
 import { readCursorSamples } from './bundleFiles';
 import { appCommand, bool, CliError, flag, out, progress, r2, runHeadless, seconds, warnProgress } from './cliKit';
 import { framesCmd } from './framesCmd';
-import { DIRECT_STYLES, needsScenes, planDirect, projectWarnings, shotRecipes, type ApplyContext3d, type DirectStyle } from './phone3dPlan';
+import { DIRECT_STYLES, needsScenes, planDirect, projectWarnings, shotRecipes, type ApplyContext3d, type DirectStyle, type Phone3DWarning as Warning } from './phone3dPlan';
 import { sceneTimes } from './scenes';
 import { analyzeTapsInFile, bundleAudioPath, detectSilences, ffmpegPath, probeAudioDuration, ffmpegRun, ffmpegStderr, parseWhisperJson, probeMedia, transcribeBundle, whisperCli } from './media';
 
@@ -605,7 +605,28 @@ function undo(args: string[]) {
 // ---------------------------------------------------------------------------
 // export (spawns the app headless)
 
+/** Warnings that refuse an export: a tap the viewer cannot read (the phone turned away or showing its back). */
+export const EXPORT_BLOCKING: readonly string[] = ['tap-angle', 'tap-back'];
+
+/**
+ * The export guard: throws (exit 1) when a tap would not be readable, unless
+ * `force`. Look round 2 shipped an export with both tap warnings standing;
+ * every other warning still only goes to stderr. The error carries the
+ * blocking warnings with their fixes, ready for `apply`.
+ */
+export function exportGuard(warnings: readonly Warning[], force: boolean): void {
+  const blocking = warnings.filter((w) => EXPORT_BLOCKING.includes(w.code));
+  if (!blocking.length || force) return;
+  throw Object.assign(
+    new CliError(
+      `export refused: ${blocking.map((w) => w.message).join('; ')}. Apply each warning's fix (apply <bundle> '<fix>'), move the shot or the trim, or pass --force to export anyway`,
+    ),
+    { extra: { warnings: blocking } },
+  );
+}
+
 async function exportCmd(args: string[]) {
+  const force = bool(args, '--force');
   const outArg = flag(args, '--out');
   const presets = flag(args, '--preset');
   const appFlag = flag(args, '--app');
@@ -622,8 +643,10 @@ async function exportCmd(args: string[]) {
   const project = readProject(dir);
   const errs = validateProject(project);
   if (errs.length) throw new CliError(`project is invalid, fix it before exporting: ${errs.join('; ')}`);
-  // Warnings never block an export; they go to stderr with the progress lines.
-  warnProgress(projectWarnings(project, { cursor: readCursorSamples(dir) }));
+  // Warnings go to stderr with the progress lines; an unreadable tap refuses the export (exportGuard).
+  const warnings = projectWarnings(project, { cursor: readCursorSamples(dir) });
+  exportGuard(warnings, force);
+  warnProgress(warnings);
   const app = appCommand(appFlag);
   const argv = ['--export', dir, '--out', outPath, ...(gif ? ['--gif'] : []), ...(presets ? ['--preset', presets] : []), ...(timeout ? ['--timeout', timeout] : [])];
   const started = Date.now();
@@ -875,7 +898,7 @@ const HELP = {
     direct: 'direct <bundle> [--style subtle|hero|bold] [--keep] [--no-scenes] [--dry-run]  plan and apply 3D phone shots around taps, waits and scene changes (the editor\'s Auto 3D)',
     frames: 'frames <bundle> (--at 0.5,2 | --every 0.5 | --moves) [--out dir] [--scale 0.5] [--sheet] [--draft] [--timeout s]  render still PNGs at output seconds with the real app, each the export frame round(t·fps) (default: <tmp>/openscreen-frames/…)',
     undo: 'undo <bundle>  swap project.json with project.json.bak',
-    export: 'export <bundle> [--out file.mp4|.gif|folder] [--gif] [--preset id,id] [--app OpenScreen.app] [--timeout s]',
+    export: 'export <bundle> [--out file.mp4|.gif|folder] [--gif] [--preset id,id] [--app OpenScreen.app] [--timeout s] [--force]  refuses while a tap is unreadable (tap-angle, tap-back warnings) unless --force',
     open: 'open <bundle> [--app OpenScreen.app]  open it in the editor for a human (a new app process)',
     ops: 'ops  list edit op names',
   },

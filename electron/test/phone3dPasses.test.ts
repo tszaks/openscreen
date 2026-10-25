@@ -21,7 +21,10 @@ import {
   GLARE_SAMPLES,
   tileMaxPx,
   TILE_MAX_SIDE,
+  screenSteadiness,
+  tentShutter,
 } from '../src/renderer/src/phone3d/passes';
+import { tapGapAt } from '../src/shared/taps';
 import { planScreenTexture, screenUvMatrix } from '../src/renderer/src/phone3d/screenTexture';
 import { blurKernel, catcherFrame } from '../src/renderer/src/phone3d/shadow';
 import {
@@ -32,6 +35,9 @@ import {
   scene3d,
   screenQuadAt,
   shadowPointsWorld,
+  applyHomography,
+  projectWorld,
+  screenUvMap,
   project as projectPt,
   type Quad,
 } from '../src/shared/phone3d/projection';
@@ -56,7 +62,7 @@ describe('sample plan (§3.7 step 4)', () => {
 
   it('live preview / draft: one sample, no jitter, no motion', () => {
     const p = planSamples({ t: 2, travelPx: 300, motion: { samples: 12, shutterSec: 1 / 60 }, full: false });
-    expect(p).toEqual({ n: 1, nMotion: 1, times: [2], jitter: [[0, 0]] });
+    expect(p).toEqual({ n: 1, nMotion: 1, times: [2], jitter: [[0, 0]], weights: [1] });
   });
 
   it('a still phone in export: 8 jittered AA samples at the same time', () => {
@@ -64,7 +70,67 @@ describe('sample plan (§3.7 step 4)', () => {
     expect(p.n).toBe(AA_SAMPLES);
     expect(p.nMotion).toBe(1);
     expect(p.times.every((x) => x === 2)).toBe(true);
+    expect(p.weights).toEqual(new Array(AA_SAMPLES).fill(1 / AA_SAMPLES));
     expect(planSamples({ t: 2, travelPx: 50, motion: null, full: true }).nMotion).toBe(1);
+  });
+
+  it('moving: the shutter is a tent, not a box: samples stay evenly spread in time, their weights rise to the middle and fade to 0 at both ends, and sum to 1', () => {
+    const sh = 1 / 60;
+    const p = planSamples({ t: 1, travelPx: 40, motion: { samples: 12, shutterSec: sh }, full: true });
+    expect(p.weights.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 12);
+    const mid = Math.floor(p.n / 2);
+    expect(p.weights[mid]).toBeGreaterThan(1.7 / p.n);
+    expect(p.weights[0]).toBeLessThan(0.1 / p.n);
+    expect(p.weights[p.n - 1]).toBeLessThan(0.1 / p.n);
+    // Rising then falling (allowing the stratified jitter between neighbours).
+    for (let k = 1; k < mid - 1; k++) expect(p.weights[k + 1]).toBeGreaterThan(p.weights[k - 1]);
+    expect(tentShutter(0)).toBe(0);
+    expect(tentShutter(0.5)).toBe(1);
+    expect(tentShutter(1)).toBe(0);
+    expect(tentShutter(0.25)).toBe(0.5);
+    // The weighted spread of the times is a tent's (σ = width/√24), 0.71× the box's (width/√12).
+    const mean = p.times.reduce((a, x, k) => a + x * p.weights[k], 0);
+    const sd = Math.sqrt(p.times.reduce((a, x, k) => a + (x - mean) ** 2 * p.weights[k], 0));
+    expect(sd / (sh / Math.sqrt(24))).toBeGreaterThan(0.9);
+    expect(sd / (sh / Math.sqrt(24))).toBeLessThan(1.1);
+  });
+
+  it('screen steadiness: held still facing the viewer or within 0.15 s of a tap, full blur when turned away with no tap near', () => {
+    expect(screenSteadiness(1, Infinity)).toBe(1);
+    expect(screenSteadiness(0.9, Infinity)).toBe(1);
+    expect(screenSteadiness(0.8, Infinity)).toBe(0);
+    expect(screenSteadiness(0.5, Infinity)).toBe(0);
+    expect(screenSteadiness(0.5, 0)).toBe(1);
+    expect(screenSteadiness(0.5, 0.15)).toBe(1);
+    expect(screenSteadiness(0.5, 0.3)).toBe(0);
+    const half = screenSteadiness(0.85, Infinity);
+    expect(half).toBeGreaterThan(0.3);
+    expect(half).toBeLessThan(0.7);
+    expect(screenSteadiness(-1, 0.1)).toBe(1);
+    expect(tapGapAt([], 2)).toBe(Infinity);
+    expect(tapGapAt([{ t: 1 }, { t: 3, duration: 1 }], 2)).toBe(1);
+    expect(tapGapAt([{ t: 1 }, { t: 3, duration: 1 }], 3.5)).toBe(0);
+    expect(tapGapAt([{ t: 1 }, { t: 3, duration: 1 }], 4.2)).toBeCloseTo(0.2, 12);
+  });
+
+  it('screenUvMap: the projected corners of the screen rect map back to the mesh uv corners, portrait and landscape, at any pose', () => {
+    for (const orientation of ['portrait', 'landscape'] as const) {
+      const base = orientation === 'landscape' ? phoneProject({ width: 2622, height: 1206 }) : phoneProject();
+      const p = with3d(base, { pose: { ...FRONT, turn: 35, tilt: -12, rotate: 7, size: 0.8 } });
+      const s = scene3d(p, projectCanvasSize(p))!;
+      expect(s.home.orientation).toBe(orientation);
+      const cam = camAt(s, 0);
+      const H = screenUvMap(s, cam);
+      const w = s.screenMm.width;
+      const h = s.screenMm.height;
+      const z = s.body3d.depthMm / 2;
+      for (const [u, v] of [[0, 0], [1, 0], [1, 1], [0, 1], [0.25, 0.7]]) {
+        const [x, y] = projectWorld(modelToWorld([(u - 0.5) * w, (v - 0.5) * h, z], cam), cam);
+        const back = applyHomography(H, x, y)!;
+        expect(back.x, `${orientation} ${u},${v}`).toBeCloseTo(u, 6);
+        expect(back.y, `${orientation} ${u},${v}`).toBeCloseTo(v, 6);
+      }
+    }
   });
 
   it('moving: the user samples are a minimum, copies MOTION_STEP_PX apart on average, capped at 64; each sample at a fixed-random place in its own slot of the shutter', () => {

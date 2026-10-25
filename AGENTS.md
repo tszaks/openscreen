@@ -57,7 +57,7 @@ $A undo latest                      # swap project.json <-> project.json.bak
 | `apply <bundle> <edits.json\|-\|'[…]'> [--dry-run]` | Applies edit ops in order. All-or-nothing: if any op fails or the result doesn't validate, nothing is written. Writes `project.json.bak` first. |
 | `polish <bundle> [--style clean\|bold] [--title T] [--subtitle S] [--reanalyze] [--dry-run]` | One-shot good defaults (see below). Deterministic; prints the ops it applied. |
 | `undo <bundle>` | Swaps `project.json` and `project.json.bak` (so a second undo redoes). One level. |
-| `export <bundle> [--out f.mp4\|f.gif\|folder] [--gif] [--preset id[,id…]] [--app /path/OpenScreen.app] [--timeout s]` | Renders through the real app with no window and no dialogs, then `ffprobe`s the file (`probe` in the output). `--preset` writes every listed export preset into a folder. Without `--app` it uses `$OPENSCREEN_APP`, else this checkout's Electron (`electron/`). |
+| `export <bundle> [--out f.mp4\|f.gif\|folder] [--gif] [--preset id[,id…]] [--app /path/OpenScreen.app] [--timeout s] [--force]` | Renders through the real app with no window and no dialogs, then `ffprobe`s the file (`probe` in the output). `--preset` writes every listed export preset into a folder. Without `--app` it uses `$OPENSCREEN_APP`, else this checkout's Electron (`electron/`). A 3D project with a `tap-angle` or `tap-back` warning (a tap the viewer cannot read) is refused (exit 1, the warnings and their `fix` in the output) until it is fixed or `--force` is given; other warnings only print to stderr. |
 | `open <bundle> [--app …]` | Opens the project in the editor for a human (`OpenScreen --open <bundle>`). Later `apply`s show up live. |
 | `ops` | Every op name. |
 

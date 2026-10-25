@@ -7,20 +7,22 @@
 // from before + from (an explicit Start keyframe); a key without one is
 // linked and continues from wherever the phone is.
 //
-// Timing (look round 2). The judges read round 1's moves as whips: the
-// `cinematic` curve (0.7, 0, 0.16, 1) is quint-like, its peak slope is 4.4×
-// the average, so a turn-to-back crossed 146° in 0.53 s, and a spring from
-// rest put 133° of the spin-in into its first 0.29 s, then crept for a
-// second. Now every move is a cubic-type ease-in-out (CSS ease-in-out,
-// peak 1.72× the average) or the softer 1.67× one, and:
+// Timing. Round 1's moves read as whips (the quint-like `cinematic` curve
+// peaks at 4.4× the average speed). Every move is a cubic-type ease
+// (peak about 1.7× the average), and no move stops dead in the middle of a
+// shot: a hold is a slow drift, joined to the moves either side at matching
+// speed (easeInTo / easeOutFrom), so the phone never freezes and never
+// jerks. Look round 2's judges saw a frozen hero hold and a hitch where two
+// eases met on the back.
 //   spin-in      1.6 s: 204° to 4° past the pose (1.2 s, peak 292°/s), then
 //                a 0.4 s settle back: one visible overshoot that lands.
-//   hero-layback 2.3 s: out in 0.58 s, holds 0.8 s, returns no faster than
-//                it went out to 8% past the pose, then settles in 0.32 s.
-//   turn-to-back 2.4 s: one 360° that slows to half speed on the back
-//                (two halves of 1.2 s, peak 231°/s, 75°/s at the back), no
-//                stop on the bare back; `return: stay` ends on the back at
-//                rest (stayEasing).
+//   hero-layback 2.4 s: out in 0.58 s, a 0.8 s drift on through about 2.5°
+//                of turn, then back no faster than it went out to 8% past
+//                the pose, and a 0.32 s settle.
+//   turn-to-back 3.6 s: 165° to a three-quarter back view (1.45 s), a 0.7 s
+//                drift across the back (165 → 179°) so the viewer sees it,
+//                then on round to the front (1.45 s); peak about 215°/s.
+//                `return: stay` ends on the back at rest (stayEasing).
 // Peak angular speed stays under 300°/s at the default durations
 // (test/shots.test.ts pins it), half the §2.7 too-fast line.
 
@@ -61,12 +63,60 @@ export interface ShotSpec {
 const EASE_IN_OUT: Easing = { kind: 'bezier', x1: 0.42, y1: 0, x2: 0.58, y2: 1 };
 /** A softer ease-in-out (peak 1.67× the average): returns and settles, never faster than the move out. */
 const EASE_SOFT: Easing = { kind: 'bezier', x1: 0.4, y1: 0, x2: 0.6, y2: 1 };
-/** Turn-to-back halves: the first eases in and leaves at half its average speed, the second picks up at that
- *  speed and eases out (slopes match at the join: (1 − 0.85)/(1 − 0.7) = 0.15/0.3 = 0.5). */
-const LINGER_OUT: Easing = { kind: 'bezier', x1: 0.45, y1: 0, x2: 0.7, y2: 0.85 };
-const LINGER_IN: Easing = { kind: 'bezier', x1: 0.3, y1: 0.15, x2: 0.55, y2: 1 };
+
+/**
+ * An ease-in-out that ends still moving, at `endSlope` × its average speed
+ * (a bezier's end slope is (1 − y2) / (1 − x2)), to hand over to a drift.
+ */
+export const easeInTo = (endSlope: number): Easing => ({ kind: 'bezier', x1: 0.42, y1: 0, x2: 0.58, y2: 1 - endSlope * 0.42 });
+/** An ease-in-out that starts already moving, at `startSlope` × its average speed (start slope y1 / x1; negative
+ *  when the drift was going the other way: the move first carries on a touch, then turns). */
+export const easeOutFrom = (startSlope: number): Easing => ({ kind: 'bezier', x1: 0.42, y1: startSlope * 0.42, x2: 0.58, y2: 1 });
+/** A drift that comes to rest: starts at its average speed (slope 1, as the linear drift), eases out. */
+const DRIFT_TO_REST: Easing = { kind: 'bezier', x1: 0.3, y1: 0.3, x2: 0.6, y2: 1 };
+const LINEAR: Easing = { kind: 'linear' };
+
+/**
+ * The easings that join move → drift → move at matching speed, in one
+ * reference channel (every channel of the drift is the same fraction of the
+ * move out, so they all join): a move's speed at an end is its slope there ×
+ * its delta / its length, and the drift is linear (slope 1). Deltas are
+ * signed, lengths in seconds.
+ */
+function driftEasings(outDelta: number, tOut: number, driftDelta: number, tHold: number, nextDelta: number, tNext: number): { out: Easing; next: Easing } {
+  const v = driftDelta / tHold;
+  return { out: easeInTo((v * tOut) / outDelta), next: easeOutFrom((v * tNext) / nextDelta) };
+}
+
 /** How far past the pose a return or spin-in carries before it settles back, as a fraction of the move. */
 export const SHOT_OVERSHOOT = 0.08;
+
+/** hero-layback: the lean, and how far the hold drifts on (× the lean: about 2.5° of turn and 0.8% of size). */
+const HERO_LEAN = { turn: -24, tilt: 16, rotate: -4, size: -0.08, light: -25 } as const;
+const HERO_DRIFT = 0.104;
+/** hero-layback's parts, seconds: out, drift, back past the pose, settle. */
+const HERO_T = { out: 0.575, hold: 0.805, back: 0.72, settle: 0.3 } as const;
+const scaled = (d: Partial<Pose>, k: number): Partial<Pose> => Object.fromEntries(Object.entries(d).map(([c, v]) => [c, (v as number) * k]));
+const HERO_JOIN = driftEasings(HERO_LEAN.turn, HERO_T.out, HERO_LEAN.turn * HERO_DRIFT, HERO_T.hold, -HERO_LEAN.turn * (1 + HERO_DRIFT + SHOT_OVERSHOOT), HERO_T.back);
+
+/** turn-to-back: to a three-quarter back view, a slow drift across the back, then on round to the front. */
+const TTB = { out: 165, drift: 14, tilt: 8, light: 40 } as const;
+const TTB_T = { out: 1.45, hold: 0.7, on: 1.45 } as const;
+const TTB_JOIN = driftEasings(TTB.out, TTB_T.out, TTB.drift, TTB_T.hold, 360 - TTB.out - TTB.drift, TTB_T.on);
+const ttbAt = (turn: number): Partial<Pose> => ({ turn, tilt: (TTB.tilt * turn) / TTB.out, light: (TTB.light * turn) / TTB.out });
+
+/** Shot fractions from part lengths (seconds). */
+function fracs(parts: readonly number[]): [number, number][] {
+  const total = parts.reduce((a, b) => a + b, 0);
+  let t = 0;
+  return parts.map((d) => {
+    const f: [number, number] = [t / total, (t + d) / total];
+    t += d;
+    return f;
+  });
+}
+const HERO_F = fracs([HERO_T.out, HERO_T.hold, HERO_T.back, HERO_T.settle]);
+const TTB_F = fracs([TTB_T.out, TTB_T.hold, TTB_T.on]);
 
 export const SHOTS: Record<ShotRecipe, ShotSpec> = {
   'spin-in': {
@@ -84,27 +134,24 @@ export const SHOTS: Record<ShotRecipe, ShotSpec> = {
     use: 'Intro: the first 1.5-2 s, before the first tap.',
   },
   'turn-to-back': {
-    duration: 2.4,
+    duration: TTB_T.out + TTB_T.hold + TTB_T.on,
     keys: [
-      { to: { turn: 180, tilt: 6, light: 40 }, frac: [0, 0.5], easing: LINGER_OUT, stayEasing: EASE_IN_OUT, fixed: ['turn'] },
-      { to: { turn: 360, tilt: 0, light: 0 }, frac: [0.5, 1], easing: LINGER_IN, ret: true, fixed: ['turn'] },
+      { to: ttbAt(TTB.out), frac: TTB_F[0], easing: TTB_JOIN.out, fixed: ['turn'] },
+      { to: ttbAt(TTB.out + TTB.drift), frac: TTB_F[1], easing: LINEAR, stayEasing: DRIFT_TO_REST, fixed: ['turn'] },
+      { to: { turn: 360, tilt: 0, light: 0 }, frac: TTB_F[2], easing: TTB_JOIN.next, ret: true, fixed: ['turn'] },
     ],
-    summary: 'Turns all the way round (a full 360°), slowing as it passes the back.',
-    use: 'A long wait or a scene change (the edge-on moment hides the cut). Bold promos.',
+    summary: 'Turns to a three-quarter view of the back, drifts slowly across it, then on round to the front (a full 360°).',
+    use: 'A long wait (3.6 s or more) or a scene change; keep taps out of it. Bold promos.',
   },
   'hero-layback': {
-    duration: 2.3,
+    duration: HERO_T.out + HERO_T.hold + HERO_T.back + HERO_T.settle,
     keys: [
-      { to: { turn: -24, tilt: 16, rotate: -4, size: -0.08, light: -25 }, frac: [0, 0.25], easing: EASE_IN_OUT },
-      {
-        to: { turn: 24 * SHOT_OVERSHOOT, tilt: -16 * SHOT_OVERSHOOT, rotate: 4 * SHOT_OVERSHOOT, size: 0.08 * SHOT_OVERSHOOT, light: 25 * SHOT_OVERSHOOT },
-        frac: [0.6, 0.86],
-        easing: EASE_SOFT,
-        ret: true,
-      },
-      { to: {}, frac: [0.86, 1], easing: EASE_SOFT, ret: true },
+      { to: HERO_LEAN, frac: HERO_F[0], easing: HERO_JOIN.out },
+      { to: scaled(HERO_LEAN, 1 + HERO_DRIFT), frac: HERO_F[1], easing: LINEAR, stayEasing: DRIFT_TO_REST },
+      { to: scaled(HERO_LEAN, -SHOT_OVERSHOOT), frac: HERO_F[2], easing: HERO_JOIN.next, ret: true },
+      { to: {}, frac: HERO_F[3], easing: EASE_SOFT, ret: true },
     ],
-    summary: 'Leans back into a three-quarter hero angle, holds it, then swings back just past the pose and settles.',
+    summary: 'Leans back into a three-quarter hero angle, keeps drifting gently while it holds, then swings back just past the pose and settles.',
     use: 'A short wait (2.4 s or more) in the middle; one-way (return: stay) as the outro.',
   },
   settle: {

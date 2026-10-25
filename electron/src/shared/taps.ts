@@ -832,3 +832,19 @@ export function splitRawGray(buf: Uint8Array, w: number, h: number, fps: number,
   }
   return frames;
 }
+
+/**
+ * Seconds from `t` to the nearest tap: 0 while a finger is down (from a tap's
+ * `t` to `t + duration`), else the distance to the closest press or release;
+ * Infinity with no taps. Times in the same timeline as the taps (the
+ * compositor passes output-time taps). Pure.
+ */
+export function tapGapAt(taps: readonly Pick<TapSuggestion, 't' | 'duration'>[], t: number): number {
+  let gap = Infinity;
+  for (const tap of taps) {
+    const end = tap.t + (tap.duration ?? 0);
+    const d = t < tap.t ? tap.t - t : t > end ? t - end : 0;
+    if (d < gap) gap = d;
+  }
+  return gap;
+}

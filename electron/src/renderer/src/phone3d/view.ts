@@ -29,11 +29,25 @@ import {
   projectWorld,
   renderRoi,
   screenQuadAt,
+  screenUvMap,
   type Cam3D,
   type Scene3D,
 } from '../../../shared/phone3d/projection';
 import type { Engine, PhoneLook } from './engine';
-import { planGlare, planSamples, planTiles, Passes, setGlareWeight, setScreenJitter, TILE_BYTES_PER_PX, travelRefPx, type SamplePlan } from './passes';
+import {
+  planGlare,
+  planSamples,
+  planTiles,
+  Passes,
+  screenSteadiness,
+  setGlareWeight,
+  setScreenJitter,
+  setScreenSteady,
+  setScreenTile,
+  TILE_BYTES_PER_PX,
+  travelRefPx,
+  type SamplePlan,
+} from './passes';
 import { planScreenTexture, screenRoom, textureLimit } from './screenTexture';
 import { aimStudio } from './environment';
 import { frameCatcher, sampleLight } from './shadow';
@@ -65,6 +79,9 @@ export interface Render3DArgs {
    */
   drawScreen: (ctx: CanvasRenderingContext2D, dst: Rect, pxScale: number) => void;
   quality: Render3DQuality;
+  /** Seconds from this frame to the nearest tap (its press to its release; Infinity or absent when none): the
+   *  screen content holds still near a tap (screenSteadiness). */
+  tapGap?: number;
 }
 
 /**
@@ -116,7 +133,7 @@ function statsOn(): boolean {
   return g.__p3dStatsOn === true || !!g.location?.search?.includes('p3dstats');
 }
 
-/** Puts the phone and the environment rotation (the key azimuth) at the pose of `cam`. */
+/** Puts the phone, the softboxes and the environment rotation (the key azimuth) at the pose of `cam`. */
 function applyPose(engine: Engine, s: Scene3D, cam: Cam3D): void {
   const p = cam.pose;
   const g = engine.poseGroup;
@@ -124,7 +141,9 @@ function applyPose(engine: Engine, s: Scene3D, cam: Cam3D): void {
   g.rotation.set(-p.tilt * DEG, p.turn * DEG, -p.rotate * DEG, 'ZXY');
   g.scale.setScalar(cam.scale);
   engine.inner.rotation.set(0, 0, cam.landscape);
-  aimStudio(engine.scene, s.p3.light.azimuth + p.light);
+  const az = s.p3.light.azimuth + p.light;
+  aimStudio(engine.scene, az);
+  if (engine.lights) engine.kit.placeLights(engine.lights.group, cam.pos, Math.max(s.bodyMm.width, s.bodyMm.height) * cam.scale, az, s.p3.light.intensity);
 }
 
 /** The perspective camera for `cam`, its depth range, and the jittered window of the full W·ss × H·ss view. */
@@ -152,8 +171,8 @@ function applyCamera(
   return range;
 }
 
-/** Makes sure the phone for this scene and look and the studio environment are in the scene. Returns the phone
- *  model's cache key. */
+/** Makes sure the phone for this scene and look, the studio set (environment) and the preset's softboxes are in the
+ *  scene. Returns the phone model's cache key. */
 function prepareScene(engine: Engine, a: Render3DArgs): string {
   const s = a.scene;
   const p3 = s.p3;
@@ -176,6 +195,11 @@ function prepareScene(engine: Engine, a: Render3DArgs): string {
   });
   engine.scene.environment = env.tex;
   engine.scene.environmentIntensity = p3.light.intensity * engine.kit.envStrength(preset);
+  if (engine.lights?.preset !== preset) {
+    if (engine.lights) engine.scene.remove(engine.lights.group);
+    engine.lights = { preset, group: engine.kit.lights(preset) };
+    engine.scene.add(engine.lights.group);
+  }
   return phoneKey;
 }
 
@@ -222,7 +246,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
 
   // 3. The screen texture, at the frame's centre pose (the video frame is fixed for the frame).
   const camT = camAt(s, t);
-  const { quad } = screenQuadAt(s, t, camT);
+  const { quad, facing } = screenQuadAt(s, t, camT);
   const p3t = p3.transitions;
   const sizes = [p3.pose.size, ...p3t.map((tr) => tr.to.size), ...p3t.map((tr) => tr.from?.size ?? 0)];
   const texMax = textureLimit(engine.renderer.capabilities.maxTextureSize);
@@ -233,6 +257,11 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
     phone.screen.material.map = tex;
     phone.screen.material.needsUpdate = true;
   }
+  // A moving frame holds the screen content still where it should be read (facing the viewer, near a tap).
+  const steady = plan.nMotion > 1 ? screenSteadiness(facing, a.tapGap ?? Infinity) : 0;
+  // tex.matrix is the texture's own uv transform (ScreenTexture sets it; matrixAutoUpdate is off).
+  if (steady > 0) setScreenSteady(phone.screen.material, steady, screenUvMap(s, camT), tex.matrix);
+  else setScreenSteady(phone.screen.material, 0, null, null);
   mark('screen');
 
   // DoF reach (render px) over the frame's samples.
@@ -269,6 +298,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
       ks.length,
       (i) => applyPose(engine, s, scams[i]),
       scams.map((c) => sampleLight(s, c)),
+      ks.length > 1 ? ks.map((k) => plan.weights[k]) : undefined,
     );
     engine.shadow.use(catcher, p3.shadow.opacity);
     mark('shadow');
@@ -292,6 +322,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
     for (const tile of tiles) {
       if (engine.lost || r.getContext().isContextLost()) return false;
       if (N > 1) passes.clearAccum(tile.pw, tile.ph);
+      setScreenTile(phone.screen.material, roi.x * ss + tile.px, roi.y * ss + tile.py, tile.ph, ss);
       let range = { near: 1, far: 2 };
       let last = passes.msaa!;
       for (let k = 0; k < N; k++) {
@@ -322,7 +353,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
         last = target;
         mark('scene');
         if (N > 1) {
-          passes.accumulate(target, tile.pw, tile.ph, 1 / N, 1 / N);
+          passes.accumulate(target, tile.pw, tile.ph, plan.weights[k], plan.weights[k]);
           mark('accumulate');
         }
       }

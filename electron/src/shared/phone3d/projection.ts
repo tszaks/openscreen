@@ -367,6 +367,32 @@ export function applyHomography(m: Homography, x: number, y: number): Point | nu
   return { x: (m[0] * x + m[1] * y + m[2]) / w, y: (m[3] * x + m[4] * y + m[5]) / w };
 }
 
+/**
+ * Canvas px → the screen mesh's own uv at `cam` (u along the model's +x, v
+ * along its +y, 0..1 over the portrait screen rect: the uv the renderer's
+ * screen mesh carries, before the texture's own transform). Built from the
+ * four projected corners of that rect, so it holds in landscape too. The
+ * renderer uses it to read the screen texture where the frame's centre pose
+ * put it (a steady screen under motion blur).
+ */
+export function screenUvMap(s: Scene3D, cam: Cam3D): Homography {
+  const w = s.screenMm.width;
+  const h = s.screenMm.height;
+  const z = s.body3d.depthMm / 2;
+  // Mesh uv (0,0), (1,0), (1,1), (0,1) = the unit square's corners in homography()'s order.
+  const corners: Vec3[] = [
+    [-w / 2, -h / 2, z],
+    [w / 2, -h / 2, z],
+    [w / 2, h / 2, z],
+    [-w / 2, h / 2, z],
+  ];
+  const quad = corners.map((c) => {
+    const [x, y] = projectWorld(modelToWorld(c, cam), cam);
+    return { x, y };
+  }) as Quad;
+  return invHomography(homography(quad));
+}
+
 /** Everything the compositor's hit-testing needs for one frame. */
 export interface ScreenMap3D {
   quad: Quad;

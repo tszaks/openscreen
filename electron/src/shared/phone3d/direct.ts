@@ -180,7 +180,8 @@ export function edgeOnOffset(base: Readonly<Pose>, direction: 1 | -1, duration =
   const key = shotKeys('turn-to-back', 'front').keys[0];
   const b = shotBase(base);
   const from = b.turn;
-  const to = from + 180 * direction;
+  // The first key's own turn (the three-quarter back view it eases to), not an assumed 180.
+  const to = from + (key.to.turn ?? 0) * direction;
   // The edge-on angle (90 + 180k) strictly between from and to.
   const lo = Math.min(from, to);
   const target = 90 + 180 * Math.ceil((lo - 90) / 180 + 1e-12);

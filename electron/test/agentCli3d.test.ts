@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { defaultFramesDir, framesCmd, parseFramesArgs, planFrameTimes, poseInfo } from '../src/node/framesCmd';
-import { parseDirectArgs } from '../src/node/agentCli';
+import { exportGuard, parseDirectArgs } from '../src/node/agentCli';
+import { projectWarnings } from '../src/node/phone3dPlan';
 import { needsScenes } from '../src/node/phone3dPlan';
 import { readCursorSamples } from '../src/node/bundleFiles';
 import { CliError } from '../src/node/cliKit';
@@ -243,5 +244,39 @@ describe('cursor.json (the same samples as the editor, D5)', () => {
     expect(readCursorSamples(dir)).toEqual([]);
     writeFileSync(join(dir, 'cursor.json'), JSON.stringify({ samples: 'nope' }));
     expect(readCursorSamples(dir)).toEqual([]);
+  });
+});
+
+describe('export guard', () => {
+  /** A 9:16 take with a tap at 5 s and the 3D phone turned to its back over 4..5 s. */
+  const backAtTap = () => {
+    const p = with3d(phoneProject({ presetId: 'social-9x16' }), { transitions: [move('m', 4, 5, { turn: 180 })] });
+    p.device.frame = true;
+    p.taps = [{ id: 't', t: 5, x: 0.5, y: 0.5, kind: 'tap', confidence: 1 }];
+    return p;
+  };
+
+  it('refuses an export while a tap is unreadable, with the warnings and their fixes; --force exports anyway', () => {
+    const warnings = projectWarnings(backAtTap());
+    expect(warnings.some((w) => w.code === 'tap-back')).toBe(true);
+    let thrown: (CliError & { extra?: { warnings: unknown[] } }) | null = null;
+    try {
+      exportGuard(warnings, false);
+    } catch (e) {
+      thrown = e as CliError & { extra?: { warnings: unknown[] } };
+    }
+    expect(thrown).toBeInstanceOf(CliError);
+    expect(thrown!.code).toBe(1);
+    expect(thrown!.message).toMatch(/^export refused: The phone shows its back/);
+    expect(thrown!.extra!.warnings).toEqual(warnings.filter((w) => w.code === 'tap-back'));
+    expect(() => exportGuard(warnings, true)).not.toThrow();
+  });
+
+  it('other warnings never block', () => {
+    expect(() => exportGuard([{ code: 'too-fast', message: 'fast' }, { code: 'off-canvas', message: 'out' }], false)).not.toThrow();
+    const ok = with3d(phoneProject({ presetId: 'social-9x16' }), { transitions: [move('m', 7, 8, { turn: 180 })] });
+    ok.device.frame = true;
+    ok.taps = [{ id: 't', t: 5, x: 0.5, y: 0.5, kind: 'tap', confidence: 1 }];
+    expect(() => exportGuard(projectWarnings(ok), false)).not.toThrow();
   });
 });

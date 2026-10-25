@@ -309,15 +309,18 @@ describe('shot op', () => {
     expect(p3of(q).transitions.map((t) => [t.id, t.recipe ?? null])).toEqual([
       ['m1', 'turn-to-back'],
       ['m2', 'turn-to-back'],
+      ['m3', 'turn-to-back'],
       ['keep', null],
     ]);
   });
 
-  it('float turns on the idle float; return "stay" keeps only the outbound move', () => {
+  it('float turns on the idle float; return "stay" keeps only the outbound moves (the lean and its drift, which comes to rest)', () => {
     expect(p3of(run(phoneProject(), [{ op: 'shot', recipe: 'float' }])).float.on).toBe(true);
     const q = run(with3d(phoneProject()), [{ op: 'shot', recipe: 'hero-layback', at: 4, return: 'stay' }]);
-    expect(p3of(q).transitions).toHaveLength(1);
+    expect(p3of(q).transitions).toHaveLength(2);
     expect(p3of(q).transitions[0].to.tilt).toBe(16);
+    expect(p3of(q).transitions[1].to.tilt).toBeGreaterThan(16);
+    expect(p3of(q).transitions[1].easing.kind).toBe('bezier');
   });
 
   it('a shot after a turn-to-back starts from the same angle (rebased, explicit Start), so nothing jumps', () => {
@@ -325,7 +328,7 @@ describe('shot op', () => {
       { op: 'shot', recipe: 'turn-to-back', at: 1 },
       { op: 'shot', recipe: 'hero-layback', at: 6 },
     ]);
-    const [, , hero] = p3of(q).transitions;
+    const [, , , hero] = p3of(q).transitions;
     expect(hero.from).toMatchObject({ turn: 0 });
     expect(poseAt(p3of(q), 5).turn).toBe(360);
   });
@@ -353,7 +356,7 @@ describe('shot op', () => {
     expect(() => applyOps(p, [{ op: 'shot', recipe: 'settle', at: 1, return: 'back' }], fresh())).toThrow(/return must be/);
     expect(() => applyOps(p, [{ op: 'shot', recipe: 'settle', at: 1, intensity: 3 }], fresh())).toThrow(/intensity must be 0\.25\.\.2/);
     expect(() => applyOps(p, [{ op: 'shot', recipe: 'settle', at: 1, direction: 2 }], fresh())).toThrow(/direction must be 1 or -1/);
-    expect(() => applyOps(p, [{ op: 'shot', recipe: 'turn-to-back', at: 1, duration: 0.15 }], fresh())).toThrow(/duration must be at least 0\.20 s for turn-to-back/);
+    expect(() => applyOps(p, [{ op: 'shot', recipe: 'turn-to-back', at: 1, duration: 0.15 }], fresh())).toThrow(/duration must be at least 0\.51 s for turn-to-back/);
     expect(() => applyOps(p, [{ op: 'shot', recipe: 'settle' }], fresh())).toThrow(/"at" must be a number/);
   });
 });

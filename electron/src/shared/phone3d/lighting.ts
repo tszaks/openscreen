@@ -1,17 +1,20 @@
 // The studio light presets, as pure data (D13: procedural, no HDRI). The
-// renderer (renderer/src/phone3d/environment.ts) paints all of it into ONE
-// PMREM environment: the softboxes, the set around the phone (an overhead
-// gradient, a front fill, a white bounce card below and dark flags at the
-// sides) and the faint glass sheen. Every lit surface takes all its light
-// from that one environment, so a metal face never falls into a black gap
-// between lights, and rough surfaces see soft-edged sources.
+// renderer (renderer/src/phone3d/environment.ts) makes ONE rig of each:
+// - the softboxes (the key, rim strips, an overhead strip, the lens
+//   catchlight) are RectAreaLights LIGHT_DISTANCE body long sides from the
+//   phone, so a flat face (the 17 Pro's back, the band at turn 90) sees each
+//   one from a different angle at every point and takes a gradient and a
+//   moving highlight;
+// - the set round the phone (an overhead gradient, a front fill, a white
+//   bounce card below and dark flags at the sides) is ONE PMREM environment,
+//   so a face that points between the boxes still sees the room.
 //
 // Frames of reference:
 // - A softbox's azimuth is an OFFSET from the key azimuth (phone3d.light.
 //   azimuth + pose.light), so the `light` channel turns the whole rig.
 // - The set (front fill, flags) is placed as seen from the camera at the
 //   DEFAULT key azimuth (`DEFAULT_KEY_AZIMUTH`); it turns with the light
-//   channel too, because the environment turns as one piece.
+//   channel too, because the environment and the boxes turn as one piece.
 // Azimuth 0 is the camera's side of the phone, + toward the canvas right;
 // elevation 0 is level with the phone, + up.
 
@@ -31,15 +34,23 @@ export const KEY_ELEVATION = 32;
 /** The key azimuth phone3d starts with (model.ts defaultPhone3D): the frame the set is placed in. */
 export const DEFAULT_KEY_AZIMUTH = -35;
 
+/**
+ * How far the softboxes stand from the phone's centre, in body long sides. Near enough that a flat face sees a
+ * box from clearly different angles across its length (about 22° from the top of the back to its bottom), so the
+ * highlight has a gradient and moves across the face as the phone turns; far enough that the box still reads as
+ * a studio light, not a lamp beside the phone.
+ */
+export const LIGHT_DISTANCE = 2.6;
+
 export interface SoftBox {
   /** Degrees, offset from the key azimuth. */
   azimuth: number;
   /** Degrees above the phone. */
   elevation: number;
-  /** Half the box's angular width and height, degrees (as seen from the phone). */
+  /** Half the box's angular width and height, degrees (as seen from the phone's centre). */
   halfW: number;
   halfH: number;
-  /** Radiance at the box's centre, scene-linear (1 is a white that tone maps to about 80%); × phone3d.light.intensity. */
+  /** The box's radiance, scene-linear (1 is a white that tone maps to about 80%); × phone3d.light.intensity. */
   radiance: number;
   /** sRGB hex. */
   color: string;
@@ -58,7 +69,7 @@ export interface StudioSet {
 }
 
 export interface LightRig {
-  /** The softboxes, key first, painted into the environment with soft edges. */
+  /** The softboxes, key first (RectAreaLights). */
   boxes: SoftBox[];
   set: StudioSet;
   /** The key: its elevation (the shadow's light) and relative strength. */
@@ -81,9 +92,12 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
       { azimuth: -65, elevation: 6, halfW: 5, halfH: 42, radiance: 2.0, color: '#ffffff' },
       { azimuth: 185, elevation: 14, halfW: 5, halfH: 34, radiance: 2.0, color: '#ffffff' },
       { azimuth: -115, elevation: 14, halfW: 4, halfH: 34, radiance: 1.5, color: '#ffffff' },
-      { azimuth: 40, elevation: 74, halfW: 70, halfH: 10, radiance: 0.5, color: '#f4f6ff' },
+      { azimuth: 40, elevation: 74, halfW: 70, halfH: 10, radiance: 0.4, color: '#f4f6ff' },
       // A small soft lamp just above and right of the camera: the round catchlight in the lens elements.
       { azimuth: 50, elevation: 18, halfW: 5, halfH: 5, radiance: 2.5, color: '#ffffff' },
+      // A tall strip right of the camera (60° from it): its reflection crosses the screen glass as the phone turns
+      // toward it, and sweeps over the back in the three-quarter back view.
+      { azimuth: 95, elevation: 12, halfW: 6, halfH: 36, radiance: 1.4, color: '#ffffff' },
     ],
     set: { top: 0.8, horizon: 0.45, front: 0.15, floor: 0.55, flags: 0.9 },
     key: { elevation: KEY_ELEVATION, intensity: 1 },

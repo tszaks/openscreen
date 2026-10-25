@@ -92,7 +92,10 @@ function fakeEngine(maxSide = 8192) {
       phone: () => ({ root: new THREE.Group(), screen: new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial()), dispose() {} }),
       environment: () => null,
       envStrength: () => 1,
+      lights: () => new THREE.Group(),
+      placeLights: () => {},
     },
+    lights: null,
     phones: cache(),
     envs: cache(),
     current: { phone: null },
@@ -495,9 +498,9 @@ describe('oblique density (§3.6, owner decision 11)', () => {
 });
 
 describe('GPU memory at 4K (§3.9 table method, decimal MB)', () => {
-  /** WP4a's parts the stand-in does not have, as §3.9 budgets them: a 512 HalfFloat PMREM (1536 × 2048 × 8 B) and
-   *  geometry up to 10 MB. (Round 1 also counted the RectAreaLight LTC tables; all light is the PMREM now.) */
-  const WP4A = 3 * 512 * 4 * 512 * 8 + 10e6;
+  /** WP4a's parts the stand-in does not have, as §3.9 budgets them: a 512 HalfFloat PMREM (1536 × 2048 × 8 B),
+   *  geometry up to 10 MB, and the RectAreaLight LTC tables (two 64 × 64 RGBA float textures). */
+  const WP4A = 3 * 512 * 4 * 512 * 8 + 10e6 + 2 * 64 * 64 * 16;
 
   /** The heaviest frame of a 200° turn at 30 fps (t 0..4 s, the move 1..3 s), counted bytes plus WP4a's parts. */
   function peak(patch: Partial<Phone3D>, layout: 'fill' | 'social4k') {

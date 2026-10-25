@@ -74,6 +74,8 @@ export interface SamplePlan {
   times: number[];
   /** Sub-pixel camera offset of each sample, render px. */
   jitter: (readonly [number, number])[];
+  /** Each sample's share of the frame (the tent shutter's weight; 1/N when still), summing to 1. */
+  weights: number[];
 }
 
 export interface SampleInputs {
@@ -93,6 +95,19 @@ export function travelRefPx(travelOutputPx: number, shortSide: number): number {
 }
 
 /**
+ * The shutter's response at u (0..1 across the shutter): a tent, 1 in the
+ * middle, 0 at both ends. A box shutter (every sample weighed the same)
+ * prints every thin stroke as two hard-edged copies at the ends of its smear
+ * (look round 2: "TD Bank" read as doubled text); a tent fades the smear out
+ * at both ends, and its spread (σ) is 0.71× a box's of the same width. The
+ * samples stay evenly spread in time (1 px apart), so no gap opens at the
+ * ends; only their weights follow the tent.
+ */
+export function tentShutter(u: number): number {
+  return Math.max(0, 1 - Math.abs(2 * Math.min(1, Math.max(0, u)) - 1));
+}
+
+/**
  * The sub-samples of one frame (§3.7 step 4), from pose and fixed tables only,
  * so a frame always renders the same way. Nmotion = 1 when the hull moves less
  * than STILL_TRAVEL_PX over the shutter, else ceil(travel / MOTION_STEP_PX)
@@ -100,17 +115,49 @@ export function travelRefPx(travelOutputPx: number, shortSide: number): number {
  * otherwise. A moving frame's shutter is cut into N equal slots and each
  * sample sits at a fixed-random place in its own slot (stratified): even
  * spacing printed the copies of an edge as a regular stack (ghosts); jittered,
- * the leftover steps are fine noise inside the smear.
+ * the leftover steps are fine noise inside the smear. Each sample is weighed
+ * by the tent shutter at its place (`weights`, summing to 1); a still frame's
+ * samples weigh 1/N each.
  */
 export function planSamples({ t, travelPx, motion, full }: SampleInputs): SamplePlan {
-  if (!full) return { n: 1, nMotion: 1, times: [t], jitter: [JITTER[0]] };
+  if (!full) return { n: 1, nMotion: 1, times: [t], jitter: [JITTER[0]], weights: [1] };
   const moving = motion !== null && motion.shutterSec > 0 && travelPx >= STILL_TRAVEL_PX;
   const nMotion = moving
     ? Math.min(MAX_SAMPLES, Math.max(Math.max(2, Math.round(motion.samples)), Math.ceil(travelPx / MOTION_STEP_PX)))
     : 1;
   const n = Math.max(nMotion, AA_SAMPLES);
-  const times = Array.from({ length: n }, (_, k) => (nMotion > 1 ? t + ((k + slotOffset(t, k)) / n - 0.5) * motion!.shutterSec : t));
-  return { n, nMotion, times, jitter: JITTER.slice(0, n) };
+  const u = Array.from({ length: n }, (_, k) => (k + slotOffset(t, k)) / n);
+  const times = u.map((x) => (nMotion > 1 ? t + (x - 0.5) * motion!.shutterSec : t));
+  const raw = u.map((x) => (nMotion > 1 ? tentShutter(x) : 1));
+  const sum = raw.reduce((a, b) => a + b, 0);
+  return { n, nMotion, times, jitter: JITTER.slice(0, n), weights: raw.map((w) => w / sum) };
+}
+
+/** The screen content holds still (no motion blur) when the screen faces the camera this squarely or more (cosine);
+ *  it blurs fully below SCREEN_STEADY_FACING[0]. */
+export const SCREEN_STEADY_FACING = [0.8, 0.9] as const;
+/** ...and within this many seconds of a tap (fully steady inside the first, blurring again by the second). */
+export const SCREEN_STEADY_TAP = [0.15, 0.3] as const;
+
+const smoothstep = (a: number, b: number, x: number) => {
+  const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+};
+
+/**
+ * How still the screen CONTENT is held under motion blur, 0..1 (§3.7 step 4,
+ * look round 3): 1 when the screen faces the viewer (facing ≥ 0.9) or a tap
+ * is within 0.15 s, so the UI is crisp when it is the point of the frame and
+ * a tap always lands on legible text; 0 (the full blur) when the phone is
+ * turned away and no tap is near. In between it eases. The body, the screen's
+ * edge and the glass still blur as the phone moves; only what the screen shows
+ * is read where the frame's centre pose put it. `tapGap` = seconds from the
+ * frame to the nearest tap (Infinity when none). Pure.
+ */
+export function screenSteadiness(facing: number, tapGap: number): number {
+  const byFacing = smoothstep(SCREEN_STEADY_FACING[0], SCREEN_STEADY_FACING[1], facing);
+  const byTap = 1 - smoothstep(SCREEN_STEADY_TAP[0], SCREEN_STEADY_TAP[1], tapGap);
+  return Math.max(byFacing, byTap);
 }
 
 // ---------------------------------------------------------------------------
@@ -327,27 +374,77 @@ export function lodBias<M extends THREE.Material>(mat: M): M {
   return mat;
 }
 
+/** Per-draw inputs of the screen's texture lookup (screenLookup). */
+interface ScreenLookupUniforms {
+  uScreenJitter: { value: THREE.Vector2 };
+  uSteady: { value: number };
+  uSteadyH: { value: THREE.Matrix3 };
+  uSteadyMap: { value: THREE.Matrix3 };
+  uTileOrigin: { value: THREE.Vector2 };
+  uTileH: { value: number };
+  uSs: { value: number };
+}
+
+function lookupUniforms(mat: THREE.Material): ScreenLookupUniforms {
+  const data = mat.userData as { screenLookup?: ScreenLookupUniforms };
+  return (data.screenLookup ??= {
+    uScreenJitter: { value: new THREE.Vector2() },
+    uSteady: { value: 0 },
+    uSteadyH: { value: new THREE.Matrix3() },
+    uSteadyMap: { value: new THREE.Matrix3() },
+    uTileOrigin: { value: new THREE.Vector2() },
+    uTileH: { value: 1 },
+    uSs: { value: 1 },
+  });
+}
+
 /**
- * The screen texture lookup undoes the sample's sub-pixel jitter (§3.6,
- * D19): a jittered sample sees the scene moved by `j` render px, so the
- * fragment at a pixel reads the texel the UNjittered render read there:
- * uv − dFdx(uv)·jx + dFdy(uv)·jy (render px are y down, gl_FragCoord y up).
- * The screen's EDGE (its coverage) still moves with the jitter and is
- * anti-aliased by it; its inside stays texel exact, so every sample can add
- * the screen without softening the UI. Apply after lodBias.
+ * The screen texture lookup (§3.6, §3.7 step 4, D19). Two corrections, so
+ * the screen's inside stays exact while its edge anti-aliases and blurs:
+ * - Jitter: a jittered sample sees the scene moved by `j` render px, so the
+ *   fragment at a pixel reads the texel the UNjittered render read there:
+ *   uv − dFdx(uv)·jx + dFdy(uv)·jy (render px are y down, gl_FragCoord y up).
+ * - Steadiness (screenSteadiness): under motion blur each sample's screen is
+ *   at its own pose, and the UI text smears with it. With uSteady = 1 the
+ *   fragment instead reads the texel the frame's CENTRE pose put at this
+ *   output pixel: its canvas position (the tile's place in the full view, no
+ *   jitter, / ss) through uSteadyH (canvas → mesh uv at the centre pose,
+ *   projection.ts screenUvMap) and the texture's own transform (uSteadyMap).
+ *   Every sample then reads the same picture, so the content is crisp while
+ *   the screen's edge still moves with the phone; uSteady between 0 and 1
+ *   mixes the two (a shorter smear).
+ * Apply after lodBias.
  */
-export function screenJitter<M extends THREE.Material>(mat: M): M {
-  const data = mat.userData as { screenJitter?: { value: THREE.Vector2 } };
-  const uniform = (data.screenJitter ??= { value: new THREE.Vector2() });
+export function screenLookup<M extends THREE.Material>(mat: M): M {
+  const u = lookupUniforms(mat);
   addPatch(mat, {
-    key: 'jitter',
+    key: 'screen-lookup',
     apply: (shader) => {
       const call = 'texture( map, vMapUv,';
-      if (!shader.fragmentShader.includes(call)) throw new Error('phone3d: screenJitter needs lodBias first');
-      shader.uniforms.uScreenJitter = uniform;
-      shader.fragmentShader =
-        'uniform vec2 uScreenJitter;\n' +
-        shader.fragmentShader.replace(call, 'texture( map, vMapUv - dFdx( vMapUv ) * uScreenJitter.x + dFdy( vMapUv ) * uScreenJitter.y,');
+      if (!shader.fragmentShader.includes(call)) throw new Error('phone3d: screenLookup needs lodBias first');
+      Object.assign(shader.uniforms, u);
+      // After three's declarations (vMapUv is declared by uv_pars_fragment), just before main().
+      const main = 'void main() {';
+      if (!shader.fragmentShader.includes(main)) throw new Error('phone3d: screen shader has no main()');
+      const lookup =
+        `uniform vec2 uScreenJitter;
+uniform float uSteady;
+uniform mat3 uSteadyH;
+uniform mat3 uSteadyMap;
+uniform vec2 uTileOrigin;
+uniform float uTileH;
+uniform float uSs;
+vec2 screenUv() {
+	vec2 own = vMapUv - dFdx( vMapUv ) * uScreenJitter.x + dFdy( vMapUv ) * uScreenJitter.y;
+	if ( uSteady <= 0.0 ) return own;
+	vec2 canvasPx = ( uTileOrigin + vec2( gl_FragCoord.x, uTileH - gl_FragCoord.y ) ) / uSs;
+	vec3 q = uSteadyH * vec3( canvasPx, 1.0 );
+	vec2 meshUv = clamp( q.xy / q.z, 0.0, 1.0 );
+	vec2 held = ( uSteadyMap * vec3( meshUv, 1.0 ) ).xy;
+	return mix( own, held, uSteady );
+}
+`;
+      shader.fragmentShader = shader.fragmentShader.replace(main, lookup + main).replace(call, 'texture( map, screenUv(),');
     },
   });
   return mat;
@@ -355,7 +452,29 @@ export function screenJitter<M extends THREE.Material>(mat: M): M {
 
 /** Sets the jitter (render px) the screen's texture lookup undoes for the next draw. */
 export function setScreenJitter(mat: THREE.Material, x: number, y: number): void {
-  (mat.userData as { screenJitter?: { value: THREE.Vector2 } }).screenJitter?.value.set(x, y);
+  lookupUniforms(mat).uScreenJitter.value.set(x, y);
+}
+
+/**
+ * Sets the frame's screen steadiness (screenSteadiness) and the centre pose's canvas → mesh uv map (row-major,
+ * projection.ts Homography) with the texture's uv transform; 0 turns the steady lookup off.
+ */
+export function setScreenSteady(mat: THREE.Material, steady: number, canvasToUv: readonly number[] | null, mapMatrix: THREE.Matrix3 | null): void {
+  const u = lookupUniforms(mat);
+  u.uSteady.value = canvasToUv && mapMatrix ? Math.min(1, Math.max(0, steady)) : 0;
+  if (canvasToUv && mapMatrix) {
+    const m = canvasToUv;
+    u.uSteadyH.value.set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+    u.uSteadyMap.value.copy(mapMatrix);
+  }
+}
+
+/** Sets where the tile being drawn sits in the full W·ss × H·ss view (render px, top-down, no jitter), its height and ss. */
+export function setScreenTile(mat: THREE.Material, x: number, y: number, h: number, ss: number): void {
+  const u = lookupUniforms(mat);
+  u.uTileOrigin.value.set(x, y);
+  u.uTileH.value = h;
+  u.uSs.value = ss;
 }
 
 // ---------------------------------------------------------------------------

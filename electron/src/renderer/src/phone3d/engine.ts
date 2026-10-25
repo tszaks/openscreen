@@ -107,6 +107,9 @@ export class Engine {
    */
   readonly phones = new Lru<PhoneModel>(3);
   readonly envs = new Lru<{ tex: THREE.Texture | null; dispose(): void }>(1);
+  /** The current preset's softboxes (RectAreaLights: no GPU objects of their own), a child of the scene, not of the
+   *  pose group (the shadow pass moves the pose group into its own scene). */
+  lights: { preset: string; group: THREE.Group } | null = null;
   current: { phone: PhoneModel | null } = { phone: null };
   readonly stats: EngineStats = { renders: 0, lastMs: 0, samples: 0, tiles: 0, roi: { x: 0, y: 0, w: 0, h: 0 }, texture: { w: 0, h: 0 }, gpuBytes: 0 };
   private canvasSize = { w: 0, h: 0 };
@@ -246,6 +249,8 @@ export class Engine {
     if (this.current.phone) this.inner.remove(this.current.phone.root);
     this.current = { phone: null };
     this.scene.environment = null;
+    if (this.lights) this.scene.remove(this.lights.group);
+    this.lights = null;
     this.phones.clear(dispose);
     this.envs.clear(dispose);
   }

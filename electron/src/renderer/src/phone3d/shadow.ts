@@ -369,12 +369,21 @@ export class ShadowPass {
    * poses: `place(i)` puts the phone (`phone`, moved into the silhouette scene
    * for the pass and put back) at pose i. Each pose casts its silhouette once,
    * along its own light (`lights[i]`), onto the frame's one catcher plane; the
-   * silhouettes are averaged, then blurred once. `modelKey` names the phone
+   * silhouettes are averaged (by `weights`, the sample plan's tent shutter;
+   * equal without), then blurred once. `modelKey` names the phone
    * model; with the same model, catcher, lights and poses as last time, the
    * masks are reused as they are (a still phone, the paused preview, playback
    * without moves). Does not place the catcher: use() does.
    */
-  render(phone: THREE.Object3D, frame: CatcherFrame, modelKey: string, poses: number, place: (i: number) => void, lights: readonly (readonly [number, number, number])[]): void {
+  render(
+    phone: THREE.Object3D,
+    frame: CatcherFrame,
+    modelKey: string,
+    poses: number,
+    place: (i: number) => void,
+    lights: readonly (readonly [number, number, number])[],
+    weights?: readonly number[],
+  ): void {
     const r = this.renderer;
     const n = Math.max(1, Math.floor(poses));
     const mats: string[] = [];
@@ -383,7 +392,7 @@ export class ShadowPass {
       phone.updateMatrixWorld(true);
       mats.push(phone.matrixWorld.elements.join(','), lights[i].join(','));
     }
-    const key = [modelKey, n, mats.join(';'), frame.plane, frame.u0, frame.u1, frame.v0, frame.v1, frame.sigma.ambient, frame.sigma.contact].join('|');
+    const key = [modelKey, n, mats.join(';'), weights?.join(',') ?? '', frame.plane, frame.u0, frame.u1, frame.v0, frame.v1, frame.sigma.ambient, frame.sigma.contact].join('|');
     if (key === this.key) return;
     this.key = key;
     this.maskRenders++;
@@ -419,7 +428,7 @@ export class ShadowPass {
       this.silhouettes++;
       if (n > 1) {
         this.addMat.uniforms.uSrc.value = this.sil.texture;
-        this.addMat.uniforms.uW.value = 1 / n;
+        this.addMat.uniforms.uW.value = weights ? weights[i] : 1 / n;
         this.quad.material = this.addMat;
         r.setRenderTarget(this.avg);
         r.render(this.quadScene, this.quadCam);

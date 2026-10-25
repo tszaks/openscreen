@@ -98,7 +98,10 @@ export const BUTTON_PROUD_MM = 0.55;
 const BUTTON_EMBED_MM = 0.3;
 /** The crown's inset run as a fraction of the button's width (the top stays flat over the middle 1 − 2·this). */
 const BUTTON_CROWN = 0.32;
-const CAMERA_CONTROL_PROUD_MM = 0.28;
+/** Camera Control: a sapphire strip nearly flush with the band (round 2's 0.28 mm crown read as a black slot). */
+const CAMERA_CONTROL_PROUD_MM = 0.06;
+/** The flash: a thin metal ring round a frosted diffuser that fills it (round 2's black 22% ring read as clip-art). */
+const FLASH_LAMP_FRAC = 0.88;
 /** Bottom edge: USB-C pill and grilles. */
 const PORT_MM = { w: 8.3, h: 2.5 };
 const GRILLE = { holes: 6, d: 0.95, pitch: 1.3, gap: 2.4 };
@@ -1123,7 +1126,7 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
     const q = lensPos(pl.flash);
     const r = pl.flash.rMm ?? 3.4;
     disc(flash, q[0], q[1], r, surfaceZ(q), FLASH_GROUP.ring);
-    disc(flash, q[0], q[1], r * 0.78, surfaceZ(q) + DECAL_LIFT_MM, FLASH_GROUP.lamp);
+    disc(flash, q[0], q[1], r * FLASH_LAMP_FRAC, surfaceZ(q) + DECAL_LIFT_MM, FLASH_GROUP.lamp);
   }
   const sensor = new Builder();
   if (pl.sensor) {

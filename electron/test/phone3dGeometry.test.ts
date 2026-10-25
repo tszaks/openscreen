@@ -9,6 +9,8 @@ import {
   InstancedMesh,
   Mesh,
   MeshPhysicalMaterial,
+  Quaternion,
+  RectAreaLight,
   Scene,
   SRGBColorSpace,
   ShaderLib,
@@ -18,7 +20,7 @@ import {
 import { DEVICES, genericDevice, getDevice, type DeviceModel } from '../src/shared/devices';
 import { body3dFor } from '../src/shared/devices3d';
 import { continuousRectPoints } from '../src/shared/phone3d/outline';
-import { DEFAULT_KEY_AZIMUTH, FLAGS, KEY_ELEVATION, LIGHT_PRESETS } from '../src/shared/phone3d/lighting';
+import { DEFAULT_KEY_AZIMUTH, FLAGS, KEY_ELEVATION, LIGHT_DISTANCE, LIGHT_PRESETS } from '../src/shared/phone3d/lighting';
 import { defaultPhone3D, LIGHT_PRESET_NAMES } from '../src/shared/phone3d/model';
 import {
   CHAMFER_MM,
@@ -51,11 +53,12 @@ import {
   frontGlassSpecular,
   LENS_COVER_ROUGHNESS,
   LENS_ELEMENTS,
+  ALUMINIUM_ROUGHNESS,
   PANEL_ALBEDO,
   PANEL_ROUGHNESS,
   PANEL_SPECULAR,
 } from '../src/renderer/src/phone3d/materials';
-import { aimStudio, lightDir, quantizeBg, studioRadiance, studioScene } from '../src/renderer/src/phone3d/environment';
+import { aimStudio, boxSize, lightDir, placeStudio, quantizeBg, studioLights, studioRadiance, studioScene } from '../src/renderer/src/phone3d/environment';
 
 const dev = (id: string) => getDevice(id)!;
 const build = (d: DeviceModel): PhoneModel => phoneModel(d, body3dFor(d));
@@ -579,7 +582,7 @@ describe('materials (§3.4)', () => {
     expect(ti.band.roughness).toBe(0.32);
     expect(ti.band.anisotropy).toBe(0.5);
     const al = materialsFor('#2F2F31', 'aluminum', 'glossy', 0.25);
-    expect(al.band.roughness).toBe(0.24);
+    expect(al.band.roughness).toBe(ALUMINIUM_ROUGHNESS);
     expect(al.band.clearcoat).toBe(0);
     // Glossy back: diffuse colour layer under one glass coat.
     expect(al.back.roughness).toBe(0.6);
@@ -599,7 +602,11 @@ describe('materials (§3.4)', () => {
     expect(ti.glare.roughness).toBe(FRONT_GLASS_ROUGHNESS);
     expect(ti.frontGlass.specularIntensity).toBe(frontGlassSpecular(0.25));
     expect(ti.glare.specularIntensity).toBe(ti.frontGlass.specularIntensity);
-    expect(frontGlassSpecular(0.25)).toBeCloseTo(0.6, 9);
+    // The default glass is anti-reflective (about 1.4% straight on); glass 1 is bare glass (4%).
+    expect(frontGlassSpecular(0.25)).toBeCloseTo(0.35, 9);
+    // The glass mirrors the softboxes only: the set's fill would lay a grey veil over the whole screen.
+    expect(ti.frontGlass.envMapIntensity).toBe(0);
+    expect(ti.glare.envMapIntensity).toBe(0);
     expect(frontGlassSpecular(0)).toBe(0);
     expect(frontGlassSpecular(1)).toBe(1);
     expect(ti.frontGlass.ior).toBe(1.5);
@@ -657,14 +664,22 @@ describe('materials (§3.4)', () => {
     const set = materialsFor('#3C3C3D', 'titanium', 'frosted', 0.25);
     const s2 = { fragmentShader: ShaderLib.basic.fragmentShader, vertexShader: '', uniforms: {} };
     set.screen.onBeforeCompile(s2 as never, undefined as never);
-    // The −0.5 bias sample, its uv shifted back by the sample's jitter (screenJitter).
-    expect(s2.fragmentShader).toContain(LOD_MAP_FRAGMENT.replace('texture( map, vMapUv,', 'texture( map, vMapUv - dFdx( vMapUv ) * uScreenJitter.x + dFdy( vMapUv ) * uScreenJitter.y,'));
+    // The −0.5 bias sample through screenUv(): the uv shifted back by the sample's jitter, or held where the
+    // frame's centre pose put it (screenLookup).
+    expect(s2.fragmentShader).toContain(LOD_MAP_FRAGMENT.replace('texture( map, vMapUv,', 'texture( map, screenUv(),'));
+    expect(s2.fragmentShader).toContain('vec2 own = vMapUv - dFdx( vMapUv ) * uScreenJitter.x + dFdy( vMapUv ) * uScreenJitter.y;');
+    // screenUv() reads vMapUv, so it must come after three's declaration of it and before main() (round 3 first
+    // put it at the top: the screen shader failed to compile and the screen vanished).
+    const fs = s2.fragmentShader;
+    expect(fs.indexOf('#include <uv_pars_fragment>')).toBeGreaterThan(-1);
+    expect(fs.indexOf('vec2 screenUv()')).toBeGreaterThan(fs.indexOf('#include <uv_pars_fragment>'));
+    expect(fs.indexOf('vec2 screenUv()')).toBeLessThan(fs.indexOf('void main() {'));
     expect(s2.fragmentShader).not.toContain('#include <map_fragment>');
     expect(s2.fragmentShader).toContain('pc_fragScreen = vec4( gl_FragColor.rgb * gl_FragColor.a, gl_FragColor.a );');
     expect(s2.fragmentShader).toContain('gl_FragColor = vec4( 0.0, 0.0, 0.0, gl_FragColor.a );');
     // Patches compose once and key the program cache.
     lodBias(set.screen);
-    expect(set.screen.customProgramCacheKey()).toBe('mrt-screen|lodbias|jitter');
+    expect(set.screen.customProgramCacheKey()).toBe('mrt-screen|lodbias|screen-lookup');
     // Every lit material in the set is patched; the screen and the glare over it go to the screen attachment.
     for (const m of set.all) {
       expect(m.customProgramCacheKey(), m.type).toMatch(m === set.screen ? /^mrt-screen/ : m === set.glare ? /^mrt-glare$/ : /^mrt-lit$/);
@@ -770,24 +785,40 @@ describe('studio environment (D13: one procedural environment holds all the ligh
     expect(floor[2] / floor[1]).toBeLessThan(1.3);
     // Flags: either side, a little behind the phone.
     for (const side of [-1, 1]) expect(lum(at('studio', side * FLAGS.azimuth, FLAGS.elevation))).toBeLessThan(0.25 * horizon);
-    // The key (azimuth = the key's own, KEY_ELEVATION up) and the rim strips behind outshine the dome.
-    expect(lum(at('studio', DEFAULT_KEY_AZIMUTH, KEY_ELEVATION))).toBeGreaterThan(2 * horizon);
-    const rim = LIGHT_PRESETS.studio.boxes[2];
-    expect(lum(at('studio', DEFAULT_KEY_AZIMUTH + rim.azimuth, rim.elevation))).toBeGreaterThan(3 * horizon);
+    // The softboxes are lights, not painted into the set: where the key stands the set is just the dome.
+    expect(lum(at('studio', DEFAULT_KEY_AZIMUTH, KEY_ELEVATION))).toBeLessThan(1.5 * lum(at('studio', DEFAULT_KEY_AZIMUTH + 90, KEY_ELEVATION)) + 0.2);
   });
 
-  it('every softbox has a soft edge (no hard rectangle in a lens or the glass), and no preset clips its key', () => {
+  it('the softboxes are RectAreaLights round the phone: LIGHT_DISTANCE long sides out, facing it, sized by their angle, turned by the light channel', () => {
     for (const preset of LIGHT_PRESET_NAMES) {
-      const key = LIGHT_PRESETS[preset].boxes[0];
-      // Walk out of the key horizontally in 0.5° steps: no step changes more than 12% of its radiance.
-      let prev = lum(at(preset, DEFAULT_KEY_AZIMUTH, key.elevation));
-      for (let d = 0.5; d <= key.halfW * 1.6; d += 0.5) {
-        const v = lum(at(preset, DEFAULT_KEY_AZIMUTH + d / Math.cos((key.elevation * Math.PI) / 180), key.elevation));
-        expect(Math.abs(v - prev), `${preset} ${d}`).toBeLessThan(0.12 * key.radiance);
-        prev = v;
+      const rig = studioLights(preset);
+      const boxes = LIGHT_PRESETS[preset].boxes;
+      expect(rig.children.length, preset).toBe(boxes.length);
+      const center = [100, -50, 20] as const;
+      const unit = 300; // body long side, world units
+      for (const az of [-35, 50]) {
+        placeStudio(rig, center, unit, az, 1.5);
+        boxes.forEach((box, i) => {
+          const l = rig.children[i] as RectAreaLight;
+          expect(l).toBeInstanceOf(RectAreaLight);
+          const p = l.getWorldPosition(new Vector3());
+          const d = p.clone().sub(new Vector3(...center));
+          expect(d.length()).toBeCloseTo(LIGHT_DISTANCE * unit, 6);
+          // Its direction from the phone is the box's (azimuth offset from the key, elevation), turned by az.
+          const want = lightDir(az + box.azimuth, box.elevation);
+          expect(d.normalize().dot(new Vector3(...want))).toBeCloseTo(1, 6);
+          // It faces the phone: a RectAreaLight emits along its local −z.
+          const facing = new Vector3(0, 0, -1).applyQuaternion(l.getWorldQuaternion(new Quaternion()));
+          expect(facing.dot(d)).toBeCloseTo(-1, 6);
+          const size = boxSize(box);
+          expect(l.width).toBeCloseTo(size.w * unit, 6);
+          expect(l.height).toBeCloseTo(size.h * unit, 6);
+          expect(l.intensity).toBeCloseTo(box.radiance * 1.5, 9);
+        });
       }
       // A key at 2.5 or more tone maps to white on any metal and washed Cosmic Orange to peach in round 1.
-      expect(key.radiance, preset).toBeLessThanOrEqual(2.5);
+      expect(boxes[0].radiance, preset).toBeLessThanOrEqual(2.5);
+      expect(boxes[0].elevation, preset).toBe(KEY_ELEVATION);
     }
   });
 
