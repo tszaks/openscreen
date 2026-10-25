@@ -26,21 +26,49 @@ Keep the command in one word-list like this (no `$A`-style variable holding
 
 ## Step 0: find and prepare the CLI
 
-This skill is a symlink and you are usually in another project's folder, so
-the checkout comes from this file's real path. Run this block as it is, in
-one call (it works in zsh and bash, from any folder):
+You are usually in another project's folder, so nothing here assumes the
+checkout is the current folder. The checkout is two folders above this
+file's real path (`<checkout>/skills/openscreen/SKILL.md`). Before you run
+the block, put the path you read this file from into its first line (Claude
+Code shows it as the skill's base directory; add `/SKILL.md`). Leave it `''`
+when you do not know it: the block then tries the installed skill for each
+tool, one line each, then the current folder's git checkout.
+
+Run the block as one call (it works in zsh and bash, from any folder):
 
 ```sh
-for f in ~/.claude/skills/openscreen/SKILL.md ~/.codex/skills/openscreen/SKILL.md; do [ -e "$f" ] && { OS="$(cd "$(dirname "$(realpath "$f")")/../.." && pwd)"; break; }; done
+SKILL_MD=''   # the path you read this SKILL.md from; '' if you do not know it
+OS=''
+[ -n "$SKILL_MD" ] && [ -e "$SKILL_MD" ] && OS="$(cd "$(dirname "$(realpath "$SKILL_MD")")/../.." && pwd)"
+[ -z "$OS" ] && [ -e ~/.claude/skills/openscreen/SKILL.md ] && OS="$(cd "$(dirname "$(realpath ~/.claude/skills/openscreen/SKILL.md)")/../.." && pwd)"
+[ -z "$OS" ] && [ -e ~/.codex/skills/openscreen/SKILL.md ] && OS="$(cd "$(dirname "$(realpath ~/.codex/skills/openscreen/SKILL.md)")/../.." && pwd)"
+[ -z "$OS" ] && G="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -e "$G/electron/scripts/openscreen-agent.mjs" ] && OS="$G"
 CLI="$OS/electron/scripts/openscreen-agent.mjs"
-ready() { node "$CLI" ops | grep -q '"phone3d"' && node "$CLI" ops | grep -q '"direct"' && node "$CLI" help | grep -q '"frames"'; }
-ready || { echo "building $OS/electron/dist (once)"; npm --prefix "$OS/electron" run build > "${TMPDIR:-/tmp}/openscreen-skill-build.log" 2>&1; }
-ready && echo "READY: node $CLI" || { echo "NOT READY (checkout: ${OS:-not found})"; tail -5 "${TMPDIR:-/tmp}/openscreen-skill-build.log" 2>/dev/null; }
+ready() { [ -n "$OS" ] && node "$CLI" ops | grep -q '"phone3d"' && node "$CLI" ops | grep -q '"direct"' && node "$CLI" help | grep -q '"frames"'; }
+[ -z "$OS" ] || ready || { echo "building $OS/electron/dist (once)"; npm --prefix "$OS/electron" run build > "${TMPDIR:-/tmp}/openscreen-skill-build.log" 2>&1; }
+ready && echo "READY: node $CLI" || { echo "NOT READY (checkout: ${OS:-not found})"; [ -n "$OS" ] && tail -5 "${TMPDIR:-/tmp}/openscreen-skill-build.log" 2>/dev/null; }
 ```
 
 Done when it prints `READY: node /abs/…/openscreen-agent.mjs`: that line is
-`<cli>`. If it prints `NOT READY`, stop and report its output. Then read
-`AGENTS.md` in that checkout (the folder above `electron/`).
+`<cli>`. Then read `AGENTS.md` in that checkout (the folder above
+`electron/`).
+
+- `NOT READY (checkout: not found)`: no path, no installed skill, and the
+  current folder is not a checkout. Ask the user where their OpenScreen
+  checkout is, put `<checkout>/skills/openscreen/SKILL.md` in the first line,
+  and run the block again.
+- `NOT READY (checkout: /abs/…)` with build output: the build failed. Stop
+  and report that output.
+
+A person installs the skill once, so "use openscreen" works from any
+project. One command links it for both tools:
+`node <checkout>/electron/scripts/install-skill.mjs`. It makes these two
+links, one per tool (by hand, each line on its own):
+
+```sh
+ln -s <checkout>/skills/openscreen ~/.claude/skills/openscreen
+ln -s <checkout>/skills/openscreen ~/.codex/skills/openscreen
+```
 
 ## Step 1: pick the recording
 
@@ -74,11 +102,25 @@ Run these in order. Each step is done when its check holds.
    `outputDuration` is inside the target length (else cut more, step 3).
    Times change: re-run `info` and work in **output seconds** from here on.
 5. `<cli> direct <bundle> --style hero` — `bold` for promos (rests a few
-   degrees off front), `subtle` for tutorials. Read each `shots[].reason`.
-   If `shots` has no shot after the intro and the video has a gap of 2.4 s or
-   more between taps, place one yourself: convert the taps to output seconds
-   with `info.clips`, add a `hero-layback` `shot` in that gap, and check it
-   with `apply --dry-run` (`warnings: []`).
+   degrees off front), `subtle` for tutorials. Read each `shots[].reason`
+   and the `note`. Auto 3D is restrained on purpose: at most one big move
+   (`spin-in`, `turn-to-back`, `hero-layback`) per 30 s (`hero`, `subtle`)
+   or per 20 s (`bold`), never two big moves within 6 s, at most 3
+   `turn-to-back`s; the phone holds a calm pose the rest of the time. On a
+   take over 90 s the `note` recommends a trim to the best 15–45 s: do
+   step 3 again rather than adding shots.
+   **Placing a shot yourself** (only when the video is short and has no
+   shot after the intro): pick a gap between taps of at least the shot's
+   length (2.4 s for `hero-layback`), convert the taps to output seconds
+   with `info.clips`, and keep the same restraint (one big move per 30 s,
+   6 s apart). **Zooms count too**: a zoom (Zoom to taps, auto-focus or a
+   manual zoom) pushes the 3D camera in toward the screen, so while one
+   plays the phone must stay within 35° of front. A tap zoom starts just
+   before its tap, so end the shot's lean (the first 1.4 s of a
+   `hero-layback`) before the next tap, and never put `spin-in` or
+   `turn-to-back` over a zoom. Check with `apply --dry-run`: done when
+   `warnings: []`; a `zoom-angle` or `tap-angle` warning names the moment:
+   move the shot earlier, shorten it (`duration`), or apply its `fix`.
    The rest pose after Auto 3D is the End of the intro **and of every
    planned shot that returns to rest**. To rest a few degrees off front for
    the whole video: use `--style bold` (rests at -8°/5°), or edit the End
@@ -93,7 +135,10 @@ Run these in order. Each step is done when its check holds.
    own Start (Auto 3D's spin-in does); its output note says so.
 6. `<cli> frames <bundle> --moves --sheet --draft` — **open `sheet.png`**
    and judge it against the checklist below. Each file's `facing` must be
-   near 1 at every tap time.
+   near 1 at every tap time and during every zoom. On a long video,
+   `--from S --to E` limits the stills to output seconds S..E; when the
+   moves need more than 200 stills, `--moves` samples them evenly and says
+   so in its output.
 7. Fix what you saw with one `<cli> apply <bundle> '[…]'` per round:
    `setPose`, `editTransition`, `shot`, `removeTransition`, a `phone3d`
    setting, or a warning's `fix` list as it is. Read each note in `changes`.
@@ -120,6 +165,10 @@ fixes you made, the final warnings (0), and the output path.
 
 - Only the best moments, inside the target length (social: 15–30 s).
 - The screen faces front at every tap (facing near 1), readable.
+- Zooms play with the phone near front (within 35°): a zoom pushes the
+  camera in, so it is never the moment for a big turn.
+- Restraint: at most one big move per 30 s (bold: per 20 s), never two
+  within 6 s; the phone holds a calm pose (float is fine) the rest of the time.
 - One idea per move; nothing moves while something happens on screen.
 - Moves sit in waits or at scene changes.
 - The intro is under 1.8 s; at most about a third of the runtime moves.
@@ -133,8 +182,8 @@ fixes you made, the final warnings (0), and the output path.
 |---|---|
 | `spin-in` | the intro, before the first tap |
 | `settle` | a gentle intro, or any intro under 2 s |
-| `hero-layback` | a wait of 2.4 s or more; with `"return":"stay"` as the outro |
-| `turn-to-back` | a long wait (4.5 s or more) or a scene change; bold promos |
+| `hero-layback` | a wait of 2.4 s or more; with `"return":"stay"` as the outro; its lean ends before the next zoom |
+| `turn-to-back` | a long wait (4.5 s or more) or a scene change, never over a zoom; bold promos, at most 3 per video |
 | `float` | calm tutorials (idle drift, no moves) |
 
 `info.shotRecipes` has each one's length and summary. Easing: `spring` for
@@ -149,6 +198,8 @@ length), `cinematic` for turns of 90° or more, `smooth` for small moves,
 - `trim`, `cut` and `speed` take source seconds; every other time is output
   seconds after cuts. In one edits list, put `trim`/`cut`/`speed` first.
 - App Store layouts stay flat by design; use a social preset for 3D.
+- Zooms play in 3D as a camera push-in (same timing and easing as flat);
+  there is no separate 3D zoom control: the Zoom tab and zoom ops drive it.
 - An export renders 10-15× slower than real time: judge with `frames`, and
   export once at the end.
 - `<cli> undo <bundle>` swaps back the last `apply`, `polish` or `direct`

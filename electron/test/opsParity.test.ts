@@ -195,16 +195,20 @@ describe('ops parity: the rest pose after Auto 3D and the worked example', () =>
     expect(AGENTS).not.toMatch(/rest pose is the End of the intro \(and of each later move\), so\s+edit that End/);
   });
 
-  it('the worked example checks its fixes with --dry-run before it applies them, and uses no turn-to-back', () => {
+  it('the worked example checks its fixes with --dry-run before it applies them, and keeps decision 18\'s restraint', () => {
     const ex = section(AGENTS, '### Example: "make this world class" (an iPhone take)');
     const dry = ex.indexOf('apply "$B" fixes.json --dry-run');
     const real = ex.search(/apply "\$B" fixes\.json\s+#/);
     expect(dry, 'a dry run of fixes.json').toBeGreaterThan(-1);
     expect(real, 'the real apply').toBeGreaterThan(dry);
     const fixes = JSON.parse(ex.match(/```json\n([\s\S]*?)```/)![1]);
-    // Every op in it is a real op, and its shots are laybacks placed in the gaps the text names.
+    // Every op in it is a real op. Owner decision 18 (restraint): after the spin-in at 0, the only big move it adds
+    // is one layback at least 20 s later (the bold limit for a promo); the quiet middle gets float.
     for (const o of fixes) expect(OP_NAMES as readonly string[]).toContain(o.op);
-    expect(fixes.filter((o: { op: string }) => o.op === 'shot').map((o: { recipe: string }) => o.recipe)).toEqual(['hero-layback', 'hero-layback']);
+    const shots = fixes.filter((o: { op: string }) => o.op === 'shot') as { recipe: string; at?: number }[];
+    expect(shots.map((o) => o.recipe)).toEqual(['float', 'hero-layback']);
+    const big = shots.filter((o) => o.recipe !== 'float');
+    expect(big.every((o) => (o.at ?? 0) >= 20)).toBe(true);
   });
 });
 

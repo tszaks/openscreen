@@ -44,7 +44,7 @@ Everything that decides how a video *looks and moves* is a pure function here, s
 | `previewPointer.ts` | What a press on the editor's preview does, in order: crop, place a tap, the selected layer's corner handle, the topmost layer, empty canvas |
 | `phone3d/` | The 3D phone as pure math and data: the model and its normalizer, easing, poses over time, the camera and projection, shot recipes, the edit ops, the Auto 3D planner and the warnings (see [3d-phone/ARCHITECTURE.md](3d-phone/ARCHITECTURE.md)) |
 | `devices3d.ts` | What the 3D phone needs beyond `devices.ts`: depth, edge shape, back finish and camera plateau per model, each row with its Apple source |
-| `focusSegments.ts` | Every zoom the editor plays (autofocus, tap zooms, manual zooms) from one function, so the editor, the CLI and the 3D planner see the same list |
+| `focusSegments.ts` | Every zoom the editor plays (autofocus, tap zooms, manual zooms) from one function, so the editor, the CLI and the 3D planner see the same list (with the 3D phone on, each zoom pushes the 3D camera in) |
 | `types.ts` | The project model, defaults, migration of older projects, reset |
 
 ## Rendering and export
