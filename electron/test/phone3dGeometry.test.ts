@@ -6,7 +6,11 @@ import {
   BufferGeometry,
   Color,
   CustomBlending,
+  DataTexture,
   DataUtils,
+  HalfFloatType,
+  NearestFilter,
+  UnsignedByteType,
   InstancedMesh,
   Mesh,
   MeshPhysicalMaterial,
@@ -69,8 +73,10 @@ import {
   FRONT_GLASS_FLAG_SIN,
 } from '../src/renderer/src/phone3d/materials';
 import { RECT_DIFFUSE_LINE } from '../src/renderer/src/phone3d/passes';
-import { aimStudio, boxSize, HDRI_LOOK, lightDir, placeStudio, quantizeBg, studioLights, studioSet, studioScene } from '../src/renderer/src/phone3d/environment';
-import { HDRI, hdriData } from '../src/renderer/src/phone3d/hdri';
+import { aimStudio, boxSize, equirectDir, HDRI_LOOK, lightDir, placeStudio, quantizeBg, SET_TEX, studioLights, studioSet, studioScene } from '../src/renderer/src/phone3d/environment';
+import { HDRI, hdriData, hdriTexture, rgbeToFloat } from '../src/renderer/src/phone3d/hdri';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { readFileSync } from 'node:fs';
 import { APPLE_SWATCHES, APPLE_WRAPPER, appleFinishKey, finish3dHex } from '../src/renderer/src/phone3d/finishes3d';
 
 const dev = (id: string) => getDevice(id)!;
@@ -856,28 +862,42 @@ describe('studio environment (owner decision 15: one CC0 studio HDRI, the hero s
     studioSet(preset, bg, lightDir(camAz - DEFAULT_KEY_AZIMUTH, el));
   const lum = (c: readonly number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 
-  it('the HDRI decodes from the inlined asset: 2k, finite, non-negative, a real studio (dark corners, bright lights)', () => {
+  it('the HDRI decodes from the inlined asset: 2k RGBE, the same values as three\'s HDRLoader, a real studio (dark corners, bright lights)', () => {
     const d = hdriData();
     expect(HDRI.id).toBe('studio_small_09');
     expect([d.width, d.height]).toEqual([2048, 1024]);
-    expect(d.data.length).toBe(2048 * 1024 * 4);
-    const f = DataUtils.fromHalfFloat;
+    expect(d.rgbe.length).toBe(2048 * 1024 * 4);
+    expect(hdriData()).toBe(d); // decoded once
+    // Cross-check against three's own decoder on the shipped file (half floats, so within half precision).
+    const file = readFileSync(new URL('../src/renderer/src/phone3d/assets/studio.hdr', import.meta.url));
+    const loader = new HDRLoader();
+    loader.setDataType(HalfFloatType);
+    const ref = loader.parse(file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength)) as { width: number; height: number; data: Uint16Array };
+    expect([ref.width, ref.height]).toEqual([d.width, d.height]);
     let lo = Infinity;
     let hi = 0;
-    for (let i = 0; i < d.data.length; i += 4 * 97) {
-      const L = 0.2126 * f(d.data[i]) + 0.7152 * f(d.data[i + 1]) + 0.0722 * f(d.data[i + 2]);
-      expect(Number.isFinite(L) && L >= 0).toBe(true);
+    for (let i = 0; i < d.rgbe.length; i += 4 * 97) {
+      const ours = rgbeToFloat(d.rgbe[i], d.rgbe[i + 1], d.rgbe[i + 2], d.rgbe[i + 3]);
+      for (let c = 0; c < 3; c++) {
+        const theirs = DataUtils.fromHalfFloat(ref.data[i + c]);
+        expect(Math.abs(ours[c] - theirs)).toBeLessThanOrEqual(Math.max(1e-6, Math.abs(theirs) * 0.01));
+      }
+      const L = 0.2126 * ours[0] + 0.7152 * ours[1] + 0.0722 * ours[2];
       lo = Math.min(lo, L);
       hi = Math.max(hi, L);
     }
     expect(lo).toBeLessThan(0.05);
     expect(hi).toBeGreaterThan(20);
-    expect(hdriData()).toBe(d); // decoded once
+    // The GPU texture is the RGBE bytes as they are (4 B a texel), nearest filtered: the dome decodes them.
+    const tex = hdriTexture();
+    expect(tex.type).toBe(UnsignedByteType);
+    expect(tex.minFilter).toBe(NearestFilter);
+    tex.dispose();
   });
 
-  it('the PMREM scene is the dome alone: no lights, the HDRI × the preset gain, keep and add from studioSet', () => {
-    const map = new Texture();
-    const s = studioScene('studio', bg, map);
+  it('the PMREM scene is the dome alone: no lights, the HDRI × the preset gain, keep and add baked from studioSet', () => {
+    const map = new Texture({ width: 2048, height: 1024 });
+    const s = studioScene('studio', bg, map as Texture & { image: { width: number; height: number } });
     const kinds: string[] = [];
     s.traverse((o) => {
       if (o !== s) kinds.push(o.name || o.type);
@@ -887,20 +907,30 @@ describe('studio environment (owner decision 15: one CC0 studio HDRI, the hero s
     const dome = s.getObjectByName('studio:dome') as Mesh;
     const mat = dome.material as ShaderMaterial;
     expect(mat.uniforms.map.value).toBe(map);
+    expect(mat.uniforms.mapSize.value.toArray()).toEqual([2048, 1024]);
     expect(mat.uniforms.yaw.value).toBeCloseTo((HDRI.yawDeg * Math.PI) / 180, 12);
     const tint = new Color().setStyle(HDRI_LOOK.studio.tint).multiplyScalar(HDRI_LOOK.studio.gain);
     expect(mat.uniforms.gainTint.value.x).toBeCloseTo(tint.r, 9);
-    const pos = attr(dome.geometry, 'position');
-    const keep = attr(dome.geometry, 'keep');
-    const add = attr(dome.geometry, 'add');
-    for (let i = 0; i < pos.count; i += 7) {
-      const v = studioSet('studio', bg, [pos.getX(i) / 10, pos.getY(i) / 10, pos.getZ(i) / 10]);
-      expect(keep.getX(i)).toBeCloseTo(v.keep[0], 5);
-      expect(add.getZ(i)).toBeCloseTo(v.add[2], 5);
-      expect(keep.getY(i) >= 0 && add.getY(i) >= 0).toBe(true);
+    // A coarse dome: everything is read per pixel.
+    expect(attr(dome.geometry, 'position').count).toBeLessThan(4000);
+    const keep = mat.uniforms.setKeep.value as DataTexture;
+    const add = mat.uniforms.setAdd.value as DataTexture;
+    const { w, h } = SET_TEX;
+    for (let k = 0; k < 400; k++) {
+      const i = (k * 37) % w;
+      const j = (k * 101) % h;
+      const v = studioSet('studio', bg, equirectDir((i + 0.5) / w, (j + 0.5) / h));
+      const o = (j * w + i) * 4;
+      for (let c = 0; c < 3; c++) {
+        expect(DataUtils.fromHalfFloat((keep.image.data as Uint16Array)[o + c])).toBeCloseTo(v.keep[c], 2);
+        expect(DataUtils.fromHalfFloat((add.image.data as Uint16Array)[o + c])).toBeCloseTo(v.add[c], 2);
+      }
     }
+    // equirectDir inverts three's equirectUv (u round from +x toward +z, v up).
+    const dir = equirectDir(0.3, 0.8);
+    expect(Math.atan2(dir[2], dir[0]) / (2 * Math.PI) + 0.5).toBeCloseTo(0.3, 9);
+    expect(Math.asin(dir[1]) / Math.PI + 0.5).toBeCloseTo(0.8, 9);
     expect(DEFAULT_KEY_AZIMUTH).toBe(defaultPhone3D().light.azimuth);
-    // Every preset takes the same room, at its own gain and tint.
     for (const p of LIGHT_PRESET_NAMES) expect(HDRI_LOOK[p].gain, p).toBeGreaterThan(0);
   });
 

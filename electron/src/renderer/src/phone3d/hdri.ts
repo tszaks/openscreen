@@ -3,12 +3,14 @@
 //
 // It is inlined into the engine chunk (Vite `?inline`), which loader.ts
 // imports only when a project's 3D phone is active, so a flat project never
-// loads it (nor three). Decoded once per process, synchronously (atob +
-// three's HDRLoader), so building the environment stays a pure function of
-// the project: no fetch, no file:// rules, no frame that renders before the
-// room is there.
-import { DataTexture, HalfFloatType, LinearFilter, LinearSRGBColorSpace, RepeatWrapping, ClampToEdgeWrapping, RGBAFormat } from 'three';
-import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+// loads it (nor three). Decoded once per process, synchronously, so building
+// the environment stays a pure function of the project: no fetch, no file://
+// rules, no frame that renders before the room is there.
+//
+// It stays in its own 8-bit RGBE form on the GPU (4 B a texel; the dome
+// shader decodes it, environment.ts): a half-float upload is twice that, and
+// the 4K memory budget (owner decision 16) has no room for the difference.
+import { ClampToEdgeWrapping, DataTexture, NearestFilter, NoColorSpace, RepeatWrapping, RGBAFormat, UnsignedByteType } from 'three';
 import STUDIO_HDR from './assets/studio.hdr?inline';
 
 /** The shipped panorama and how it sits in the studio frame (environment.ts). */
@@ -22,42 +24,99 @@ export const HDRI = {
 export interface HdriData {
   width: number;
   height: number;
-  /** RGBA half floats, top row first (the file's order). */
-  data: Uint16Array;
+  /** RGBE bytes (mantissas, shared exponent), top row first (the file's order). */
+  rgbe: Uint8Array;
+}
+
+/** One RGBE texel → linear RGB: m/255 · 2^(e − 128), exactly as three's HDRLoader decodes it (0 when e is 0). */
+export function rgbeToFloat(r: number, g: number, b: number, e: number): [number, number, number] {
+  if (e === 0) return [0, 0, 0];
+  const f = 2 ** (e - 128) / 255;
+  return [r * f, g * f, b * f];
+}
+
+/** Base64 (a data URL's payload) → bytes. */
+function base64Bytes(dataUrl: string): Uint8Array {
+  const bin = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/**
+ * A Radiance .hdr file (32-bit_rle_rgbe, "-Y h +X w") → its RGBE bytes. Reads
+ * run-length scanlines (2, 2, width) and flat ones; throws on anything else,
+ * so a different asset cannot slip in half-read.
+ */
+export function decodeRadiance(bytes: Uint8Array): HdriData {
+  let pos = 0;
+  const line = () => {
+    let s = '';
+    while (pos < bytes.length && bytes[pos] !== 0x0a) s += String.fromCharCode(bytes[pos++]);
+    pos++;
+    return s;
+  };
+  if (!line().startsWith('#?')) throw new Error('phone3d: the studio HDRI is not a Radiance file');
+  for (let l = line(); l !== ''; l = line()) {
+    if (l.startsWith('FORMAT=') && l !== 'FORMAT=32-bit_rle_rgbe') throw new Error(`phone3d: unsupported HDRI ${l}`);
+    if (pos >= bytes.length) throw new Error('phone3d: the studio HDRI header has no end');
+  }
+  const m = /^-Y (\d+) \+X (\d+)$/.exec(line());
+  if (!m) throw new Error('phone3d: the studio HDRI is not -Y h +X w');
+  const height = Number(m[1]);
+  const width = Number(m[2]);
+  const out = new Uint8Array(width * height * 4);
+  const scan = new Uint8Array(width * 4);
+  for (let y = 0; y < height; y++) {
+    const rle = width >= 8 && width < 32768 && bytes[pos] === 2 && bytes[pos + 1] === 2 && ((bytes[pos + 2] << 8) | bytes[pos + 3]) === width;
+    if (!rle) {
+      out.set(bytes.subarray(pos, pos + width * 4), y * width * 4);
+      pos += width * 4;
+      continue;
+    }
+    pos += 4;
+    for (let c = 0; c < 4; c++) {
+      let x = 0;
+      while (x < width) {
+        let n = bytes[pos++];
+        if (n > 128) {
+          n -= 128;
+          if (x + n > width) throw new Error('phone3d: HDRI scanline overrun');
+          const v = bytes[pos++];
+          for (let k = 0; k < n; k++) scan[(x++) * 4 + c] = v;
+        } else {
+          if (n === 0 || x + n > width) throw new Error('phone3d: bad HDRI run');
+          for (let k = 0; k < n; k++) scan[(x++) * 4 + c] = bytes[pos++];
+        }
+      }
+    }
+    out.set(scan, y * width * 4);
+  }
+  if (pos > bytes.length) throw new Error('phone3d: the studio HDRI is truncated');
+  return { width, height, rgbe: out };
 }
 
 let decoded: HdriData | null = null;
 
-/** Base64 (a data URL's payload) → bytes. */
-function base64Bytes(dataUrl: string): ArrayBuffer {
-  const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out.buffer;
-}
-
 /** The decoded panorama (once per process). */
 export function hdriData(): HdriData {
-  if (decoded) return decoded;
-  const loader = new HDRLoader();
-  loader.setDataType(HalfFloatType);
-  const r = loader.parse(base64Bytes(STUDIO_HDR)) as { width: number; height: number; data: Uint16Array };
-  if (!r || !(r.width > 0) || !(r.height > 0)) throw new Error('phone3d: the studio HDRI did not decode');
-  decoded = { width: r.width, height: r.height, data: r.data };
-  return decoded;
+  return (decoded ??= decodeRadiance(base64Bytes(STUDIO_HDR)));
 }
 
-/** A GPU texture of the panorama (equirectangular, linear, half float). The caller disposes it. */
+/**
+ * A GPU texture of the panorama: equirectangular RGBE bytes, nearest filtered
+ * (RGBE does not filter; the dome shader decodes the four texels round a
+ * point and interpolates them itself). The caller disposes it.
+ */
 export function hdriTexture(): DataTexture {
-  const { width, height, data } = hdriData();
-  const tex = new DataTexture(data, width, height, RGBAFormat, HalfFloatType);
-  tex.colorSpace = LinearSRGBColorSpace;
-  tex.flipY = true; // as HDRLoader's own load() sets it: v = 0 is the bottom row
+  const { width, height, rgbe } = hdriData();
+  const tex = new DataTexture(rgbe, width, height, RGBAFormat, UnsignedByteType);
+  tex.colorSpace = NoColorSpace;
+  tex.flipY = true; // the file is top row first; flipped, v = 0 is its bottom row, as three's equirectUv expects
   tex.wrapS = RepeatWrapping;
   tex.wrapT = ClampToEdgeWrapping;
-  tex.minFilter = LinearFilter;
-  tex.magFilter = LinearFilter;
+  tex.minFilter = NearestFilter;
+  tex.magFilter = NearestFilter;
   tex.generateMipmaps = false;
   tex.needsUpdate = true;
   return tex;

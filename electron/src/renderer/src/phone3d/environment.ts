@@ -24,15 +24,23 @@
 
 import {
   BackSide,
-  BufferAttribute,
   Color,
   Group,
   Mesh,
   PMREMGenerator,
   RectAreaLight,
   Scene,
+  ClampToEdgeWrapping,
+  DataTexture,
+  DataUtils,
+  HalfFloatType,
+  LinearFilter,
+  NoColorSpace,
+  RepeatWrapping,
+  RGBAFormat,
   ShaderMaterial,
   SphereGeometry,
+  Vector2,
   Vector3,
   type Texture,
   type WebGLRenderer,
@@ -48,9 +56,6 @@ const FLOOR_TINT = 0.06;
 /** The floor card blends in over this many degrees below the horizon. */
 const FLOOR_BLEND_DEG = 15;
 const DOME_RADIUS = 10;
-/** Dome tessellation: 0.7° per segment, so the painted strips (half-width 4-5°) keep their soft edges (the panorama
- *  itself is read per pixel). */
-const DOME_SEG = { w: 512, h: 256 };
 export const PMREM_SIZE = 512;
 
 const deg = Math.PI / 180;
@@ -192,56 +197,117 @@ export function studioSet(preset: LightPreset, bgMean: Rgb, dir: readonly [numbe
   return { keep, add };
 }
 
+/** The set's resolution (studioSetTextures): 0.7° a texel, so the painted strips (half-width 4-5°) keep their soft
+ *  edges. */
+export const SET_TEX = { w: 512, h: 256 } as const;
+
+/** The unit direction at equirect (u, v) (three's equirectUv inverted: u round from +x toward +z, v up). */
+export function equirectDir(u: number, v: number): [number, number, number] {
+  const phi = (u - 0.5) * 2 * Math.PI;
+  const theta = (v - 0.5) * Math.PI;
+  return [Math.cos(phi) * Math.cos(theta), Math.sin(theta), Math.sin(phi) * Math.cos(theta)];
+}
+
+/**
+ * studioSet baked into two small equirect textures (SET_TEX, half float,
+ * linear, row 0 = the bottom): keep (rgb) and add (rgb). The dome reads them
+ * per pixel, so the dome itself can be a coarse mesh: the dense 512 × 256
+ * dome of look round 4 was about 10 MB of vertex buffers while the PMREM was
+ * made, and the 4K memory budget (owner decision 16) counts that peak.
+ */
+export function studioSetTextures(preset: LightPreset, bgMean: Rgb): { keep: DataTexture; add: DataTexture } {
+  const { w, h } = SET_TEX;
+  const keep = new Uint16Array(w * h * 4);
+  const add = new Uint16Array(w * h * 4);
+  const one = DataUtils.toHalfFloat(1);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const v = studioSet(preset, bgMean, equirectDir((i + 0.5) / w, (j + 0.5) / h));
+      const o = (j * w + i) * 4;
+      for (let c = 0; c < 3; c++) {
+        keep[o + c] = DataUtils.toHalfFloat(v.keep[c]);
+        add[o + c] = DataUtils.toHalfFloat(v.add[c]);
+      }
+      keep[o + 3] = one;
+      add[o + 3] = one;
+    }
+  }
+  const tex = (data: Uint16Array) => {
+    const t = new DataTexture(data, w, h, RGBAFormat, HalfFloatType);
+    t.colorSpace = NoColorSpace;
+    t.wrapS = RepeatWrapping;
+    t.wrapT = ClampToEdgeWrapping;
+    t.minFilter = LinearFilter;
+    t.magFilter = LinearFilter;
+    t.generateMipmaps = false;
+    t.needsUpdate = true;
+    return t;
+  };
+  return { keep: tex(keep), add: tex(add) };
+}
+
+/** Dome tessellation: the panorama and the set are read per pixel, so the sphere only has to be round. */
+const DOME_SEG = { w: 64, h: 32 };
+
 const DOME_VERT = /* glsl */ `
-attribute vec3 keep;
-attribute vec3 add;
 varying vec3 vDir;
-varying vec3 vKeep;
-varying vec3 vAdd;
 void main() {
   vDir = position;
-  vKeep = keep;
-  vAdd = add;
   gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
 }`;
 
-// The panorama in the dome's direction: three's equirectUv after a turn of yaw about +y, × gain × tint × keep, + add.
+// The panorama (8-bit RGBE, decoded and interpolated here: RGBE does not filter) in the dome's direction turned by
+// yaw about +y, × gain × tint × the set's keep, + the set's add.
 const DOME_FRAG = /* glsl */ `
 uniform sampler2D map;
+uniform vec2 mapSize;
+uniform sampler2D setKeep;
+uniform sampler2D setAdd;
 uniform vec3 gainTint;
 uniform float yaw;
 varying vec3 vDir;
-varying vec3 vKeep;
-varying vec3 vAdd;
+vec2 equirect( vec3 d ) {
+  return vec2( atan( d.z, d.x ) * 0.15915494309189535 + 0.5, asin( clamp( d.y, -1.0, 1.0 ) ) * 0.3183098861837907 + 0.5 );
+}
+vec3 rgbe( int x, int y ) {
+  vec4 c = floor( texelFetch( map, ivec2( x, y ), 0 ) * 255.0 + 0.5 );
+  return c.a < 0.5 ? vec3( 0.0 ) : c.rgb * ( exp2( c.a - 128.0 ) / 255.0 );
+}
 void main() {
   vec3 d = normalize( vDir );
+  vec2 uvSet = equirect( d );
   float c = cos( yaw );
   float s = sin( yaw );
-  d = vec3( c * d.x + s * d.z, d.y, -s * d.x + c * d.z );
-  vec2 uv = vec2( atan( d.z, d.x ) * 0.15915494309189535 + 0.5, asin( clamp( d.y, -1.0, 1.0 ) ) * 0.3183098861837907 + 0.5 );
-  vec3 hdr = texture2D( map, uv ).rgb;
-  gl_FragColor = vec4( hdr * gainTint * vKeep + vAdd, 1.0 );
+  vec2 t = equirect( vec3( c * d.x + s * d.z, d.y, -s * d.x + c * d.z ) ) * mapSize - 0.5;
+  vec2 f = fract( t );
+  ivec2 i0 = ivec2( floor( t ) );
+  int W = int( mapSize.x );
+  int H = int( mapSize.y );
+  int x0 = ( ( i0.x % W ) + W ) % W;
+  int x1 = ( x0 + 1 ) % W;
+  int y0 = clamp( i0.y, 0, H - 1 );
+  int y1 = clamp( i0.y + 1, 0, H - 1 );
+  vec3 hdr = mix( mix( rgbe( x0, y0 ), rgbe( x1, y0 ), f.x ), mix( rgbe( x0, y1 ), rgbe( x1, y1 ), f.x ), f.y );
+  gl_FragColor = vec4( hdr * gainTint * texture2D( setKeep, uvSet ).rgb + texture2D( setAdd, uvSet ).rgb, 1.0 );
 }`;
 
-/** The scene that goes through PMREM: the dome, the HDRI (HDRI_LOOK) under studioSet's flags, floor tint and painted
- *  boxes. `map` is the panorama texture (hdri.ts); the caller disposes it. */
-export function studioScene(preset: LightPreset, bgMean: Rgb, map: Texture): Scene {
+/** The scene that goes through PMREM: a dome reading the HDRI (HDRI_LOOK) under the set (studioSetTextures). `map` is
+ *  the panorama texture (hdri.ts), owned by the caller; the set textures go with the scene (disposeScene). */
+export function studioScene(preset: LightPreset, bgMean: Rgb, map: Texture & { image: { width: number; height: number } }): Scene {
   const scene = new Scene();
   const dome = new SphereGeometry(DOME_RADIUS, DOME_SEG.w, DOME_SEG.h);
-  const pos = dome.getAttribute('position');
-  const keep = new Float32Array(pos.count * 3);
-  const add = new Float32Array(pos.count * 3);
-  for (let i = 0; i < pos.count; i++) {
-    const v = studioSet(preset, bgMean, [pos.getX(i) / DOME_RADIUS, pos.getY(i) / DOME_RADIUS, pos.getZ(i) / DOME_RADIUS]);
-    keep.set(v.keep, i * 3);
-    add.set(v.add, i * 3);
-  }
-  dome.setAttribute('keep', new BufferAttribute(keep, 3));
-  dome.setAttribute('add', new BufferAttribute(add, 3));
+  const set = studioSetTextures(preset, bgMean);
   const look = HDRI_LOOK[preset];
   const tint = new Color().setStyle(look.tint).multiplyScalar(look.gain);
   const mat = new ShaderMaterial({
-    uniforms: { map: { value: map }, gainTint: { value: new Vector3(tint.r, tint.g, tint.b) }, yaw: { value: HDRI.yawDeg * deg } },
+    uniforms: {
+      map: { value: map },
+      mapSize: { value: new Vector2(map.image.width, map.image.height) },
+      setKeep: { value: set.keep },
+      setAdd: { value: set.add },
+      gainTint: { value: new Vector3(tint.r, tint.g, tint.b) },
+      yaw: { value: HDRI.yawDeg * deg },
+    },
     vertexShader: DOME_VERT,
     fragmentShader: DOME_FRAG,
     side: BackSide,
@@ -250,6 +316,7 @@ export function studioScene(preset: LightPreset, bgMean: Rgb, map: Texture): Sce
   });
   const domeMesh = new Mesh(dome, mat);
   domeMesh.name = 'studio:dome';
+  domeMesh.userData.textures = [set.keep, set.add];
   scene.add(domeMesh);
   return scene;
 }
@@ -315,6 +382,7 @@ function disposeScene(scene: Scene) {
     if (o instanceof Mesh) {
       o.geometry.dispose();
       (o.material as ShaderMaterial).dispose();
+      for (const t of (o.userData.textures as Texture[] | undefined) ?? []) t.dispose();
     }
   });
 }
