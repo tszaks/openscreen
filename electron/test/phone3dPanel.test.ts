@@ -621,7 +621,7 @@ describe('panel text', () => {
     const at = (t: number) => (t === 8.9 ? 'swipe' : 'tap');
     expect(warningText({ code: 'tap-back', at: 8.9, message: 'x' }, at)).toBe('Faces away at this swipe');
     expect(warningText({ code: 'tap-back', at: 2, message: 'x' }, at)).toBe('Faces away at this tap');
-    expect(warningText({ code: 'zoom-3d', at: 2, message: 'The zoom at 2.00 s does not play while the phone is 3D (…)' }, at)).toBe('Zoom does not play in 3D');
+    expect(warningText({ code: 'zoom-angle', at: 2, message: 'x' }, at)).toBe('Turned too far during this zoom');
   });
   it('gives the App Store reason and the frame-off reason', () => {
     expect(inactiveText('app-store')!.title).toBe('Flat in App Store layouts.');

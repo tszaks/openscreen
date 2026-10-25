@@ -216,7 +216,7 @@ same code (`applyOps3d`), so the editor refuses what the CLI refuses:
 | Undo | — | `undo` (one level, file-based) |
 | Anything else | any field | `set {path: "/json/pointer", value}` — the value's JSON type must match; `/recording` is read-only |
 
-Zooms (manual, tap and auto-focus) do not play while the 3D phone is on (`phone3d`): the 3D screen always shows the whole recording, 1:1, and the shots frame the phone. They come back as they were when 3D is turned off. Zoom ops still apply, but on a 3D project their `changes` note says the zoom does not play, and `apply`/`validate` list a `zoom-3d` warning per manual zoom. Auto 3D (`direct`) plans shots through zooms, except a `spin-in` or `turn-to-back` (more than 35° off front; see `zoom-angle`).
+Zooms (manual, tap and auto-focus) play while the 3D phone is on (`phone3d`): a zoom pushes the 3D camera in toward the zoom centre on the phone's screen, with the same timing and easing as a flat zoom. The phone stays whole and keeps its pose. The zoom ops and the editor's zoom controls are the same as for a flat project. During a zoom the screen must face within 35° of front (`zoom-angle`). Auto 3D (`direct`) plans shots through zooms, except a `spin-in` or `turn-to-back` (more than 35° off front).
 
 Not in the editor, so not ops: keystroke overlay and click ripples have no
 switch (they are drawn whenever the recording has keystrokes/clicks); use
@@ -466,8 +466,8 @@ the same plan.
 
 1. **Busy time**: each tap from 0.6 s before it to at least 0.8 s after it
    (longer for a swipe, a long press, or a tap that is still settling), and
-   each typing run. Zooms are not busy: they do not play while the phone is
-   3D, so a shot may run through one.
+   each typing run. Zooms are not busy: a zoom pushes the 3D camera in, so a
+   shot may run through one if it stays within 35° of front.
    Busy spans closer than 1.2 s merge. While busy, the phone stays within 12°
    of straight on.
 2. **Free windows**: the rest, shrunk by 0.15 s next to busy time. A window
@@ -539,7 +539,6 @@ edits list).
 | `pose-jump` | a move's explicit Start differs from where the phone is by more than 1° or 0.5% (turn and rotate modulo 360) | `editTransition {id, from:null}` |
 | `too-fast` | a move turns faster than 600°/s (360°/s with motion blur off): it strobes | none: make it longer or smaller (`duration`, `intensity`) |
 | `floor-flat` | a floor shadow with camera height under 4° (invisible) | `phone3d {camera:{elevation:12}}` |
-| `zoom-3d` | a manual zoom on a 3D project: it does not play while the phone is 3D (it plays again with 3D off) | none: remove the zoom, or keep it for the flat version |
 
 ### Look before you export
 

@@ -715,8 +715,6 @@ export function warningText(w: Pick<Warning, 'code' | 'at' | 'message'>, kindAt:
       return 'Goes off the canvas';
     case 'overlap':
       return 'Starts before the move ahead ends';
-    case 'zoom-3d':
-      return 'Zoom does not play in 3D';
     case 'past-end':
       return 'Ends after the video';
     case 'pose-jump':

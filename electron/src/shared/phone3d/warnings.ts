@@ -32,7 +32,7 @@ export interface Warning {
   fix?: EditOp[];
 }
 
-export const WARNING_CODES = ['inactive', 'tap-angle', 'tap-back', 'zoom-angle', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat', 'zoom-3d'] as const;
+export const WARNING_CODES = ['inactive', 'tap-angle', 'tap-back', 'zoom-angle', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat'] as const;
 export type WarningCode = (typeof WARNING_CODES)[number];
 
 /** A tap must see the screen within this angle of straight on. */
@@ -812,24 +812,6 @@ function floorFlatWarnings(c: Ctx): Found[] {
   ];
 }
 
-/**
- * Manual zooms do not play while the phone is 3D (compositor.ts: the zoom camera is the identity when the 3D phone
- * draws), so each one is named, or the user and the agent would add zooms that silently do nothing. No fix: the
- * zooms come back unchanged when 3D is off, so removing them is the user's call. Automatic zooms (autofocus, taps)
- * are settings, not marks on the timeline; the editor says they are off in its Zoom panel.
- */
-function zoom3dWarnings(c: Ctx): Found[] {
-  return c.p.manualZooms
-    .filter((z) => z.inStart < c.D)
-    .map((z, i) => ({
-      code: 'zoom-3d' as const,
-      key: `zoom-3d:${i}`,
-      message: `The zoom at ${s2(z.inStart)} does not play while the phone is 3D (the screen always shows the whole recording); it plays again with 3D off`,
-      at: r3(Math.max(0, z.inStart)),
-      end: r3(Math.min(c.D, z.outEnd)),
-    }));
-}
-
 // ---------------------------------------------------------------------------
 // Fixes
 
@@ -919,9 +901,8 @@ const codePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 /**
  * Every warning for `p`'s 3D phone, sorted by time. `cursor` is the
  * bundle's cursor.json samples (D5), passed by the CLI and the editor alike.
- * No check reads it since look round 4: zooms do not play on the 3D screen
- * (compositor.ts), so the old over-zoom warning (a move during a zoom) cannot
- * happen; the parameter stays so callers do not change.
+ * zoom-angle reads it: the autofocus zooms come from it (focusSegmentsFor),
+ * and each zoom pushes the 3D camera in, so the screen must face front then.
  * [] when there is no phone3d, it is off, or it has structural errors
  * (those are validateProject's).
  */
@@ -950,7 +931,6 @@ export function projectWarnings(p: Project, opts: { cursor?: readonly CursorSamp
     ...poseJumpWarnings(c),
     ...tooFastWarnings(c),
     ...floorFlatWarnings(c),
-    ...zoom3dWarnings(c),
   ];
   const out = found.map(({ key: _key, offCanvas: _oc, offCanvasCause: _cause, ...w }) => w as Warning);
   found.forEach((w, i) => {

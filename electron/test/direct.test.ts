@@ -59,7 +59,7 @@ function directed(p: Project, opts: DirectOptions): Project {
   return applyOps(p, [{ op: 'direct', style: opts.style, replace: opts.replace, ...(opts.scenes ? {} : { scenes: false }) }], { newId: () => `d${++n}`, scenes: opts.scenes ? [...opts.scenes] : undefined, cursor: opts.cursor ? [...opts.cursor] : undefined }).project;
 }
 
-/** Busy time: taps and typing only (zooms do not play while the phone is 3D, so they are never busy). */
+/** Busy time: taps and typing only (a zoom is not busy: owner decision 20 makes it a 35° angle limit, not a hold). */
 function busyOf(p: Project): { start: number; end: number }[] {
   const tl = new Timeline(p.recording.duration, p.clips);
   const out = tapsToOutput(p.taps, tl).map((t) =>
@@ -133,9 +133,9 @@ function checkPlan(p: Project, opts: DirectOptions, label: string) {
   const D = new Timeline(p.recording.duration, p.clips).outputDuration;
   const warnings = projectWarnings(out, { cursor: opts.cursor });
   if (opts.replace) {
-    // zoom-3d names each manual zoom on any 3D project (zooms do not play in 3D), with or without shots: one per zoom.
-    expect(warnings.filter((w) => w.code !== 'zoom-3d'), `${label}: warnings`).toEqual([]);
-    expect(warnings.filter((w) => w.code === 'zoom-3d').length, `${label}: zoom-3d`).toBe(p.manualZooms.filter((z) => z.inStart < D).length);
+    // A fresh plan adds no warnings. Zooms play in 3D (owner decision 20: a camera push-in), so a manual zoom is not
+    // a warning on its own; only a shot steeper than 35° during one would be (zoom-angle), and the plan avoids that.
+    expect(warnings, `${label}: warnings`).toEqual([]);
     // While busy, the phone faces the viewer within 12°.
     for (const b of busyOf(p)) {
       for (let t = Math.max(0, b.start); t <= Math.min(D, b.end); t += 1 / 60) expect(facing(p3, t), `${label}: facing at ${t.toFixed(3)}`).toBeGreaterThanOrEqual(COS_BUSY - 1e-9);

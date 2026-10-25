@@ -2,7 +2,7 @@
 // fix clears its warning when applied through applyOps (as the editor's Fix
 // button and an agent's `apply` do).
 import { describe, expect, it } from 'vitest';
-import { applyOps, ZOOM_3D_NOTE, type EditOp } from '../src/shared/agentOps';
+import { applyOps, type EditOp } from '../src/shared/agentOps';
 import { FRONT, type Phone3D, type Pose, type PoseTransition } from '../src/shared/phone3d/model';
 import { EDGES, FLOAT_FIX_STEPS, OFF_CANVAS_ADDED_PX, OFF_CANVAS_FRACTION, offCanvasAdded, offCanvasMeter, projectWarnings, WARNING_CODES, type Warning } from '../src/shared/phone3d/warnings';
 import type { Project } from '../src/shared/types';
@@ -43,7 +43,7 @@ describe('projectWarnings: scope', () => {
   });
 
   it('knows exactly the spec codes', () => {
-    expect([...WARNING_CODES]).toEqual(['inactive', 'tap-angle', 'tap-back', 'zoom-angle', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat', 'zoom-3d']);
+    expect([...WARNING_CODES]).toEqual(['inactive', 'tap-angle', 'tap-back', 'zoom-angle', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat']);
   });
 
   it('never blocks applyOps: a project full of warnings still takes edits', () => {
@@ -475,30 +475,26 @@ describe('zoom-angle (owner decision 20: during a zoom the screen faces within t
   });
 });
 
-describe('zoom-3d', () => {
-  it('names each manual zoom while the phone is 3D (zooms do not play there), with no fix', () => {
+describe('zooms in 3D (owner decisions 20 and 21: no zoom-3d warning)', () => {
+  it('a manual zoom on a 3D project that faces front is not a warning: it plays (a camera push-in)', () => {
     const p = applyOps(take(), [{ op: 'addZoom', at: 4, scale: 2 }, { op: 'addZoom', at: 11, scale: 1.5 }]).project;
-    const ws = only(p, 'zoom-3d');
-    expect(ws.map((w) => w.at)).toEqual([4, 11]);
-    for (const w of ws) {
-      expect(w.end).toBeGreaterThan(w.at!);
-      expect(w.fix).toBeUndefined();
-      expect(w.message).toContain('does not play while the phone is 3D');
-    }
+    expect(p.manualZooms).toHaveLength(2);
+    expect(projectWarnings(p)).toEqual([]);
   });
 
-  it('negative: no manual zooms, or 3D off (the zooms play)', () => {
-    expect(only(take(), 'zoom-3d')).toEqual([]);
-    const off = applyOps(take({ enabled: false }), [{ op: 'addZoom', at: 4 }]).project;
-    expect(projectWarnings(off)).toEqual([]);
+  it('one steep manual zoom gives exactly one warning, zoom-angle (never a second one that says the zoom does not play)', () => {
+    const p = applyOps(take({ pose: P({ turn: 60 }) }), [{ op: 'addZoom', at: 8, scale: 2 }]).project;
+    const ws = projectWarnings(p);
+    expect(ws.map((x) => x.code)).toEqual(['zoom-angle']);
+    expect(ws[0].message).not.toMatch(/does not play/);
   });
 
-  it('zoom ops still apply, and their notes say the zooms do not play while the phone is 3D', () => {
+  it('zoom ops give the same notes with 3D on and off (the zoom plays either way)', () => {
     const ops: EditOp[] = [{ op: 'addZoom', at: 4 }, { op: 'zoomSettings', autofocus: true }, { op: 'clearZooms' }];
     const on = applyOps(take(), ops);
-    expect(on.notes.every((n) => n.endsWith(ZOOM_3D_NOTE))).toBe(true);
     const off = applyOps(take({ enabled: false }), ops);
-    expect(off.notes.some((n) => n.includes(ZOOM_3D_NOTE))).toBe(false);
+    expect(on.notes).toEqual(off.notes);
+    expect(on.notes.some((n) => /not play/.test(n))).toBe(false);
     expect(off.project.zoom).toEqual(on.project.zoom);
   });
 });

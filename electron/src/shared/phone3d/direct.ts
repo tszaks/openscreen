@@ -5,9 +5,11 @@
 //
 // The rule it plans by: while something happens on screen (a tap, a typing
 // run) the phone faces the viewer; it only moves in the free time between.
-// Zooms are not busy time: they do not play while the phone is 3D
-// (compositor.ts), so they can never clash with a move. All times are OUTPUT
-// seconds on the edited timeline.
+// Zooms are not busy time: a zoom pushes the 3D camera in toward the screen
+// (owner decision 20) and the phone may keep moving, but within the
+// steep-angle limit (ZOOM_ANGLE_DEG, the zoom-angle warning): no spin-in or
+// turn-to-back runs through a zoom. All times are OUTPUT seconds on the
+// edited timeline.
 
 import { isPhoneProject, rangesToOutput, tapsToOutput } from '../mobileProject';
 import { Timeline } from '../timeline';
@@ -782,7 +784,7 @@ function longTakeNote(inp: Inputs, style: DirectStyle): string | undefined {
 
 /**
  * The Auto 3D plan for `p` (§2.6): busy time (taps, typing and kept moves;
- * zooms do not play in 3D, so they are not busy) → free windows → intro, outro and middle shots within the density
+ * zooms are not busy, only an angle limit: owner decision 20) → free windows → intro, outro and middle shots within the density
  * caps → a scene-change wipe → ops, in this order: `phone3d` (on, base pose,
  * lighting, motion blur), `clearTransitions` when replacing, one `shot` per
  * shot in time order (float last for subtle). Then a self-check: the ops are
