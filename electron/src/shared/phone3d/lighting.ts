@@ -95,7 +95,7 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
       { azimuth: -65, elevation: 6, halfW: 5, halfH: 42, radiance: 2.0, color: '#ffffff' },
       { azimuth: 185, elevation: 14, halfW: 5, halfH: 34, radiance: 2.0, color: '#ffffff' },
       { azimuth: -115, elevation: 14, halfW: 4, halfH: 34, radiance: 1.5, color: '#ffffff' },
-      { azimuth: 40, elevation: 74, halfW: 70, halfH: 10, radiance: 0.3, color: '#f4f6ff' },
+      { azimuth: 40, elevation: 64, halfW: 70, halfH: 16, radiance: 1.1, color: '#f4f6ff' },
       // A low wide box under the key: the broad soft highlight that slides across a back turned three-quarters
       // toward the key (the turn-to-back's end pose), well off the camera axis so FRONT stays clean.
       { azimuth: -5, elevation: 0, halfW: 10, halfH: 12, radiance: 0.9, color: '#ffffff' },
@@ -105,10 +105,13 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
       // toward it, and sweeps over the back in the three-quarter back view.
       { azimuth: 95, elevation: 12, halfW: 6, halfH: 36, radiance: 1.4, color: '#ffffff' },
       // A wide box above the camera axis: a back facing the viewer mirrors its lower edge (bright top, falling off down the back).
-      { azimuth: 35, elevation: 24, halfW: 26, halfH: 9, radiance: 3, color: '#ffffff' },
+      { azimuth: 35, elevation: 24, halfW: 26, halfH: 9, radiance: 2.2, color: '#ffffff' },
       // A tall strip 60° left of the camera: a back turned three-quarters (turn 130-170) mirrors it as a soft
       // vertical highlight that slides across the back and the panel as the phone turns.
       { azimuth: -25, elevation: 8, halfW: 9, halfH: 40, radiance: 1.6, color: '#ffffff', distance: 1.2 },
+      // A broad soft box behind on the key side, near the phone: a back turned well past three-quarters (the
+      // turn-to-back outro from a layback) mirrors it as a falling gradient instead of one flat tone.
+      { azimuth: -100, elevation: 18, halfW: 16, halfH: 32, radiance: 0.9, color: '#ffffff', distance: 1.6 },
       // A white bounce card low in front: the downward faces (the plateau step's rounded edge, the band's lower
       // chamfers) catch a thin line of it.
       { azimuth: 35, elevation: -32, halfW: 30, halfH: 10, radiance: 1.2, color: '#ffffff' },
