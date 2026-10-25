@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEVICES, genericDevice } from '../src/shared/devices';
-import { BODY3D, BODY3D_IDS, body3dFor, body3dSource } from '../src/shared/devices3d';
+import { BODY3D, BODY3D_IDS, BUTTON_DEPTH, body3dFor, body3dSource } from '../src/shared/devices3d';
 
 // Apple tech-spec depths, as printed on each model's support.apple.com page
 // (fetched 2026-10-24; URL per row in devices3d.ts). A typo in the table
@@ -55,7 +55,8 @@ describe('devices3d', () => {
         expect(l.y * hMm - l.rMm, d.id).toBeGreaterThanOrEqual(-0.01);
         expect(l.y * hMm + l.rMm, d.id).toBeLessThanOrEqual(hMm + 0.01);
       }
-      expect(b.buttonDepth).toBeCloseTo(0.62, 12);
+      expect(b.buttonDepth).toBeCloseTo(BUTTON_DEPTH, 12);
+      expect(b.buttonDepth * b.depthMm).toBeLessThan(4);
     }
   });
 

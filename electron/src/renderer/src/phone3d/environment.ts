@@ -1,92 +1,64 @@
-// Procedural studio lighting (D13, spec §3.1).
+// Procedural studio lighting (D13, spec §3.1): ONE PMREM environment holds
+// every light the phone sees.
 //
-// Two parts, never double counted:
-// 1. The hero softboxes are RectAreaLights. LTC gives analytically sharp
-//    softbox edges at any resolution and (r186) covers clearcoat too, so the
-//    band highlight and the glossy back's reflection are crisp streaks.
-// 2. A PMREM environment holds only the fill: a dim vertical gradient dome
-//    (2–6%), a floor bounce tinted by the project's mean background colour,
-//    and a faint wide strip behind and above the camera, so the front glass
-//    shows a diagonal sheen at FRONT. The hero boxes are NOT in it.
+// Round 1 lit the phone with three RectAreaLight softboxes over a dim (2-6%)
+// fill. Metal only reflects what it faces, so a face that pointed between
+// the boxes went black: Silver read as Space Black at turn 150 and clipped
+// to white at 180, and the plateau top turned peach under the key. Real
+// product sets are a room of light: a big soft source overhead, a white card
+// under the phone, black flags at the sides for the edge lines. So now:
+// - the dome: an overhead gradient (horizon → top), a broad front fill on
+//   the camera's side, and a white bounce card below the horizon (tinted a
+//   little by the background), with two dark flags either side of the phone;
+// - the softboxes (key, rims, an overhead strip) painted into the same dome
+//   with soft edges (no hard rectangle in a lens or a glass edge).
+// Nothing bright sits near the camera axis: round 1's sheen strip there (for
+// a diagonal sheen on the glass at FRONT) was also what a metal back facing
+// the camera mirrored, so Silver clipped to white at turn 180 and fell to
+// grey at 150. Around the camera the studio is even (within about 15%), so a
+// finish keeps its colour as the phone turns.
+// One source of light for every surface: rough metal sees the soft sources
+// blurred, glossy glass sees them sharp, and nothing is double counted.
+// The light channel turns it all together (scene.environmentRotation), and
+// the shadow's light is the key's direction (KEY_ELEVATION).
 //
 // Frame (lighting.ts): azimuth 0 is the camera's side (+z), + toward the
-// canvas right (+x); elevation + up. `aimStudio` turns the light group and
-// scene.environmentRotation together by (light.azimuth + pose.light).
+// canvas right (+x); elevation + up. The environment is turned by the key
+// azimuth (light.azimuth + pose.light), so in its own frame the key sits at
+// azimuth 0.
 
 import {
-  AdditiveBlending,
   BackSide,
   BufferAttribute,
   Color,
-  DoubleSide,
-  Group,
   Mesh,
   MeshBasicMaterial,
-  PlaneGeometry,
   PMREMGenerator,
-  RectAreaLight,
   Scene,
   SphereGeometry,
   type Texture,
   type WebGLRenderer,
   type WebGLRenderTarget,
 } from 'three';
-import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
-import { LIGHT_DISTANCE, LIGHT_PRESETS, type SoftBox } from '../../../shared/phone3d/lighting';
-import { defaultPhone3D, type LightPreset } from '../../../shared/phone3d/model';
+import { DEFAULT_KEY_AZIMUTH, FLAGS, LIGHT_PRESETS, type SoftBox } from '../../../shared/phone3d/lighting';
+import type { LightPreset } from '../../../shared/phone3d/model';
 
-/**
- * Luminance (nits) of a softbox of relative intensity 1. A box seen in a
- * steel band (F0 ≈ 0.56) then reflects ≈ 20 in HDR, which survives a
- * 2-of-12-sample motion-blur average and tone maps to a bright streak (D3);
- * the diffuse back under the key sits around 0.1–0.3.
- */
-export const BOX_RADIANCE = 22;
-
-/** Fill dome levels, as multiples of the preset's `ambient` (0.02–0.06): top and horizon. */
-const DOME_TOP = 1.0;
-const DOME_HORIZON = 0.4;
-/** Floor bounce: the background's mean linear colour × ambient × this. */
-const FLOOR_BOUNCE = 1.5;
-/** The sheen strip's radiance (it shows in the glass at specularIntensity × F0 ≈ 1%). */
-export const SHEEN_RADIANCE = 2.5;
-/**
- * The sheen strip: size (in dome-placement units), roll, and where it sits as
- * seen from the phone at the DEFAULT key azimuth: just above and right of
- * the camera, so a flat glass at FRONT reflects it (reflections of a flat
- * glass at FRONT only span about ±9° around the camera axis). The strip
- * turns with the light channel like the rest of the environment (D13), so
- * it lives at environment azimuth (camera az − default key az).
- */
-const SHEEN = { w: 1.8, h: 0.4, azimuth: 3, elevation: 5, rollDeg: -32 };
-const DEFAULT_KEY_AZIMUTH = defaultPhone3D().light.azimuth;
+/** How much the bounce card takes on the background's mean colour (the rest is white). */
+const FLOOR_TINT = 0.15;
+/** The front fill's reach: half-width in azimuth and height in elevation, degrees. */
+const FRONT_LOBE = { halfAz: 150, halfEl: 50 };
+/** The overhead gradient rises from this elevation to full at TOP_TO_DEG: steepest near the horizon, so a flat
+ *  metal back (it mirrors directions within about ±15° of level) falls off softly from top to bottom. */
+const TOP_FROM_DEG = -10;
+const TOP_TO_DEG = 70;
+/** The floor card blends in over this many degrees below the horizon. */
+const FLOOR_BLEND_DEG = 15;
+/** A softbox's edge: radiance is flat to this fraction of its half-size, then falls off as cos² to 0 at the edge. */
+const BOX_CORE = 0.45;
 const DOME_RADIUS = 10;
-/**
- * Soft bounce cards in the fill (large, dim, soft-edged), placed as seen from
- * the phone at the default key azimuth: one each side and one overhead. A
- * dome of 2–6% alone left every metal band black wherever no softbox was
- * reflected, so Natural Titanium read as black; real product sets surround
- * the phone with white boards for exactly this. Radiance scales with the
- * preset's ambient (studio 0.05 = these values).
- */
-const CARDS = [
-  { azimuth: -105, elevation: 10, halfW: 45, halfH: 40, radiance: 0.8 },
-  { azimuth: 105, elevation: 10, halfW: 45, halfH: 40, radiance: 0.55 },
-  { azimuth: 0, elevation: 72, halfW: 180, halfH: 22, radiance: 0.25 },
-];
-const CARD_AMBIENT_REF = 0.05;
-/** cos² window: 1 at 0, 0 at |t| ≥ 1. */
-const cos2Window = (t: number) => (Math.abs(t) >= 1 ? 0 : Math.cos((Math.PI / 2) * t) ** 2);
+/** Dome tessellation: about 1.4° per segment, fine enough for the 3.5°-wide rim strips. */
+const DOME_SEG = { w: 256, h: 128 };
 export const PMREM_SIZE = 512;
-
-let ltcReady = false;
-/** RectAreaLightUniformsLib.init() once per process (it fills the LTC uniforms). */
-export function initAreaLights() {
-  if (!ltcReady) {
-    RectAreaLightUniformsLib.init();
-    ltcReady = true;
-  }
-}
 
 const deg = Math.PI / 180;
 /** Unit direction for (azimuth, elevation) in this file's frame. */
@@ -96,60 +68,8 @@ export function lightDir(azimuthDeg: number, elevationDeg: number): [number, num
   return [Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)];
 }
 
-/**
- * The hero softboxes of a preset as RectAreaLights, aimed at the origin.
- * `unit` is the phone body's long side in world units (boxes are sized and
- * placed in long sides; RectAreaLight ignores a parent's scale for its
- * size, so the unit is applied here). `intensity` = phone3d.light.intensity.
- */
-export function studioLights(preset: LightPreset, unit = 1, intensity = 1): Group {
-  initAreaLights();
-  const g = new Group();
-  g.name = `studio:${preset}`;
-  for (const [i, box] of LIGHT_PRESETS[preset].boxes.entries()) g.add(softbox(box, unit, intensity, i));
-  return g;
-}
-
-function softbox(box: SoftBox, unit: number, intensity: number, i: number): RectAreaLight {
-  const light = new RectAreaLight(new Color().setStyle(box.color), box.intensity * BOX_RADIANCE * intensity, box.w * unit, box.h * unit);
-  const [x, y, z] = lightDir(box.azimuth, box.elevation);
-  const d = LIGHT_DISTANCE * unit;
-  light.position.set(x * d, y * d, z * d);
-  light.lookAt(0, 0, 0);
-  light.name = i === 0 ? 'key' : `box${i}`;
-  light.userData.baseIntensity = box.intensity * BOX_RADIANCE;
-  // In long sides, for scaleStudio: a RectAreaLight's size ignores its parent's scale.
-  light.userData.box = { dir: [x, y, z], w: box.w, h: box.h };
-  return light;
-}
-
-/**
- * Re-sizes a light group for a phone whose body long side is `unit` world
- * units, centred on `center`: each box keeps its direction and its size and
- * distance in long sides (its aim is unchanged: it looks at the group's
- * origin). The engine calls it per sample, since a pose's size channel
- * changes the phone's size in world units.
- */
-export function scaleStudio(lights: Group, center: readonly [number, number, number], unit: number) {
-  lights.position.set(center[0], center[1], center[2]);
-  for (const l of lights.children) {
-    const box = l.userData.box as { dir: [number, number, number]; w: number; h: number } | undefined;
-    if (!(l instanceof RectAreaLight) || !box) continue;
-    const d = LIGHT_DISTANCE * unit;
-    l.position.set(box.dir[0] * d, box.dir[1] * d, box.dir[2] * d);
-    l.width = box.w * unit;
-    l.height = box.h * unit;
-  }
-}
-
-/** Rescale a light group to a new phone3d.light.intensity without rebuilding it. */
-export function setLightIntensity(lights: Group, intensity: number) {
-  for (const l of lights.children) if (l instanceof RectAreaLight) l.intensity = (l.userData.baseIntensity as number) * intensity;
-}
-
-/** Turn the softboxes and the fill environment together (key azimuth = light.azimuth + pose.light). */
-export function aimStudio(lights: Group, scene: Scene, azimuthDeg: number) {
-  lights.rotation.set(0, azimuthDeg * deg, 0);
+/** Turn the environment to the key azimuth (light.azimuth + pose.light), degrees. */
+export function aimStudio(scene: Scene, azimuthDeg: number) {
   scene.environmentRotation.set(0, azimuthDeg * deg, 0);
 }
 
@@ -158,88 +78,96 @@ export type Rgb = readonly [number, number, number];
 /** 16 levels per channel, so a slowly changing background reuses the cached environment. */
 export const quantizeBg = (bg: Rgb): [number, number, number] => bg.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 15) / 15) as [number, number, number];
 
-/**
- * Radiance of the fill dome in an environment-local direction (unit
- * vector): the base dome (2–6% of white for studio: horizon → top, the
- * floor bounce below the horizon tinted by the background) plus, unless
- * `cards` is false, the soft bounce cards. Pure; fillScene samples it.
- */
-export function fillRadiance(preset: LightPreset, bgMean: Rgb, dir: readonly [number, number, number], cards = true): [number, number, number] {
-  const amb = LIGHT_PRESETS[preset].ambient;
-  const [x, y, z] = dir;
-  const [br, bgc, bb] = quantizeBg(bgMean);
-  let r: number, g: number, b: number;
-  if (y >= 0) {
-    // Horizon → top: a smooth rise (smoothstep), neutral.
-    const s = y * y * (3 - 2 * y);
-    r = g = b = amb * (DOME_HORIZON + (DOME_TOP - DOME_HORIZON) * s);
-  } else {
-    // Below the horizon: the floor bounce, tinted by the background.
-    const s = Math.min(1, -y * 3);
-    const h = amb * DOME_HORIZON;
-    r = h + (br * amb * FLOOR_BOUNCE - h) * s;
-    g = h + (bgc * amb * FLOOR_BOUNCE - h) * s;
-    b = h + (bb * amb * FLOOR_BOUNCE - h) * s;
+/** cos² window: 1 at 0, 0 at |t| ≥ 1. */
+const cos2Window = (t: number) => (Math.abs(t) >= 1 ? 0 : Math.cos((Math.PI / 2) * t) ** 2);
+/** Flat core to BOX_CORE, then cos² down to 0 at |t| = 1. */
+const boxWindow = (t: number) => {
+  const a = Math.abs(t);
+  return a <= BOX_CORE ? 1 : cos2Window((a - BOX_CORE) / (1 - BOX_CORE));
+};
+const smoothstep = (a: number, b: number, x: number) => {
+  const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+};
+/** Signed angle a − b, wrapped into (−180, 180]. */
+const angleDiff = (a: number, b: number) => ((((a - b) % 360) + 540) % 360) - 180;
+
+const boxColors = new Map<string, [number, number, number]>();
+function linearOf(hex: string): [number, number, number] {
+  let c = boxColors.get(hex);
+  if (!c) {
+    const k = new Color().setStyle(hex);
+    boxColors.set(hex, (c = [k.r, k.g, k.b]));
   }
-  if (!cards) return [r, g, b];
-  const az = (Math.atan2(x, z) * 180) / Math.PI;
-  const el = (Math.asin(Math.max(-1, Math.min(1, y))) * 180) / Math.PI;
-  let card = 0;
-  for (const c of CARDS) {
-    const da = Math.abs(((az - (c.azimuth - DEFAULT_KEY_AZIMUTH) + 540) % 360) - 180);
-    const de = Math.abs(el - c.elevation);
-    card += c.radiance * cos2Window(da / c.halfW) * cos2Window(de / c.halfH);
-  }
-  card *= amb / CARD_AMBIENT_REF;
-  return [r + card, g + card, b + card];
+  return c;
+}
+
+/** One softbox's radiance toward (az, el) (environment frame, degrees). */
+function boxRadiance(b: SoftBox, az: number, el: number): number {
+  const du = angleDiff(az, b.azimuth) * Math.cos(b.elevation * deg);
+  const dv = el - b.elevation;
+  return b.radiance * boxWindow(du / b.halfW) * boxWindow(dv / b.halfH);
 }
 
 /**
- * The fill scene that goes through PMREM: the dome (fillRadiance as vertex
- * colours, with the floor bounce and the bounce cards) and the soft sheen
- * strip. No RectAreaLight and no softbox: the hero boxes are lights only.
+ * Radiance of the studio environment in an environment-frame direction (unit
+ * vector), scene-linear RGB, before phone3d.light.intensity: the dome
+ * (overhead gradient, front fill, bounce card tinted FLOOR_TINT by the
+ * background), darkened by the flags, plus every softbox. Pure; studioScene
+ * paints the dome with it.
  */
-export function fillScene(preset: LightPreset, bgMean: Rgb): Scene {
+export function studioRadiance(preset: LightPreset, bgMean: Rgb, dir: readonly [number, number, number]): [number, number, number] {
+  const rig = LIGHT_PRESETS[preset];
+  const set = rig.set;
+  const [x, y, z] = dir;
+  const az = (Math.atan2(x, z) * 180) / Math.PI;
+  const el = (Math.asin(Math.max(-1, Math.min(1, y))) * 180) / Math.PI;
+  // As seen from the camera at the default key azimuth (the frame the set is placed in).
+  const camAz = az + DEFAULT_KEY_AZIMUTH;
+  const front = set.front * cos2Window(camAz / FRONT_LOBE.halfAz) * cos2Window(el / FRONT_LOBE.halfEl);
+  const sky = set.horizon + (set.top - set.horizon) * (smoothstep(TOP_FROM_DEG, TOP_TO_DEG, el) - smoothstep(TOP_FROM_DEG, TOP_TO_DEG, 0));
+  const [br, bgc, bb] = quantizeBg(bgMean);
+  const tint = (c: number) => set.floor * (1 - FLOOR_TINT + FLOOR_TINT * c);
+  const f = smoothstep(0, FLOOR_BLEND_DEG, -el);
+  const dome = (floorC: number) => sky * (1 - f) + tint(floorC) * f + front;
+  let r = dome(br);
+  let g = dome(bgc);
+  let b = dome(bb);
+  // Flags either side: they cut the dome (not the softboxes) down toward black.
+  let flag = 0;
+  for (const side of [-1, 1]) flag = Math.max(flag, cos2Window(angleDiff(camAz, side * FLAGS.azimuth) / FLAGS.halfW) * cos2Window((el - FLAGS.elevation) / FLAGS.halfH));
+  const keep = 1 - set.flags * flag;
+  r *= keep;
+  g *= keep;
+  b *= keep;
+  for (const box of rig.boxes) {
+    const k = boxRadiance(box, az, el);
+    if (k <= 0) continue;
+    const c = linearOf(box.color);
+    r += k * c[0];
+    g += k * c[1];
+    b += k * c[2];
+  }
+  return [r, g, b];
+}
+
+/** The scene that goes through PMREM: the dome, studioRadiance as vertex colours. */
+export function studioScene(preset: LightPreset, bgMean: Rgb): Scene {
   const scene = new Scene();
-  const dome = new SphereGeometry(DOME_RADIUS, 96, 48);
+  const dome = new SphereGeometry(DOME_RADIUS, DOME_SEG.w, DOME_SEG.h);
   const pos = dome.getAttribute('position');
   const colors = new Float32Array(pos.count * 3);
   for (let i = 0; i < pos.count; i++) {
-    const v = fillRadiance(preset, bgMean, [pos.getX(i) / DOME_RADIUS, pos.getY(i) / DOME_RADIUS, pos.getZ(i) / DOME_RADIUS]);
+    const v = studioRadiance(preset, bgMean, [pos.getX(i) / DOME_RADIUS, pos.getY(i) / DOME_RADIUS, pos.getZ(i) / DOME_RADIUS]);
     colors[i * 3] = v[0];
     colors[i * 3 + 1] = v[1];
     colors[i * 3 + 2] = v[2];
   }
   dome.setAttribute('color', new BufferAttribute(colors, 3));
   const domeMesh = new Mesh(dome, new MeshBasicMaterial({ vertexColors: true, side: BackSide, toneMapped: false }));
-  domeMesh.name = 'fill:dome';
+  domeMesh.name = 'studio:dome';
   scene.add(domeMesh);
 
-  const d = DOME_RADIUS * 0.6;
-  // Soft-edged: radiance falls off as cos² across the strip and toward its
-  // ends, added over the dome. A hard-edged quad showed the cube map's
-  // texels as stair steps in the glass.
-  const sg = new PlaneGeometry(SHEEN.w * d, SHEEN.h * d, 24, 12);
-  const sp = sg.getAttribute('position');
-  const sc = new Float32Array(sp.count * 3);
-  for (let i = 0; i < sp.count; i++) {
-    const u = sp.getX(i) / ((SHEEN.w * d) / 2);
-    const v = sp.getY(i) / ((SHEEN.h * d) / 2);
-    const bump = (x: number) => Math.max(0, Math.cos((Math.PI / 2) * Math.min(1, Math.abs(x))));
-    const k = SHEEN_RADIANCE * bump(v) ** 2 * Math.sqrt(bump(u));
-    sc[i * 3] = sc[i * 3 + 1] = sc[i * 3 + 2] = k;
-  }
-  sg.setAttribute('color', new BufferAttribute(sc, 3));
-  const strip = new Mesh(
-    sg,
-    new MeshBasicMaterial({ vertexColors: true, side: DoubleSide, toneMapped: false, blending: AdditiveBlending, transparent: true, depthWrite: false }),
-  );
-  const [sx, sy, sz] = lightDir(SHEEN.azimuth - DEFAULT_KEY_AZIMUTH, SHEEN.elevation);
-  strip.position.set(sx * d, sy * d, sz * d);
-  strip.lookAt(0, 0, 0);
-  strip.rotateZ(SHEEN.rollDeg * deg);
-  strip.name = 'fill:sheen';
-  scene.add(strip);
   return scene;
 }
 
@@ -250,10 +178,11 @@ const envCaches = new WeakMap<WebGLRenderer, Map<string, EnvEntry>>();
 const ENV_CACHE_SIZE = 4;
 
 /**
- * The PMREM fill environment for a preset and background mean (linear RGB),
- * via `fromScene(fill, 0, near, far, { size: 512 })` (about 25 MB HalfFloat).
+ * The studio environment for a preset and background mean (linear RGB), via
+ * `fromScene(studio, 0, near, far, { size: 512 })` (about 25 MB HalfFloat).
  * Cached per renderer, per (preset, bgMean quantized to 16 levels), LRU 4;
- * evicted targets are disposed. Set it as `scene.environment`.
+ * evicted targets are disposed. Set it as `scene.environment`. (Tools; the
+ * engine owns its own, createStudioEnv.)
  */
 export function studioEnv(renderer: WebGLRenderer, preset: LightPreset, bgMean: Rgb): Texture {
   let cache = envCaches.get(renderer);
@@ -276,11 +205,11 @@ export function studioEnv(renderer: WebGLRenderer, preset: LightPreset, bgMean: 
 }
 
 /**
- * The PMREM fill environment, not cached: the caller owns the target and
+ * The studio environment, not cached: the caller owns the target and
  * disposes it (the engine keeps one, LRU 1, for the §3.9 budget).
  */
 export function createStudioEnv(renderer: WebGLRenderer, preset: LightPreset, bgMean: Rgb): WebGLRenderTarget {
-  const scene = fillScene(preset, bgMean);
+  const scene = studioScene(preset, bgMean);
   const pmrem = new PMREMGenerator(renderer);
   const target = pmrem.fromScene(scene, 0, 0.1, DOME_RADIUS * 4, { size: PMREM_SIZE });
   pmrem.dispose();

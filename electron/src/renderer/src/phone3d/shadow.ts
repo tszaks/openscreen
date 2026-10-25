@@ -27,8 +27,8 @@
 // a mask again, and a fast move's shadow is as smooth as the phone's blur.
 import * as THREE from 'three';
 import {
-  keyLightDir,
   shadowCatcherCorners,
+  shadowLightDir,
   shadowSigma,
   SHADOW_CONTACT,
   type Cam3D,
@@ -176,15 +176,16 @@ export function planarShadowMatrix(kind: 'wall' | 'floor', plane: number, L: rea
   return m.set(1, -ax, 0, plane * ax, 0, 0, 0, plane, 0, -az, 1, plane * az, 0, 0, 0, 1);
 }
 
-/** The light direction a sample's shadow is cast along (key azimuth + the pose's light channel). */
+/** The light direction a sample's shadow is cast along: the shared shadowLightDir (the project's key, its offset
+ *  capped at the 2D frame shadow's; the pose's light channel does not turn it). */
 export function sampleLight(s: Scene3D, cam: Cam3D): [number, number, number] {
-  return keyLightDir(s.p3.light.azimuth + cam.pose.light) as [number, number, number];
+  return shadowLightDir(s, cam) as [number, number, number];
 }
 
 /**
  * The catcher, its mask mapping and the planar shadow matrix at one sample:
  * the same catcher area and light direction the shared projection uses
- * (shadowCatcherCorners, keyLightDir), so the ROI and the drawn shadow agree.
+ * (shadowCatcherCorners, shadowLightDir), so the ROI and the drawn shadow agree.
  */
 export function catcherFrame(s: Scene3D, cam: Cam3D): CatcherFrame {
   const corners = shadowCatcherCorners(s, cam).map((c) => new THREE.Vector3(c[0], c[1], c[2]));

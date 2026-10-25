@@ -102,13 +102,12 @@ export class Engine {
   shadow: ShadowPass;
   kit: PhoneKit = STUDIO_KIT;
   /**
-   * Built phones by device + look (LRU 3); the environment by preset + bg (LRU 1: a 512 PMREM is 25 MB, and the
-   * 4K budget of §3.9 holds one; a new preset or background rebuilds it once); light rigs by preset + intensity.
+   * Built phones by device + look (LRU 3); the studio environment by preset + bg (LRU 1: a 512 PMREM is 25 MB, and
+   * the 4K budget of §3.9 holds one; a new preset or background rebuilds it once).
    */
   readonly phones = new Lru<PhoneModel>(3);
   readonly envs = new Lru<{ tex: THREE.Texture | null; dispose(): void }>(1);
-  readonly rigs = new Lru<{ obj: THREE.Object3D; dispose(): void }>(4);
-  current: { phone: PhoneModel | null; rig: THREE.Object3D | null } = { phone: null, rig: null };
+  current: { phone: PhoneModel | null } = { phone: null };
   readonly stats: EngineStats = { renders: 0, lastMs: 0, samples: 0, tiles: 0, roi: { x: 0, y: 0, w: 0, h: 0 }, texture: { w: 0, h: 0 }, gpuBytes: 0 };
   private canvasSize = { w: 0, h: 0 };
   private restoreWaiters: (() => void)[] = [];
@@ -242,15 +241,13 @@ export class Engine {
     setTimeout(() => waiters.forEach((f) => f()), 0);
   };
 
-  /** Drop every cached model, environment and rig (dispose only while the context is alive). */
+  /** Drop every cached model and environment (dispose only while the context is alive). */
   dropCaches(dispose: boolean): void {
     if (this.current.phone) this.inner.remove(this.current.phone.root);
-    if (this.current.rig) this.scene.remove(this.current.rig);
-    this.current = { phone: null, rig: null };
+    this.current = { phone: null };
     this.scene.environment = null;
     this.phones.clear(dispose);
     this.envs.clear(dispose);
-    this.rigs.clear(dispose);
   }
 
   dispose(): void {

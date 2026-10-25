@@ -517,12 +517,44 @@ export const SHADOW_SUPPORT_SIGMAS = 3;
 /** The softness at which the 3D shadow equals the 2D one (phone3d's default). */
 const SOFTNESS_REF = defaultPhone3D().shadow.softness;
 
-/** The world points of the body's shadow on the active catcher, cast along the key light (azimuth
- *  light.azimuth + pose.light, KEY_ELEVATION up). Wall: a plane parallel to the canvas, WALL_GAP_MM behind the
- *  rearmost hull point at this pose; floor: a horizontal plane 1 mm under the lowest hull point. */
-export function shadowPointsWorld(s: Scene3D, cam: Cam3D, light: { azimuth: number } = { azimuth: s.p3.light.azimuth + cam.pose.light }): Vec3[] {
+/**
+ * The most the shadow is pushed off the phone, per unit of the body's long side: the 2D frame shadow's offset
+ * (DEFAULT_FRAME_SHADOW.offsetY, D14). A key 32° up casts every millimetre of height about a millimetre sideways,
+ * so a phone 15 mm deep (lens glass included) threw its shadow 10% of the body away, and edge-on (the body 72 mm
+ * deep) a dark slab five phones wide ran to the frame edge. With the offset capped the shadow sits like the 2D
+ * frame's at every turn: a soft drop shadow that shrinks to a contact shadow as the phone goes edge-on.
+ */
+export const SHADOW_OFFSET = DEFAULT_FRAME_SHADOW.offsetY;
+
+/**
+ * The direction (unit, toward the light) the shadow is cast along at this pose: the key's (`azimuth`, default the
+ * project's light.azimuth, KEY_ELEVATION up), its sideways part scaled down so the highest point of the body above
+ * the catcher lands at most SHADOW_OFFSET · body long side from where it would with a light straight on.
+ * The pose's `light` channel does NOT turn it: a shot turns the reflections, but a shadow that swept across the
+ * backdrop in a spin-in (a hard wedge, then a streak, then a blob) drew the eye off the phone. Pure; the renderer
+ * casts the silhouette along exactly this (renderer/phone3d/shadow.ts sampleLight).
+ */
+export function shadowLightDir(s: Scene3D, cam: Cam3D, azimuth: number = s.p3.light.azimuth): Vec3 {
   const pts = bodyPointsMm(s, true).map((p) => modelToWorld(p, cam));
-  const L = keyLightDir(light.azimuth);
+  const L = keyLightDir(azimuth);
+  const wall = s.p3.shadow.kind === 'wall';
+  // Height above the catcher of the highest point, and the light's sideways run per unit of height.
+  const along = wall ? Math.max(L[2], MIN_WALL_LZ) : L[1];
+  const height = wall ? Math.max(...pts.map((q) => q[2])) - wallZ(pts, cam) : Math.max(...pts.map((q) => q[1])) - floorY(pts, cam);
+  const side = wall ? Math.hypot(L[0], L[1]) / along : Math.hypot(L[0], L[2]) / along;
+  const cap = SHADOW_OFFSET * Math.max(s.bodyMm.width, s.bodyMm.height) * cam.scale;
+  const k = side * height > cap && side > 0 ? cap / (side * height) : 1;
+  const d: Vec3 = wall ? [L[0] * k, L[1] * k, along] : [L[0] * k, along, L[2] * k];
+  const n = Math.hypot(d[0], d[1], d[2]);
+  return [d[0] / n, d[1] / n, d[2] / n];
+}
+
+/** The world points of the body's shadow on the active catcher, cast along shadowLightDir. Wall: a plane parallel
+ *  to the canvas, WALL_GAP_MM behind the rearmost hull point at this pose; floor: a horizontal plane 1 mm under the
+ *  lowest hull point. `light.azimuth` overrides the key azimuth (default: the project's light.azimuth). */
+export function shadowPointsWorld(s: Scene3D, cam: Cam3D, light?: { azimuth: number }): Vec3[] {
+  const pts = bodyPointsMm(s, true).map((p) => modelToWorld(p, cam));
+  const L = shadowLightDir(s, cam, light?.azimuth);
   if (s.p3.shadow.kind === 'wall') {
     const zw = wallZ(pts, cam);
     const lz = Math.max(L[2], MIN_WALL_LZ);
@@ -531,13 +563,14 @@ export function shadowPointsWorld(s: Scene3D, cam: Cam3D, light: { azimuth: numb
       return [q[0] - k * L[0], q[1] - k * L[1], zw] as Vec3;
     });
   }
-  const yf = Math.min(...pts.map((q) => q[1])) - 1 * cam.scale;
+  const yf = floorY(pts, cam);
   return pts.map((q) => {
     const k = (q[1] - yf) / L[1];
     return [q[0] - k * L[0], yf, q[2] - k * L[2]] as Vec3;
   });
 }
 
+const floorY = (pts: readonly Vec3[], cam: Cam3D) => Math.min(...pts.map((q) => q[1])) - 1 * cam.scale;
 const wallZ = (pts: readonly Vec3[], cam: Cam3D) => Math.min(...pts.map((q) => q[2])) - WALL_GAP_MM * cam.scale;
 
 /**

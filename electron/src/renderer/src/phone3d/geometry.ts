@@ -84,10 +84,10 @@ export const SEAM_D_MM = 0.1;
 const GLASS_EDGE_MM = 0.25;
 /** Antenna line width (along the outline). */
 const ANTENNA_W_MM = 0.6;
-/** Plateau: the concave fillet where it meets the back (spec: 0.4). */
-const PLATEAU_BASE_FILLET_MM = 0.4;
-/** Plateau with no measured inset still gets a rounded top edge. */
-const PLATEAU_MIN_ROUND_MM = 0.2;
+/** Plateau: the shortest run of its filleted rise (a plateau with no measured inset still rolls onto its top). */
+const PLATEAU_MIN_RUN_MM = 0.6;
+/** Rings in the plateau's rise. */
+const PLATEAU_RISE_RINGS = 14;
 /** Lens assembly. */
 const LENS_GLASS_FRAC = 0.78; // cover-glass radius / ring radius
 const LENS_RING_FILLET_MM = 0.1;
@@ -96,6 +96,8 @@ const LENS_BARREL_MM = 1.5;
 /** Buttons. */
 export const BUTTON_PROUD_MM = 0.55;
 const BUTTON_EMBED_MM = 0.3;
+/** The crown's inset run as a fraction of the button's width (the top stays flat over the middle 1 − 2·this). */
+const BUTTON_CROWN = 0.32;
 const CAMERA_CONTROL_PROUD_MM = 0.28;
 /** Bottom edge: USB-C pill and grilles. */
 const PORT_MM = { w: 8.3, h: 2.5 };
@@ -112,6 +114,21 @@ const CIRCLE_SEG = 64;
  * the back below the plateau. Margin from the body edges and the plateau, mm.
  */
 const UNIBODY_PANEL = { margin: 7, rMm: 6 };
+/** The unibody panel's seam: width and depth of the metal step round the glass (a fine line, under 1 px at 1080). */
+const PANEL_SEAM_MM = 0.05;
+/** The panel glass's rounded edge (a small bevel that catches light as it rises out of the seam). */
+const PANEL_EDGE_MM = 0.35;
+
+/** The panel glass edge: a quarter-ellipse from the seam floor (inset `seam`, depth `seam`) up onto the flat glass. */
+function panelEdge(seam: number): Strip {
+  const out: Strip = [];
+  for (let k = 0; k <= 6; k++) {
+    const a = (k / 6) * (Math.PI / 2);
+    const n = norm2(seam * Math.cos(a), PANEL_EDGE_MM * Math.sin(a));
+    out.push({ i: seam + PANEL_EDGE_MM * (1 - Math.cos(a)), z: -seam + seam * Math.sin(a), no: n[0], nz: n[1] });
+  }
+  return out;
+}
 
 export const RENDER_ORDER = { glass: 0, screen: 1, glare: 2, lensElements: 3, lensCover: 4, decal: 1 } as const;
 
@@ -599,18 +616,27 @@ function transformBuilder(b: Builder, from: number, m: Matrix4) {
 // ---------------------------------------------------------------------------
 // Parts
 
-/** A capsule button: stadium outline in its own plane, swept outward. */
+/**
+ * A capsule button: stadium outline in its own plane, swept outward along a
+ * crowned profile (a quarter-ellipse from the wall to the top, its inset
+ * semi-axis BUTTON_CROWN of the width), so the top is a gentle dome that
+ * sweeps through the studio like the band does. A flat-topped pill mirrored
+ * one patch of the studio and read lighter and glossier than the frame.
+ */
 function buildButton(b: Builder, length: number, width: number, proud: number, place: Matrix4) {
   const from = b.pos.length / 3;
   // Local: stadium in xy (x = across the band depth, y = along its length), sweep +z outward.
   const loop = stadiumLoop(width, length, 16);
-  const rf = Math.min(0.3, width * 0.25, proud * 0.6);
-  const wall: Strip = [
-    { z: -BUTTON_EMBED_MM, i: 0, no: 1, nz: 0 },
-    ...convexArc(rf, proud - rf, rf, 0, Math.PI / 2, 5),
-  ];
-  sweep(b, loop, [wall]);
-  cap(b, insetLoop(loop, rf), proud, 1);
+  const ai = width * BUTTON_CROWN;
+  const steps = 8;
+  const crown: Strip = [{ z: -BUTTON_EMBED_MM, i: 0, no: 1, nz: 0 }];
+  for (let k = 0; k <= steps; k++) {
+    const t = (k / steps) * (Math.PI / 2);
+    const n = norm2(proud * Math.cos(t), ai * Math.sin(t));
+    crown.push({ i: ai * (1 - Math.cos(t)), z: proud * Math.sin(t), no: n[0], nz: n[1] });
+  }
+  sweep(b, loop, [crown]);
+  cap(b, insetLoop(loop, ai), proud, 1);
   transformBuilder(b, from, place);
 }
 
@@ -645,23 +671,26 @@ interface BackFrame {
   xy(bx: number, by: number): V2;
 }
 
-/** A pillow-edged plateau (or turret) footprint, swept up from the back surface. */
+/**
+ * A plateau (or turret) footprint, swept up from the back surface along a
+ * filleted rise: z = h·(3u² − 2u³) over the inset run u ∈ 0..1, so it leaves
+ * the back with a concave fillet, is steepest (1.5·h/run) halfway, and rolls
+ * onto the flat top with a convex one; its normal never faces down. Round 1
+ * rose with a vertical wall under a quarter-ellipse: the wall faced the floor
+ * and drew a black undercut band, so the plateau looked glued on. The run is
+ * the measured top inset (devices3d insetMm), at least PLATEAU_MIN_RUN_MM.
+ */
 function buildPlateau(b: Builder, loop: Loop, zBack: number, heightMm: number, insetMm: number, scale?: number[], holes: V2[][] = []) {
-  const a = Math.max(insetMm, PLATEAU_MIN_ROUND_MM);
-  const rb = Math.min(PLATEAU_BASE_FILLET_MM, heightMm * 0.4);
-  const deg = Math.PI / 180;
+  const a = Math.max(insetMm, PLATEAU_MIN_RUN_MM, heightMm * 0.9);
   const strip: Strip = [];
-  // Concave base fillet: from the back surface (normal up) to the wall foot (normal outward).
-  for (let k = 0; k <= 4; k++) {
-    const ph = (k / 4) * 90 * deg;
-    strip.push({ i: -rb + rb * Math.sin(ph), z: rb - rb * Math.cos(ph), no: Math.sin(ph), nz: Math.cos(ph) });
-  }
-  // Pillow: quarter-ellipse with semi-axes (a, h − rb), wall to top.
-  const hh = heightMm - rb;
-  for (let k = 1; k <= 10; k++) {
-    const th = (k / 10) * 90 * deg;
-    const n = norm2(hh * Math.cos(th), a * Math.sin(th));
-    strip.push({ i: a * (1 - Math.cos(th)), z: rb + hh * Math.sin(th), no: n[0], nz: n[1] });
+  const steps = PLATEAU_RISE_RINGS;
+  for (let k = 0; k <= steps; k++) {
+    const u = k / steps;
+    const z = heightMm * u * u * (3 - 2 * u);
+    // dz/di = 6h·u(1 − u)/a; outward normal ∝ (dz/di, 1) in (outward, z).
+    const slope = (6 * heightMm * u * (1 - u)) / a;
+    const n = norm2(slope, 1);
+    strip.push({ i: a * u, z, no: n[0], nz: n[1] });
   }
   sweep(b, loop, [strip], { scale, z0: zBack });
   const sc = scale ?? loop.p.map(() => 1);
@@ -736,7 +765,9 @@ function buildLens(L: LensBuild, s: LensSpec) {
   fr.forEach((fz, gi) => {
     const r = glassR * rr[gi];
     const zc = coverZ - depth * fz;
-    const sag = Math.min(r * 0.2, depth * 0.2);
+    // A curved element (up to about 12° at its rim) mirrors a spread of the studio: the key lands as a small
+    // catchlight near its top instead of the element reading as a flat disc.
+    const sag = Math.min(r * 0.22, depth * 0.35);
     const rings = 6;
     const seg = 48;
     const idx: number[][] = [];
@@ -906,7 +937,6 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
   // panel is inlaid below the plateau.
   const back = new Builder();
   const backPanel = new Builder();
-  const backSeam = new Builder();
   const fullBack = rectLoop(W, H, bodyRadius);
   // Back-frame outline: the body outline is symmetric in x, so the same loop serves.
   if (!unibody) {
@@ -924,35 +954,29 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
     const moved = (l: Loop): Loop => ({ p: l.p.map(([x, y]) => [x + pcx, y + pcy]), t: l.t });
     const pl2 = moved(panelLoop);
     cap(back, insetLoop(fullBack, lipInset), d2, 1, [pl2.p.slice().reverse()]);
-    // Panel seam: a wall down from the metal (facing the panel), a 0.12 mm
-    // floor, then the panel glass rounds up out of it.
-    sweep(backSeam, pl2, [
+    // Panel seam: the metal steps down PANEL_SEAM_MM (a wall facing the
+    // panel and a narrow floor, both metal: the back's own material), then the
+    // panel glass rounds up out of it. Flush, with no black keyline: the
+    // front seam's #0a0a0a ring here drew a hairline outline round a matte
+    // card, which read as computer-drawn.
+    sweep(back, pl2, [
       [
         { z: d2, i: 0, no: -1, nz: 0 },
-        { z: d2 - SEAM_D_MM, i: 0, no: -1, nz: 0 },
+        { z: d2 - PANEL_SEAM_MM, i: 0, no: -1, nz: 0 },
       ],
       [
-        { z: d2 - SEAM_D_MM, i: 0, no: 0, nz: 1 },
-        { z: d2 - SEAM_D_MM, i: SEAM_W_MM, no: 0, nz: 1 },
+        { z: d2 - PANEL_SEAM_MM, i: 0, no: 0, nz: 1 },
+        { z: d2 - PANEL_SEAM_MM, i: PANEL_SEAM_MM, no: 0, nz: 1 },
       ],
     ]);
-    const pe = prof.glassEdge.map((q) => ({ ...q, i: q.i - rim + SEAM_W_MM }));
-    sweep(backPanel, pl2, [pe]);
-    cap(backPanel, insetLoop(pl2, SEAM_W_MM + GLASS_EDGE_MM), d2, 1);
+    const pe = panelEdge(PANEL_SEAM_MM);
+    sweep(backPanel, pl2, [pe], { z0: d2 });
+    cap(backPanel, insetLoop(pl2, PANEL_SEAM_MM + PANEL_EDGE_MM), d2, 1);
   }
   backFrom(back, 0);
   backFrom(backPanel, 0);
-  backFrom(backSeam, 0);
   add(partMesh('back', back));
   add(partMesh('backPanel', backPanel));
-  if (backSeam.pos.length) {
-    // The panel seam shares the seam material.
-    const sm = partMesh('seam', backSeam);
-    if (sm) {
-      sm.name = 'seam:panel';
-      add(sm);
-    }
-  }
 
   // Plateau.
   const plateau = new Builder();
@@ -1000,7 +1024,7 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
 
   // Lenses.
   const L: LensBuild = { ring: new Builder(), barrel: new Builder(), elements: new Builder(), cover: new Builder() };
-  const topContour = insetLoop(plLoop, (scale ?? plLoop.p.map(() => 1)).map((s) => Math.max(topInset, PLATEAU_MIN_ROUND_MM) * s));
+  const topContour = insetLoop(plLoop, (scale ?? plLoop.p.map(() => 1)).map((s) => Math.max(topInset, PLATEAU_MIN_RUN_MM, pl.heightMm * 0.9) * s));
   const onTop = (q: V2) => pointInPoly(topContour, q);
   for (const spec of lensSpecs) buildLens(L, spec);
   for (const b of [L.ring, L.barrel, L.elements, L.cover]) transformBuilder(b, 0, BACK_TO_MODEL);

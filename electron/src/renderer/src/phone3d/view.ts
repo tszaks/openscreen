@@ -35,6 +35,7 @@ import {
 import type { Engine, PhoneLook } from './engine';
 import { planGlare, planSamples, planTiles, Passes, setGlareWeight, setScreenJitter, TILE_BYTES_PER_PX, type SamplePlan } from './passes';
 import { planScreenTexture, screenRoom, textureLimit } from './screenTexture';
+import { aimStudio } from './environment';
 import { frameCatcher, sampleLight } from './shadow';
 
 const DEG = Math.PI / 180;
@@ -115,7 +116,7 @@ function statsOn(): boolean {
   return g.__p3dStatsOn === true || !!g.location?.search?.includes('p3dstats');
 }
 
-/** Puts the phone, the lights and the environment rotation at the pose of `cam`. */
+/** Puts the phone and the environment rotation (the key azimuth) at the pose of `cam`. */
 function applyPose(engine: Engine, s: Scene3D, cam: Cam3D): void {
   const p = cam.pose;
   const g = engine.poseGroup;
@@ -123,14 +124,7 @@ function applyPose(engine: Engine, s: Scene3D, cam: Cam3D): void {
   g.rotation.set(-p.tilt * DEG, p.turn * DEG, -p.rotate * DEG, 'ZXY');
   g.scale.setScalar(cam.scale);
   engine.inner.rotation.set(0, 0, cam.landscape);
-  const az = (s.p3.light.azimuth + p.light) * DEG;
-  const rig = engine.current.rig;
-  if (rig) {
-    // The softboxes sit around the phone at its size this sample (a long side in world px), turned to the key azimuth.
-    engine.kit.placeLights(rig, cam.pos, Math.max(s.bodyMm.width, s.bodyMm.height) * cam.scale);
-    rig.rotation.set(0, az, 0);
-  }
-  engine.scene.environmentRotation.set(0, az, 0);
+  aimStudio(engine.scene, s.p3.light.azimuth + p.light);
 }
 
 /** The perspective camera for `cam`, its depth range, and the jittered window of the full W·ss × H·ss view. */
@@ -158,8 +152,8 @@ function applyCamera(
   return range;
 }
 
-/** Makes sure the phone for this scene and look, its light rig and the environment are in the scene. Returns the
- *  phone model's cache key. */
+/** Makes sure the phone for this scene and look and the studio environment are in the scene. Returns the phone
+ *  model's cache key. */
 function prepareScene(engine: Engine, a: Render3DArgs): string {
   const s = a.scene;
   const p3 = s.p3;
@@ -173,23 +167,6 @@ function prepareScene(engine: Engine, a: Render3DArgs): string {
     engine.current.phone = phone;
   }
   const preset = p3.light.preset;
-  const rigKey = `${engine.generation}|${preset}|${p3.light.intensity}`;
-  const rig = engine.rigs.get(rigKey, () => {
-    const obj = engine.kit.lights(preset, p3.light.intensity);
-    return {
-      obj,
-      dispose: () =>
-        obj.traverse((o) => {
-          const d = o as unknown as { dispose?: () => void };
-          if (o !== obj && typeof d.dispose === 'function') d.dispose();
-        }),
-    };
-  });
-  if (engine.current.rig !== rig.obj) {
-    if (engine.current.rig) engine.scene.remove(engine.current.rig);
-    engine.scene.add(rig.obj);
-    engine.current.rig = rig.obj;
-  }
   const q = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 15) / 15;
   const bg = [q(a.bgMean[0]), q(a.bgMean[1]), q(a.bgMean[2])] as const;
   const envKey = `${engine.generation}|${preset}|${bg.join(',')}`;

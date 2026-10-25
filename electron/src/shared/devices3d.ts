@@ -285,7 +285,12 @@ export function body3dSource(id: string): { specs: string; drawing: string; note
 /** Model ids that have a measured row. */
 export const BODY3D_IDS: readonly string[] = Object.keys(ROWS);
 
-const BUTTON_DEPTH = 0.62;
+/**
+ * Side buttons' width across the band, as a fraction of depth (an estimate: no Apple drawing gives it). The
+ * spec's first 0.62 made 5.4 mm pills on an 8.75 mm band, which the look judges read as big flat slabs at the
+ * edge-on view; the buttons on the phones are about 3.5 mm across.
+ */
+export const BUTTON_DEPTH = 0.4;
 /** Antenna band lines (approximation): near the top and bottom of every metal-banded iPhone. */
 const IPHONE_ANTENNA = [0.07, 0.93];
 
