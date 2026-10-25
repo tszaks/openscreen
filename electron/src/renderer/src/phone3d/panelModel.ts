@@ -25,6 +25,7 @@ import {
   type ShotRecipe,
 } from '../../../shared/phone3d/model';
 import { DEFAULT_MOVE_LENGTH } from '../../../shared/phone3d/ops';
+import { SHOTS } from '../../../shared/phone3d/shots';
 import { poseAt, poseTargetAt, resolveStarts, type PoseTarget } from '../../../shared/phone3d/pose';
 import type { Warning } from '../../../shared/phone3d/warnings';
 import type { Phone3DInactiveReason } from '../../../shared/phone3d/placement';
@@ -195,13 +196,25 @@ export const LENS_RANGE = [Math.ceil(lensMm(60)), Math.floor(lensMm(8))] as cons
 // ---------------------------------------------------------------------------
 // Shots and move names
 
-/** Moves grouped into shots: same recipe, at most two, the second starting within 0.35 s after the first ends. */
+/** The words for each move of a shot, by recipe (SHOTS' keys, in order), and for its one-way (`return: 'stay'`) keys. */
+const PART_WORDS: Partial<Record<ShotRecipe, { keys: readonly string[]; stay?: readonly string[] }>> = {
+  'spin-in': { keys: ['spin', 'settle'] },
+  'hero-layback': { keys: ['out', 'hold', 'back', 'settle'], stay: ['out', 'hold'] },
+  'turn-to-back': { keys: ['out', 'drift', 'on'], stay: ['out', 'land'] },
+  settle: { keys: ['drop', 'settle'] },
+};
+
+/** The most moves one shot of `recipe` writes (its full key list). */
+const shotParts = (recipe: ShotRecipe) => Math.max(1, SHOTS[recipe].keys.length);
+
+/** Moves grouped into shots: same recipe, at most the recipe's own number of moves, each starting within 0.35 s
+ *  after the one before ends. */
 export function shotGroups(list: readonly PoseTransition[]): PoseTransition[][] {
   const out: PoseTransition[][] = [];
   for (const m of list) {
     const g = out[out.length - 1];
     const last = g?.[g.length - 1];
-    if (g && last && m.recipe && g.length < 2 && last.recipe === m.recipe && m.start - last.end <= 0.35 && m.start >= last.end - 1e-6) g.push(m);
+    if (g && last && m.recipe && g.length < shotParts(m.recipe) && last.recipe === m.recipe && m.start - last.end <= 0.35 && m.start >= last.end - 1e-6) g.push(m);
     else out.push([m]);
   }
   return out;
@@ -230,7 +243,10 @@ export function moveName(list: readonly PoseTransition[], id: string): string {
   if (!m) return 'Move';
   const base = m.recipe ? RECIPE_LABEL[m.recipe] : `${EASE_LABEL[m.easing.kind]} move`;
   const s = shotInfo(list, id);
-  return s.parts > 1 ? `${base} · ${s.part === 1 ? 'out' : 'back'}` : base;
+  if (s.parts <= 1) return base;
+  const words = m.recipe ? PART_WORDS[m.recipe] : undefined;
+  const list2 = words && (s.parts === words.keys.length ? words.keys : s.parts === words.stay?.length ? words.stay : undefined);
+  return `${base} · ${list2 ? list2[s.part - 1] : `move ${s.part}`}`;
 }
 
 /** "Shot 2 of 57 · move 1 of 2". */

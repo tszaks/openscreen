@@ -418,8 +418,12 @@ describe('holdPreview (no preview redraw during a 3D export, frames or headless 
     expect(src).toMatch(/const previewHeld = \(\) => holdPreview\(\{ headless: !!headless, exporting: exportingRef\.current, project: projRef\.current \}\);/);
     // renderAt up to its first draw: the hold, then exactly main's early returns (no recording, no canvas, no context).
     const renderAt = src.slice(src.indexOf('const renderAt = useCallback('), src.indexOf('compositor.render(outT, frameInputsAt('));
+    // WP5 adds one guard: a hover preview (a shot tile or an easing, set only while the pointer is over one and
+    // cleared by any edit or by playback) owns the preview canvas. It reads neither the export nor the headless
+    // flag, and the export renders on its own compositor, so export pixels are unchanged (flat identity checks it).
     expect(renderAt.match(/if \([^)]*\)[^;]*return;/g)).toEqual([
       'if (previewHeld()) return;',
+      'if (previewing3d.current) return;',
       'if (!video || !canvas || video.readyState < 2) return;',
       'if (!ctx) return;',
     ]);

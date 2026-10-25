@@ -1,6 +1,7 @@
 // The rest pose after Auto 3D (AGENTS.md "Which keyframe a pose edit changes", skill step 5). Auto 3D bakes
 // the rest pose into the End of the intro AND of every planned shot that returns to rest, so editing only the
-// intro's End changes the rest until the first planned shot. setPose's note names the later moves that still
+// intro's End changes the rest until the first planned shot. The intro's End is the End of its last move (index 1:
+// since look round 4 each intro recipe writes the move and a settle back onto the pose). setPose's note names the later moves that still
 // hold the old pose, with the ops that fix them; the documented recipe is: edit the intro's End, then apply
 // the ops the note lists. These tests run that recipe on real Auto 3D plans and check every rest moment.
 import { describe, expect, it } from 'vitest';
@@ -46,14 +47,14 @@ describe('rest pose after Auto 3D', () => {
     it(`${style}: the intro End edit plus the ops its note lists rest at the new pose everywhere the plan rested`, () => {
       const before = planned(style);
       const p3 = before.phone3d!;
-      const oldRest = p3.transitions[0].to;
+      const oldRest = p3.transitions[1].to;
       // The plan has shots after the intro that return to rest (the case the old recipe got wrong).
-      expect(p3.transitions.length).toBeGreaterThan(2);
-      const restTimes = times.filter((t) => samePose(poseAt(p3, t), oldRest) && t > p3.transitions[0].end);
-      expect(restTimes.some((t) => t > p3.transitions[1].end)).toBe(true);
+      expect(p3.transitions.length).toBeGreaterThan(3);
+      const restTimes = times.filter((t) => samePose(poseAt(p3, t), oldRest) && t > p3.transitions[1].end);
+      expect(restTimes.some((t) => t > p3.transitions[2].end)).toBe(true);
       const newRest: Pose = { ...oldRest, ...NEW_REST };
 
-      const step1 = apply(before, [{ op: 'setPose', index: 0, end: 'to', ...NEW_REST }]);
+      const step1 = apply(before, [{ op: 'setPose', index: 1, end: 'to', ...NEW_REST }]);
       const fix = noteOps(step1.notes[0]);
       expect(fix.length, step1.notes[0]).toBeGreaterThan(0);
       // Editing only the intro's End leaves the old rest after the first planned shot: the bug the note warns of.
@@ -72,7 +73,7 @@ describe('rest pose after Auto 3D', () => {
 
   it('the note is silent when no later move holds the old pose', () => {
     const p = apply(phoneProject({ duration: 10 }), [{ op: 'phone3d', enabled: true }, { op: 'shot', recipe: 'spin-in', at: 0 }]).project;
-    const r = apply(p, [{ op: 'setPose', index: 0, end: 'to', turn: -8, tilt: 5 }]);
+    const r = apply(p, [{ op: 'setPose', index: 1, end: 'to', turn: -8, tilt: 5 }]);
     expect(r.notes[0]).toMatch(/^setPose edited End of \S+$/);
   });
 
@@ -82,7 +83,7 @@ describe('rest pose after Auto 3D', () => {
       { op: 'shot', recipe: 'spin-in', at: 0 },
       { op: 'shot', recipe: 'hero-layback', at: 6 },
     ]).project;
-    const r = apply(p, [{ op: 'setPose', index: 0, end: 'to', turn: -8, tilt: 5 }]);
+    const r = apply(p, [{ op: 'setPose', index: 1, end: 'to', turn: -8, tilt: 5 }]);
     const last = r.project.phone3d!.transitions.length - 1;
     expect(r.notes[0]).toContain(`End of ${r.project.phone3d!.transitions[last].id} (index ${last}) still holds the old pose (turn 0, tilt 0)`);
     expect(noteOps(r.notes[0])).toEqual([{ op: 'setPose', index: last, end: 'to', turn: -8, tilt: 5 }]);

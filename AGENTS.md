@@ -360,12 +360,14 @@ change the pose the whole video rests at, pick one:
 1. `direct --style bold` when its rest (turn -8°, tilt 5°) is what you want:
    every planned move is built around it. Bold also plans `turn-to-back` in
    long waits.
-2. Edit the intro's End, `setPose {index:0, end:"to", …}`, and read its
-   note. When later moves still hold the old pose, the note names them and
-   ends with the ops that give them the new one:
-   `setPose edited End of m1; End of m3 (index 2) still holds the old pose
+2. Edit the End of the intro's last move and read its note. Each intro
+   recipe writes two moves (the move, then a settle back onto the pose), so
+   that is `setPose {index:1, end:"to", …}`. When later moves still hold the
+   old pose, the note names them and ends with the ops that give them the
+   new one:
+   `setPose edited End of m2; End of m6 (index 5) still holds the old pose
    (turn 0, tilt 0), so the phone goes back to it there. For one rest pose,
-   apply: [{"op":"setPose","index":2,"end":"to","turn":-8,"tilt":5}]`.
+   apply: [{"op":"setPose","index":5,"end":"to","turn":-8,"tilt":5}]`.
    Apply that list as it is (a pose whole turns away keeps its whole turns).
    Without it, the phone rests at the new pose only until the first planned
    shot, then at the old one for the rest of the video.
@@ -433,10 +435,10 @@ from it.
 
 | Recipe | Default length | What it does | Use it for |
 |---|---|---|---|
-| `spin-in` | 1.6 s | spins in from the back, small and soft, and lands sharp on the pose (spring 40/9.5, one 3% overshoot) | the intro, before the first tap |
-| `turn-to-back` | 3.2 s (`return:"stay"`: 1.44 s) | turns to show the back, then all the way round to the front (a full 360°) | a long wait, or a scene change (the edge-on moment hides the cut); bold promos |
-| `hero-layback` | 1.4 s (`return:"stay"`: 0.63 s) | leans back into a three-quarter hero angle, then springs back | a wait of 2.4 s or more; one-way (`return:"stay"`) as the outro |
-| `settle` | 1.0 s | drops in slightly large and leaned back, and settles onto the pose | a gentle intro, or any intro under 2 s |
+| `spin-in` | 1.6 s | spins in from the back, small and soft, carries 4° past the pose and settles back onto it (2 moves) | the intro, before the first tap |
+| `turn-to-back` | 3.7 s (`return:"stay"`: 1.8 s) | turns to a three-quarter view of the back, drifts slowly across it, then on round to the front (a full 360°; 3 moves). One-way it lands on the three-quarter back (2 moves) | a long wait, or a scene change (the edge-on moment hides the cut); bold promos; one-way as an outro |
+| `hero-layback` | 2.4 s (`return:"stay"`: 1.38 s) | leans back into a three-quarter hero angle, keeps drifting gently while it holds, then swings back just past the pose and settles (4 moves; one-way: the lean and the hold) | a wait of 2.4 s or more; one-way (`return:"stay"`) as the outro |
+| `settle` | 1.0 s | drops in slightly large and leaned back, carries just past the pose and settles onto it (2 moves) | a gentle intro, or any intro under 2 s |
 | `float` | — | turns on `phone3d.float` (no moves) | calm tutorials |
 
 - `at` is where the shot starts (output s). `duration` is the length of what
@@ -572,7 +574,7 @@ output seconds, after the cuts):
 ```json
 [
   {"op": "editTransition", "index": 0, "end": 1.4},
-  {"op": "setPose", "index": 0, "end": "to", "turn": -8, "tilt": 5, "size": 0.92},
+  {"op": "setPose", "index": 1, "end": "to", "turn": -8, "tilt": 5, "size": 0.92},
   {"op": "shot", "recipe": "hero-layback", "at": 15.0},
   {"op": "shot", "recipe": "hero-layback", "at": 21.4, "direction": -1},
   {"op": "phone3d", "light": {"preset": "contrast"}, "dof": {"background": 0.3}}
@@ -580,7 +582,8 @@ output seconds, after the cuts):
 ```
 
 The second op makes the phone rest a little off front and smaller. After
-`direct`, the rest pose is the End of the intro **and of every planned shot
+`direct`, the rest pose is the End of the intro's last move (index 1: each
+intro recipe writes the move and a settle) **and of every planned shot
 that returns to rest**, so edit those Ends. Here `direct` planned only the
 intro, so one edit is enough, and the two shots after it start from the new
 rest and return to it (ops run in order). When `direct` did plan later shots,

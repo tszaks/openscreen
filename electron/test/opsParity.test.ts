@@ -179,7 +179,8 @@ describe('ops parity: the rest pose after Auto 3D and the worked example', () =>
       { op: 'shot', recipe: 'spin-in', at: 0 },
       { op: 'shot', recipe: 'hero-layback', at: 6 },
     ]).project;
-    return applyOps(p, [{ op: 'setPose', index: 0, end: 'to', turn: -8, tilt: 5 }]).notes[0];
+    // The intro's rest is the End of its last move (index 1: spin-in writes the spin and a settle).
+    return applyOps(p, [{ op: 'setPose', index: 1, end: 'to', turn: -8, tilt: 5 }]).notes[0];
   }
 
   it('AGENTS.md and the skill tell the agent to apply the ops the setPose note lists, in the words the note uses', () => {
@@ -313,7 +314,11 @@ describe('ops parity: the editor writes 3D state only through apply3d', () => {
   it.skipIf(!wp5)('apply3d runs the shared applyOps3d, and the panel and lane get apply3d', () => {
     expect(editor).toMatch(/applyOps3d\(/);
     expect(editor).toMatch(/<Phone3DPanel[\s\S]*?\bapply3d=\{apply3d\}/);
-    expect(editor).toMatch(/<TransitionLane[\s\S]*?\bapply3d=\{apply3d\}/);
+    // The lane gets callbacks, not apply3d itself (WP5's props): its writes (retime) go through apply3d.
+    const lane = editor.slice(editor.indexOf('<TransitionLane'), editor.indexOf('/>', editor.indexOf('<TransitionLane')));
+    expect(lane, 'the lane JSX').not.toBe('');
+    expect(lane).toMatch(/onRetime=\{[^\n]*\bapply3d\(\{ op: 'editTransition'/);
+    expect(lane).not.toMatch(/setProj\(/);
   });
 
   it.skipIf(!wp5)('every op the 3D UI sends is a real op, with fields the op accepts', () => {

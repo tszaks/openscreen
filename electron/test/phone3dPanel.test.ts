@@ -70,7 +70,14 @@ function phoneProject(p3?: Partial<Phone3D>): Project {
 let n = 0;
 const id = () => `m${++n}`;
 
-/** A spin-in at 0 and two Laybacks, as Auto 3D writes them. */
+/** A hand-made spring move squeezed into 0.63 s (shorter than its 180/18 spring needs), clear of plan()'s moves. */
+const squeezed = (): PoseTransition => ({ id: 'sq', start: 20, end: 20.63, to: { ...FRONT, turn: 20 }, easing: { kind: 'spring', stiffness: 180, damping: 18 } });
+
+/**
+ * A spin-in at 0 and two Laybacks, as Auto 3D writes them. Since look round 4 a spin-in is 2 moves (spin, settle)
+ * and a Layback 4 (out, hold, back, settle): [0] spin, [1] settle | [2] out, [3] hold, [4] back, [5] settle |
+ * [6] out (mirrored), [7] hold, [8] back, [9] settle.
+ */
 function plan(): PoseTransition[] {
   n = 0;
   const spin = expandShot('spin-in', { start: 0 }, FRONT, id).transitions;
@@ -156,14 +163,27 @@ describe('lens', () => {
 });
 
 describe('shots and names', () => {
-  it('groups a Layback\'s two moves into one shot and names each move', () => {
+  it('groups a shot\'s moves into one shot (as many as its recipe writes) and names each move', () => {
     const list = plan();
-    expect(shotGroups(list).map((g) => g.length)).toEqual([1, 2, 2]);
-    expect(moveName(list, list[0].id)).toBe('Spin in');
-    expect(moveName(list, list[1].id)).toBe('Layback · out');
-    expect(moveName(list, list[2].id)).toBe('Layback · back');
-    expect(shotLine(list, list[2].id)).toBe('Shot 2 of 3 · move 2 of 2');
-    expect(shotLine(list, list[0].id)).toBe('Shot 1 of 3');
+    expect(shotGroups(list).map((g) => g.length)).toEqual([2, 4, 4]);
+    expect(list.map((m) => moveName(list, m.id))).toEqual([
+      'Spin in · spin', 'Spin in · settle',
+      'Layback · out', 'Layback · hold', 'Layback · back', 'Layback · settle',
+      'Layback · out', 'Layback · hold', 'Layback · back', 'Layback · settle',
+    ]);
+    expect(shotLine(list, list[4].id)).toBe('Shot 2 of 3 · move 3 of 4');
+    expect(shotLine(list, list[0].id)).toBe('Shot 1 of 3 · move 1 of 2');
+    // Two shots of the same recipe back to back stay two shots.
+    n = 0;
+    const two = [...expandShot('hero-layback', { start: 0 }, FRONT, id).transitions, ...expandShot('hero-layback', { start: 2.4 }, FRONT, id).transitions];
+    expect(shotGroups(two).map((g) => g.length)).toEqual([4, 4]);
+    // One-way shots (return: stay) name their own keys.
+    n = 0;
+    const ttb = expandShot('turn-to-back', { start: 0, ret: 'stay' }, FRONT, id).transitions;
+    expect(ttb.map((m) => moveName(ttb, m.id))).toEqual(['To back · out', 'To back · land']);
+    n = 0;
+    const lay = expandShot('hero-layback', { start: 0, ret: 'stay' }, FRONT, id).transitions;
+    expect(lay.map((m) => moveName(lay, m.id))).toEqual(['Layback · out', 'Layback · hold']);
   });
   it('names a hand-made move by its easing', () => {
     const m: PoseTransition = { id: 'x', start: 1, end: 2, to: FRONT, easing: { kind: 'smooth' } };
@@ -171,9 +191,9 @@ describe('shots and names', () => {
   });
   it('selects all Laybacks, or the same move of every Layback', () => {
     const list = plan();
-    expect(sameRecipe(list, list[1].id)).toEqual([list[1].id, list[2].id, list[3].id, list[4].id]);
-    expect(samePart(list, list[1].id)).toEqual([list[1].id, list[3].id]);
-    expect(samePart(list, list[4].id)).toEqual([list[2].id, list[4].id]);
+    expect(sameRecipe(list, list[2].id)).toEqual(list.slice(2).map((m) => m.id));
+    expect(samePart(list, list[2].id)).toEqual([list[2].id, list[6].id]);
+    expect(samePart(list, list[8].id)).toEqual([list[4].id, list[8].id]);
   });
 });
 
@@ -189,14 +209,16 @@ describe('the target chip', () => {
 
   it('is On a keyframe within half a frame, not a loose distance', () => {
     const s = p3();
-    const lay = s.transitions[1];
-    expect(chipFor(s, lay.end + 0.016, o)).toMatchObject({ mode: 'on', label: 'End of Layback · out' });
+    // The first Layback's last move: a hold follows it (the moves inside a shot touch, so just past their Ends is the
+    // next move's Start).
+    const lay = s.transitions[5];
+    expect(chipFor(s, lay.end + 0.016, o)).toMatchObject({ mode: 'on', label: 'End of Layback · settle' });
     expect(chipFor(s, lay.end + 0.017, o).mode).not.toBe('on');
   });
 
   it('is Near inside a move, with the distance to the end it edits', () => {
     const s = p3();
-    const lay = s.transitions[1];
+    const lay = s.transitions[2];
     const c = chipFor(s, lay.end - 0.2, o);
     expect(c.mode).toBe('near');
     expect(c.dist).toBeCloseTo(0.2, 9);
@@ -205,7 +227,7 @@ describe('the target chip', () => {
 
   it('holds the last End in a hold, or adds a move there with Auto key', () => {
     const s = p3();
-    expect(chipFor(s, 7, o)).toMatchObject({ mode: 'holding', label: 'End of Layback · back' });
+    expect(chipFor(s, 7, o)).toMatchObject({ mode: 'holding', label: 'End of Layback · settle' });
     expect(chipFor(s, 7, { ...o, autoKey: true }).mode).toBe('none');
   });
 
@@ -215,7 +237,7 @@ describe('the target chip', () => {
 
   it('turns each chip into the op the CLI would run', () => {
     const s = p3();
-    const lay = s.transitions[1];
+    const lay = s.transitions[2];
     const near = poseEditOps(s, chipFor(s, lay.end - 0.2, o), { turn: 10 }, lay.end - 0.2);
     expect(near).toEqual({ ops: [{ op: 'setPose', id: lay.id, end: 'to', turn: 10 }], seek: lay.end });
     const base = poseEditOps(s, chipFor(s, 7, { ...o, editing: 'base' }), { tilt: 3 }, 7);
@@ -234,7 +256,7 @@ describe('the target chip', () => {
 
   it('refuses an Auto key move squeezed against the move before', () => {
     const s = p3();
-    const end = s.transitions[2].end;
+    const end = s.transitions[5].end; // the first Layback's last move
     const r = poseEditOps(s, chipFor(s, end + 0.05, { ...o, autoKey: true }), { turn: 30 }, end + 0.05);
     expect(r).toHaveProperty('error');
   });
@@ -259,7 +281,7 @@ describe('the target chip', () => {
 
   it('locks Near on the End it edits and asks the playhead to go there', () => {
     const s = p3();
-    const lay = s.transitions[1];
+    const lay = s.transitions[2];
     const r = lockPose(s, chipFor(s, lay.end - 0.2, o), lay.end - 0.2, 'unused');
     expect(r).toEqual({ lock: { kind: 'key', id: lay.id, end: 'to' }, ops: [], seek: lay.end });
     expect(lockedOps({ kind: 'base' }, { size: 0.9 })).toEqual([{ op: 'setPose', target: 'base', size: 0.9 }]);
@@ -279,7 +301,7 @@ describe('the target chip', () => {
 describe('many moves at once', () => {
   it('shows "–" for channels that differ (mirrored Laybacks) and keeps shared ones', () => {
     const s = { pose: { ...FRONT }, transitions: plan() };
-    const outs = [s.transitions[1].id, s.transitions[3].id];
+    const outs = [s.transitions[2].id, s.transitions[6].id];
     const mixed = mixedChannels(keyPoses(s, outs, 'to'));
     expect(mixed.has('turn')).toBe(true); // −24 and 24
     expect(mixed.has('tilt')).toBe(false); // 16 and 16
@@ -288,7 +310,7 @@ describe('many moves at once', () => {
   it('adds the same change to each move when a "–" field is dragged, as one op list', () => {
     const p = phoneProject({ transitions: plan() });
     const s = p.phone3d!;
-    const outs = [s.transitions[1].id, s.transitions[3].id];
+    const outs = [s.transitions[2].id, s.transitions[6].id];
     const ops = multiPoseOps(s, outs, 'to', 'turn', 5, 'add');
     const r = applyOps3d(p, ops);
     expect('project' in r).toBe(true);
@@ -299,19 +321,19 @@ describe('many moves at once', () => {
 
   it('sets every move when a value is typed', () => {
     const s = { pose: { ...FRONT }, transitions: plan() };
-    const ops = multiPoseOps(s, [s.transitions[1].id, s.transitions[3].id], 'to', 'tilt', 9, 'set');
+    const ops = multiPoseOps(s, [s.transitions[2].id, s.transitions[6].id], 'to', 'tilt', 9, 'set');
     expect(ops.map((x) => x.tilt)).toEqual([9, 9]);
   });
 
   it('never sends a value the op would refuse (clamped to the pose range)', () => {
     const s = { pose: { ...FRONT }, transitions: plan() };
-    const ops = multiPoseOps(s, [s.transitions[1].id], 'to', 'tilt', 500, 'add');
+    const ops = multiPoseOps(s, [s.transitions[2].id], 'to', 'tilt', 500, 'add');
     expect(ops[0].tilt).toBe(85);
   });
 
   it('sets an easing, fitting a spring\'s length, and durations, for every move', () => {
     const p = phoneProject({ transitions: plan() });
-    const ids = [p.phone3d!.transitions[1].id, p.phone3d!.transitions[3].id];
+    const ids = [p.phone3d!.transitions[2].id, p.phone3d!.transitions[6].id];
     const r = applyOps3d(p, easingOps(ids, { kind: 'spring', stiffness: 180, damping: 18 }, true));
     expect('project' in r).toBe(true);
     if ('project' in r) for (const m of r.project.phone3d!.transitions.filter((x) => ids.includes(x.id))) expect(isFitted(m)).toBe(true);
@@ -512,33 +534,36 @@ describe('the lane', () => {
   it('draws touching keys as two halves with split hit areas, and hides keys on narrow blocks', () => {
     const list = plan();
     const zoomed = laneLayout(list, { pxPerSec: 140, selected: [] });
-    const lay = list[1];
+    const lay = list[2];
     const halves = zoomed.keys.filter((k) => k.shape !== 'full');
     expect(halves.length).toBeGreaterThan(0);
     const left = zoomed.keys.find((k) => k.moveId === lay.id && k.which === 'end')!;
-    const right = zoomed.keys.find((k) => k.moveId === list[2].id && k.which === 'start')!;
+    const right = zoomed.keys.find((k) => k.moveId === list[3].id && k.which === 'start')!;
     expect(left.shape).toBe('left');
     expect(right.shape).toBe('right');
     expect(left.hit[1]).toBe(right.hit[0]);
     const out = laneLayout(list, { pxPerSec: 10, selected: [] });
-    expect(out.keys).toHaveLength(0); // 0.63 s × 10 px = 6.3 px blocks: no keys
-    const far = laneLayout(list, { pxPerSec: 4, selected: [] });
-    expect(far.blocks).toHaveLength(1); // only the 1.6 s spin-in is 6 px or wider (6.4 px)
-    expect(far.ticks.length).toBe(4);
+    expect(out.keys).toHaveLength(0); // the longest move is 1.2 s × 10 px = 12 px: no keys
+    const far = laneLayout(list, { pxPerSec: 5.5, selected: [] });
+    expect(far.blocks).toHaveLength(1); // only the 1.2 s spin is 6 px or wider (6.6 px)
+    expect(far.ticks.length).toBe(list.length - 1); // every other move is a tick
   });
 
   it('marks a linked Start hollow and labels only blocks wide enough', () => {
     const list = plan();
     const l = laneLayout(list, { pxPerSec: 140, selected: [] });
-    expect(l.keys.find((k) => k.moveId === list[2].id && k.which === 'start')!.hollow).toBe(true);
+    expect(l.keys.find((k) => k.moveId === list[3].id && k.which === 'start')!.hollow).toBe(true);
     expect(l.keys.find((k) => k.moveId === list[0].id && k.which === 'start')!.hollow).toBe(false);
     expect(l.blocks.find((b) => b.id === list[0].id)!.label).toBe('Spin in');
-    expect(l.blocks.find((b) => b.id === list[2].id)!.label).toBeNull(); // the second move of a shot
+    expect(l.blocks.find((b) => b.id === list[2].id)!.label).toBe('Layback');
+    expect(l.blocks.find((b) => b.id === list[3].id)!.label).toBeNull(); // the second move of a shot
   });
 
   it('hatches the cut part of a squeezed spring on the one selected block', () => {
-    const list = plan();
-    const back = list[2];
+    // Look round 4's recipes use no spring, so the squeezed spring is a hand-made one.
+    const list = [...plan(), squeezed()];
+    const back = list[list.length - 1];
+    expect(springShortfall(back)).toBeGreaterThan(0);
     const sel = laneLayout(list, { pxPerSec: 100, selected: [back.id] });
     expect(sel.blocks.find((b) => b.id === back.id)!.tail).toBeCloseTo(springShortfall(back) * 100, 6);
     expect(laneLayout(list, { pxPerSec: 100, selected: [back.id, list[0].id] }).blocks.every((b) => b.tail === 0)).toBe(true);
@@ -555,15 +580,16 @@ describe('the lane', () => {
 
   it('selects the moves a selection box touches', () => {
     const list = plan();
-    expect(marqueeIds(list, 395, 420, 100)).toEqual([list[1].id]);
+    expect(marqueeIds(list, 395, 420, 100)).toEqual([list[2].id]);
     expect(marqueeIds(list, 0, 2000, 100)).toHaveLength(list.length);
   });
 
   it('frames a selection with room, including a squeezed spring\'s tail', () => {
-    const list = plan();
-    const w = frameWindow([list[2]])!;
-    expect(w.start).toBeLessThan(list[2].start);
-    expect(w.end).toBeGreaterThan(list[2].end + springShortfall(list[2]));
+    const sq = squeezed();
+    expect(springShortfall(sq)).toBeGreaterThan(0);
+    const w = frameWindow([sq])!;
+    expect(w.start).toBeLessThan(sq.start);
+    expect(w.end).toBeGreaterThan(sq.end + springShortfall(sq));
     expect(frameWindow([])).toBeNull();
   });
 });

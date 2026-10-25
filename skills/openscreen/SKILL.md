@@ -81,8 +81,9 @@ Run these in order. Each step is done when its check holds.
    with `apply --dry-run` (`warnings: []`).
    The rest pose after Auto 3D is the End of the intro **and of every
    planned shot that returns to rest**. To rest a few degrees off front for
-   the whole video: use `--style bold` (rests at -8°/5°), or edit the
-   intro's End (`{"op":"setPose","index":0,"end":"to","turn":-8,"tilt":5}`)
+   the whole video: use `--style bold` (rests at -8°/5°), or edit the End
+   of the intro's last move (each intro writes the move and a settle, so
+   `{"op":"setPose","index":1,"end":"to","turn":-8,"tilt":5}`)
    and read its note in `changes`: when later moves still hold the old
    pose, it ends with `For one rest pose, apply: [...]`. Apply that list as
    it is, or the phone goes back to front after the first planned shot.
