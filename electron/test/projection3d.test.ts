@@ -23,6 +23,7 @@ import {
   renderRoi,
   scene3d,
   screenMap3d,
+  screenAxisSin,
   screenQuad,
   SHADOW_AMBIENT_SIGMA,
   SHADOW_CONTACT,
@@ -145,6 +146,35 @@ describe('projection vs three.js', () => {
       });
     }
     expect(worst).toBeLessThan(0.01);
+  });
+});
+
+describe('screenAxisSin (the front glass flag, materials.ts FRONT_GLASS_FLAG)', () => {
+  it('0 at FRONT wherever the phone stands; sin of the tilt or of the camera elevation; equals three view-space normal', () => {
+    const p = with3d(phoneProject({ presetId: 'social-9x16' }), {});
+    const s = scene3d(p)!;
+    for (const at of [{}, { x: 0.3, y: -0.2, size: 0.6 }, { rotate: 40 }]) expect(screenAxisSin(camAt(s, 0, { ...FRONT, ...at }))).toBeLessThan(1e-12);
+    expect(screenAxisSin(camAt(s, 0, { ...FRONT, tilt: 16 }))).toBeCloseTo(Math.sin((16 * Math.PI) / 180), 12);
+    expect(screenAxisSin(camAt(s, 0, { ...FRONT, turn: -24 }))).toBeCloseTo(Math.sin((24 * Math.PI) / 180), 12);
+    const up = scene3d(with3d(phoneProject({ presetId: 'social-9x16' }), { camera: { fov: 22, elevation: 9 } }))!;
+    expect(screenAxisSin(camAt(up, 0, FRONT))).toBeCloseTo(Math.sin((9 * Math.PI) / 180), 12);
+    // Against three: the screen normal through the model's and the camera's matrices, as the shader's view-space normal.
+    const r = lcg(7);
+    for (let i = 0; i < 50; i++) {
+      const q = with3d(phoneProject({ presetId: LAYOUTS[i % 3] }), { camera: { fov: 22, elevation: r() * 30 } });
+      const sq = scene3d(q)!;
+      const pose = randomPose(r);
+      const cam = camAt(sq, 0, pose);
+      const deg = Math.PI / 180;
+      const obj = new THREE.Object3D();
+      obj.rotation.set(-pose.tilt * deg, pose.turn * deg, -pose.rotate * deg, 'ZXY');
+      obj.updateMatrixWorld(true);
+      const camera = new THREE.PerspectiveCamera();
+      camera.rotation.set(-cam.elevation * deg, 0, 0);
+      camera.updateMatrixWorld(true);
+      const n = new THREE.Vector3(0, 0, 1).transformDirection(obj.matrixWorld).transformDirection(camera.matrixWorldInverse);
+      expect(screenAxisSin(cam)).toBeCloseTo(Math.hypot(n.x, n.y), 9);
+    }
   });
 });
 

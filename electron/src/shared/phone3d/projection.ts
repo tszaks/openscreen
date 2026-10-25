@@ -309,6 +309,16 @@ export function screenQuadAt(s: Scene3D, t: number, cam: Cam3D = camAt(s, t)): {
   return { quad, facing };
 }
 
+/**
+ * Sine of the angle between the screen's normal and the camera's axis: 0 when the screen is parallel to the canvas
+ * (FRONT with the camera level), wherever the phone stands on the canvas. The front glass's flag fade
+ * (materials.ts FRONT_GLASS_FLAG) uses the same number in the shader: the length of the view-space normal's x and y.
+ */
+export function screenAxisSin(cam: Pick<Cam3D, 'Rpose' | 'rot'>): number {
+  const n = mtv(cam.rot, mv(cam.Rpose, [0, 0, 1]));
+  return Math.hypot(n[0], n[1]);
+}
+
 /** screenQuad(p, t): the screen's 4 canvas corners plus facing; null without a framed phone. */
 export function screenQuad(p: SceneSource, t: number, canvas?: Size): { quad: Quad; facing: number } | null {
   const s = asScene(p, canvas);

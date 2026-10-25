@@ -233,9 +233,10 @@ describe('renderPhone3D frame loop', () => {
     expect(passes.msaa).not.toBeNull();
   });
 
-  it('the glass sheen is drawn on the samples planGlare picks, with their weights (still: sample 0 × N)', async () => {
+  it('the glass sheen is drawn on the samples planGlare picks, with their weights (still: sample 0 × N); never inside the flag (FRONT)', async () => {
     const { planGlare } = await import('../src/renderer/src/phone3d/passes');
-    for (const [patch, t] of [[{}, 0.5], [moving(), 1.8]] as const) {
+    const tilted = { pose: { ...FRONT, tilt: 20 } } as Partial<Phone3D>;
+    for (const [patch, t, inFlag] of [[{}, 0.5, true], [tilted, 0.5, false], [moving(), 1.8, false]] as const) {
       const s = sceneFor(patch as Partial<Phone3D>, false);
       const { engine } = fakeEngine();
       const glare = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
@@ -248,7 +249,10 @@ describe('renderPhone3D frame loop', () => {
         orig(sc, c);
       };
       const { out } = frame(engine, args(s, t));
-      expect(seen).toEqual(Array.from({ length: out.tiles }, () => planGlare({ n: out.samples, nMotion: out.samples > 8 ? out.samples : 1 })).flat());
+      const want = Array.from({ length: out.tiles }, () => planGlare({ n: out.samples, nMotion: out.samples > 8 ? out.samples : 1 })).flat();
+      // At FRONT the front glass mirrors the flag (materials.ts FRONT_GLASS_FLAG): the shader would add exactly 0.
+      expect(seen).toEqual(inFlag ? want.map(() => 0) : want);
+      if (!inFlag) expect(seen.some((w) => w > 0)).toBe(true);
     }
   });
 

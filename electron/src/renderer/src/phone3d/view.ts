@@ -28,6 +28,7 @@ import {
   maxCocPx,
   projectWorld,
   renderRoi,
+  screenAxisSin,
   screenQuadAt,
   screenUvMap,
   type Cam3D,
@@ -50,6 +51,7 @@ import {
 } from './passes';
 import { planScreenTexture, screenRoom, textureLimit } from './screenTexture';
 import { aimStudio } from './environment';
+import { FRONT_GLASS_FLAG_SIN } from './materials';
 import { frameCatcher, sampleLight } from './shadow';
 
 const DEG = Math.PI / 180;
@@ -340,8 +342,10 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
         const target = msaa ? passes.msaa! : passes.plain!;
         setScreenJitter(phone.screen.material, jx, jy);
         if (phone.glare) {
-          phone.glare.visible = glareWeights[k] > 0;
-          setGlareWeight(phone.glare.material as THREE.Material, glareWeights[k]);
+          // Inside the flag (materials.ts FRONT_GLASS_FLAG) the shader would add exactly 0: skip the draw.
+          const w = screenAxisSin(cam) < FRONT_GLASS_FLAG_SIN.clear ? 0 : glareWeights[k];
+          phone.glare.visible = w > 0;
+          setGlareWeight(phone.glare.material as THREE.Material, w);
         }
         // Only the last sample's depth is read (by DoF): skip resolving it otherwise.
         target.resolveDepthBuffer = dofOn && k === N - 1;

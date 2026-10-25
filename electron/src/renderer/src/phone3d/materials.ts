@@ -33,7 +33,7 @@ import {
   } from 'three';
 import type { DeviceModel, FrameMaterial } from '../../../shared/devices';
 import type { Body3D } from '../../../shared/devices3d';
-import { lodBias, mrtOutput, screenLookup } from './passes';
+import { flagFade, lodBias, mrtOutput, rectSpecularOnly, screenLookup } from './passes';
 import { FLASH_GROUP, BAND_GROUP, FRONT_GLASS_GROUP, FRONT_GROUP, isUnibody, type PhonePart } from './geometry';
 
 // ---------------------------------------------------------------------------
@@ -187,19 +187,34 @@ export const LENS_COVER_SPECULAR = 0.3;
  * grey veil, not a sheen (round 2 kept it under 25% by making the glass weak,
  * and the judges saw no reflection at any angle). A softbox draws a
  * soft-edged reflection that slides across the front as the phone turns, its
- * edges crossing the screen; at FRONT no box is near the camera axis, so the screen
- * stays exact. The default strength is anti-reflective glass: a softbox
- * filling the whole screen (the key at the hero layback) lifts black UI to
- * about 14% grey, not the 25% bare glass gives. On white UI the sheen is lost
- * in the white, as on a real phone; on dark UI and the border it shows.
+ * edges crossing the screen. On white UI the sheen is lost in the white, as on
+ * a real phone; on dark UI and the border it shows.
+ * Facing the camera the glass mirrors the studio's black flag round the lens
+ * (FRONT_GLASS_FLAG), so the screen at FRONT is exact for every preset and key
+ * azimuth. Look round 4 relied on placing no box near the camera axis, and
+ * that held only for studio at the default azimuth: the box above the camera
+ * lifted dark UI at the top of a FRONT screen by up to 93 levels (26.7 dB
+ * against flat, gate 40), and soft or a mirrored key veiled the whole screen.
  */
 export const FRONT_GLASS_ROUGHNESS = 0.15;
 /** The glare's strength per unit of phone3d.glass: the default 0.25 → 1, bare cover glass (4% straight on, rising
  *  toward grazing), so a softbox reflects as a faint sheet that slides over the screen as the phone turns; glass 1
  *  → 4, a glossy showroom mirror. Round 3's anti-reflective 1.4% vanished on white UI at every angle (all three
- *  judges: no reflection at any angle, a flat print). At FRONT no softbox is near the camera axis, so the screen
- *  stays exact; one sheet for the border and the screen. */
+ *  judges: no reflection at any angle, a flat print). Facing the camera the flag (FRONT_GLASS_FLAG) keeps the
+ *  screen exact; one sheet for the border and the screen. */
 export const FRONT_GLASS_SPECULAR_PER_GLASS = 4;
+/**
+ * The black flag round the camera lens, as the angle between the screen's normal and the camera's axis: the front
+ * glass (border and glare) reflects nothing within `clearDeg` and fully from `fullDeg` (smoothstep between, on the
+ * sine; projection.ts screenAxisSin is the same number on the CPU, so a sample inside clearDeg skips the glare draw).
+ * 5° keeps the spin-in's landing (turn 4) clean; the hero layback (about 29°) and every turn show the full sheen.
+ */
+export const FRONT_GLASS_FLAG = { clearDeg: 5, fullDeg: 20 } as const;
+export const FRONT_GLASS_FLAG_SIN = {
+  clear: Math.sin((FRONT_GLASS_FLAG.clearDeg * Math.PI) / 180),
+  full: Math.sin((FRONT_GLASS_FLAG.fullDeg * Math.PI) / 180),
+} as const;
+
 /** The front glass's specularIntensity for a phone3d.glass value (border and glare alike). */
 export const frontGlassSpecular = (glass: number) => Math.max(0, glass) * FRONT_GLASS_SPECULAR_PER_GLASS;
 
@@ -233,7 +248,9 @@ function towardWhite(hex: string, t: number): Color {
 }
 
 function physical(params: ConstructorParameters<typeof MeshPhysicalMaterial>[0]): MeshPhysicalMaterial {
-  return mrtOutput(new MeshPhysicalMaterial(params), 'lit');
+  const m = mrtOutput(new MeshPhysicalMaterial(params), 'lit');
+  // A metal has no diffuse term: skip the rect lights' diffuse integral (exact, and a third of their cost).
+  return params?.metalness === 1 ? rectSpecularOnly(m) : m;
 }
 
 /** Anodised aluminium roughness (the 17 Pro unibody, the 16/17 bands). */
@@ -289,8 +306,9 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   const antenna = physical({ color: srgb(hex).multiplyScalar(0.55), roughness: 0.45, metalness: 0 });
   const seam = physical({ color: srgb('#0a0a0a'), roughness: 0.6, metalness: 0 });
   const spec = frontGlassSpecular(glass);
-  const frontGlass = physical({ color: srgb('#050506'), roughness: FRONT_GLASS_ROUGHNESS, ior: 1.5, specularIntensity: spec, metalness: 0 });
-  const glare = reflectionOnly(overlay(mrtOutput(new MeshPhysicalMaterial({ color: 0x000000, roughness: FRONT_GLASS_ROUGHNESS, ior: 1.5, specularIntensity: spec, metalness: 0 }), 'glare'), reversed));
+  const flag = (m: MeshPhysicalMaterial) => flagFade(m, FRONT_GLASS_FLAG_SIN.clear, FRONT_GLASS_FLAG_SIN.full);
+  const frontGlass = flag(physical({ color: srgb('#050506'), roughness: FRONT_GLASS_ROUGHNESS, ior: 1.5, specularIntensity: spec, metalness: 0 }));
+  const glare = reflectionOnly(overlay(flag(rectSpecularOnly(mrtOutput(new MeshPhysicalMaterial({ color: 0x000000, roughness: FRONT_GLASS_ROUGHNESS, ior: 1.5, specularIntensity: spec, metalness: 0 }), 'glare'))), reversed));
   glare.visible = glass > 0;
   frontGlass.envMapIntensity = 0;
   glare.envMapIntensity = 0;

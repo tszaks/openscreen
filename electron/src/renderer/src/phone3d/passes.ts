@@ -319,6 +319,54 @@ export function mrtOutput<M extends THREE.Material>(mat: M, role: MrtRole): M {
   return mat;
 }
 
+/** three r186's RectAreaLight diffuse integral (lights_physical_pars_fragment, RE_Direct_RectArea_Physical). */
+export const RECT_DIFFUSE_LINE =
+  'reflectedLight.directDiffuse += lightColor * material.diffuseContribution * LTC_Evaluate( normal, viewDir, position, mat3( 1.0 ), rectCoords );';
+
+/**
+ * Leaves out each RectAreaLight's diffuse integral, for a surface with no
+ * diffuse term: a metal (metalness 1, so three's diffuseContribution is
+ * exactly 0) or the black glare layer. three evaluates it anyway, and it is
+ * one of the two or three LTC polygon integrals a rect light costs per pixel
+ * (look round 4 fix round 1: the rig had tripled the moving-frame cost).
+ * Exact: the term it drops is 0. Throws if three's chunk changes, so an
+ * upgrade cannot silently keep the cost.
+ */
+export function rectSpecularOnly<M extends THREE.Material>(mat: M): M {
+  addPatch(mat, {
+    key: 'rect-nodiffuse',
+    apply: (shader) => {
+      const chunk = THREE.ShaderChunk.lights_physical_pars_fragment;
+      if (!chunk.includes(RECT_DIFFUSE_LINE)) throw new Error('phone3d: three changed RE_Direct_RectArea_Physical');
+      shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_pars_fragment>', chunk.replace(RECT_DIFFUSE_LINE, ''));
+    },
+  });
+  return mat;
+}
+
+/**
+ * Fades a material's specular by how far the surface turns from the camera's
+ * axis: 0 while the sine of that angle (the view-space normal's x, y length)
+ * is under `sinClear`, full from `sinFull`, smoothstep between. For the front
+ * cover glass (materials.ts FRONT_GLASS_FLAG): the studio's black flag round
+ * the lens, so a screen parallel to the canvas mirrors black and stays exact.
+ * The geometric normal (nonPerturbedNormal), so a flat sheet fades as one.
+ */
+export function flagFade<M extends THREE.Material>(mat: M, sinClear: number, sinFull: number): M {
+  addPatch(mat, {
+    key: `flag-${sinClear.toFixed(4)}-${sinFull.toFixed(4)}`,
+    apply: (shader) => {
+      const at = '#include <lights_fragment_end>';
+      if (!shader.fragmentShader.includes(at)) throw new Error('phone3d: flagFade needs a lit material');
+      shader.fragmentShader = shader.fragmentShader.replace(
+        at,
+        `${at}\n\t{\n\t\tfloat flag = smoothstep( ${sinClear.toFixed(6)}, ${sinFull.toFixed(6)}, length( nonPerturbedNormal.xy ) );\n\t\treflectedLight.directSpecular *= flag;\n\t\treflectedLight.indirectSpecular *= flag;\n\t}`,
+      );
+    },
+  });
+  return mat;
+}
+
 /** The glare material's weight uniform (how many samples this draw stands for). */
 function glareWeight(mat: THREE.Material): { value: number } {
   const data = mat.userData as { glareWeight?: { value: number } };

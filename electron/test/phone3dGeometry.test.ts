@@ -61,7 +61,10 @@ import {
   LENS_RING,
   GLASS_RIM,
   ALUMINIUM_SEAL,
+  FRONT_GLASS_FLAG,
+  FRONT_GLASS_FLAG_SIN,
 } from '../src/renderer/src/phone3d/materials';
+import { RECT_DIFFUSE_LINE } from '../src/renderer/src/phone3d/passes';
 import { aimStudio, boxSize, lightDir, placeStudio, quantizeBg, studioLights, studioRadiance, studioScene } from '../src/renderer/src/phone3d/environment';
 
 const dev = (id: string) => getDevice(id)!;
@@ -731,12 +734,59 @@ describe('materials (§3.4)', () => {
     expect(set.screen.customProgramCacheKey()).toBe('mrt-screen|lodbias|screen-lookup');
     // Every lit material in the set is patched; the screen and the glare over it go to the screen attachment.
     for (const m of set.all) {
-      expect(m.customProgramCacheKey(), m.type).toMatch(m === set.screen ? /^mrt-screen/ : m === set.glare ? /^mrt-glare$/ : /^mrt-lit$/);
+      expect(m.customProgramCacheKey(), m.type).toMatch(m === set.screen ? /^mrt-screen/ : m === set.glare ? /^mrt-glare\b/ : /^mrt-lit\b/);
     }
     const s3 = frag() as never as { fragmentShader: string };
-    set.glare.onBeforeCompile(s3 as never, undefined as never);
+    const glareOnly = mrtOutput(new MeshPhysicalMaterial(), 'glare');
+    glareOnly.onBeforeCompile(s3 as never, undefined as never);
     expect(s3.fragmentShader.trimEnd().endsWith('pc_fragScreen = vec4( gl_FragColor.rgb * uGlareWeight, 0.0 );\n\tgl_FragColor = vec4( 0.0 );\n}')).toBe(true);
     expect(s3.fragmentShader.startsWith('uniform float uGlareWeight;') || s3.fragmentShader.includes('\nuniform float uGlareWeight;')).toBe(true);
+  });
+
+  it('rect lights skip their diffuse integral on metals and the glare only (exact: no diffuse term there)', () => {
+    clearMaterialCache();
+    const set = materialsFor('#3A4659', 'aluminum', 'frosted', 0.25, { backMetal: true, plateau: 'band' });
+    const frag = () => ({ fragmentShader: ShaderLib.physical.fragmentShader, vertexShader: '', uniforms: {} }) as never as { fragmentShader: string };
+    const patched = (m: MeshPhysicalMaterial) => m.customProgramCacheKey().split('|').includes('rect-nodiffuse');
+    for (const m of set.all) {
+      if (!(m instanceof MeshPhysicalMaterial)) continue;
+      expect(patched(m), m.name || m.type).toBe(m === set.glare || m.metalness === 1);
+    }
+    expect(patched(set.band) && patched(set.lensRing) && !patched(set.backPanel) && !patched(set.antenna)).toBe(true);
+    const s1 = frag();
+    set.band.onBeforeCompile(s1 as never, undefined as never);
+    expect(s1.fragmentShader).not.toContain('#include <lights_physical_pars_fragment>');
+    expect(s1.fragmentShader).not.toContain(RECT_DIFFUSE_LINE);
+    // The specular and clearcoat integrals stay (two more LTC_Evaluate calls in the rect light function).
+    const fn = s1.fragmentShader.slice(s1.fragmentShader.indexOf('void RE_Direct_RectArea_Physical'));
+    expect(fn.slice(0, fn.indexOf('\n\t}\n')).split('LTC_Evaluate(').length - 1).toBe(2);
+    const s2 = frag();
+    set.backPanel.onBeforeCompile(s2 as never, undefined as never);
+    expect(s2.fragmentShader).toContain('#include <lights_physical_pars_fragment>');
+  });
+
+  it('front glass flag: the border and the glare reflect nothing within FRONT_GLASS_FLAG of the camera axis; the rim is untouched', () => {
+    clearMaterialCache();
+    const set = materialsFor('#3C3C3D', 'titanium', 'frosted', 0.25);
+    const frag = () => ({ fragmentShader: ShaderLib.physical.fragmentShader, vertexShader: '', uniforms: {} }) as never as { fragmentShader: string };
+    expect(FRONT_GLASS_FLAG_SIN.clear).toBeCloseTo(Math.sin((FRONT_GLASS_FLAG.clearDeg * Math.PI) / 180), 12);
+    expect(FRONT_GLASS_FLAG.clearDeg).toBeGreaterThanOrEqual(4); // the spin-in lands at turn 4
+    expect(FRONT_GLASS_FLAG.fullDeg).toBeLessThanOrEqual(25); // the hero layback (about 29°) shows the full sheen
+    for (const m of [set.frontGlass, set.glare]) {
+      const s1 = frag();
+      m.onBeforeCompile(s1 as never, undefined as never);
+      const at = s1.fragmentShader.indexOf('#include <lights_fragment_end>');
+      const fade = s1.fragmentShader.indexOf(`smoothstep( ${FRONT_GLASS_FLAG_SIN.clear.toFixed(6)}, ${FRONT_GLASS_FLAG_SIN.full.toFixed(6)}, length( nonPerturbedNormal.xy ) )`);
+      expect(at).toBeGreaterThan(-1);
+      expect(fade).toBeGreaterThan(at);
+      // Before three sums the light: both specular terms are scaled.
+      expect(fade).toBeLessThan(s1.fragmentShader.indexOf('vec3 totalSpecular'));
+      expect(s1.fragmentShader.slice(fade, fade + 400)).toContain('reflectedLight.directSpecular *= flag;');
+      expect(s1.fragmentShader.slice(fade, fade + 400)).toContain('reflectedLight.indirectSpecular *= flag;');
+    }
+    const s2 = frag();
+    set.glassRim.onBeforeCompile(s2 as never, undefined as never);
+    expect(s2.fragmentShader).not.toContain('nonPerturbedNormal.xy');
   });
 
   it('device resolution: unibody, iPad metal back, single-lens turret, polished Air', () => {
