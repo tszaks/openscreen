@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { applyOps3d } from '../src/shared/agentOps';
 import { springSettleTime } from '../src/shared/phone3d/easing3d';
-import { defaultPhone3D, FRONT, type Phone3D, type PoseTransition } from '../src/shared/phone3d/model';
+import { defaultPhone3D, FRONT, POSE_RANGE, type Phone3D, type PoseTransition } from '../src/shared/phone3d/model';
+import { clamp, normalizeValue, scrubDelta } from '../src/shared/scrub';
 import { expandShot } from '../src/shared/phone3d/shots';
 import { poseAt } from '../src/shared/phone3d/pose';
 import { defaultProject, type Project } from '../src/shared/types';
@@ -14,6 +15,7 @@ import {
   deleteTarget,
   changeIsTyped,
   mixedFieldRange,
+  trackFieldRange,
   movesHaveFocus,
   clock,
   dragTimes,
@@ -487,6 +489,127 @@ describe('a many-move drag that makes every value match part-way', () => {
     expect(multi).toMatch(/poseStep\('light'/);
     expect(multi).toMatch(/poseStep\('focus'/);
     expect(multi.match(/onCommit=\{endPose\}/g)?.length).toBe(3);
+  });
+});
+
+describe('a "–" Track keeps its wide range until the drag ends', () => {
+  // Mirrors Track + ScrubField one pointermove (1 px) at a time. ScrubField
+  // keeps its own running value, clamped to the min and max Track gives it on
+  // the latest render; Track works those out from "–" (the moves differ now)
+  // and `held` (this gesture began on "–"). A re-render that changes the
+  // shown value resets the field's newest value, as ScrubField's layout effect does.
+  const two = (a: Partial<PoseTransition>, b: Partial<PoseTransition>) =>
+    phoneProject({
+      transitions: [
+        { id: 'a', start: 1, end: 2, to: { ...FRONT }, easing: { kind: 'smooth' }, ...a },
+        { id: 'b', start: 5, end: 6, to: { ...FRONT }, easing: { kind: 'smooth' }, ...b },
+      ],
+    });
+  const ids = ['a', 'b'];
+  const apply = (p: Project, ops: ReturnType<typeof durationOps>) => {
+    const r = applyOps3d(p, ops);
+    if (!('project' in r)) throw new Error('refused');
+    return r.project;
+  };
+  interface Field<G> {
+    min: number;
+    max: number;
+    step: number;
+    read: (p: Project) => { value: number; mixed: boolean };
+    begin: (p: Project) => G;
+    change: (p: Project, g: G, v: number, delta: number) => Project;
+  }
+  function scrub<G>(p: Project, f: Field<G>, px: number[], hold: boolean) {
+    const first = f.read(p);
+    let shown = first.value;
+    let current = shown;
+    let raw = shown;
+    let held = false;
+    const g = f.begin(p);
+    const seen: boolean[] = [];
+    const after: Project[] = [];
+    for (const dx of px) {
+      const { mixed } = f.read(p);
+      seen.push(mixed);
+      after.push(p);
+      const [lo, hi] = trackFieldRange(f.min, f.max, mixed, hold && held);
+      raw = clamp(raw + scrubDelta(dx, f.step, {}, 0.5), lo, hi);
+      const next = normalizeValue(raw, { min: lo, max: hi, step: f.step }, f.step);
+      if (next === current) continue;
+      current = next;
+      if (mixed) held = true;
+      p = f.change(p, g, next, next - first.value);
+      const now = f.read(p).value;
+      if (now !== shown) shown = current = now;
+      after[after.length - 1] = p;
+    }
+    return { p, seen, after };
+  }
+  const duration: Field<ReturnType<typeof beginDuration>> = {
+    min: 0.1,
+    max: 60,
+    step: 0.01,
+    read: (p) => {
+      const m = p.phone3d!.transitions;
+      return { value: +(m[0].end - m[0].start).toFixed(2), mixed: durationsMixed(m, ids) };
+    },
+    begin: (p) => beginDuration(p.phone3d!.transitions, ids),
+    change: (p, g, v, delta) => apply(p, durationStepOps(p.phone3d!.transitions, ids, g, v, { delta, typed: false })),
+  };
+  const tilt: Field<ReturnType<typeof beginMultiPose>> = {
+    min: POSE_RANGE.tilt[0],
+    max: POSE_RANGE.tilt[1],
+    step: 1,
+    read: (p) => {
+      const poses = keyPoses(p.phone3d!, ids, 'to');
+      return { value: Math.round(poses[0].tilt), mixed: mixedChannels(poses).has('tilt') };
+    },
+    begin: (p) => beginMultiPose(p.phone3d!, ids, 'to'),
+    change: (p, g, v, delta) => apply(p, multiPoseStepOps(p.phone3d!, ids, 'to', g, 'tilt', v, { delta, typed: false })),
+  };
+  const lens = (p: Project) => p.phone3d!.transitions.map((m) => +(m.end - m.start).toFixed(3));
+  const tilts = (p: Project) => p.phone3d!.transitions.map((m) => m.to.tilt);
+  const left = (n: number) => Array<number>(n).fill(-1);
+  const right = (n: number) => Array<number>(n).fill(1);
+  const durTwo = () => two({ end: 1.575 }, { end: 5.805 });
+
+  it('Duration: dragging both moves down to 0.1 s and back the same distance restores 0.575 / 0.805 s', () => {
+    const { p, seen } = scrub(durTwo(), duration, [...left(150), ...right(150)], true);
+    expect(seen).toContain(false); // both met at 0.1 s part-way
+    expect(lens(p)).toEqual([0.575, 0.805]);
+  });
+
+  it('Duration: a move never grows while the drag goes the other way', () => {
+    const { after } = scrub(durTwo(), duration, left(150), true);
+    let last = lens(durTwo());
+    for (const step of after) {
+      const now = lens(step);
+      expect(now[0]).toBeLessThanOrEqual(last[0]);
+      expect(now[1]).toBeLessThanOrEqual(last[1]);
+      last = now;
+    }
+    expect(last).toEqual([0.1, 0.1]);
+  });
+
+  it('Pose: dragging both tilts to the 85° end and back restores 60° / 20°', () => {
+    const { p, seen } = scrub(two({ to: { ...FRONT, tilt: 60 } }, { to: { ...FRONT, tilt: 20 } }), tilt, [...right(180), ...left(180)], true);
+    expect(seen).toContain(false); // both at 85° part-way
+    expect(tilts(p)).toEqual([60, 20]);
+  });
+
+  it('would jump back mid-drag if the range shrank when the moves meet (guards `held`)', () => {
+    const { p } = scrub(durTwo(), duration, [...left(150), ...right(150)], false);
+    expect(lens(p)).not.toEqual([0.575, 0.805]);
+    const t = scrub(two({ to: { ...FRONT, tilt: 60 } }, { to: { ...FRONT, tilt: 20 } }), tilt, [...right(180), ...left(180)], false);
+    expect(tilts(t.p)).not.toEqual([60, 20]);
+  });
+
+  it('is what Track does: the range comes from "–" or a held gesture, set on a change and cleared on commit and on a new press', () => {
+    const track = readFileSync(join(__dirname, '../src/renderer/src/phone3d/Track.tsx'), 'utf8');
+    expect(track).toMatch(/trackFieldRange\(min, max, !!mixed, held\)/);
+    expect(track).toMatch(/onPointerDownCapture=\{\(\) => \{[^}]*setHeld\(false\)/);
+    expect(track).toMatch(/if \(mixed && !held\) setHeld\(true\)/);
+    expect(track).toMatch(/onCommit=\{\(\) => \{\s*gesture\.current = null;\s*setHeld\(false\)/);
   });
 });
 

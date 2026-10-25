@@ -5,9 +5,9 @@
 // reads as a share of a field it is not. While you drag, fill and handle
 // turn accent (phone3d.css).
 
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { ScrubField } from '../components/ScrubField';
-import { changeIsTyped, mixedFieldRange, minus } from './panelModel';
+import { changeIsTyped, minus, trackFieldRange } from './panelModel';
 
 export interface TrackProps {
   label: string;
@@ -45,6 +45,7 @@ export interface TrackProps {
   onCommit?: () => void;
 }
 
+const STEP_KEY = /^(Arrow(Up|Down|Left|Right)|Home|End|Page(Up|Down))$/;
 const at = (q: number) => `calc(${(q * 100).toFixed(2)}% - ${(q * 2).toFixed(2)}px)`;
 
 export function Track({ label, value, unit, min, max, step = 1, soft, origin, digits, mixed, placeholder, plain, disabled, title, onChange, onBegin, onCommit }: TrackProps) {
@@ -67,8 +68,12 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
   // an arrow key adds to every move from where each one was. So the field
   // itself must not stop at the first move's range end: it gets one range
   // width of room on each side, each move is kept in range on its own
-  // (panelModel), and a typed number is kept in range here.
-  const [fieldMin, fieldMax] = mixed ? mixedFieldRange(min, max) : [min, max];
+  // (panelModel), and a typed number is kept in range here. A gesture that
+  // began on "–" keeps that room to its end (`held`): when every move reaches
+  // the same range end the field stops being mixed, and a small range would
+  // then pull the running value back (a move would jump mid-drag).
+  const [held, setHeld] = useState(false);
+  const [fieldMin, fieldMax] = trackFieldRange(min, max, !!mixed, held);
   return (
     <div
       ref={root}
@@ -77,6 +82,8 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
       // ScrubField commits only a gesture that changed the value; a new press always starts afresh.
       onPointerDownCapture={() => {
         gesture.current = null;
+        // A drag that came back to its start does not commit; a new press starts afresh.
+        setHeld(false);
       }}
       onKeyDownCapture={(e) => {
         const input = root.current?.querySelector<HTMLInputElement>('.scrub-input');
@@ -87,6 +94,13 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
         setTimeout(() => {
           if (keyNow.current === k) keyNow.current = null;
         }, 0);
+      }}
+      onKeyUp={(e) => {
+        // The field has finished a key gesture (it commits on key-up, which
+        // runs before this bubble handler). A key let go mid-drag (Shift) is
+        // not one: the drag keeps its range.
+        const idle = root.current?.querySelector('.scrub')?.getAttribute('data-state') === 'idle';
+        if (idle && STEP_KEY.test(e.key)) setHeld(false);
       }}
     >
       {showFill && (
@@ -110,12 +124,14 @@ export function Track({ label, value, unit, min, max, step = 1, soft, origin, di
             gesture.current = { start: value };
             onBegin?.();
           }
+          if (mixed && !held) setHeld(true);
           const typed = changeIsTyped(!!root.current?.querySelector('.scrub-input'), keyNow.current);
           const v = typed ? Math.min(max, Math.max(min, raw)) : raw;
           onChange(v, { delta: v - gesture.current.start, typed });
         }}
         onCommit={() => {
           gesture.current = null;
+          setHeld(false);
           onCommit?.();
         }}
       />

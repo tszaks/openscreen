@@ -546,6 +546,16 @@ export function mixedFieldRange(min: number, max: number): [number, number] {
   return [min - span, max + span];
 }
 
+/**
+ * The range a Track's field gets. A gesture that starts on a "–" field keeps
+ * the wide range until it ends (`held`), even after every move reaches the
+ * same range end and the field stops being mixed: else the field would clamp
+ * its running value to the small range and a move would jump back mid-drag.
+ */
+export function trackFieldRange(min: number, max: number, mixed: boolean, held: boolean): [number, number] {
+  return mixed || held ? mixedFieldRange(min, max) : [min, max];
+}
+
 /** Where the last press (or keyboard focus) landed: the 3D lane, the transcript, or anywhere else. */
 export type PressScope = 'lane3d' | 'transcript' | 'other';
 
