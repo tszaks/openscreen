@@ -86,6 +86,59 @@ export function poseSampler(p3: Pick<Phone3D, 'pose' | 'transitions'>): (t: numb
   };
 }
 
+/** A pose channel moving more than this across 1 µs counts as a jump. */
+const BREAK_JUMP = 1e-4;
+/** How far before a break the shutter stops (output s), so its last sample still sees the old pose. */
+export const BREAK_EPS = 1e-6;
+
+/**
+ * The times where the keyed pose jumps: the Start of an unlinked move whose
+ * own `from` differs from the pose just before it. Motion blur must not
+ * sample across one (it would blend both poses into a double image). Sorted;
+ * empty for linked moves (old projects), whose pose is continuous.
+ */
+export function poseBreaks(p3: Pick<Phone3D, 'pose' | 'transitions'>): number[] {
+  if (!p3.transitions.some((tr) => tr.from)) return [];
+  const at = poseSampler(p3);
+  const out: number[] = [];
+  for (const tr of p3.transitions) {
+    if (!tr.from) continue;
+    const a = at(tr.start - BREAK_EPS);
+    const b = at(tr.start);
+    if ((Object.keys(b) as (keyof Pose)[]).some((k) => Math.abs(b[k] - a[k]) > BREAK_JUMP)) out.push(tr.start);
+  }
+  return out;
+}
+
+/** A shutter window in output seconds. */
+export interface ShutterWindow {
+  lo: number;
+  hi: number;
+}
+
+/**
+ * The shutter of the frame at t, [t − s/2, t + s/2], cut at the nearest pose
+ * break on each side so every sample sees one pose only. A break at b belongs
+ * to the pose after it (poseAt(b) is the new pose): a break ≤ t moves the
+ * start up to b, a break > t moves the end to just before b. Null when no
+ * break falls inside, so an uncut frame keeps the exact old arithmetic.
+ */
+export function shutterWindow(breaks: readonly number[], t: number, shutterSec: number): ShutterWindow | null {
+  let lo = t - shutterSec / 2;
+  let hi = t + shutterSec / 2;
+  let cut = false;
+  for (const b of breaks) {
+    if (b > lo && b <= t) {
+      lo = b;
+      cut = true;
+    } else if (b > t && b < hi) {
+      hi = Math.max(t, b - BREAK_EPS);
+      cut = true;
+    }
+  }
+  return cut ? { lo, hi } : null;
+}
+
 /**
  * The keyed pose at output time t (no float): the base pose with no moves;
  * the first move's resolved start before it; else the last move with

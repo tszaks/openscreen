@@ -202,3 +202,25 @@ describe('poseDelta and rebaseTurn', () => {
     }
   });
 });
+
+describe('pose breaks and the cut shutter (no double image on an unlinked Start)', () => {
+  it('only an unlinked Start that differs from the pose before it is a break', async () => {
+    const { poseBreaks } = await import('../src/shared/phone3d/pose');
+    const linked = with3d(phoneProject(), { transitions: [move('a', 1, 2, { turn: 90 }), move('b', 3, 3.6, { turn: 30 })] }).phone3d!;
+    expect(poseBreaks(linked)).toEqual([]);
+    const same = with3d(phoneProject(), { transitions: [move('a', 1, 2, { turn: 90 }), move('b', 3, 3.6, { turn: 30 }, { from: { ...FRONT, turn: 90 } })] }).phone3d!;
+    expect(poseBreaks(same)).toEqual([]); // unlinked but continuous
+    const jump = with3d(phoneProject(), { transitions: [move('a', 1, 2, { turn: 90 }), move('b', 3, 3.6, { turn: 30 }, { from: { ...FRONT, turn: -20 } })] }).phone3d!;
+    expect(poseBreaks(jump)).toEqual([3]);
+  });
+
+  it('cuts the shutter at the nearest break on each side; null when none falls inside', async () => {
+    const { BREAK_EPS, shutterWindow } = await import('../src/shared/phone3d/pose');
+    const sh = 0.5 / 30;
+    expect(shutterWindow([], 3, sh)).toBeNull();
+    expect(shutterWindow([5], 3, sh)).toBeNull();
+    expect(shutterWindow([3], 3, sh)).toEqual({ lo: 3, hi: 3 + sh / 2 }); // a break belongs to the pose after it
+    expect(shutterWindow([3.004], 3, sh)).toEqual({ lo: 3 - sh / 2, hi: 3.004 - BREAK_EPS });
+    expect(shutterWindow([2.999, 3.004], 3, sh)).toEqual({ lo: 2.999, hi: 3.004 - BREAK_EPS });
+  });
+});

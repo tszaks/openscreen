@@ -14,7 +14,7 @@ import { ShadowPass } from '../src/renderer/src/phone3d/shadow';
 import { MAX_SCREEN_TEXTURE, planBands, planScreenTexture, SCREEN_BAND_PX, ScreenTexture, screenCanvasSize, screenRoom, textureLimit, textureSide } from '../src/renderer/src/phone3d/screenTexture';
 import { renderPhone3D, shadowSamples, type Blit3D, type Render3DArgs, type Render3DQuality } from '../src/renderer/src/phone3d/view';
 import type { Engine } from '../src/renderer/src/phone3d/engine';
-import { camAt, scene3d, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
+import { camAt, hullTravelPx, scene3d, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
 import { defaultPhone3D, FRONT, type Phone3D } from '../src/shared/phone3d/model';
 import { normalizeProject, type Project } from '../src/shared/types';
 import { move, phoneProject, with3d } from './helpers/phone3dFixtures';
@@ -546,5 +546,62 @@ describe('GPU memory at 4K (§3.9 table method, decimal MB)', () => {
     expect(m2.parts.canvas2d).toBeLessThanOrEqual(SCREEN_BAND_PX * 4);
     const m3 = peak({ supersample: 3 }, 'fill');
     expect(m3.total / 1e6).toBeLessThanOrEqual(440);
+  });
+});
+
+describe('a frame on an unlinked Start (a pose jump: no double image)', () => {
+  // Move a ends at turn 90; move b starts at 3 s from its own Start, turn −20 (unlinked), so the pose jumps at 3 s.
+  // 3 s is on a 30 fps frame (the export case); 3.004 s is the paused preview a little after the Start.
+  const DEG = Math.PI / 180;
+  const jump = (): Partial<Phone3D> => ({
+    transitions: [
+      move('a', 1, 2, { turn: 90 }),
+      move('b', 3, 3.6, { turn: 30 }, { from: { ...FRONT, turn: -20 } }),
+    ],
+  });
+  /** The phone's turn at every scene draw of one frame, and the frame's sample count. */
+  function turns(s: Scene3D, t: number) {
+    const { engine } = fakeEngine();
+    const seen: number[] = [];
+    const r = engine.renderer as unknown as { render: (sc: THREE.Scene, c: THREE.Camera) => void };
+    const orig = r.render;
+    r.render = (sc, c) => {
+      if (sc === engine.scene) seen.push(Math.round((engine.poseGroup.rotation.y / DEG) * 10) / 10);
+      orig(sc, c);
+    };
+    const { out } = frame(engine, args(s, t));
+    return { seen, samples: out.samples };
+  }
+
+  it('the paused preview just after the Start shows only the new pose, with the sample count of its own motion', () => {
+    const s = sceneFor(jump(), false);
+    const { seen, samples } = turns(s, 3.004);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(Math.min(...seen)).toBeGreaterThanOrEqual(-20);
+    expect(Math.max(...seen)).toBeLessThan(0); // nothing near 90: the old pose is not in the frame
+    // The jump itself is not counted as motion: an uncut shutter would plan 64 samples.
+    const uncut = planSamples({ t: 3.004, travelPx: hullTravelPx(s, 3.004, 0.5 / 30), motion: { samples: 12, shutterSec: 0.5 / 30 }, full: true });
+    expect(uncut.n).toBe(64);
+    expect(samples).toBeLessThan(uncut.n);
+  });
+
+  it('the export frame on the Start shows only the new pose, and the frame before only the old one', () => {
+    const s = sceneFor(jump(), false);
+    const on = turns(s, 3);
+    expect(on.seen.every((x) => x >= -20 && x < 0)).toBe(true);
+    const before = turns(s, 3 - 1 / 30);
+    expect(new Set(before.seen)).toEqual(new Set([90]));
+    expect(before.samples).toBe(8); // still over its shutter: the AA samples only
+  });
+
+  it('a linked project plans exactly as before (no break, the whole shutter)', () => {
+    const s = sceneFor(moving(), false);
+    const sh = 0.5 / 30;
+    const travel = hullTravelPx(s, 1.8, sh);
+    expect(hullTravelPx(s, 1.8, sh, 1, undefined, null)).toBe(travel);
+    const a = planSamples({ t: 1.8, travelPx: travel, motion: { samples: 12, shutterSec: sh }, full: true });
+    expect(planSamples({ t: 1.8, travelPx: travel, motion: { samples: 12, shutterSec: sh }, full: true, win: null })).toEqual(a);
+    const { seen } = turns(s, 1.8);
+    expect(seen).toEqual(Array.from({ length: seen.length / a.n }, () => a.times.map((tt) => Math.round(camAt(s, tt).pose.turn * 10) / 10)).flat());
   });
 });

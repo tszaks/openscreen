@@ -22,7 +22,7 @@ import { KEY_ELEVATION } from './lighting';
 import { defaultPhone3D, type Phone3D, type Pose } from './model';
 import { continuousRectPoints, pointInPolygon, type Pt2 } from './outline';
 import { phoneHome, type PhoneHome } from './placement';
-import { floatSampler, mulMat3, poseRotation, rotX, rotZ, type Mat3 } from './pose';
+import { floatSampler, mulMat3, poseRotation, rotX, rotZ, type Mat3, type ShutterWindow } from './pose';
 
 const DEG = Math.PI / 180;
 
@@ -807,17 +807,19 @@ export const TRAVEL_STEPS = 8;
 
 /**
  * The longest path a projected hull corner travels over the shutter
- * [t − shutter/2, t + shutter/2], in render pixels (canvas px × renderScale).
- * Pose only, so deterministic. Drives the adaptive motion-blur count.
+ * [t − shutter/2, t + shutter/2], or over `win` when a pose break cuts it
+ * (shutterWindow; the same window planSamples samples), in render pixels
+ * (canvas px × renderScale). Pose only, so deterministic. Drives the adaptive
+ * motion-blur count: measured across a break it would count the jump itself.
  */
-export function hullTravelPx(p: SceneSource, t: number, shutterSec: number, renderScale = 1, canvas?: Size): number {
+export function hullTravelPx(p: SceneSource, t: number, shutterSec: number, renderScale = 1, canvas?: Size, win?: ShutterWindow | null): number {
   const s = asScene(p, canvas);
-  if (!s || !(shutterSec > 0)) return 0;
+  if (!s || !(shutterSec > 0) || (win && !(win.hi > win.lo))) return 0;
   const pts = bodyPointsMm(s, true);
   let prev: [number, number][] | null = null;
   const dist = new Array(pts.length).fill(0);
   for (let k = 0; k <= TRAVEL_STEPS; k++) {
-    const tt = t - shutterSec / 2 + (shutterSec * k) / TRAVEL_STEPS;
+    const tt = win ? win.lo + ((win.hi - win.lo) * k) / TRAVEL_STEPS : t - shutterSec / 2 + (shutterSec * k) / TRAVEL_STEPS;
     const cam = camAt(s, tt);
     const cur = pts.map((q) => {
       const [x, y] = project(q, cam);

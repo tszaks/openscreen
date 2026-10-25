@@ -15,6 +15,7 @@
 // Every pass reads its inputs with texelFetch at integer coordinates, so no
 // pass filters or resamples: the FRONT screen stays texel exact.
 import * as THREE from 'three';
+import type { ShutterWindow } from '../../../shared/phone3d/pose';
 
 // ---------------------------------------------------------------------------
 // Sample plan (pure)
@@ -87,6 +88,13 @@ export interface SampleInputs {
   motion: { samples: number; shutterSec: number } | null;
   /** Export / full-quality frames (8 jittered samples, adaptive motion); false = one sample (live preview, --draft). */
   full: boolean;
+  /**
+   * The shutter cut at a pose break (shutterWindow), or null/absent for the
+   * whole shutter. A cut frame samples only inside it, so a frame on an
+   * unlinked Start shows one pose, not both. `travelPx` must be measured over
+   * the same window (hullTravelPx's `win`).
+   */
+  win?: ShutterWindow | null;
 }
 
 /** Hull travel in output px of a canvas whose short side is `shortSide`, as px at the 1080 reference. */
@@ -119,16 +127,20 @@ export function tentShutter(u: number): number {
  * by the tent shutter at its place (`weights`, summing to 1); a still frame's
  * samples weigh 1/N each.
  */
-export function planSamples({ t, travelPx, motion, full }: SampleInputs): SamplePlan {
+export function planSamples({ t, travelPx, motion, full, win }: SampleInputs): SamplePlan {
   if (!full) return { n: 1, nMotion: 1, times: [t], jitter: [JITTER[0]], weights: [1] };
-  const moving = motion !== null && motion.shutterSec > 0 && travelPx >= STILL_TRAVEL_PX;
+  const span = win ? win.hi - win.lo : (motion?.shutterSec ?? 0);
+  const moving = motion !== null && motion.shutterSec > 0 && span > 0 && travelPx >= STILL_TRAVEL_PX;
   const nMotion = moving
     ? Math.min(MAX_SAMPLES, Math.max(Math.max(2, Math.round(motion.samples)), Math.ceil(travelPx / MOTION_STEP_PX)))
     : 1;
   const n = Math.max(nMotion, AA_SAMPLES);
   const u = Array.from({ length: n }, (_, k) => (k + slotOffset(t, k)) / n);
-  const times = u.map((x) => (nMotion > 1 ? t + (x - 0.5) * motion!.shutterSec : t));
-  const raw = u.map((x) => (nMotion > 1 ? tentShutter(x) : 1));
+  // A shutter cut at a pose break (win) spreads the samples over the cut window; each keeps the tent weight of its
+  // place in the full shutter (the cut tent), so the exposure profile is the same, only truncated. With no break the
+  // arithmetic is exactly the uncut one.
+  const times = u.map((x) => (nMotion > 1 ? (win ? win.lo + x * span : t + (x - 0.5) * motion!.shutterSec) : t));
+  const raw = times.map((tt, k) => (nMotion > 1 ? tentShutter(win ? (tt - t) / motion!.shutterSec + 0.5 : u[k]) : 1));
   const sum = raw.reduce((a, b) => a + b, 0);
   return { n, nMotion, times, jitter: JITTER.slice(0, n), weights: raw.map((w) => w / sum) };
 }
