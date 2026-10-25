@@ -513,7 +513,9 @@ export class CanvasCompositor {
       draws.set('title', () => {
         const align = layout.titleTextAlign;
         const valign = layout.titleAlign;
-        const m = drawTitleCard(ctx, placed, { title: title.title, subtitle: title.subtitle }, { align, valign });
+        const own = layoutPreset({ ...this.project, exportPreset: undefined });
+        const scale = own ? H / own.height : 1;
+        const m = drawTitleCard(ctx, placed, { title: title.title, subtitle: title.subtitle }, { align, valign, scale });
         this.textBoxes.push({ kind: 'title', rect: { ...placed }, card: { ...m, align, valign } });
       });
     }
