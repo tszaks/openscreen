@@ -573,7 +573,8 @@ output seconds, after the cuts):
 
 ```json
 [
-  {"op": "editTransition", "index": 0, "end": 1.4},
+  {"op": "editTransition", "index": 0, "end": 1.05},
+  {"op": "editTransition", "index": 1, "start": 1.05, "end": 1.4},
   {"op": "setPose", "index": 1, "end": "to", "turn": -8, "tilt": 5, "size": 0.92},
   {"op": "shot", "recipe": "hero-layback", "at": 15.0},
   {"op": "shot", "recipe": "hero-layback", "at": 21.4, "direction": -1},
@@ -581,7 +582,9 @@ output seconds, after the cuts):
 ]
 ```
 
-The second op makes the phone rest a little off front and smaller. After
+The first two ops make the intro quicker (the spin-in is two moves: the spin and its settle, so both are
+retimed; shortening only the spin would overlap the settle). The third makes the phone rest a little off front
+and smaller. After
 `direct`, the rest pose is the End of the intro's last move (index 1: each
 intro recipe writes the move and a settle) **and of every planned shot
 that returns to rest**, so edit those Ends. Here `direct` planned only the
