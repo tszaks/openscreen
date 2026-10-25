@@ -728,7 +728,10 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
     const bold = checkPlan(project, { style: 'bold', replace: true, cursor }, 'ios-social/bold');
     expect(bold.plan.ops[0]).toMatchObject({ pose: { ...BOLD_BASE } });
     expect(heldOff(bold.out, VISIBLE_DEG)).toBeGreaterThan(0.9);
-    expect(bold.plan.note).toBeUndefined();
+    // Bold made no big move either (a settle only), so it says why, and that it holds its own angle (review: bold used
+    // to give a near-static plan with no note where hero explained the same shortfall).
+    expect(bold.plan.shots.some((s) => ['spin-in', 'hero-layback', 'turn-to-back'].includes(s.recipe))).toBe(false);
+    expect(bold.plan.note).toMatch(/^No turning shot fits: the phone must face front from 0\.6 s, which leaves a spin-in 0\.4 s, under the 2\.0 s it needs; .*\. The phone rests at the bold angle \(9\.4° off front\)\.$/);
     const subtle = checkPlan(project, { style: 'subtle', replace: true, cursor }, 'ios-social/subtle');
     expect(subtle.plan.ops[0]).toMatchObject({ pose: { ...FRONT } });
     expect(subtle.plan.note).toBeUndefined();
@@ -795,7 +798,8 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
       [take(30, [tap(10)]), 'hero', false],
       [take(30, [tap(10)]), 'subtle', false],
       [take(8, [tap(0.3), tap(1.2), tap(2.1), tap(3), tap(3.9), tap(4.8), tap(5.7), tap(6.6), tap(7.5)]), 'subtle', true],
-      [take(2.5), 'bold', false],
+      // Bold too: a settle only is not a big move, so it says why (and that it holds the bold angle).
+      [take(2.5), 'bold', true],
       // A 2.5 s clip: hero gets settle only (no room for spin-in), so it rests posed and says why.
       [take(2.5), 'hero', true],
     ];
@@ -804,6 +808,7 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
       expect(plan.note !== undefined, `${style} ${JSON.stringify(plan.shots)}`).toBe(noted);
     }
     expect(planDirect(take(2.5), { style: 'hero', replace: true }).note).toMatch(/^No turning shot fits: the take is 2\.5 s, under the 4 s a spin-in needs; /);
+    expect(planDirect(take(2.5), { style: 'bold', replace: true }).note).toMatch(/^No turning shot fits: the take is 2\.5 s, under the 4 s a spin-in needs; .*The phone rests at the bold angle/);
   });
 
   it('the note names the gate that actually refused each shot (short takes: the take length, the 6 s middle rule, the moving-time cap)', () => {
@@ -879,7 +884,7 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
         const { plan, out } = checkPlan(p, { style, replace: true }, label);
         if (outD >= 3) expect(maxOffFront(out), `${label}: visible 3D`).toBeGreaterThanOrEqual(VISIBLE_DEG - 1e-6);
         const moves = moving(plan);
-        const ownMovesFit = moves.length > 0 && (style !== 'hero' || turning(plan).length > 0);
+        const ownMovesFit = style === 'subtle' ? moves.length > 0 : turning(plan).length > 0;
         expect(plan.note === undefined, `${label}: note iff the style's own moves do not fit (${plan.note})`).toBe(ownMovesFit);
         expectNoteMatchesPlan(plan, style, label);
         if (plan.note) {
@@ -904,7 +909,7 @@ describe('planDirect: always a visible 3D result (owner decision 12)', () => {
 
   /** The note describes the plan it is attached to: its kind of shortfall and its dropped count match the shots. */
   function expectNoteMatchesPlan(plan: ReturnType<typeof planDirect>, style: DirectStyle, label: string): void {
-    const ownMovesFit = moving(plan).length > 0 && (style !== 'hero' || turning(plan).length > 0);
+    const ownMovesFit = style === 'subtle' ? moving(plan).length > 0 : turning(plan).length > 0;
     expect(plan.note === undefined, `${label}: note iff the style's own moves do not fit (${plan.note})`).toBe(ownMovesFit);
     if (!plan.note) return;
     expect(plan.note.startsWith('No moving shot fits'), `${label}: "No moving" iff no moving shot (${plan.note})`).toBe(moving(plan).length === 0);

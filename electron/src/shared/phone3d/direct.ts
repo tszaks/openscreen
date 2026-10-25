@@ -712,8 +712,9 @@ const offFront = (pose: Pose) => Math.acos(Math.min(1, facingOf(pose, 0))) / DEG
 /** Shots that turn the phone to a hero angle (what makes hero read as 3D; settle only leans 8° for a moment). */
 const TURNING: readonly ShotRecipe[] = ['spin-in', 'hero-layback', 'turn-to-back'];
 
-/** Whether the style's own moves are in `drafts`: a turning shot for hero, any shot for subtle and bold. */
-const ownMovesFit = (style: DirectStyle, drafts: Draft[]) => (style === 'hero' ? drafts.some((d) => TURNING.includes(d.recipe)) : drafts.length > 0);
+/** Whether the style's own moves are in `drafts`: a turning shot for hero and bold (their big moves; a settle alone is
+ *  a 0.2 s lean, so a bold plan of only a settle must say why it made no big move), any shot for subtle. */
+const ownMovesFit = (style: DirectStyle, drafts: Draft[]) => (style === 'subtle' ? drafts.length > 0 : drafts.some((d) => TURNING.includes(d.recipe)));
 
 /**
  * The style could not use its own moves, so the posed rest stands in: hero
@@ -804,7 +805,7 @@ function longTakeNote(inp: Inputs, style: DirectStyle): string | undefined {
  * or subtle fits no shot at all, and there are no kept moves, the phone rests
  * at POSED_REST (inside the 12° rule) instead of straight on, after a check
  * that this adds no warning and no edge overflow. Every plan whose own moves
- * still do not fit (and so every plan with no moving shot) says why in `note`,
+ * still do not fit (no moving shot; for hero and bold, no turning shot) says why in `note`,
  * from the self-check run whose shots it returns. When the shots planned on
  * POSED_REST do include the style's own moves, the plan has no note.
  */
@@ -825,11 +826,11 @@ export function planDirect(p: Project, opts: DirectOptions): DirectPlan {
       // straight on may not from the posed angle). Then the style's own moves fit and there is nothing to explain.
       if (!ownMovesFit(opts.style, posed.drafts)) rest = `The phone rests at a posed angle instead (${offFront(POSED_REST).toFixed(1)}° off front, inside the ${BUSY_FACING_DEG}° rule for taps).`;
     }
-  } else if (!styled.drafts.length) {
+  } else if (!ownMovesFit(opts.style, styled.drafts)) {
     const kept = (styled.baseProject.phone3d?.transitions.length ?? 0) > 0;
     rest = kept ? 'Your own moves stay as they are.' : `The phone rests at the ${opts.style} angle (${offFront(styleBase).toFixed(1)}° off front).`;
   }
-  // A note whenever the style's own moves did not fit: no moving shot at all, or (hero) no turning shot. It is built
+  // A note whenever the style's own moves did not fit: no moving shot at all, or (hero, bold) no turning shot. It is built
   // from the run whose shots the plan returns, so its reasons and its dropped count describe this plan.
   const someMove = checked.drafts.length > 0;
   const fit = rest ? `${someMove ? 'No turning shot fits' : 'No moving shot fits'}: ${missingCauses(opts, inp, checked, someMove).join('; ')}. ${rest}` : undefined;

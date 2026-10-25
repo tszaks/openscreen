@@ -507,15 +507,25 @@ the same plan.
    warning is dropped (a shot that pushes the phone past a canvas edge first
    gets one try leaning the other way), so a fresh plan has 0 warnings.
 10. **Always visible**: on an iPhone take, Auto 3D always gives a visible 3D
-   result. When the style's own moves do not fit (hero: no `spin-in`,
-   `hero-layback` or `turn-to-back`; subtle: no shot at all) and there are
-   no kept moves, the phone rests at `{turn:-8, tilt:5}` (9.4°, inside the
-   12° rule) instead of straight on, and the output has a `note` that says
-   which check refused each move. A plan with no moving shot always has a
-   `note`.
+   result. When the style's own moves do not fit (hero and bold: no
+   `spin-in`, `hero-layback` or `turn-to-back`; subtle: no shot at all), the
+   output has a `note` that says which check refused each move and what the
+   phone does instead. Hero with no kept moves then rests at
+   `{turn:-8, tilt:5}` (9.4°, inside the 12° rule) instead of straight on;
+   bold already rests there. A plan with no moving shot always has a `note`.
 
 `shots[].reason` says why each shot is where it is. On a long take, trim to
 the best 15-45 s first (the `note` says so); `polish` speeds up the waits.
+The waits are the quiet windows Auto 3D puts its big moves in, and polish
+plays them 3x faster, so after polish a short take can be left with no
+window long enough (a `hero-layback` needs 2.4 s, a `turn-to-back` 4.5 s).
+Example: a 15 s trim with one 5.7 s wait gets a bold `turn-to-back` inside
+the wait, but after polish the wait plays in 1.9 s, so bold gets only a
+`settle` and a `note` that no turning shot fits. For a short take that
+should get one big move, set that wait's clip back to normal speed before
+`direct` (`clipSpeed {index, speed: 1}`; `info` lists the clips), or add the
+shot by hand. Do not run `direct` first and polish after: a move keeps its
+length when its footage speeds up, so it no longer fits the wait.
 Remove shots you do not want with `removeTransition`.
 
 ### Warnings
