@@ -54,6 +54,9 @@ export interface SoftBox {
   radiance: number;
   /** sRGB hex. */
   color: string;
+  /** How far it stands from the phone's centre, body long sides (default LIGHT_DISTANCE). A nearer box is seen from
+   *  more different angles across a flat face, so its highlight falls off across the face instead of filling it. */
+  distance?: number;
 }
 
 export interface StudioSet {
@@ -103,6 +106,9 @@ export const LIGHT_PRESETS: Record<LightPreset, LightRig> = {
       { azimuth: 95, elevation: 12, halfW: 6, halfH: 36, radiance: 1.4, color: '#ffffff' },
       // A wide box above the camera axis: a back facing the viewer mirrors its lower edge (bright top, falling off down the back).
       { azimuth: 35, elevation: 24, halfW: 26, halfH: 9, radiance: 3, color: '#ffffff' },
+      // A tall strip 60° left of the camera: a back turned three-quarters (turn 130-170) mirrors it as a soft
+      // vertical highlight that slides across the back and the panel as the phone turns.
+      { azimuth: -25, elevation: 8, halfW: 9, halfH: 40, radiance: 1.6, color: '#ffffff', distance: 1.2 },
       // A white bounce card low in front: the downward faces (the plateau step's rounded edge, the band's lower
       // chamfers) catch a thin line of it.
       { azimuth: 35, elevation: -32, halfW: 30, halfH: 10, radiance: 1.2, color: '#ffffff' },

@@ -81,13 +81,14 @@ function initAreaLights() {
 
 /** A softbox's size at the rig distance, in body long sides: its angular half-size seen from the phone. */
 export function boxSize(box: SoftBox): { w: number; h: number } {
-  return { w: 2 * LIGHT_DISTANCE * Math.tan(box.halfW * deg), h: 2 * LIGHT_DISTANCE * Math.tan(box.halfH * deg) };
+  const d = box.distance ?? LIGHT_DISTANCE;
+  return { w: 2 * d * Math.tan(box.halfW * deg), h: 2 * d * Math.tan(box.halfH * deg) };
 }
 
 /**
  * The preset's hero softboxes as RectAreaLights in a group, in the rig's own
- * frame (key at azimuth 0), each LIGHT_DISTANCE body long sides from the
- * group's origin and facing it. placeStudio sizes, centres and turns them.
+ * frame (key at azimuth 0), each its distance (LIGHT_DISTANCE unless the box
+ * sets one) in body long sides from the group's origin and facing it. placeStudio sizes, centres and turns them.
  */
 export function studioLights(preset: LightPreset): Group {
   initAreaLights();
@@ -96,7 +97,7 @@ export function studioLights(preset: LightPreset): Group {
   LIGHT_PRESETS[preset].boxes.forEach((box, i) => {
     const light = new RectAreaLight(new Color().setStyle(box.color), box.radiance, 1, 1);
     light.name = i === 0 ? 'key' : `box${i}`;
-    light.userData.box = { dir: lightDir(box.azimuth, box.elevation), ...boxSize(box), radiance: box.radiance };
+    light.userData.box = { dir: lightDir(box.azimuth, box.elevation), ...boxSize(box), radiance: box.radiance, distance: box.distance ?? LIGHT_DISTANCE };
     g.add(light);
   });
   return g;
@@ -113,9 +114,9 @@ export function placeStudio(lights: Group, center: readonly [number, number, num
   lights.position.set(center[0], center[1], center[2]);
   lights.rotation.set(0, azimuthDeg * deg, 0);
   for (const l of lights.children) {
-    const box = l.userData.box as { dir: [number, number, number]; w: number; h: number; radiance: number } | undefined;
+    const box = l.userData.box as { dir: [number, number, number]; w: number; h: number; radiance: number; distance: number } | undefined;
     if (!(l instanceof RectAreaLight) || !box) continue;
-    const d = LIGHT_DISTANCE * unit;
+    const d = box.distance * unit;
     l.position.set(box.dir[0] * d, box.dir[1] * d, box.dir[2] * d);
     l.lookAt(center[0], center[1], center[2]);
     l.width = box.w * unit;

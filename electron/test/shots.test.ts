@@ -191,12 +191,20 @@ describe('expandShot', () => {
 
     const stay = expandShot('turn-to-back', { start: 2, ret: 'stay' }, FRONT, ids()).transitions;
     expect(stay).toHaveLength(2);
-    expect(stay[1].to.turn).toBe(162);
-    // The outbound keys fill the shot; the default length is the outbound part of the recipe's.
-    expect(defaultShotDuration('turn-to-back', 'stay')).toBeCloseTo(2.1, 9);
-    expect(stay[1].end - stay[0].start).toBeCloseTo(2.1, 9);
-    // Ending the shot, the drift comes to rest on the back (its stay easing) instead of drifting on.
-    expect(stay[1].easing).toEqual(SHOTS['turn-to-back'].keys[1].stayEasing);
+    // Look round 4: the outro LANDS. One ease to 3% past the three-quarter back, then a soft settle onto it (round 3's
+    // drift crept on to the clip's last frame). The default length is its own, 1.8 s.
+    expect(stay[0].to.turn).toBeCloseTo(150 * 1.03, 9);
+    expect(stay[1].to).toMatchObject({ turn: 150, tilt: 8, light: 40, size: 0.9 });
+    expect(defaultShotDuration('turn-to-back', 'stay')).toBeCloseTo(1.8, 9);
+    expect(stay[1].end - stay[0].start).toBeCloseTo(1.8, 9);
+    const ps = { pose: FRONT, transitions: stay };
+    const h = 1 / 480;
+    const sp = (t: number) => rotationAngle(poseRotation(poseAt(ps, t - h)), poseRotation(poseAt(ps, t + h))) / (2 * h);
+    expect(sp(stay[1].end - 2 * h)).toBeLessThan(1); // at rest when the shot ends
+    expect(poseAt(ps, stay[1].end + 0.5)).toEqual(poseAt(ps, stay[1].end)); // and nothing moves after it
+    // The round trip dollies back as it turns and comes back to the base size on the front.
+    expect(rt[0].to.size).toBeCloseTo(0.9, 9);
+    expect(rt[2].to.size).toBe(1);
     expect(rt[1].easing).toEqual({ kind: 'linear' });
     const custom = expandShot('turn-to-back', { start: 0, ret: 'stay', duration: 2 }, FRONT, ids()).transitions;
     expect([custom[0].start, custom[custom.length - 1].end]).toEqual([0, 2]);

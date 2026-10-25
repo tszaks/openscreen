@@ -39,7 +39,7 @@ import {
   screenRectFor,
   type Rect,
 } from './mobile/deviceFrame';
-import { ACCENT_TOUCH_COLOR, drawTouchIndicators, PHONE3D_TOUCH } from './mobile/tapIndicator';
+import { ACCENT_TOUCH_COLOR, drawTouchIndicators, PHONE3D_TOUCH, PHONE3D_TOUCH_SIZE } from './mobile/tapIndicator';
 import { computePhoneLayout, drawBlurredBackground, drawTitleCard, type PhoneLayout } from './mobile/layout';
 import type { Ripple } from '../../shared/ripples';
 import { fileUrl } from '../../shared/fileUrl';
@@ -404,7 +404,9 @@ export class CanvasCompositor {
       }
     }
 
-    const cam = this.zoomOn
+    // A 3D phone never zooms its own screen (look round 4): a real screen does not crop its content while the phone
+    // turns, and the zoom cut the UI and pushed taps off the screen edge. The 3D moves frame the phone instead.
+    const cam = this.zoomOn && !this.scene3d
       ? cameraAt(time, this.focusSegments, this.autofocusOpts)
       : { center: { x: 0.5, y: 0.5 }, scale: 1 };
 
@@ -588,8 +590,8 @@ export class CanvasCompositor {
       drawTouchIndicators(ctx, phone.taps, time, source, pointScaleFor(dst, phone.device) * cam.scale, {
         style: ts.style,
         color: ts.color === 'accent' ? ACCENT_TOUCH_COLOR : '#FFFFFF',
-        sizePt: ts.sizePt,
-        // On a 3D phone the screen is smaller and seen at an angle: a crisp dark edge so a white tap reads on white UI.
+        sizePt: ts.sizePt * (opts.phone3d ? PHONE3D_TOUCH_SIZE : 1),
+        // On a 3D phone: a smaller, softer press, kept inside the screen.
         ...(opts.phone3d ? PHONE3D_TOUCH : {}),
       });
     }

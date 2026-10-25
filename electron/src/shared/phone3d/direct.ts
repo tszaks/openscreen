@@ -81,7 +81,7 @@ export const BOLD_BASE: Pose = { ...FRONT, turn: -8, tilt: 5 };
 /** Self-check: re-plan rounds before offenders are just dropped. */
 export const MAX_ROUNDS = 4;
 /** Warnings a planned shot must not cause (every code a move can cause). */
-const SHOT_CODES: readonly WarningCode[] = ['tap-angle', 'tap-back', 'off-canvas', 'overlap', 'over-zoom', 'past-end', 'pose-jump', 'too-fast'];
+const SHOT_CODES: readonly WarningCode[] = ['tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast'];
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const s1 = (x: number) => `${x.toFixed(1)} s`;

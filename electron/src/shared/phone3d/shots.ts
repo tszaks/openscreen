@@ -22,8 +22,9 @@
 //   turn-to-back 3.7 s: 150° to a three-quarter back view (1.4 s), a 0.7 s
 //                drift on across it (150 → 162°) so the viewer sees the
 //                back and the plateau's side, then on round to the front
-//                (1.6 s); peak about 215°/s. `return: stay` comes to rest on
-//                the three-quarter back (stayEasing): a deliberate end pose.
+//                (1.6 s); peak about 215°/s. `return: stay` (1.8 s) eases
+//                3% past the three-quarter back and settles onto it: an end
+//                pose that lands (round 3's drift crept on to the last frame).
 // Peak angular speed stays under 300°/s at the default durations
 // (test/shots.test.ts pins it), half the §2.7 too-fast line.
 
@@ -54,6 +55,8 @@ export interface ShotSpec {
   keys: ShotKey[];
   /** The recipe turns phone3d.float on instead of adding moves. */
   float?: true;
+  /** Its own keys and length for `return: 'stay'` (an end pose it lands on), instead of dropping the return keys. */
+  stay?: { duration: number; keys: ShotKey[] };
   /** One line for `info` and the gallery tile. */
   summary: string;
   /** When to use it. */
@@ -100,11 +103,15 @@ const HERO_T = { out: 0.575, hold: 0.805, back: 0.72, settle: 0.3 } as const;
 const scaled = (d: Partial<Pose>, k: number): Partial<Pose> => Object.fromEntries(Object.entries(d).map(([c, v]) => [c, (v as number) * k]));
 const HERO_JOIN = driftEasings(HERO_LEAN.turn, HERO_T.out, HERO_LEAN.turn * HERO_DRIFT, HERO_T.hold, -HERO_LEAN.turn * (1 + HERO_DRIFT + SHOT_OVERSHOOT), HERO_T.back);
 
-/** turn-to-back: to a three-quarter back view, a slow drift across the back, then on round to the front. */
-const TTB = { out: 150, drift: 12, tilt: 8, light: 40 } as const;
+/** turn-to-back: to a three-quarter back view, a slow drift across the back, then on round to the front. The phone
+ *  eases back a little as it turns (size: the plateau and the back stay clear of the 9:16 frame's edges). */
+const TTB = { out: 150, drift: 12, tilt: 8, light: 40, size: -0.1 } as const;
 const TTB_T = { out: 1.4, hold: 0.7, on: 1.6 } as const;
 const TTB_JOIN = driftEasings(TTB.out, TTB_T.out, TTB.drift, TTB_T.hold, 360 - TTB.out - TTB.drift, TTB_T.on);
-const ttbAt = (turn: number): Partial<Pose> => ({ turn, tilt: (TTB.tilt * turn) / TTB.out, light: (TTB.light * turn) / TTB.out });
+const ttbAt = (turn: number): Partial<Pose> => ({ turn, tilt: (TTB.tilt * turn) / TTB.out, light: (TTB.light * turn) / TTB.out, size: (TTB.size * turn) / TTB.out });
+/** turn-to-back, return 'stay': an outro that LANDS on the three-quarter back (look round 4: round 3's drift crept
+ *  into rest on the last frame, so the clip ended mid-move). One ease to 3% past the pose, a soft settle back. */
+const TTB_STAY = { duration: 1.8, overshoot: 0.03, land: 0.78 } as const;
 
 /** Shot fractions from part lengths (seconds). */
 function fracs(parts: readonly number[]): [number, number][] {
@@ -139,10 +146,17 @@ export const SHOTS: Record<ShotRecipe, ShotSpec> = {
     keys: [
       { to: ttbAt(TTB.out), frac: TTB_F[0], easing: TTB_JOIN.out, fixed: ['turn'] },
       { to: ttbAt(TTB.out + TTB.drift), frac: TTB_F[1], easing: LINEAR, stayEasing: DRIFT_TO_REST, fixed: ['turn'] },
-      { to: { turn: 360, tilt: 0, light: 0 }, frac: TTB_F[2], easing: TTB_JOIN.next, ret: true, fixed: ['turn'] },
+      { to: { turn: 360, tilt: 0, light: 0, size: 0 }, frac: TTB_F[2], easing: TTB_JOIN.next, ret: true, fixed: ['turn'] },
     ],
+    stay: {
+      duration: TTB_STAY.duration,
+      keys: [
+        { to: ttbAt(TTB.out * (1 + TTB_STAY.overshoot)), frac: [0, TTB_STAY.land], easing: EASE_IN_OUT, fixed: ['turn'] },
+        { to: ttbAt(TTB.out), frac: [TTB_STAY.land, 1], easing: EASE_SOFT, fixed: ['turn'] },
+      ],
+    },
     summary: 'Turns to a three-quarter view of the back, drifts slowly across it, then on round to the front (a full 360°).',
-    use: 'A long wait (3.7 s or more) or a scene change; keep taps out of it. One-way (return: stay) as an outro that ends on the back. Bold promos.',
+    use: 'A long wait (3.7 s or more) or a scene change; keep taps out of it. One-way (return: stay, 1.8 s) as an outro that lands on the three-quarter back; leave about 0.5 s after it so the clip ends on a still pose. Bold promos.',
   },
   'hero-layback': {
     duration: HERO_T.out + HERO_T.hold + HERO_T.back + HERO_T.settle,
@@ -195,9 +209,12 @@ export interface ShotOptions {
 }
 
 /** The keys a shot keeps for `ret`, with fracs stretched so the last kept key ends at 1; a last kept key with a
- *  `stayEasing` takes it (it ends the shot, so it must come to rest). */
+ *  `stayEasing` takes it (it ends the shot, so it must come to rest). A recipe with its own `stay` keys uses them.
+ *  `span` = the kept part's default length / the recipe's. */
 export function shotKeys(recipe: ShotRecipe, ret: ShotReturn = 'front'): { keys: ShotKey[]; span: number } {
-  const all = SHOTS[recipe].keys;
+  const spec = SHOTS[recipe];
+  if (ret === 'stay' && spec.stay) return { keys: spec.stay.keys.map((k) => ({ ...k })), span: spec.stay.duration / spec.duration };
+  const all = spec.keys;
   const kept = ret === 'stay' ? all.filter((k) => !k.ret) : all;
   const span = kept.length ? kept[kept.length - 1].frac[1] : 1;
   return {

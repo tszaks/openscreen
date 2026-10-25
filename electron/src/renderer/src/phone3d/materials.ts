@@ -236,8 +236,8 @@ function physical(params: ConstructorParameters<typeof MeshPhysicalMaterial>[0])
 }
 
 /** Anodised aluminium roughness (the 17 Pro unibody, the 16/17 bands). */
-export const ALUMINIUM_ROUGHNESS = 0.4;
-export const ALUMINIUM_SEAL = { clearcoat: 1, roughness: 0.12 };
+export const ALUMINIUM_ROUGHNESS = 0.34;
+export const ALUMINIUM_SEAL = { clearcoat: 1, roughness: 0.1 };
 
 function bandMaterial(hex: string, material: FrameMaterial, polished: boolean): MeshPhysicalMaterial {
   const color = bandF0(hex, material);

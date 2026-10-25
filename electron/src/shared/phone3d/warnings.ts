@@ -8,7 +8,6 @@
 // again; a fix that would not clear its warning is not offered. Pure and
 // deterministic (no clock, no randomness).
 
-import { focusSegmentsFor } from '../focusSegments';
 import { tapsToOutput } from '../mobileProject';
 import { Timeline } from '../timeline';
 import type { CursorSample, Project } from '../types';
@@ -32,7 +31,7 @@ export interface Warning {
   fix?: EditOp[];
 }
 
-export const WARNING_CODES = ['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'over-zoom', 'past-end', 'pose-jump', 'too-fast', 'floor-flat'] as const;
+export const WARNING_CODES = ['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat'] as const;
 export type WarningCode = (typeof WARNING_CODES)[number];
 
 /** A tap must see the screen within this angle of straight on. */
@@ -515,25 +514,6 @@ function overlapFixes(c: Ctx, w: Found): EditOp[][] {
 }
 const compareStart = (a: PoseTransition, b: PoseTransition) => a.start - b.start || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-function overZoomWarnings(c: Ctx): Found[] {
-  const zooms = focusSegmentsFor(c.p, c.cursor);
-  const out: Found[] = [];
-  for (const tr of c.p3.transitions) {
-    const hits = zooms.filter((z) => tr.start < z.outEnd && tr.end > z.inStart);
-    if (!hits.length) continue;
-    const z = hits[0];
-    out.push({
-      code: 'over-zoom',
-      key: `move:${tr.id}`,
-      message: `Move ${tr.id} (${s2(tr.start)}–${s2(tr.end)}) runs during a zoom (${s2(z.inStart)}–${s2(z.outEnd)})${hits.length > 1 ? ` and ${hits.length - 1} more` : ''}`,
-      at: r3(Math.max(tr.start, z.inStart)),
-      end: r3(Math.min(tr.end, z.outEnd)),
-      transitionId: tr.id,
-    });
-  }
-  return out;
-}
-
 function pastEndWarnings(c: Ctx): Found[] {
   return c.p3.transitions
     .filter((tr) => tr.end > c.D + 1e-6)
@@ -655,7 +635,6 @@ const CHECKS: Partial<Record<WarningCode, Check>> = {
   'tap-angle': tapWarnings,
   'tap-back': tapWarnings,
   overlap: overlapWarnings,
-  'over-zoom': overZoomWarnings,
   'past-end': pastEndWarnings,
   'pose-jump': poseJumpWarnings,
   'too-fast': tooFastWarnings,
@@ -719,8 +698,10 @@ const codePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * Every warning for `p`'s 3D phone, sorted by time. `cursor` is the
- * bundle's cursor.json samples (zooms from autofocus need them, D5): pass
- * the same samples the editor has, so the CLI and the editor agree.
+ * bundle's cursor.json samples (D5), passed by the CLI and the editor alike.
+ * No check reads it since look round 4: zooms do not play on the 3D screen
+ * (compositor.ts), so the old over-zoom warning (a move during a zoom) cannot
+ * happen; the parameter stays so callers do not change.
  * [] when there is no phone3d, it is off, or it has structural errors
  * (those are validateProject's).
  */
@@ -744,7 +725,6 @@ export function projectWarnings(p: Project, opts: { cursor?: readonly CursorSamp
     ...tapWarnings(c),
     ...offCanvasWarnings(c),
     ...overlapWarnings(c),
-    ...overZoomWarnings(c),
     ...pastEndWarnings(c),
     ...poseJumpWarnings(c),
     ...tooFastWarnings(c),

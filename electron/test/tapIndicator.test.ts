@@ -11,6 +11,9 @@ import {
   swipePoint,
   touchPhase,
   PHONE3D_TOUCH,
+  PHONE3D_TOUCH_SIZE,
+  defaultTouchIndicator,
+  insideRect,
 } from '../src/renderer/src/mobile/tapIndicator';
 import { mockCanvas } from './helpers/mockCanvas';
 
@@ -116,12 +119,30 @@ describe('3D phone touch indicator', () => {
     expect(sets(m, 'lineWidth')).toContain(1);
   });
 
-  it('on a 3D phone the press has a firm dark edge and a fuller fill, so a white tap reads on white UI', () => {
+  it('on a 3D phone the press is softer than flat: a lighter fill, a faint edge, a soft shadow (look round 4)', () => {
+    expect(PHONE3D_TOUCH.fillOpacity!).toBeLessThan(defaultTouchIndicator.fillOpacity);
+    expect(PHONE3D_TOUCH.edgeOpacity!).toBeLessThan(defaultTouchIndicator.edgeOpacity);
+    expect(PHONE3D_TOUCH.shadowOpacity!).toBeGreaterThan(0);
+    expect(PHONE3D_TOUCH_SIZE).toBeLessThan(1);
     const m = mockCanvas();
     drawTouchIndicator(m.ctx, tap, 2.15, screen, 3, PHONE3D_TOUCH);
-    expect(sets(m, 'strokeStyle')).toContain('rgba(0,0,0,0.5)');
-    // The edge scales with the rim (1.6 pt × 3 px/pt × 0.6), not a 1 px hairline.
-    expect(sets(m, 'lineWidth')).toContain(1.6 * 3 * 0.6);
-    expect(PHONE3D_TOUCH.fillOpacity!).toBeGreaterThan(0.4);
+    expect(sets(m, 'strokeStyle')).toContain(`rgba(0,0,0,${PHONE3D_TOUCH.edgeOpacity})`);
+    expect(sets(m, 'lineWidth')).toContain(1); // a hairline edge, not round 3's firm band
+  });
+
+  it('a tap at the screen edge draws inside the screen on a 3D phone, half off it flat', () => {
+    const edge: TapSuggestion = { ...tap, x: 0.98, y: 0.02 };
+    const centres = (opts: Parameters<typeof drawTouchIndicator>[5]) => {
+      const m = mockCanvas();
+      for (const t of [2.02, 2.15, 2.4, 2.5]) drawTouchIndicator(m.ctx, edge, t, screen, 1, opts);
+      return m.calls.filter((c) => c.name === 'arc').map((c) => ({ x: c.args[0] as number, y: c.args[1] as number, r: c.args[2] as number }));
+    };
+    const flat = centres(undefined);
+    expect(flat.some((a) => a.x + a.r > screen.x + screen.w)).toBe(true);
+    for (const a of centres(PHONE3D_TOUCH)) {
+      expect(a.x + a.r).toBeLessThanOrEqual(screen.x + screen.w + 1e-6);
+      expect(a.y - a.r).toBeGreaterThanOrEqual(screen.y - 1e-6);
+    }
+    expect(insideRect({ x: 0, y: 0 }, { x: 0, y: 0, w: 10, h: 100 }, 20)).toEqual({ x: 5, y: 20 });
   });
 });

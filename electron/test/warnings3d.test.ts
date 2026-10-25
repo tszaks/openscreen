@@ -43,7 +43,7 @@ describe('projectWarnings: scope', () => {
   });
 
   it('knows exactly the spec codes', () => {
-    expect([...WARNING_CODES]).toEqual(['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'over-zoom', 'past-end', 'pose-jump', 'too-fast', 'floor-flat']);
+    expect([...WARNING_CODES]).toEqual(['inactive', 'tap-angle', 'tap-back', 'off-canvas', 'overlap', 'past-end', 'pose-jump', 'too-fast', 'floor-flat']);
   });
 
   it('never blocks applyOps: a project full of warnings still takes edits', () => {
@@ -292,33 +292,6 @@ describe('overlap', () => {
 
   it('negative: moves that touch end to start do not overlap', () => {
     expect(only(take({ transitions: [move('a', 1, 2, { turn: 20 }), move('b', 2, 3, {})] }), 'overlap')).toEqual([]);
-  });
-});
-
-describe('over-zoom', () => {
-  it('a move during a manual zoom (no fix)', () => {
-    let p = take({ transitions: [move('a', 6, 7, { turn: 20 })] });
-    p = applyOps(p, [{ op: 'addZoom', at: 5, x: 0.5, y: 0.5 }], { newId: () => 'z' }).project;
-    const [w] = only(p, 'over-zoom');
-    expect(w).toMatchObject({ transitionId: 'a', at: 6 });
-    expect(w.fix).toBeUndefined();
-  });
-
-  it('sees the tap zooms the editor plays (focusSegmentsFor), and the cursor’s autofocus zooms', () => {
-    const p = take({ transitions: [move('a', 4.8, 5.4, { turn: 10 })] }, [5]);
-    expect(only(p, 'over-zoom')).toEqual([]);
-    p.zoom = { ...p.zoom, fromTaps: true };
-    expect(only(p, 'over-zoom').length).toBe(1);
-    const q = take({ transitions: [move('a', 12, 12.6, { turn: 10 })] });
-    q.zoom = { ...q.zoom, autofocus: true };
-    const cursor = [{ time: 12.2, x: 0.5, y: 0.5, kind: 'clickDown' as const }];
-    expect(projectWarnings(q).filter((w) => w.code === 'over-zoom')).toEqual([]);
-    expect(projectWarnings(q, { cursor }).filter((w) => w.code === 'over-zoom').length).toBe(1);
-  });
-
-  it('negative: a move clear of every zoom', () => {
-    const p = applyOps(take({ transitions: [move('a', 9, 10, { turn: 20 })] }), [{ op: 'addZoom', at: 5, x: 0.5, y: 0.5 }], { newId: () => 'z' }).project;
-    expect(only(p, 'over-zoom')).toEqual([]);
   });
 });
 
