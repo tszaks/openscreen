@@ -28,6 +28,8 @@ export interface TouchIndicatorOptions {
   strokePt: number;
   /** Soft dark shadow behind the indicator (0 disables). */
   shadowOpacity: number;
+  /** The dark hairline just outside the rim (its alpha), so a white indicator has an edge on a white screen. */
+  edgeOpacity: number;
 }
 
 export const defaultTouchIndicator: TouchIndicatorOptions = {
@@ -37,7 +39,17 @@ export const defaultTouchIndicator: TouchIndicatorOptions = {
   fillOpacity: 0.4,
   strokePt: 1,
   shadowOpacity: 0.35,
+  edgeOpacity: 0.16,
 };
+
+/**
+ * The 3D phone's touch indicator: the screen is smaller and seen at an angle
+ * under the glass, where round 2's indicator (a 40% white disc, a 16% dark
+ * hairline) read as a grey smudge on white UI. A firmer rim with a clear dark
+ * edge and a fuller fill read as a press on light and dark UI alike. Flat
+ * projects keep the defaults.
+ */
+export const PHONE3D_TOUCH: Partial<TouchIndicatorOptions> = { fillOpacity: 0.55, strokePt: 1.6, edgeOpacity: 0.5 };
 
 /** The OpenScreen accent, for an on-brand variant. */
 export const ACCENT_TOUCH_COLOR = '#FF8A3D';
@@ -160,12 +172,14 @@ export function drawTouchIndicator(
     ctx.shadowOffsetY = 0;
   };
   // Crisp rim: the colour stroke plus a faint dark hairline just outside it,
-  // so a white indicator still has an edge on a white screen.
+  // so a white indicator still has an edge on a white screen (1 px; a firmer edge, scaled with the rim, when the
+  // edge is stronger than the default).
+  const edgeW = o.edgeOpacity > defaultTouchIndicator.edgeOpacity ? Math.max(1, stroke * 0.6) : 1;
   const rim = (x: number, y: number, rad: number, width: number, alpha: number) => {
     ctx.beginPath();
-    ctx.arc(x, y, rad + width * 0.5 + 0.5, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(0,0,0,${0.16 * alpha})`;
-    ctx.lineWidth = 1;
+    ctx.arc(x, y, rad + width * 0.5 + 0.5 * edgeW, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(0,0,0,${o.edgeOpacity * alpha})`;
+    ctx.lineWidth = edgeW;
     ctx.stroke();
     ctx.beginPath();
     ctx.arc(x, y, rad, 0, Math.PI * 2);

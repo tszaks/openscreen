@@ -10,6 +10,7 @@ import {
   indicatorWindow,
   swipePoint,
   touchPhase,
+  PHONE3D_TOUCH,
 } from '../src/renderer/src/mobile/tapIndicator';
 import { mockCanvas } from './helpers/mockCanvas';
 
@@ -102,5 +103,25 @@ describe('drawTouchIndicator', () => {
     const none = mockCanvas();
     drawTouchIndicators(none.ctx, [tap, swipe, typing], 4, screen, 1);
     expect(none.calls.length).toBe(0);
+  });
+});
+
+describe('3D phone touch indicator', () => {
+  const sets = (m: ReturnType<typeof mockCanvas>, prop: string) => m.calls.filter((c) => c.name === `set:${prop}`).map((c) => c.args[0]);
+
+  it('the flat default is unchanged: a 1 px hairline at 16% black outside the rim', () => {
+    const m = mockCanvas();
+    drawTouchIndicator(m.ctx, tap, 2.15, screen, 1);
+    expect(sets(m, 'strokeStyle')).toContain('rgba(0,0,0,0.16)');
+    expect(sets(m, 'lineWidth')).toContain(1);
+  });
+
+  it('on a 3D phone the press has a firm dark edge and a fuller fill, so a white tap reads on white UI', () => {
+    const m = mockCanvas();
+    drawTouchIndicator(m.ctx, tap, 2.15, screen, 3, PHONE3D_TOUCH);
+    expect(sets(m, 'strokeStyle')).toContain('rgba(0,0,0,0.5)');
+    // The edge scales with the rim (1.6 pt × 3 px/pt × 0.6), not a 1 px hairline.
+    expect(sets(m, 'lineWidth')).toContain(1.6 * 3 * 0.6);
+    expect(PHONE3D_TOUCH.fillOpacity!).toBeGreaterThan(0.4);
   });
 });

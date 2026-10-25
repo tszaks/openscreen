@@ -39,7 +39,7 @@ import {
   screenRectFor,
   type Rect,
 } from './mobile/deviceFrame';
-import { ACCENT_TOUCH_COLOR, drawTouchIndicators } from './mobile/tapIndicator';
+import { ACCENT_TOUCH_COLOR, drawTouchIndicators, PHONE3D_TOUCH } from './mobile/tapIndicator';
 import { computePhoneLayout, drawBlurredBackground, drawTitleCard, type PhoneLayout } from './mobile/layout';
 import type { Ripple } from '../../shared/ripples';
 import { fileUrl } from '../../shared/fileUrl';
@@ -443,7 +443,7 @@ export class CanvasCompositor {
             tctx.rect(dst.x, dst.y, dst.w, dst.h);
             tctx.clip();
           };
-          this.drawScreenContent(tctx, dst, time, input, cam, { clip: clipDst, cursorOutsideClip: false, pxScale });
+          this.drawScreenContent(tctx, dst, time, input, cam, { clip: clipDst, cursorOutsideClip: false, pxScale, phone3d: true });
           drawCutouts(tctx, mapRect(body, rect, dst), phone.device, { orientation: phone.orientation });
         },
       });
@@ -561,7 +561,7 @@ export class CanvasCompositor {
     time: number,
     input: FrameInputs,
     cam: { center: Point; scale: number },
-    opts: { clip: () => void; cursorOutsideClip: boolean; pxScale: number },
+    opts: { clip: () => void; cursorOutsideClip: boolean; pxScale: number; phone3d?: boolean },
   ): void {
     const { phone } = this;
     const H = this.canvas.height;
@@ -589,6 +589,8 @@ export class CanvasCompositor {
         style: ts.style,
         color: ts.color === 'accent' ? ACCENT_TOUCH_COLOR : '#FFFFFF',
         sizePt: ts.sizePt,
+        // On a 3D phone the screen is smaller and seen at an angle: a crisp dark edge so a white tap reads on white UI.
+        ...(opts.phone3d ? PHONE3D_TOUCH : {}),
       });
     }
     if (opts.cursorOutsideClip) ctx.restore();
