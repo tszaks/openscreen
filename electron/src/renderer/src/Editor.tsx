@@ -255,12 +255,17 @@ export function Editor({
     }
     projRef.current = proj;
     latest3d.current = null;
+    // A gesture that ended before its last 3D change was committed: end its step now.
+    if (sealPending.current) {
+      sealPending.current = false;
+      historyRef.current.seal();
+    }
     // A later edit (or an undo) makes a gesture's "Start unlinked" Undo stale.
     if (unlinkToast.current?.sealed) unlinkToast.current.stale = true;
   }, [proj]);
   // Each pointer gesture (a click, a drag) is its own undo step.
   useEffect(() => {
-    const seal = () => historyRef.current.seal();
+    const seal = () => sealSoon();
     window.addEventListener('pointerdown', seal, true);
     window.addEventListener('pointerup', seal, true);
     return () => {
@@ -295,6 +300,14 @@ export function Editor({
   /** The newest project an apply3d call made, ahead of React's commit, so the
    *  next op of the same gesture builds on it (a drag that adds a move, then edits it). */
   const latest3d = useRef<Project | null>(null);
+  /** A gesture ended while its last apply3d change was still waiting for React's commit
+   *  (the history records in a passive effect): seal once that change is recorded, so it
+   *  joins its own gesture's step instead of becoming a step of its own. */
+  const sealPending = useRef(false);
+  function sealSoon() {
+    if (latest3d.current) sealPending.current = true;
+    else historyRef.current.seal();
+  }
   /** A "Start unlinked" toast whose Undo undoes its whole gesture, while nothing came after it. */
   const unlinkToast = useRef<{ sealed: boolean; stale: boolean } | null>(null);
   /** Dev mode only: each apply3d call as {ops, ctx} for the replay test (§6.6b). */
@@ -719,7 +732,7 @@ export function Editor({
   };
   /** The 3D panel's gesture ended: one undo step. */
   const seal3d = () => {
-    historyRef.current.seal();
+    sealSoon();
     if (unlinkToast.current) unlinkToast.current.sealed = true;
   };
 
@@ -956,7 +969,7 @@ export function Editor({
       orbit.current = null;
       setOrbitView(null);
       setHoverCursor(undefined);
-      historyRef.current.seal();
+      sealSoon();
       return;
     }
     if (previewDrag.current) {
@@ -4400,7 +4413,7 @@ export function Editor({
               onSelect={selectMoves}
               onBegin={() => historyRef.current.hold()}
               onRetime={(id, times) => apply3d({ op: 'editTransition', id, start: times.start, end: times.end })}
-              onEnd={() => historyRef.current.seal()}
+              onEnd={sealSoon}
               onAdd={addMoveAt}
               onMenu={laneMenu}
               onFrame={frameMoves}

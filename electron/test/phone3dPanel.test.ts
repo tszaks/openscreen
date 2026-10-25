@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { applyOps3d } from '../src/shared/agentOps';
 import { springSettleTime } from '../src/shared/phone3d/easing3d';
@@ -426,5 +428,37 @@ describe('panel text', () => {
     expect(qualityHint(base)).toBe('Edges are already smooth at 1×');
     expect(qualityHint({ ...base, supersample: 2 })).toMatch(/^Exports about 4× slower$/);
     expect(qualityHint({ ...base, motionBlur: { ...base.motionBlur, samples: 24 } })).toBe('Exports about 2× slower');
+  });
+});
+
+describe('every 3D control writes through apply3d (SPEC D1)', () => {
+  const read = (f: string) => readFileSync(join(__dirname, '../src/renderer/src', f), 'utf8');
+  const panelFiles = ['phone3d/Phone3DPanel.tsx', 'phone3d/TransitionLane.tsx', 'phone3d/EasingCurve.tsx', 'phone3d/ShotGallery.tsx', 'phone3d/Track.tsx', 'phone3d/PopupMenu.tsx', 'phone3d/panelModel.ts', 'components/ExportPanel.tsx'];
+
+  it('has no setProj( in the 3D panel, lane, curve and gallery files', () => {
+    for (const f of panelFiles) expect(read(f), f).not.toMatch(/setProj\s*\(/);
+  });
+
+  it('never writes phone3d or exportPreset with setProj in the editor', () => {
+    const editor = read('Editor.tsx');
+    // Any setProj whose updater touches phone3d, or the Export menu's preset-layout Resolution.
+    // Each setProj(…) call's own argument, up to its matching ")".
+    const calls = editor.split('setProj(').slice(1).map((c) => {
+      let depth = 1;
+      for (let i = 0; i < c.length; i++) {
+        if (c[i] === '(') depth++;
+        else if (c[i] === ')' && --depth === 0) return c.slice(0, i);
+      }
+      return c;
+    });
+    expect(calls.length).toBeGreaterThan(20); // the parse found the editor's many setProj calls
+    expect(calls.filter((c) => /phone3d|exportPreset/.test(c))).toEqual(["(p) => ({ ...p, exportPreset: v })"]);
+    expect(editor).toMatch(/onResolution=\{\(preset\) => apply3d\(\{ op: 'exportSettings', preset \}\)\}/);
+  });
+
+  it('validates each 3D edit exactly as the CLI does (apply3d runs applyOps3d)', () => {
+    const editor = read('Editor.tsx');
+    expect(editor).toMatch(/const run = \(p: Project\) => applyOps3d\(p, list, ctxFor\(\)\);/);
+    expect(editor).toMatch(/if \('error' in first\) \{\s*toast\(first\.error\);\s*return false;/);
   });
 });
