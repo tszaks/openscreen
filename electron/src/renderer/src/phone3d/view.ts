@@ -166,7 +166,11 @@ function applyCamera(
   c.far = range.far;
   c.position.set(cam.eye[0], cam.eye[1], cam.eye[2]);
   c.rotation.set(-cam.elevation * DEG, 0, 0);
-  c.setViewOffset(W * ss, H * ss, win.x, win.y, win.w, win.h);
+  // A zoom push-in (cam.view, owner decision 20) is a longer lens with a shift: the full view is s times bigger and
+  // its origin moves by (ox, oy) canvas px, so the phone renders at the zoomed size (the texture follows it).
+  const v = cam.view;
+  if (v) c.setViewOffset(W * ss * v.s, H * ss * v.s, win.x - v.ox * ss, win.y - v.oy * ss, win.w, win.h);
+  else c.setViewOffset(W * ss, H * ss, win.x, win.y, win.w, win.h);
   c.updateProjectionMatrix();
   c.updateMatrixWorld(true);
   return range;
@@ -367,7 +371,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
           near: range.near,
           far: range.far,
           focusZ,
-          cocScale: p3.dof.amount * pose.focus * 0.02 * H * ss,
+          cocScale: p3.dof.amount * pose.focus * 0.02 * H * ss * (camT.view?.s ?? 1),
           maxCoc: coc,
           taps: dofTaps(coc, a.quality.full),
         });

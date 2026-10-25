@@ -74,6 +74,23 @@ export interface Cam3D {
   landscape: number;
   /** The pose this camera was built for. */
   pose: Pose;
+  /** A zoom push-in (owner decision 20), when one plays: canvas = s·p + (ox, oy), p the canvas point without it. */
+  view?: View2D;
+}
+
+/**
+ * A zoom push-in on the 3D camera (owner decision 20): the lens closes in on
+ * the zoom centre (a longer focal length with a matching lens shift), so the
+ * whole picture of the phone scales by `s` about a canvas point:
+ * canvas = s·p + (ox, oy). The phone keeps its pose and stays whole; the
+ * renderer draws it at the zoomed size, so the screen texture is sized from
+ * the zoomed screen and stays 1:1 and sharp. Every projection here (hulls,
+ * ROI, depth range, hit-testing) goes through it.
+ */
+export interface View2D {
+  s: number;
+  ox: number;
+  oy: number;
 }
 
 /**
@@ -130,7 +147,10 @@ export function projectWorld(w: Vec3, cam: Cam3D): [number, number, number] {
   const H = cam.canvas.height;
   const nx = ((cam.focal / (W / H)) * c[0]) / z;
   const ny = (cam.focal * c[1]) / z;
-  return [((nx + 1) / 2) * W, ((1 - ny) / 2) * H, z];
+  const x = ((nx + 1) / 2) * W;
+  const y = ((1 - ny) / 2) * H;
+  const v = cam.view;
+  return v ? [v.s * x + v.ox, v.s * y + v.oy, z] : [x, y, z];
 }
 
 /** A model point (mm) → [canvas x, canvas y, view depth]. */
@@ -159,7 +179,10 @@ function toView(w: Vec3, cam: Cam3D): Vec3 {
 function viewToCanvas(v: Vec3, cam: Cam3D): Point {
   const W = cam.canvas.width;
   const H = cam.canvas.height;
-  return { x: (((cam.focal / (W / H)) * v[0]) / v[2] + 1) * (W / 2), y: (1 - (cam.focal * v[1]) / v[2]) * (H / 2) };
+  const x = (((cam.focal / (W / H)) * v[0]) / v[2] + 1) * (W / 2);
+  const y = (1 - (cam.focal * v[1]) / v[2]) * (H / 2);
+  const z = cam.view;
+  return z ? { x: z.s * x + z.ox, y: z.s * y + z.oy } : { x, y };
 }
 
 type ClipPlane = (v: Vec3) => number;
@@ -170,9 +193,21 @@ const nearPlane: ClipPlane = (v) => v[2] - NEAR_CLIP_PX;
 /** The canvas frustum: the near plane plus the 4 side planes through the canvas edges. Linear in view space, so
  *  clipping by them and interpolating in world space agree. */
 function frustumPlanes(cam: Cam3D): ClipPlane[] {
-  const fx = cam.focal / (cam.canvas.width / cam.canvas.height);
+  const W = cam.canvas.width;
+  const H = cam.canvas.height;
+  const fx = cam.focal / (W / H);
   const fy = cam.focal;
-  return [nearPlane, (v) => v[2] - fx * v[0], (v) => v[2] + fx * v[0], (v) => v[2] - fy * v[1], (v) => v[2] + fy * v[1]];
+  // With a zoom (View2D) the canvas edges are the planes where the zoomed NDC is ±1: ndc' = s·ndc + t.
+  const k = cam.view?.s ?? 1;
+  const tx = cam.view ? k - 1 + (2 * cam.view.ox) / W : 0;
+  const ty = cam.view ? 1 - k - (2 * cam.view.oy) / H : 0;
+  return [
+    nearPlane,
+    (v) => (1 - tx) * v[2] - k * fx * v[0],
+    (v) => (1 + tx) * v[2] + k * fx * v[0],
+    (v) => (1 - ty) * v[2] - k * fy * v[1],
+    (v) => (1 + ty) * v[2] + k * fy * v[1],
+  ];
 }
 
 /** Sutherland–Hodgman: a convex polygon (view space, in order) clipped by each plane in turn. May be empty. */
@@ -241,6 +276,9 @@ export interface Scene3D {
   screenRadiusMm: number;
   /** The drawn pose at output time t (float included). */
   poseAt: (t: number) => Pose;
+  /** The zoom push-in at output time t (owner decision 20), or null/absent when no zoom plays. The compositor sets
+   *  it from the project's zoom segments; a scene without it (agent tools, warnings) is the unzoomed view. */
+  viewAt?: (t: number) => View2D | null;
 }
 
 /**
@@ -272,7 +310,29 @@ const asScene = (s: SceneSource, canvas?: Size): Scene3D | null => (isScene(s) ?
 
 /** The camera at output time t (pose from the scene, float included). */
 export function camAt(s: Scene3D, t: number, pose: Pose = s.poseAt(t)): Cam3D {
-  return cameraFor(s.home, pose, s.p3.camera, s.canvas, s.body3d);
+  const cam = cameraFor(s.home, pose, s.p3.camera, s.canvas, s.body3d);
+  const v = s.viewAt?.(t);
+  if (v && (v.s !== 1 || v.ox !== 0 || v.oy !== 0)) cam.view = v;
+  return cam;
+}
+
+/**
+ * The push-in that frames a zoom on the 3D phone (owner decision 20): the
+ * flat zoom's scale `k`, about the point `uv` of the screen (0..1 over the
+ * flat screen rect, v down: the centre of what the flat zoom would show), so
+ * that point lands where the screen's centre is without the zoom. At k = 1
+ * and the screen's centre it is the identity. From the unzoomed camera at t
+ * (pose included), so it follows the screen as the phone moves.
+ */
+export function zoomViewAt(s: Scene3D, t: number, k: number, uv: Point): View2D | null {
+  if (!(k > 1 + 1e-6)) return null;
+  const base = cameraFor(s.home, s.poseAt(t), s.p3.camera, s.canvas, s.body3d);
+  const { quad } = screenQuadAt(s, t, base);
+  const h = homography(quad);
+  const p = applyHomography(h, uv.x, uv.y);
+  const r = applyHomography(h, 0.5, 0.5);
+  if (!p || !r) return null;
+  return { s: k, ox: r.x - k * p.x, oy: r.y - k * p.y };
 }
 
 // ---------------------------------------------------------------------------
@@ -693,7 +753,7 @@ export function shadowBlurPx(p: SceneSource, t: number, canvas?: Size): number {
   const seen = catcherInView(s, cam);
   if (!seen.length) return 0;
   const nearest = Math.max(NEAR_CLIP_PX, Math.min(...seen.map((w) => toView(w, cam)[2])));
-  return SHADOW_SUPPORT_SIGMAS * shadowSigma(s, cam).ambient * (cam.focal * cam.canvas.height) / (2 * nearest);
+  return (SHADOW_SUPPORT_SIGMAS * shadowSigma(s, cam).ambient * (cam.focal * cam.canvas.height) * (cam.view?.s ?? 1)) / (2 * nearest);
 }
 
 /** Circle of confusion at view depth z with the focus at z_f (spec §3.7 step 6), px. */
@@ -713,7 +773,7 @@ export function maxCocPx(s: Scene3D, t: number): number {
   const catcher = s.p3.shadow.on ? catcherInView(s, cam).map((w) => toView(w, cam)) : [];
   let m = 0;
   for (const v of [...body, ...catcher]) m = Math.max(m, cocPx(s.p3, pose.focus, s.canvas.height, zf, v[2]));
-  return m;
+  return m * (cam.view?.s ?? 1);
 }
 
 export interface RoiOptions {
