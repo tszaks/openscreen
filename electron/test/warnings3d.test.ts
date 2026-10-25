@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyOps, ZOOM_3D_NOTE, type EditOp } from '../src/shared/agentOps';
 import { FRONT, type Phone3D, type Pose, type PoseTransition } from '../src/shared/phone3d/model';
-import { EDGES, OFF_CANVAS_ADDED_PX, OFF_CANVAS_FRACTION, offCanvasAdded, offCanvasMeter, projectWarnings, WARNING_CODES, type Warning } from '../src/shared/phone3d/warnings';
+import { EDGES, FLOAT_FIX_STEPS, OFF_CANVAS_ADDED_PX, OFF_CANVAS_FRACTION, offCanvasAdded, offCanvasMeter, projectWarnings, WARNING_CODES, type Warning } from '../src/shared/phone3d/warnings';
 import type { Project } from '../src/shared/types';
 import { move, phoneProject, with3d } from './helpers/phone3dFixtures';
 
@@ -201,14 +201,46 @@ describe('off-canvas: one warning per cause, and fast on long takes', () => {
     expect(ws).toHaveLength(1);
     const [w] = ws;
     expect(w.message).toMatch(/ 10 times from 0\.27 s to 18\.53 s \(the idle float carries it past the edge\)$/);
-    expect(w.fix).toEqual([{ op: 'setPose', at: expect.any(Number), y: expect.any(Number) }]);
-    expect((w.fix![0] as EditOp).y as number).toBeLessThan(0.1);
+    // Advisor ruling 3 (owner decision 19): the float is the culprit, so no move is named and the fix lowers the
+    // float (the gentlest amount that clears it), leaving the pose alone.
+    expect(w.transitionId).toBeUndefined();
+    expect(w.fix).toEqual([{ op: 'phone3d', float: { amount: expect.any(Number) } }]);
+    const amount = ((w.fix![0] as EditOp).float as { amount: number }).amount;
+    expect(amount).toBeLessThan(1);
     expect(only(applyFix(p, w), 'off-canvas')).toEqual([]);
+    // The next gentler step down still pokes out, so the offered amount is the largest that clears it.
+    const step = FLOAT_FIX_STEPS.map((f) => Math.round(f * 100) / 100).filter((a) => a > amount).at(-1);
+    if (step !== undefined) expect(only(applyFix(p, { ...w, fix: [{ op: 'phone3d', float: { amount: step } }] }), 'off-canvas')).toHaveLength(1);
+  });
+
+  it('a float-caused overflow the float cannot fix (the float off still pokes out) is the pose: no move named, a setPose fix', () => {
+    // A kept pose just past the margin on its own, with the float on: the keyframes alone are out, so it is not the
+    // float's doing; there is no move, so the pose it rests at is the culprit.
+    const [w] = only(longTake(20, { ...BOB, pose: P({ y: 0.125 }) }), 'off-canvas');
+    expect(w.transitionId).toBeUndefined();
+    expect(w.message).not.toMatch(/float/);
+    expect(w.fix).toEqual([{ op: 'setPose', at: expect.any(Number), y: expect.any(Number) }]);
+    expect((w.fix![0] as EditOp).y as number).toBeLessThan(0.125);
   });
 
   it('negative: a pose that is out on its own does not blame the float', () => {
     const [w] = only(longTake(20, { ...BOB, pose: P({ y: 0.13 }) }), 'off-canvas');
     expect(w.message).toBe('The phone goes 85 px off the canvas from 0.00 s to 20.00 s');
+  });
+
+  it('culprit (advisor ruling 3): a move is named only when it adds overflow; a drift that carries a lean on names the lean', () => {
+    // lean pushes the phone off the right edge; drift follows straight on (no hold) and barely moves it; the worst
+    // moment is in the drift. Without the drift the phone is just as far out (it holds the lean), so the drift adds
+    // nothing; without the lean it is inside, so the lean is named.
+    const p = take({ transitions: [move('lean', 4, 5, { x: 0.6 }), move('drift', 5, 7, { x: 0.6002 }), move('back', 9, 10, { x: 0 })] });
+    const [w] = only(p, 'off-canvas');
+    expect(w.transitionId).toBe('lean');
+    // A hold between them breaks the chain: a move after a hold that keeps the pose names no move, and the pose
+    // it rests at is the culprit.
+    const held = take({ pose: P({ x: 0.6 }), transitions: [move('same', 4, 5, { x: 0.6001 })] });
+    const ws = only(held, 'off-canvas');
+    expect(ws.length).toBeGreaterThan(0);
+    for (const x of ws) expect(x.transitionId).toBeUndefined();
   });
 
   it('two keyframes that each push it out are two warnings, each with a fix that clears it', () => {

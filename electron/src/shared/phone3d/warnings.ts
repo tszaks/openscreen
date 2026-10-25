@@ -88,7 +88,7 @@ interface Ctx {
 }
 
 /** A warning plus the identity used to tell whether a fix cleared it. */
-type Found = Warning & { key: string; offCanvas?: OffCanvas };
+type Found = Warning & { key: string; offCanvas?: OffCanvas; offCanvasCause?: OffCanvasCause['kind'] };
 
 function makeCtx(p: Project, cursor: readonly CursorSample[]): Ctx | null {
   if (!p.phone3d) return null;
@@ -354,22 +354,85 @@ function offCanvasGroups(c: Ctx, times: readonly number[]): OffCanvas[] {
   return [...groups.values()];
 }
 
-function offCanvasWarnings(c: Ctx): Found[] {
+/** Every sample of `g`'s runs (the off-canvas check's own times inside each run). */
+const runTimes = (times: readonly number[], g: OffCanvas) => g.runs.flatMap((r) => timesIn(times, r.at, r.end));
+
+/**
+ * The move an off-canvas group is named after (advisor ruling 3, owner
+ * decision 19), or undefined. A move is named only when the per-edge
+ * comparison shows it ADDS overflow: at some sample of the group's runs, an
+ * edge is past the margin and more than OFF_CANVAS_ADDED_PX further past it
+ * than on the same timeline without that move. The candidates are the move
+ * active at the worst moment and the moves that lead straight into it (no
+ * hold between them: one shot's lean, drift and return), latest first, so a
+ * drift that only carries on a lean does not hide the lean. A run the
+ * candidates do not push out (the float alone, or a pose the phone already
+ * rests at) names no move.
+ */
+function offCanvasMove(c: Ctx, g: OffCanvas, times: readonly number[]): PoseTransition | undefined {
+  const list = c.p3.transitions;
   const margin = offCanvasMargin(c.scene);
-  return offCanvasGroups(c, offCanvasTimes(c)).map((g) => {
-    const tr = culprit(c.p3.transitions, g.worst);
+  const samples = runTimes(times, g);
+  const cache: BoundsCache = new Map();
+  const mine = samples.map((t) => edgesAt(c.scene, t, cache));
+  let i = activeIndex(list, g.worst);
+  if (i < 0) i = list.length ? 0 : -1;
+  for (; i >= 0; i--) {
+    const tr = list[i];
+    const without = applyFix(c.p, [{ op: 'removeTransition', id: tr.id }]);
+    const wc = without && makeCtx(without, c.cursor);
+    if (!wc) continue;
+    const wcache: BoundsCache = new Map();
+    const adds = samples.some((t, k) => {
+      const base = edgesAt(wc.scene, t, wcache);
+      return mine[k].some((o, e) => o > margin && o > base[e] + OFF_CANVAS_ADDED_PX);
+    });
+    if (adds) return tr;
+    // Only moves that lead straight into this one (no hold between) are part of the same motion.
+    const prev = list[i - 1];
+    if (!prev || prev.end < tr.start - 1e-3) break;
+  }
+  return undefined;
+}
+
+/** What makes an off-canvas group: a move (named), else the idle float, else the pose the phone rests at. */
+type OffCanvasCause = { kind: 'move'; tr: PoseTransition } | { kind: 'float' } | { kind: 'pose' };
+
+/** The float is the cause when it is on and the keyframes alone keep every sample of the group's runs inside. */
+function floatCarries(c: Ctx, g: OffCanvas, times: readonly number[]): boolean {
+  if (!c.p3.float.on) return false;
+  const margin = offCanvasMargin(c.scene);
+  const cache: BoundsCache = new Map();
+  return runTimes(times, g).every((t) => overflowAt(c.scene, t, cache, poseAt(c.p3, t)) <= margin);
+}
+
+/**
+ * Float first: when the keyframes alone stay inside the margin, the float is what carries the phone out (a move that
+ * only brings it near the edge is not named: lowering the float clears it without touching the moves). Then a move
+ * that adds overflow; else the pose the phone rests at (the base pose or a kept hold).
+ */
+function offCanvasCause(c: Ctx, g: OffCanvas, times: readonly number[]): OffCanvasCause {
+  if (floatCarries(c, g, times)) return { kind: 'float' };
+  const tr = offCanvasMove(c, g, times);
+  return tr ? { kind: 'move', tr } : { kind: 'pose' };
+}
+
+function offCanvasWarnings(c: Ctx): Found[] {
+  const times = offCanvasTimes(c);
+  return offCanvasGroups(c, times).map((g) => {
+    const cause = offCanvasCause(c, g, times);
     const n = g.runs.length;
     const span = g.end > g.at ? `from ${s2(g.at)} to ${s2(g.end)}` : `at ${s2(g.at)}`;
-    // The keyframes alone keep it inside: only the idle float carries it out.
-    const floatOnly = c.p3.float.on && overflowAt(c.scene, g.worst, new Map(), poseAt(c.p3, g.worst)) <= margin;
+    const why = cause.kind === 'float' ? ' (the idle float carries it past the edge)' : '';
     return {
       code: 'off-canvas' as const,
       key: `off-canvas:${targetKey(g.target)}`,
-      message: `The phone goes ${Math.round(g.over)} px off the canvas ${n > 1 ? `${n} times ` : ''}${span}${floatOnly ? ' (the idle float carries it past the edge)' : ''}`,
+      message: `The phone goes ${Math.round(g.over)} px off the canvas ${n > 1 ? `${n} times ` : ''}${span}${why}`,
       at: r3(g.at),
       end: r3(g.end),
-      ...(tr ? { transitionId: tr.id } : {}),
+      ...(cause.kind === 'move' ? { transitionId: cause.tr.id } : {}),
       offCanvas: g,
+      offCanvasCause: cause.kind,
     };
   });
 }
@@ -377,8 +440,25 @@ function offCanvasWarnings(c: Ctx): Found[] {
 /** Times a fix for `g` must clear: every sample in its span (keyframe times of `c`'s moves included). */
 const groupTimes = (c: Ctx, g: OffCanvas) => timesIn(offCanvasTimes(c), g.at, g.end);
 
+/** Float amounts a float-caused off-canvas fix tries, as fractions of the current amount (the gentlest first). */
+export const FLOAT_FIX_STEPS = [0.8, 0.6, 0.4, 0.2, 0] as const;
+
+/**
+ * Fixes for an off-canvas warning. When the idle float carries the phone out
+ * (advisor ruling 3), first a lower `float.amount` (the largest that clears
+ * it), then the setPose below. Otherwise only the setPose.
+ */
+function* offCanvasFixes(c: Ctx, w: Found): Iterable<EditOp[]> {
+  if (w.offCanvasCause === 'float') {
+    const amount = c.p3.float.amount;
+    for (const a of new Set(FLOAT_FIX_STEPS.map((f) => Math.round(amount * f * 100) / 100))) if (a < amount) yield [{ op: 'phone3d', float: { amount: a } }];
+  }
+  // Only worked out when no float fix cleared it (each round re-renders the warning's span).
+  yield* offCanvasPoseFixes(c, w);
+}
+
 /** A setPose that pulls the keyframe behind the worst moment back onto the canvas (clamped x/y/size). */
-function offCanvasFixes(c: Ctx, w: Found): EditOp[][] {
+function offCanvasPoseFixes(c: Ctx, w: Found): EditOp[][] {
   const g = w.offCanvas;
   if (!g) return [];
   const W = c.scene.canvas.width;
@@ -740,7 +820,7 @@ function noWorse(c: Ctx, fixed: Project): boolean {
 }
 
 /** The first candidate fix that clears `w` and makes nothing else worse. */
-function firstFix(c: Ctx, w: Found, candidates: EditOp[][]): EditOp[] | undefined {
+function firstFix(c: Ctx, w: Found, candidates: Iterable<EditOp[]>): EditOp[] | undefined {
   for (const ops of candidates) {
     const fixed = applyFix(c.p, ops);
     if (fixed && cleared(w, fixed, c.cursor) && noWorse(c, fixed)) return ops;
@@ -748,7 +828,7 @@ function firstFix(c: Ctx, w: Found, candidates: EditOp[][]): EditOp[] | undefine
   return undefined;
 }
 
-const FIXERS: Partial<Record<WarningCode, (c: Ctx, w: Found) => EditOp[][]>> = {
+const FIXERS: Partial<Record<WarningCode, (c: Ctx, w: Found) => Iterable<EditOp[]>>> = {
   'tap-angle': tapFixes,
   'tap-back': tapFixes,
   'off-canvas': offCanvasFixes,
@@ -795,7 +875,7 @@ export function projectWarnings(p: Project, opts: { cursor?: readonly CursorSamp
     ...floorFlatWarnings(c),
     ...zoom3dWarnings(c),
   ];
-  const out = found.map(({ key: _key, offCanvas: _oc, ...w }) => w as Warning);
+  const out = found.map(({ key: _key, offCanvas: _oc, offCanvasCause: _cause, ...w }) => w as Warning);
   found.forEach((w, i) => {
     const fixer = FIXERS[w.code];
     if (!fixer) return;

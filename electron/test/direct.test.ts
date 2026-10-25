@@ -430,6 +430,29 @@ describe('planDirect: rules', () => {
     expect(projectWarnings(out).filter((w) => w.transitionId && planned.has(w.transitionId))).toEqual([]);
   });
 
+  it('off-canvas culprit (advisor ruling 3): the 50.60 s split names the kept move, then the float, never the outro', () => {
+    // Same take as above. The kept pose's top pokes out from 1.73 s; the outro's lean pulls it back under the margin
+    // at 50.60 s, and the float carries it out again at 51.27-51.67 s, during the outro's drift. That second run is
+    // not added by any move: the outro without its drift (or without the whole outro) is no less far out at the top.
+    const p = with3d(take(52, [tap(9.76)]), { transitions: [move('k', 1, 2, { x: 0.1457, y: -0.1234 })], float: { on: true, amount: 1, period: 2 } });
+    const plan = planDirect(p, { style: 'hero', replace: false });
+    let n = 0;
+    const out = applyOps(p, plan.ops, { newId: () => `d${++n}` }).project;
+    const ws = projectWarnings(out).filter((w) => w.code === 'off-canvas');
+    expect(ws.map((w) => [w.at, w.end, w.transitionId ?? null])).toEqual([
+      [expect.any(Number), 50.6, 'k'],
+      [51.267, 51.667, null],
+    ]);
+    const [kept, floated] = ws;
+    // The kept move does push it out (without it the phone is inside), so it is named, and its fix moves its pose.
+    expect(kept.fix).toEqual([expect.objectContaining({ op: 'setPose' })]);
+    // The float run: the float is the culprit, and the fix lowers its amount; applying it clears that run.
+    expect(floated.message).toMatch(/\(the idle float carries it past the edge\)$/);
+    expect(floated.fix).toEqual([{ op: 'phone3d', float: { amount: expect.any(Number) } }]);
+    const fixed = applyOps(out, floated.fix!, { newId: () => 'f' }).project;
+    expect(projectWarnings(fixed).filter((w) => w.code === 'off-canvas' && w.at! > 50.6)).toEqual([]);
+  });
+
   it('self-check: when neither direction fits, the shot is dropped', () => {
     // A phone scaled to the canvas width: a hero lean pokes past one side or the other, whichever way it leans.
     const p = take(30, [tap(10)]);
