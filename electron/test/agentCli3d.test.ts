@@ -7,7 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { defaultFramesDir, exportFps, framesCmd, parseFramesArgs, planFrameTimes, poseInfo } from '../src/node/framesCmd';
-import { exportGuard, main, parseDirectArgs } from '../src/node/agentCli';
+import { exportGuard, main, parseDirectArgs, zoomSpans } from '../src/node/agentCli';
+import { focusSegmentsFor } from '../src/shared/focusSegments';
+import { applyOps } from '../src/shared/agentOps';
+import type { CursorSample } from '../src/shared/types';
 import { needsScenes, projectWarnings } from '../src/node/phone3dPlan';
 import { readCursorSamples } from '../src/node/bundleFiles';
 import { CliError } from '../src/node/cliKit';
@@ -414,6 +417,60 @@ describe('info.export: the frame rate the export writes', () => {
     expect(onPreset.export.fps).toBe(exportFps(social));
     const plain = { ...phoneProject({ presetId: 'none' }), outputFPS: 60 };
     expect((await info(plain)).export.fps).toBe(60);
+  });
+});
+
+describe('info.zooms (owner decision 22): every zoom that plays, in output seconds, with its source', () => {
+  /** A 30 s take with all three kinds: autofocus from two clicks, tap zooms, and one manual zoom. */
+  function allKinds() {
+    let p = phoneProject({ presetId: 'social-9x16', duration: 30 });
+    p.taps = [5, 12].map((t, i) => ({ id: `t${i}`, t, x: 0.3, y: 0.6, kind: 'tap' as const, confidence: 1 }));
+    p.tapsAnalyzed = true;
+    p = applyOps(p, [{ op: 'zoomSettings', autofocus: true, fromTaps: true }, { op: 'addZoom', at: 20, x: 0.25, y: 0.75, scale: 2 }]).project;
+    const cursor: CursorSample[] = [8.5, 24].map((time) => ({ time, x: 0.7, y: 0.2, kind: 'clickDown' as const }));
+    return { p, cursor };
+  }
+
+  it('is exactly focusSegmentsFor (start = inStart, focus = holdStart, end = outEnd, centre), with each span\'s source', () => {
+    const { p, cursor } = allKinds();
+    const spans = zoomSpans(p, cursor);
+    const segs = focusSegmentsFor(p, cursor);
+    expect(segs.length).toBeGreaterThanOrEqual(4);
+    const r2 = (x: number) => Math.round(x * 100) / 100;
+    const r3 = (x: number) => Math.round(x * 1000) / 1000;
+    expect(spans.map(({ source: _s, ...z }) => z)).toEqual(segs.map((z) => ({ start: r2(z.inStart), focus: r2(z.holdStart), end: r2(z.outEnd), x: r3(z.center.x), y: r3(z.center.y) })));
+    const sources = new Set(spans.map((z) => z.source));
+    expect(sources).toEqual(new Set(['auto', 'tap', 'manual']));
+    expect(spans.filter((z) => z.source === 'manual')).toEqual([expect.objectContaining({ start: 20, x: 0.25, y: 0.75 })]);
+    // Tap and autofocus centres follow their own planners (near the tap / the click), so each kind is near its input.
+    for (const z of spans.filter((x) => x.source === 'tap')) expect(Math.hypot(z.x - 0.3, z.y - 0.6)).toBeLessThan(0.1);
+    for (const z of spans.filter((x) => x.source === 'auto')) expect(Math.hypot(z.x - 0.7, z.y - 0.2)).toBeLessThan(0.1);
+    for (const z of spans) expect(z.start <= z.focus && z.focus <= z.end).toBe(true);
+  });
+
+  it('negative: [] with no zooms, and [] on an App Store preset (no zoom plays there)', () => {
+    const plain = phoneProject({ presetId: 'social-9x16' });
+    plain.zoom = { ...plain.zoom, autofocus: false, fromTaps: false };
+    expect(zoomSpans(plain, [])).toEqual([]);
+    const { p, cursor } = allKinds();
+    expect(zoomSpans({ ...p, layout: { ...p.layout, presetId: 'appstore' } }, cursor)).toEqual([]);
+  });
+
+  it('info prints it, reading the bundle\'s cursor.json', async () => {
+    const { p, cursor } = allKinds();
+    const dir = mkdtempSync(join(scratch, 'zooms-'));
+    writeFileSync(join(dir, 'project.json'), JSON.stringify(p));
+    writeFileSync(join(dir, 'cursor.json'), JSON.stringify({ samples: cursor }));
+    let text = '';
+    const write = process.stdout.write;
+    process.stdout.write = ((s: string) => ((text += s), true)) as typeof process.stdout.write;
+    try {
+      expect(await main(['info', dir])).toBe(0);
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(JSON.parse(text).zooms).toEqual(zoomSpans(p, readCursorSamples(dir)));
+    expect(JSON.parse(text).zooms.some((z: { source: string }) => z.source === 'auto')).toBe(true);
   });
 });
 
