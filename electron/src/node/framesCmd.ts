@@ -154,7 +154,7 @@ export function planFrameTimes(p: Project, select: FrameSelection): { frames: Pl
     const n = frames.length;
     const picked = new Set(Array.from({ length: MAX_FRAMES }, (_, i) => Math.round((i * (n - 1)) / (MAX_FRAMES - 1))));
     frames = frames.filter((_, i) => picked.has(i));
-    note = `--moves found ${n} frames${range}, more than the ${MAX_FRAMES} a run renders, so it rendered ${frames.length} evenly spread over them (every ${Math.round(((n - 1) / (MAX_FRAMES - 1)) * 100) / 100}th). For every frame, run shorter ranges with --from/--to.`;
+    note = `--moves found ${n} frames${range}, more than the ${MAX_FRAMES} a run renders, so it rendered ${frames.length} evenly spread from the first to the last. For every frame, run shorter ranges with --from/--to.`;
   }
   return { frames, past: [...past], fps, ...(note ? { note } : {}) };
 }
