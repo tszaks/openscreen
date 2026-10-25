@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { createRequire } from 'node:module';
 // @ts-expect-error plain .mjs script without types
-import { AXES, blindPairs, bundleTaps, compareTimes, esc, matchRefs, mediaSize, nearestShapePreset, pairCanvas, pairFilter, parseArgs, planSvg, keptRuns, prng, quietWindow, sourceToOutput, tallyEqual, tallyLook } from '../scripts/review3d.mjs';
+import { AXES, blindPairs, bundleTaps, compareTimes, esc, matchRefs, mediaInfo, mediaSize, nearestShapePreset, pairCanvas, pairFilter, pairFingerprint, parseArgs, planSvg, keptRuns, prng, quietWindow, sourceToOutput, tallyEqual, tallyLook } from '../scripts/review3d.mjs';
 
 const SCRIPT = join(__dirname, '..', 'scripts', 'review3d.mjs');
 
@@ -102,6 +102,14 @@ describe('review3d: time and windows', () => {
     expect(quietWindow([4, 16], [], 4, two)).toEqual({ start: 16.5, free: true, fits: true });
   });
 
+  it('quietWindow ignores a tap inside a cut (it is not in the video), and counts a swipe from where it leaves the cut', () => {
+    // Runs 0..4 and 10..20. A tap at 4.2 is cut away: 1..4 is free (it used to be blocked by the tap's pad).
+    const gap = [{ sourceStart: 0, sourceEnd: 4 }, { sourceStart: 10, sourceEnd: 20 }];
+    expect(quietWindow([0.5, 4.2, 10.5], [], 3, gap)).toEqual({ start: 1, free: true, fits: true });
+    // A long press from 8 to 12 starts in the cut and is seen from 10 to 12: the window starts after its pad.
+    expect(quietWindow([0.5, 2, { t: 8, duration: 4 }], [], 3, gap)).toEqual({ start: 12.5, free: true, fits: true });
+  });
+
   it('quietWindow says when no kept run is long enough (fits: false) instead of handing back a short take', () => {
     const short = [{ sourceStart: 0, sourceEnd: 2 }, { sourceStart: 10, sourceEnd: 12.5 }];
     expect(quietWindow([], [], 3, short)).toEqual({ start: 10, free: false, fits: false });
@@ -134,15 +142,17 @@ describe('review3d: time and windows', () => {
 });
 
 describe('review3d: the pair canvas', () => {
-  it('near shapes are centre-cropped to the narrower one; far shapes are padded and flagged as a leak', () => {
-    expect(pairCanvas({ w: 1100, h: 1093 }, { w: 1080, h: 1080 })).toEqual({ w: 1080, h: 1080, aspect: 1, diff: 0.006, mode: 'crop', leak: false });
+  it('both sides are centre-cropped to the narrower shape, near or far (bars would show which side had the other shape)', () => {
+    expect(pairCanvas({ w: 1100, h: 1093 }, { w: 1080, h: 1080 })).toEqual({ w: 1080, h: 1080, aspect: 1, diff: 0.006, mode: 'crop', leak: false, cut: 0.006, wide: false });
     const far = pairCanvas({ w: 1100, h: 1093 }, { w: 1080, h: 1920 });
-    expect(far).toMatchObject({ w: 1080, h: 1920, mode: 'pad', leak: true });
+    expect(far).toMatchObject({ w: 1080, h: 1920, mode: 'crop', leak: false, wide: true, cut: 0.441 });
     // Both orders give the same canvas (the side does not change it).
     expect(pairCanvas({ w: 1080, h: 1920 }, { w: 1100, h: 1093 })).toEqual(far);
     expect(pairCanvas({ w: 1080, h: 1920 }, { w: 720, h: 1280 })).toMatchObject({ w: 1080, h: 1920, diff: 0, mode: 'crop' });
-    expect(pairFilter(far)).toContain('pad=1080:1920');
-    expect(pairFilter(pairCanvas({ w: 100, h: 100 }, { w: 100, h: 104 }))).toMatch(/^crop=.*scale=1080:1124/);
+    expect(pairFilter(far)).not.toContain('pad=');
+    expect(pairFilter(far)).toContain('scale=1080:1920');
+    // Side data (ICC profile, display matrix, HDR) and frame metadata (EXIF) go first; both sides get one colour tag.
+    expect(pairFilter(pairCanvas({ w: 100, h: 100 }, { w: 100, h: 104 }))).toMatch(/^sidedata=mode=delete,metadata=mode=delete,crop=.*scale=1080:1124.*setparams=range=tv:color_primaries=bt709/);
   });
 
   it('nearestShapePreset picks the 3D layout preset nearest a reference shape', () => {
@@ -265,9 +275,12 @@ let logFile: string;
 // Real media (ffmpeg-static, as the app bundles it): our frames are 108x192 PNGs and our clips 108x192 mp4s;
 // the references are a 110x109 JPEG (a near-square capture) and other shapes, so the pair files must be re-encoded.
 const FFMPEG: string = createRequire(__filename)('ffmpeg-static');
-function makeMedia(file: string, w: number, h: number, video = false) {
-  const src = ['-f', 'lavfi', '-i', `testsrc=size=${w}x${h}:rate=30:duration=${video ? 0.5 : 0.04}`];
-  const enc = video ? ['-c:v', 'libx264', '-pix_fmt', 'yuv420p'] : ['-frames:v', '1'];
+function makeMedia(file: string, w: number, h: number, video = false, o: { rate?: number; duration?: number; tags?: boolean } = {}) {
+  const src = ['-f', 'lavfi', '-i', `testsrc=size=${w}x${h}:rate=${o.rate ?? 30}:duration=${video ? (o.duration ?? 0.5) : 0.04}`];
+  // `tags`: a file that carries more than pixels (another colour description, a title, a comment), as a capture from
+  // another tool does; the placed pair files must not show it.
+  const tags = o.tags ? ['-vf', 'setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc', '-metadata', 'title=Rotato export', '-metadata', 'comment=made with another tool'] : [];
+  const enc = video ? [...tags, '-c:v', 'libx264', '-pix_fmt', 'yuv420p'] : [...tags, '-frames:v', '1'];
   const r = spawnSync(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', ...src, ...enc, file]);
   if (r.status !== 0) throw new Error(`ffmpeg could not make ${file}: ${r.stderr}`);
   return file;
@@ -291,19 +304,23 @@ beforeAll(() => {
   fakePng = makeMedia(join(root, 'ours.png'), 108, 192);
   fakeMp4 = makeMedia(join(root, 'ours.mp4'), 108, 192, true);
   mkdirSync(join(root, 'refs'));
-  makeMedia(join(root, 'refs', 'a.jpg'), 110, 109);
-  makeMedia(join(root, 'refs', 'spin-in-rotato.png'), 90, 160);
+  makeMedia(join(root, 'refs', 'a.jpg'), 110, 109, false, { tags: true });
+  makeMedia(join(root, 'refs', 'spin-in-rotato.png'), 90, 160, false, { tags: true });
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-/** Both sides of every pair: one extension, one pixel size, and nothing else (a judge cannot tell them apart by the file). */
+/** Both sides of every pair: one extension, one pixel size, one length, one stream description, one set of
+ *  container tags and PNG chunks, and nothing else (a judge cannot tell them apart by the file). */
 async function expectSameShape(dir: string, ids: string[]) {
   for (const id of ids) {
     const [L, R] = ['L', 'R'].map((side) => readdirSync(dir).find((f) => f.startsWith(`${id}-${side}.`) && !f.endsWith('.review'))!);
     expect(extname(L), id).toBe(extname(R));
-    const [sl, sr] = await Promise.all([mediaSize(join(dir, L)), mediaSize(join(dir, R))]);
+    const [sl, sr] = await Promise.all([mediaInfo(join(dir, L)), mediaInfo(join(dir, R))]);
     expect(sl, id).not.toBeNull();
     expect(sl, id).toEqual(sr);
+    const [fl, fr] = await Promise.all([pairFingerprint(join(dir, L)), pairFingerprint(join(dir, R))]);
+    expect(fl, id).toEqual(fr);
+    expect(JSON.stringify(fl), id).not.toMatch(/bt2020|smpte2084|Rotato|another tool|iCCP|eXIf|tEXt/);
   }
 }
 
@@ -355,13 +372,17 @@ describe('review3d: commands (fake agent)', { timeout: 120_000 }, () => {
     const out = join(root, 'equal');
     mkdirSync(join(root, 'person'));
     mkdirSync(join(root, 'agentclip'));
+    // Another length, frame rate and colour description on one side: the placed clips still match.
     makeMedia(join(root, 'person', 'out.mp4'), 108, 192, true);
-    makeMedia(join(root, 'agentclip', 'out.mp4'), 72, 128, true);
+    makeMedia(join(root, 'agentclip', 'out.mp4'), 72, 128, true, { rate: 24, duration: 0.7, tags: true });
     const made = run(['pairs', '--a', join(root, 'person', 'out.mp4'), '--b', join(root, 'agentclip', 'out.mp4'), '--labels', 'person,agent', '--out', out, '--seed', '1', '--agent', agent]);
     expect(made.code, JSON.stringify(made.out)).toBe(0);
     expect(readdirSync(join(out, 'pairs')).filter((f) => !f.endsWith('.review')).sort()).toEqual(['pair-01-L.mp4', 'pair-01-R.mp4']);
     await expectSameShape(join(out, 'pairs'), ['pair-01']);
     expect(made.out.pairShapes[0]).toMatchObject({ w: 1080, h: 1920, mode: 'crop', leak: false });
+    const placedLen = (await mediaInfo(join(out, 'pairs', 'pair-01-L.mp4')))!.duration!;
+    expect(placedLen).toBeGreaterThan(0.4);
+    expect(placedLen).toBeLessThanOrEqual(0.5 + 1e-6);
     const key = JSON.parse(readFileSync(join(out, 'key.json'), 'utf8'));
     const side = key.pairs['pair-01'].L === 'agent' ? 'L' : 'R';
     const other = side === 'L' ? 'R' : 'L';
