@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { grownSize, Passes, planSamples } from '../src/renderer/src/phone3d/passes';
 import { ShadowPass } from '../src/renderer/src/phone3d/shadow';
-import { MAX_SCREEN_TEXTURE, planBands, planScreenTexture, SCREEN_BAND_PX, ScreenTexture, screenCanvasSize, screenRoom, textureLimit, textureSide } from '../src/renderer/src/phone3d/screenTexture';
+import { MAX_SCREEN_TEXTURE, planBands, planScreenTexture, SCREEN_BAND_PX, ScreenTexture, screenCanvasSize, screenRoom, textureLimit, textureSide, visibleUv } from '../src/renderer/src/phone3d/screenTexture';
 import { renderPhone3D, shadowSamples, type Blit3D, type Render3DArgs, type Render3DQuality } from '../src/renderer/src/phone3d/view';
 import type { Engine } from '../src/renderer/src/phone3d/engine';
 import { camAt, hullTravelPx, scene3d, screenQuadAt, type Scene3D } from '../src/shared/phone3d/projection';
@@ -603,5 +603,39 @@ describe('a frame on an unlinked Start (a pose jump: no double image)', () => {
     expect(planSamples({ t: 1.8, travelPx: travel, motion: { samples: 12, shutterSec: sh }, full: true, win: null })).toEqual(a);
     const { seen } = turns(s, 1.8);
     expect(seen).toEqual(Array.from({ length: seen.length / a.n }, () => a.times.map((tt) => Math.round(camAt(s, tt).pose.turn * 10) / 10)).flat());
+  });
+});
+
+describe('screen texture under a zoom push-in (owner decision 20)', () => {
+  const flat = { x: 300, y: 400, w: 480, h: 1040 };
+  const canvas = { width: 1080, height: 1920 };
+  const quadOf = (r: { x: number; y: number; w: number; h: number }) =>
+    [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }] as [
+      { x: number; y: number }, { x: number; y: number }, { x: number; y: number }, { x: number; y: number },
+    ];
+  it('a screen wholly on the canvas plans exactly as before (FRONT stays texel-exact)', () => {
+    const q = quadOf(flat);
+    expect(visibleUv(q, canvas)).toBeNull();
+    expect(planScreenTexture(q, flat, 1, 8192, canvas)).toEqual(planScreenTexture(q, flat, 1, 8192));
+  });
+  it('a pushed-in screen past the canvas: the texture holds only its visible window, at the zoomed density', () => {
+    // 3× about the screen centre: the screen is 1440 × 3120 on a 1080 × 1920 canvas.
+    const k = 3;
+    const cx = flat.x + flat.w / 2;
+    const cy = flat.y + flat.h / 2;
+    const z = { x: cx - (flat.w * k) / 2, y: cy - (flat.h * k) / 2, w: flat.w * k, h: flat.h * k };
+    const q = quadOf(z);
+    const win = visibleUv(q, canvas)!;
+    expect(win[0]).toBeGreaterThan(0);
+    expect(win[1]).toBeGreaterThan(0);
+    const L = planScreenTexture(q, flat, 1, 8192, canvas);
+    expect(L.scale).toBeCloseTo(k, 9);
+    expect(L.aligned).toBe(false);
+    // The window, not the whole screen: about the canvas plus the 2% pad, never the whole 1440 × 3120.
+    expect(L.w).toBeLessThan(flat.w * k * 0.9);
+    expect(L.h).toBeLessThan(flat.h * k * 0.75);
+    // The flat rect lands so that the window's corner is the texture's corner.
+    expect(L.dst.x).toBe(-Math.floor(win[0] * flat.w * k));
+    expect(L.dst.y).toBe(-Math.floor(win[1] * flat.h * k));
   });
 });

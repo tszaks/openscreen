@@ -107,6 +107,8 @@ const BUTTON_CROWN = 0.32;
 const CAMERA_CONTROL_PROUD_MM = 0.06;
 /** The flash: a thin metal ring round a frosted diffuser that fills it (round 2's black 22% ring read as clip-art). */
 const FLASH_LAMP_FRAC = 0.88;
+/** The flash diffuser's Fresnel lens: this many fine concentric rings, a shade darker than the diffuser. */
+const FLASH_FRESNEL_RINGS = 7;
 /** Bottom edge: USB-C pill and grilles. */
 const PORT_MM = { w: 8.3, h: 2.5 };
 const GRILLE = { holes: 6, d: 0.95, pitch: 1.3, gap: 2.4 };
@@ -125,7 +127,7 @@ const CIRCLE_SEG = 64;
  * the plateau's step; its corners are concentric with the body's. Round 2's 7 mm
  * and round 3's 4.2 mm margins read as a sticker or a tray set into the back.
  */
-const UNIBODY_PANEL = { margin: 1.5, top: 2.5 };
+const UNIBODY_PANEL = { margin: 1.5, top: 1.5 };
 /** Rows across a full-width plateau's rise (shared by the band, its seam and the back). */
 const RISE_ROWS = 32;
 /**
@@ -138,7 +140,7 @@ const RISE_ROWS = 32;
  * back (degrees); the fillet radii are mm and shrink together when the step is
  * too low for them.
  */
-export const PLATEAU_STEP = { wall: 60, footR: 0.35, topR: 0.9 } as const;
+export const PLATEAU_STEP = { wall: 70, footR: 0.3, topR: 0.7 } as const;
 
 interface Rise {
   /** Model y where the rise leaves the back, and where it reaches the plateau top (y1 > y0). */
@@ -146,6 +148,8 @@ interface Rise {
   y1: number;
   /** The rows' y, y0 .. y1. */
   rows: number[];
+  /** Model y where the step's wall ends and its rounded top edge begins (y0 < yWall < y1). */
+  yWall: number;
   at(y: number): { dz: number; dzdy: number };
 }
 
@@ -155,7 +159,7 @@ interface Rise {
  * ends and tangent-continuous everywhere (arc, line, arc), so reflections run
  * off the back onto the wall and onto the top with no kink.
  */
-export function stepProfile(h: number): { run: number; at(s: number): { dz: number; dzdy: number } } {
+export function stepProfile(h: number): { run: number; wallEnd: number; at(s: number): { dz: number; dzdy: number } } {
   const th = (PLATEAU_STEP.wall * Math.PI) / 180;
   const sin = Math.sin(th);
   const cos = Math.cos(th);
@@ -170,6 +174,7 @@ export function stepProfile(h: number): { run: number; at(s: number): { dz: numb
   const run = s2 + rt * sin;
   return {
     run,
+    wallEnd: s2,
     at(s) {
       const x = Math.min(run, Math.max(0, s));
       if (x <= s1) {
@@ -193,6 +198,7 @@ export function fullBarRise(H: number, pl: Body3D['plateau']): Rise {
     y0,
     y1: y0 + run,
     rows: Array.from({ length: RISE_ROWS + 1 }, (_, k) => y0 + (run * k) / RISE_ROWS),
+    yWall: y0 + prof.wallEnd,
     at: (y) => prof.at(y - y0),
   };
 }
@@ -270,9 +276,15 @@ export const FRONT_GROUP = { lens: 0, ring: 1, grille: 2 } as const;
 /** Material groups inside the lens-elements mesh: three element domes (top to bottom) and the retaining ring. */
 export const LENS_GROUP = { element0: 0, element1: 1, element2: 2, retainer: 3, hood: 4 } as const;
 /** Material groups inside the flash mesh. */
-export const FLASH_GROUP = { ring: 0, lamp: 1 } as const;
+export const FLASH_GROUP = { ring: 0, lamp: 1, fresnel: 2 } as const;
 /** frontGlass material groups: the flat sheet (border round the screen) and its rounded rim. */
 export const FRONT_GLASS_GROUP = { flat: 0, rim: 1 } as const;
+/** Material groups of the LiDAR: its dark glass window and the thin metal ring round it. */
+export const SENSOR_GROUP = { glass: 0, ring: 1 } as const;
+/** The LiDAR window's radius as a fraction of the sensor's (the rest is its ring). */
+export const SENSOR_WINDOW_FRAC = 0.86;
+/** Plateau mesh groups: its top (and rounded top edge), and a full-width step's foot and wall. */
+export const PLATEAU_GROUP = { top: 0, wall: 1 } as const;
 
 /** The measured layout the meshes were built from, for tests and the renderer. */
 export interface PhoneDims {
@@ -1120,8 +1132,11 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
       const n = norm2(-r.dzdy, 1);
       const row: [number, number] = [plateau.v(xl, y, d2 + r.dz, 0, n[0], n[1]), plateau.v(xr, y, d2 + r.dz, 0, n[0], n[1])];
       if (prev) {
-        plateau.tri(prev[0], prev[1], row[1]);
-        plateau.tri(prev[0], row[1], row[0]);
+        // The foot fillet and the wall (rows up to the wall's end) are PLATEAU_GROUP.wall: a machined wall facing
+        // down reads darker than the top face; only the rounded top edge (PLATEAU_GROUP.top) catches a highlight.
+        const g = y <= rise.yWall + 1e-6 ? PLATEAU_GROUP.wall : PLATEAU_GROUP.top;
+        plateau.tri(prev[0], prev[1], row[1], g);
+        plateau.tri(prev[0], row[1], row[0], g);
       }
       prev = row;
     }
@@ -1172,25 +1187,44 @@ export function createPhone(device: DeviceModel, body: Body3D): PhoneModel {
   // Flash, sensor (LiDAR), mic: discs on the plateau top, or on the back beside it.
   const surfaceZ = (q: V2) => (onTop(q) ? plateauTop : d2) + DECAL_LIFT_MM;
   const flash = new Builder();
+  // Flash and LiDAR sit under flat cover glass (owner decision 15: glass-covered, not flat discs): a glass disc
+  // over each (the lens covers' material: it mirrors the room), over a frosted diffuser with the fine concentric
+  // rings of its Fresnel lens (flash), or a dark sensor window (LiDAR).
+  const covers = new Builder();
   if (pl.flash) {
     const q = lensPos(pl.flash);
     const r = pl.flash.rMm ?? 3.4;
-    disc(flash, q[0], q[1], r, surfaceZ(q), FLASH_GROUP.ring);
-    disc(flash, q[0], q[1], r * FLASH_LAMP_FRAC, surfaceZ(q) + DECAL_LIFT_MM, FLASH_GROUP.lamp);
+    const z = surfaceZ(q);
+    const rl = r * FLASH_LAMP_FRAC;
+    disc(flash, q[0], q[1], r, z, FLASH_GROUP.ring);
+    disc(flash, q[0], q[1], rl, z + DECAL_LIFT_MM, FLASH_GROUP.lamp);
+    for (let k = 1; k <= FLASH_FRESNEL_RINGS; k++) {
+      const ro = (rl * (k + 0.5)) / (FLASH_FRESNEL_RINGS + 1);
+      const ri = ro - rl / (2 * (FLASH_FRESNEL_RINGS + 1));
+      const ring = (rad: number) => circleLoop(rad, 48).p.map(([px, py]): V2 => [px + q[0], py + q[1]]);
+      cap(flash, ring(ro), z + 2 * DECAL_LIFT_MM, 1, [ring(ri).reverse()], undefined, FLASH_GROUP.fresnel);
+    }
+    disc(covers, q[0], q[1], r * 0.98, z + 3 * DECAL_LIFT_MM);
   }
   const sensor = new Builder();
   if (pl.sensor) {
     const q = lensPos(pl.sensor);
-    disc(sensor, q[0], q[1], pl.sensor.rMm ?? 3.3, surfaceZ(q));
+    const r = pl.sensor.rMm ?? 3.3;
+    // A thin ring of the finish's metal round a dark glass window (as the flash), so the LiDAR reads as a flush
+    // window under the cover glass, not a black disc or a hole.
+    disc(sensor, q[0], q[1], r, surfaceZ(q), SENSOR_GROUP.ring);
+    disc(sensor, q[0], q[1], r * SENSOR_WINDOW_FRAC, surfaceZ(q) + DECAL_LIFT_MM, SENSOR_GROUP.glass);
+    disc(covers, q[0], q[1], r * 0.98, surfaceZ(q) + 3 * DECAL_LIFT_MM);
   }
   const mic = new Builder();
   if (pl.mic) {
     const q = lensPos(pl.mic);
     disc(mic, q[0], q[1], Math.max(0.35, pl.mic.rMm ?? 0.5), surfaceZ(q), 0, 20);
   }
-  for (const b of [flash, sensor, mic]) transformBuilder(b, 0, BACK_TO_MODEL);
+  for (const b of [flash, sensor, mic, covers]) transformBuilder(b, 0, BACK_TO_MODEL);
   add(partMesh('flash', flash, RENDER_ORDER.decal));
   add(partMesh('sensor', sensor, RENDER_ORDER.decal));
+  add(partMesh('lensCover', covers, RENDER_ORDER.lensCover));
   add(partMesh('mic', mic, RENDER_ORDER.decal));
 
   // --- Buttons --------------------------------------------------------------------

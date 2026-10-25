@@ -26,7 +26,7 @@ import type { Annotation, CaptionCue, Point, Project, Size } from '../../shared/
 import { cameraAt, type AutofocusOptions, type FocusSegment } from '../../shared/autofocus';
 import { getFinish, type DeviceModel, type Orientation } from '../../shared/devices';
 import type { ExportPreset } from '../../shared/exportPresets';
-import { tapGapAt, type TapSuggestion } from '../../shared/taps';
+import type { TapSuggestion } from '../../shared/taps';
 import { Timeline } from '../../shared/timeline';
 import { isPhoneProject, layoutPreset, presetAllowsZoom, resolveDevice, tapsToOutput } from '../../shared/mobileProject';
 import {
@@ -58,10 +58,13 @@ import {
   scene3d,
   screenMap3d,
   screenUVToCanvas,
+  zoomViewAt,
   type Scene3D,
   type ScreenMap3D,
+  type View2D,
 } from '../../shared/phone3d/projection';
 import { engineSync, ensurePhone3d } from './phone3d/loader';
+import { finish3dHex } from './phone3d/finishes3d';
 import type { Render3DResult } from './phone3d/view';
 
 // Background images by raw path, shared by every compositor: the editor
@@ -206,6 +209,36 @@ export class CanvasCompositor {
     this.phoneLayer =
       phoneLayerOn(project) && size ? { ...phoneDevice(size, project.phoneOverlay), aspect: phoneAspect(size, project.phoneOverlay) } : null;
     this.scene3d = phone3dActive(project).active ? scene3d(project, canvasSize) : null;
+    // Zooms on a 3D phone push the 3D camera in (owner decision 20); the screen itself always shows the whole
+    // recording, 1:1.
+    if (this.scene3d && this.zoomOn) {
+      const s3 = this.scene3d;
+      s3.viewAt = (t) => this.zoomView3d(s3, t);
+    }
+  }
+
+  /**
+   * The 3D camera's push-in for the zoom at output time t (owner decision 20): the same zoom segments, easing and
+   * timing as a flat zoom (cameraAt), aimed at the centre of what the flat zoom would show (the clamped crop) and
+   * capped so the phone stays whole on the canvas (projection.ts zoomViewAt, ZOOM_PUSH). Null when no zoom plays.
+   */
+  private zoomView3d(s3: Scene3D, t: number): View2D | null {
+    const cam = cameraAt(t, this.focusSegments, this.autofocusOpts);
+    if (!(cam.scale > 1 + 1e-6)) return null;
+    const fullW = this.project.recording.sourceSize.width;
+    const fullH = this.project.recording.sourceSize.height;
+    const crop = this.project.style.cropRect;
+    const all = sourceCrop(crop, fullW, fullH, { center: { x: 0.5, y: 0.5 }, scale: 1 });
+    const z = sourceCrop(crop, fullW, fullH, cam);
+    const uv = { x: (z.sx + z.cropW / 2 - all.sx) / all.cropW, y: (z.sy + z.cropH / 2 - all.sy) / all.cropH };
+    return zoomViewAt(s3, t, cam.scale, uv, this.zoomScaleMax());
+  }
+
+  /** The strongest zoom in the project (the push-in's full strength, zoomViewAt's kMax). */
+  private zoomScaleMax(): number {
+    let m = 1;
+    for (const seg of this.focusSegments) m = Math.max(m, seg.scale);
+    return m;
   }
 
   /** Whether this project draws a 3D phone (phone3dActive and a framed phone on this canvas). */
@@ -397,8 +430,8 @@ export class CanvasCompositor {
       }
     }
 
-    // A 3D phone never zooms its own screen (look round 4): a real screen does not crop its content while the phone
-    // turns, and the zoom cut the UI and pushed taps off the screen edge. The 3D moves frame the phone instead.
+    // A 3D phone never crops its own screen: a zoom pushes the 3D camera in instead (zoomView3d, owner decision 20),
+    // so the screen keeps showing the whole recording, 1:1, and gets sharper as it gets bigger.
     const cam = this.zoomOn && !this.scene3d
       ? cameraAt(time, this.focusSegments, this.autofocusOpts)
       : { center: { x: 0.5, y: 0.5 }, scale: 1 };
@@ -422,9 +455,8 @@ export class CanvasCompositor {
       const out = engine.render({
         scene: s3,
         time,
-        look: { hex: getFinish(phone.device, this.project.device.finishId).hex, back: s3.p3.back, glass: s3.p3.glass },
+        look: { hex: finish3dHex(phone.device, getFinish(phone.device, this.project.device.finishId)), back: s3.p3.back, glass: s3.p3.glass },
         bgMean: this.backgroundMean(),
-        tapGap: tapGapAt(phone.taps, time),
         quality: {
           ss: q?.ss ?? 1,
           full: q?.quality === 'full',

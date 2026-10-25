@@ -145,37 +145,6 @@ export function planSamples({ t, travelPx, motion, full, win }: SampleInputs): S
   return { n, nMotion, times, jitter: JITTER.slice(0, n), weights: raw.map((w) => w / sum) };
 }
 
-/** The screen content holds still (no motion blur) when the screen faces the camera this squarely or more (cosine);
- *  it blurs fully below SCREEN_STEADY_FACING[0]. */
-export const SCREEN_STEADY_FACING = [0.8, 0.9] as const;
-/** ...and within this many seconds of a tap (fully steady inside the first, blurring again by the second). */
-export const SCREEN_STEADY_TAP = [0.15, 0.3] as const;
-/** ...and never less than this: even turned away at full speed the content smears half as far as the body moves, so
- *  the UI stays readable through a spin (look round 4: the full smear at the spin-in's peak hid the app). */
-export const SCREEN_STEADY_FLOOR = 0.5;
-
-const smoothstep = (a: number, b: number, x: number) => {
-  const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return u * u * (3 - 2 * u);
-};
-
-/**
- * How still the screen CONTENT is held under motion blur, 0..1 (§3.7 step 4,
- * look round 3): 1 when the screen faces the viewer (facing ≥ 0.9) or a tap
- * is within 0.15 s, so the UI is crisp when it is the point of the frame and
- * a tap always lands on legible text; the floor (half the blur) when the
- * phone is turned away and no tap is near. In between it eases. The body, the screen's
- * edge and the glass still blur as the phone moves; only what the screen shows
- * is read where the frame's centre pose put it. Never below
- * SCREEN_STEADY_FLOOR (half the content smear). `tapGap` = seconds from the
- * frame to the nearest tap (Infinity when none). Pure.
- */
-export function screenSteadiness(facing: number, tapGap: number): number {
-  const byFacing = smoothstep(SCREEN_STEADY_FACING[0], SCREEN_STEADY_FACING[1], facing);
-  const byTap = 1 - smoothstep(SCREEN_STEADY_TAP[0], SCREEN_STEADY_TAP[1], tapGap);
-  return Math.max(SCREEN_STEADY_FLOOR, byFacing, byTap);
-}
-
 // ---------------------------------------------------------------------------
 // Tiles (pure)
 
@@ -191,11 +160,19 @@ export const TILE_BYTES_PER_PX = { full: 20 + 16 + 16, msaa: 4 * 20 } as const;
 
 /** Above this many bytes, the ROI renders in tiles (§3.7 step 8). */
 export const TILE_THRESHOLD_BYTES = 120e6;
+/**
+ * The same for full-quality frames (export, frames: TILE_BYTES_PER_PX.full), since look v2: 80 MB. The 4K export's
+ * measured GPU footprint sat on owner decision 16's 400 MiB (389 / 400 / 418 MiB, run to run); a third smaller tile
+ * targets take about 40 MB off it, for some more tiles at 4K (the 4K moving budget, 800 ms, has the room). A
+ * 1080×1920 frame (about 1.4 Mpx × 52 B) is still one tile, and the MSAA preview keeps 120 MB.
+ */
+export const TILE_THRESHOLD_BYTES_FULL = 80e6;
+const thresholdFor = (bytesPerPx: number) => (bytesPerPx === TILE_BYTES_PER_PX.full ? TILE_THRESHOLD_BYTES_FULL : TILE_THRESHOLD_BYTES);
 /** Largest tile side, render px. */
 export const TILE_MAX_SIDE = 2048;
 /** Largest tile area, render px: as many pixels as TILE_THRESHOLD_BYTES of targets hold at `bytesPerPx`. */
 export function tileMaxPx(bytesPerPx: number): number {
-  return Math.floor(TILE_THRESHOLD_BYTES / bytesPerPx);
+  return Math.floor(thresholdFor(bytesPerPx) / bytesPerPx);
 }
 
 /** One tile: its core (written to the canvas) and the padded window rendered for it, render px, top-down. */
@@ -221,7 +198,7 @@ export interface Tile {
  */
 export function planTiles(w: number, h: number, ss: number, overlap: number, bytesPerPx: number = TILE_BYTES_PER_PX.full): Tile[] {
   if (w <= 0 || h <= 0) return [];
-  if (w * h * bytesPerPx <= TILE_THRESHOLD_BYTES) return [{ x: 0, y: 0, w, h, px: 0, py: 0, pw: w, ph: h }];
+  if (w * h * bytesPerPx <= thresholdFor(bytesPerPx)) return [{ x: 0, y: 0, w, h, px: 0, py: 0, pw: w, ph: h }];
   const ov = Math.max(0, Math.ceil(overlap));
   const maxPx = tileMaxPx(bytesPerPx);
   // The fewest columns and rows whose padded tiles fit the limits.
@@ -379,6 +356,104 @@ export function flagFade<M extends THREE.Material>(mat: M, sinClear: number, sin
   return mat;
 }
 
+/**
+ * Leaves the RectAreaLights out of a material: it reflects only the
+ * environment (the studio HDRI, owner decision 15). For the small, highly
+ * curved optics (lens cover glass, lens elements, the flash and LiDAR covers):
+ * a softbox seen in a 2 mm dome is a few pixels of hard-edged rectangle, the
+ * "blocky glyphs" of look round 4, while the panorama gives each one a real,
+ * continuous reflection of the room. three's light loop runs the rect lights
+ * only `#if defined( RE_Direct_RectArea )`.
+ */
+export function noRectLights<M extends THREE.Material>(mat: M): M {
+  addPatch(mat, {
+    key: 'no-rect',
+    apply: (shader) => {
+      const at = '#include <lights_fragment_begin>';
+      if (!shader.fragmentShader.includes(at)) throw new Error('phone3d: noRectLights needs a lit material');
+      shader.fragmentShader = shader.fragmentShader.replace(at, `#undef RE_Direct_RectArea\n${at}`);
+    },
+  });
+  return mat;
+}
+
+/** three r186's line in getIBLRadiance that turns the reflection into world space (envmap_physical_pars_fragment). */
+export const IBL_WORLD_LINE = 'reflectVec = transformDirectionByInverseViewMatrix( reflectVec, viewMatrix );';
+/** ...and the line that returns the reflected radiance. */
+export const IBL_RETURN_LINE = 'return envMapColor.rgb * envMapIntensity;';
+
+/** The studio room's per-sample inputs (setRoom): the camera's world matrix, the room's centre (world) and radius
+ *  (world units; 0 = an infinitely far environment). One set shared by every patched material. */
+export const ROOM_UNIFORMS = {
+  uRoomCam: { value: new THREE.Matrix4() },
+  uRoomCenter: { value: new THREE.Vector3() },
+  uRoomRadius: { value: 0 },
+};
+
+/**
+ * Reflects the environment as a ROOM of finite size round the phone, not an
+ * infinitely far panorama (owner decision 15, "structured reflections"): the
+ * reflected ray from each point is traced to a sphere of radius uRoomRadius
+ * about the phone, and the panorama is read in the direction of the point it
+ * hits (a parallax-corrected environment). Under the 22° camera a flat face
+ * (the 17 Pro's back, the band at turn 90) mirrors directions within about
+ * ±10° of one another, so an infinitely far panorama shows it one blurred
+ * patch of the room: one flat tone whatever the HDRI (the "painted plastic"
+ * back of look rounds 1-4). In a room a few body lengths across, each point
+ * of the face sees the room from its own place, so the studio's lights and
+ * walls sweep across it as the phone turns. Irradiance (diffuse) is unchanged.
+ *
+ * `knee` (front cover glass only): the reflected radiance L becomes
+ * L²/(L + knee), so the room's dim walls (well under the knee) nearly vanish
+ * and its lights (far over it) keep almost all their strength: what a product
+ * photographer gets by flagging the set round a phone. A black screen at an
+ * angle then shows the studio's lights sliding over it, not a grey veil of the
+ * whole room (the look round 4 judges' "glass = grey veil, island grey").
+ */
+export function roomEnv<M extends THREE.Material>(mat: M, opts: { knee?: number } = {}): M {
+  const knee = opts.knee ?? 0;
+  addPatch(mat, {
+    key: knee > 0 ? `room-env-knee-${knee.toFixed(3)}` : 'room-env',
+    apply: (shader) => {
+      let chunk = THREE.ShaderChunk.envmap_physical_pars_fragment;
+      if (!chunk.includes(IBL_WORLD_LINE)) throw new Error('phone3d: three changed getIBLRadiance');
+      if (knee > 0) {
+        if (!chunk.includes(IBL_RETURN_LINE)) throw new Error('phone3d: three changed getIBLRadiance');
+        chunk = chunk.split(IBL_RETURN_LINE).join(`return envMapColor.rgb * envMapColor.rgb / ( envMapColor.rgb + ${knee.toFixed(4)} ) * envMapIntensity;`);
+      }
+      const pars = '#include <envmap_physical_pars_fragment>';
+      const begin = '#include <lights_fragment_begin>';
+      if (!shader.fragmentShader.includes(pars) || !shader.fragmentShader.includes(begin)) return; // no environment lighting
+      Object.assign(shader.uniforms, ROOM_UNIFORMS);
+      const room = `uniform mat4 uRoomCam;
+uniform vec3 uRoomCenter;
+uniform float uRoomRadius;
+vec3 p3dRoomOrigin = vec3( 0.0 );
+vec3 p3dRoomDir( const in vec3 r ) {
+	if ( uRoomRadius <= 0.0 ) return r;
+	vec3 o = ( uRoomCam * vec4( p3dRoomOrigin, 1.0 ) ).xyz - uRoomCenter;
+	float b = dot( r, o );
+	float c = dot( o, o ) - uRoomRadius * uRoomRadius;
+	float t = - b + sqrt( max( b * b - c, 0.0 ) );
+	return normalize( o + t * r );
+}
+`;
+      shader.fragmentShader = shader.fragmentShader
+        .replace(pars, room + chunk.replace(IBL_WORLD_LINE, `${IBL_WORLD_LINE}\n\t\t\treflectVec = p3dRoomDir( reflectVec );`))
+        .replace(begin, `${begin}\n\tp3dRoomOrigin = geometryPosition;`);
+    },
+  });
+  return mat;
+}
+
+/** Sets the room for the next draws: the camera's world matrix, the phone's centre (world) and the room's radius
+ *  (world units). */
+export function setRoom(camWorld: THREE.Matrix4, center: readonly [number, number, number], radius: number): void {
+  ROOM_UNIFORMS.uRoomCam.value.copy(camWorld);
+  ROOM_UNIFORMS.uRoomCenter.value.set(center[0], center[1], center[2]);
+  ROOM_UNIFORMS.uRoomRadius.value = radius;
+}
+
 /** The glare material's weight uniform (how many samples this draw stands for). */
 function glareWeight(mat: THREE.Material): { value: number } {
   const data = mat.userData as { glareWeight?: { value: number } };
@@ -441,42 +516,22 @@ export function lodBias<M extends THREE.Material>(mat: M): M {
 /** Per-draw inputs of the screen's texture lookup (screenLookup). */
 interface ScreenLookupUniforms {
   uScreenJitter: { value: THREE.Vector2 };
-  uSteady: { value: number };
-  uSteadyH: { value: THREE.Matrix3 };
-  uSteadyMap: { value: THREE.Matrix3 };
-  uTileOrigin: { value: THREE.Vector2 };
-  uTileH: { value: number };
-  uSs: { value: number };
 }
 
 function lookupUniforms(mat: THREE.Material): ScreenLookupUniforms {
   const data = mat.userData as { screenLookup?: ScreenLookupUniforms };
-  return (data.screenLookup ??= {
-    uScreenJitter: { value: new THREE.Vector2() },
-    uSteady: { value: 0 },
-    uSteadyH: { value: new THREE.Matrix3() },
-    uSteadyMap: { value: new THREE.Matrix3() },
-    uTileOrigin: { value: new THREE.Vector2() },
-    uTileH: { value: 1 },
-    uSs: { value: 1 },
-  });
+  return (data.screenLookup ??= { uScreenJitter: { value: new THREE.Vector2() } });
 }
 
 /**
- * The screen texture lookup (§3.6, §3.7 step 4, D19). Two corrections, so
- * the screen's inside stays exact while its edge anti-aliases and blurs:
- * - Jitter: a jittered sample sees the scene moved by `j` render px, so the
- *   fragment at a pixel reads the texel the UNjittered render read there:
- *   uv − dFdx(uv)·jx + dFdy(uv)·jy (render px are y down, gl_FragCoord y up).
- * - Steadiness (screenSteadiness): under motion blur each sample's screen is
- *   at its own pose, and the UI text smears with it. With uSteady = 1 the
- *   fragment instead reads the texel the frame's CENTRE pose put at this
- *   output pixel: its canvas position (the tile's place in the full view, no
- *   jitter, / ss) through uSteadyH (canvas → mesh uv at the centre pose,
- *   projection.ts screenUvMap) and the texture's own transform (uSteadyMap).
- *   Every sample then reads the same picture, so the content is crisp while
- *   the screen's edge still moves with the phone; uSteady between 0 and 1
- *   mixes the two (a shorter smear).
+ * The screen texture lookup (§3.6, §3.7 step 4): a jittered sample sees the
+ * scene moved by `j` render px, so the fragment at a pixel reads the texel
+ * the UNjittered render read there: uv − dFdx(uv)·jx + dFdy(uv)·jy (render px
+ * are y down, gl_FragCoord y up). The screen's inside then stays exact while
+ * its edge anti-aliases. Under motion blur each sample reads its own pose's
+ * screen, so the content blurs exactly as the glass over it and the body round
+ * it do (owner decision 15: physically correct; look rounds 3-4 held the
+ * content still instead, which read as a picture sliding under the glass).
  * Apply after lodBias.
  */
 export function screenLookup<M extends THREE.Material>(mat: M): M {
@@ -490,22 +545,9 @@ export function screenLookup<M extends THREE.Material>(mat: M): M {
       // After three's declarations (vMapUv is declared by uv_pars_fragment), just before main().
       const main = 'void main() {';
       if (!shader.fragmentShader.includes(main)) throw new Error('phone3d: screen shader has no main()');
-      const lookup =
-        `uniform vec2 uScreenJitter;
-uniform float uSteady;
-uniform mat3 uSteadyH;
-uniform mat3 uSteadyMap;
-uniform vec2 uTileOrigin;
-uniform float uTileH;
-uniform float uSs;
+      const lookup = `uniform vec2 uScreenJitter;
 vec2 screenUv() {
-	vec2 own = vMapUv - dFdx( vMapUv ) * uScreenJitter.x + dFdy( vMapUv ) * uScreenJitter.y;
-	if ( uSteady <= 0.0 ) return own;
-	vec2 canvasPx = ( uTileOrigin + vec2( gl_FragCoord.x, uTileH - gl_FragCoord.y ) ) / uSs;
-	vec3 q = uSteadyH * vec3( canvasPx, 1.0 );
-	vec2 meshUv = clamp( q.xy / q.z, 0.0, 1.0 );
-	vec2 held = ( uSteadyMap * vec3( meshUv, 1.0 ) ).xy;
-	return mix( own, held, uSteady );
+	return vMapUv - dFdx( vMapUv ) * uScreenJitter.x + dFdy( vMapUv ) * uScreenJitter.y;
 }
 `;
       shader.fragmentShader = shader.fragmentShader.replace(main, lookup + main).replace(call, 'texture( map, screenUv(),');
@@ -517,28 +559,6 @@ vec2 screenUv() {
 /** Sets the jitter (render px) the screen's texture lookup undoes for the next draw. */
 export function setScreenJitter(mat: THREE.Material, x: number, y: number): void {
   lookupUniforms(mat).uScreenJitter.value.set(x, y);
-}
-
-/**
- * Sets the frame's screen steadiness (screenSteadiness) and the centre pose's canvas → mesh uv map (row-major,
- * projection.ts Homography) with the texture's uv transform; 0 turns the steady lookup off.
- */
-export function setScreenSteady(mat: THREE.Material, steady: number, canvasToUv: readonly number[] | null, mapMatrix: THREE.Matrix3 | null): void {
-  const u = lookupUniforms(mat);
-  u.uSteady.value = canvasToUv && mapMatrix ? Math.min(1, Math.max(0, steady)) : 0;
-  if (canvasToUv && mapMatrix) {
-    const m = canvasToUv;
-    u.uSteadyH.value.set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
-    u.uSteadyMap.value.copy(mapMatrix);
-  }
-}
-
-/** Sets where the tile being drawn sits in the full W·ss × H·ss view (render px, top-down, no jitter), its height and ss. */
-export function setScreenTile(mat: THREE.Material, x: number, y: number, h: number, ss: number): void {
-  const u = lookupUniforms(mat);
-  u.uTileOrigin.value.set(x, y);
-  u.uTileH.value = h;
-  u.uSs.value = ss;
 }
 
 // ---------------------------------------------------------------------------

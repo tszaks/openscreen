@@ -5,6 +5,8 @@ export default defineConfig({
   plugins: [react()],
   root: 'src/renderer',
   base: './',
+  // The 3D phone's studio HDRI (phone3d/assets/*.hdr) is imported with ?inline into the lazily loaded engine chunk.
+  assetsInclude: ['**/*.hdr'],
   build: {
     outDir: '../../dist/renderer',
     emptyOutDir: true,

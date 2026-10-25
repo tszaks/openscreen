@@ -30,7 +30,6 @@ import {
   renderRoi,
   screenAxisSin,
   screenQuadAt,
-  screenUvMap,
   type Cam3D,
   type Scene3D,
 } from '../../../shared/phone3d/projection';
@@ -41,11 +40,9 @@ import {
   planSamples,
   planTiles,
   Passes,
-  screenSteadiness,
   setGlareWeight,
+  setRoom,
   setScreenJitter,
-  setScreenSteady,
-  setScreenTile,
   TILE_BYTES_PER_PX,
   travelRefPx,
   type SamplePlan,
@@ -56,6 +53,10 @@ import { FRONT_GLASS_FLAG_SIN } from './materials';
 import { frameCatcher, sampleLight } from './shadow';
 
 const DEG = Math.PI / 180;
+
+/** The studio room's radius round the phone, in body long sides (passes.ts roomEnv): about where the panorama's
+ *  stands and walls would be for a phone on a table in it. Picked by looking. */
+export const ROOM_RADIUS = 3;
 
 export interface Render3DQuality {
   /** Supersample factor (export and frames; the preview uses 1). */
@@ -82,9 +83,6 @@ export interface Render3DArgs {
    */
   drawScreen: (ctx: CanvasRenderingContext2D, dst: Rect, pxScale: number) => void;
   quality: Render3DQuality;
-  /** Seconds from this frame to the nearest tap (its press to its release; Infinity or absent when none): the
-   *  screen content holds still near a tap (screenSteadiness). */
-  tapGap?: number;
 }
 
 /**
@@ -168,7 +166,11 @@ function applyCamera(
   c.far = range.far;
   c.position.set(cam.eye[0], cam.eye[1], cam.eye[2]);
   c.rotation.set(-cam.elevation * DEG, 0, 0);
-  c.setViewOffset(W * ss, H * ss, win.x, win.y, win.w, win.h);
+  // A zoom push-in (cam.view, owner decision 20) is a longer lens with a shift: the full view is s times bigger and
+  // its origin moves by (ox, oy) canvas px, so the phone renders at the zoomed size (the texture follows it).
+  const v = cam.view;
+  if (v) c.setViewOffset(W * ss * v.s, H * ss * v.s, win.x - v.ox * ss, win.y - v.oy * ss, win.w, win.h);
+  else c.setViewOffset(W * ss, H * ss, win.x, win.y, win.w, win.h);
   c.updateProjectionMatrix();
   c.updateMatrixWorld(true);
   return range;
@@ -252,22 +254,17 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
 
   // 3. The screen texture, at the frame's centre pose (the video frame is fixed for the frame).
   const camT = camAt(s, t);
-  const { quad, facing } = screenQuadAt(s, t, camT);
+  const { quad } = screenQuadAt(s, t, camT);
   const p3t = p3.transitions;
   const sizes = [p3.pose.size, ...p3t.map((tr) => tr.to.size), ...p3t.map((tr) => tr.from?.size ?? 0)];
   const texMax = textureLimit(engine.renderer.capabilities.maxTextureSize);
-  const layout = planScreenTexture(quad, s.home.screen, ss, texMax);
+  const layout = planScreenTexture(quad, s.home.screen, ss, texMax, s.canvas);
   // Drawn and uploaded now, once (not inside the first sample's draw), in bands when the screen is big.
   const tex = engine.screen.update(layout, camT.landscape, (tctx) => a.drawScreen(tctx, layout.dst, layout.scale), texMax, screenRoom(s.home.screen, ss, sizes));
   if (phone.screen.material.map !== tex) {
     phone.screen.material.map = tex;
     phone.screen.material.needsUpdate = true;
   }
-  // A moving frame holds the screen content still where it should be read (facing the viewer, near a tap).
-  const steady = plan.nMotion > 1 ? screenSteadiness(facing, a.tapGap ?? Infinity) : 0;
-  // tex.matrix is the texture's own uv transform (ScreenTexture sets it; matrixAutoUpdate is off).
-  if (steady > 0) setScreenSteady(phone.screen.material, steady, screenUvMap(s, camT), tex.matrix);
-  else setScreenSteady(phone.screen.material, 0, null, null);
   mark('screen');
 
   // DoF reach (render px) over the frame's samples.
@@ -328,7 +325,6 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
     for (const tile of tiles) {
       if (engine.lost || r.getContext().isContextLost()) return false;
       if (N > 1) passes.clearAccum(tile.pw, tile.ph);
-      setScreenTile(phone.screen.material, roi.x * ss + tile.px, roi.y * ss + tile.py, tile.ph, ss);
       let range = { near: 1, far: 2 };
       let last = passes.msaa!;
       for (let k = 0; k < N; k++) {
@@ -343,6 +339,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
           w: tile.pw,
           h: tile.ph,
         });
+        setRoom(engine.camera.matrixWorld, cam.pos, ROOM_RADIUS * Math.max(s.bodyMm.width, s.bodyMm.height) * cam.scale);
         const target = msaa ? passes.msaa! : passes.plain!;
         setScreenJitter(phone.screen.material, jx, jy);
         if (phone.glare) {
@@ -374,7 +371,7 @@ export function renderPhone3D(engine: Engine, a: Render3DArgs): Render3DResult {
           near: range.near,
           far: range.far,
           focusZ,
-          cocScale: p3.dof.amount * pose.focus * 0.02 * H * ss,
+          cocScale: p3.dof.amount * pose.focus * 0.02 * H * ss * (camT.view?.s ?? 1),
           maxCoc: coc,
           taps: dofTaps(coc, a.quality.full),
         });

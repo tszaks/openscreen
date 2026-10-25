@@ -1,22 +1,17 @@
-// Procedural studio lighting (D13, spec §3.1): ONE light rig, in two parts
-// that never light the same thing twice.
+// Studio lighting (spec §3.1; owner decision 15): ONE light rig, in two parts.
 //
 // - The hero softboxes (lighting.ts boxes: the key, the rim strips, the
-//   overhead strip, the lens catchlight) are RectAreaLights at a finite
-//   distance round the phone (LIGHT_DISTANCE body long sides, or the box's
-//   own nearer distance). A light at a
-//   finite distance is what models a FLAT face: each point of the 17 Pro's
-//   back sees the box from its own angle, so a broad soft highlight sweeps
-//   across the back and the band as the phone turns. Round 2 painted the
-//   boxes into the infinitely far environment instead, and a flat metal face
-//   mirrors one direction of an infinite environment at every point: the
-//   backs and the turn-90 side read as one flat tone (look judges round 2).
-// - The set (the overhead gradient, the front fill, the white bounce card
-//   below, the dark side flags) is the PMREM environment (512): the room the
-//   phone stands in. Since look round 4 it is dark round the camera axis
-//   (metal reads by bright and dark zones; round 3's bright even set made
-//   every coloured finish one flat tone), with enough overhead gradient and
-//   floor card that no face goes black between the boxes.
+//   lens catchlight) are RectAreaLights at a finite distance round the phone
+//   (LIGHT_DISTANCE body long sides, or the box's own nearer distance): they
+//   draw the crisp highlights that sweep over the back and the band.
+// - The room is ONE CC0 studio HDRI (hdri.ts, assets/SOURCE.md) through PMREM:
+//   a dome that samples the panorama (turned by HDRI.yawDeg), × the preset's
+//   gain and tint (HDRI_LOOK), under the preset's side flags and a little of
+//   the backdrop's colour on the floor, plus the boxes painted into the set
+//   (inEnv). The materials read it as a room of finite size (passes.ts
+//   roomEnv), so flat faces show its structure. Look rounds 1-4 painted a
+//   procedural set instead; judges read the metal as painted plastic and the
+//   glass as a grey veil (decision 15).
 //
 // The light channel turns both together: the rig's group and
 // scene.environmentRotation (placeStudio, aimStudio), by the key azimuth
@@ -29,15 +24,24 @@
 
 import {
   BackSide,
-  BufferAttribute,
   Color,
   Group,
   Mesh,
-  MeshBasicMaterial,
   PMREMGenerator,
   RectAreaLight,
   Scene,
+  ClampToEdgeWrapping,
+  DataTexture,
+  DataUtils,
+  HalfFloatType,
+  LinearFilter,
+  NoColorSpace,
+  RepeatWrapping,
+  RGBAFormat,
+  ShaderMaterial,
   SphereGeometry,
+  Vector2,
+  Vector3,
   type Texture,
   type WebGLRenderer,
   type WebGLRenderTarget,
@@ -45,20 +49,22 @@ import {
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { DEFAULT_KEY_AZIMUTH, FLAGS, LIGHT_DISTANCE, LIGHT_PRESETS, type SoftBox } from '../../../shared/phone3d/lighting';
 import type { LightPreset } from '../../../shared/phone3d/model';
+import { HDRI, hdriTexture } from './hdri';
 
-/** How much the bounce card takes on the background's mean colour (the rest is white). */
-const FLOOR_TINT = 0.15;
-/** The front fill's reach: half-width in azimuth and height in elevation, degrees. */
-const FRONT_LOBE = { halfAz: 150, halfEl: 50 };
-/** The overhead gradient rises from this elevation to full at TOP_TO_DEG: steepest near the horizon, so a flat
- *  metal back (it mirrors directions within about ±15° of level) falls off softly from top to bottom. */
-const TOP_FROM_DEG = -10;
-const TOP_TO_DEG = 70;
+/** How much the floor takes on the background's mean colour (a bounce off the coloured backdrop). */
+const FLOOR_TINT = 0.06;
 /** The floor card blends in over this many degrees below the horizon. */
 const FLOOR_BLEND_DEG = 15;
 const DOME_RADIUS = 10;
-/** Dome tessellation: 0.7° per segment, so the painted strips (half-width 4-5°) keep their soft edges. */
-const DOME_SEG = { w: 512, h: 256 };
+/**
+ * The studio floor falls off from the horizon toward the nadir: × 1 down to `fromDeg` below the horizon, × `deep`
+ * from `toDeg` (smoothstep between). The panorama's floor is one bright white sweep, and a back seen from the
+ * camera's height (22° above) mirrors the floor 10-35° down: unfalloffed, every back read as one flat tone and
+ * the plateau step's down-facing wall mirrored the white and read lighter than the top face (look v2 round 1).
+ * With the fall, a back's top (which mirrors nearer the horizon) is lighter than its bottom, the gradient a
+ * product shot's sweep gives, and the step's wall (which mirrors further down) is darker than the top face.
+ */
+export const FLOOR_FALL = { fromDeg: 0, toDeg: 18, deep: 0.3 } as const;
 export const PMREM_SIZE = 512;
 
 const deg = Math.PI / 180;
@@ -101,7 +107,7 @@ export function studioLights(preset: LightPreset): Group {
     if (box.inEnv) return; // painted into the set (studioRadiance)
     const light = new RectAreaLight(new Color().setStyle(box.color), box.radiance, 1, 1);
     light.name = i === 0 ? 'key' : `box${i}`;
-    light.userData.box = { dir: lightDir(box.azimuth, box.elevation), ...boxSize(box), radiance: box.radiance, distance: box.distance ?? LIGHT_DISTANCE };
+    light.userData.box = { dir: lightDir(box.azimuth, box.elevation), ...boxSize(box), radiance: box.radiance * HDRI_LOOK[preset].boxes, distance: box.distance ?? LIGHT_DISTANCE };
     g.add(light);
   });
   return g;
@@ -153,68 +159,178 @@ const softBox = (t: number) => {
 /** Signed angle a − b, wrapped into (−180, 180]. */
 const angleDiff = (a: number, b: number) => ((((a - b) % 360) + 540) % 360) - 180;
 
+/** How each preset takes the HDRI (owner decision 15): a gain (scene-linear) and a tint (sRGB), and how strong its
+ *  softboxes are against it (`boxes`, × each box's radiance). The studio panorama is the room every preset stands
+ *  in; the presets differ by how bright and what colour it is, and by their softboxes (lighting.ts).
+ *  Studio (look v2 round 2): the boxes at full strength washed every back evenly and pushed Cosmic Orange past
+ *  the tone curve's knee (red at 95%: one flat salmon tone); at half, under a brighter room, the back keeps its
+ *  colour and shows the room's gradients. */
+export const HDRI_LOOK: Record<LightPreset, { gain: number; tint: string; boxes: number }> = {
+  studio: { gain: 0.5, tint: '#f3f6ff', boxes: 0.5 },
+  soft: { gain: 0.6, tint: '#ffffff', boxes: 1 },
+  contrast: { gain: 0.25, tint: '#ffffff', boxes: 1 },
+  warm: { gain: 0.4, tint: '#ffd9b8', boxes: 1 },
+  night: { gain: 0.1, tint: '#b8c8ff', boxes: 1 },
+};
+
 /**
- * Radiance of the studio environment (the set) in an environment-frame
- * direction (unit vector), scene-linear RGB, before phone3d.light.intensity:
- * the dome (overhead gradient, front fill, bounce card tinted FLOOR_TINT by
- * the background), darkened by the flags. The softboxes are lights
- * (studioLights), not part of it. Pure; studioScene paints the dome with it.
+ * What the studio adds to the HDRI in an environment-frame direction (unit
+ * vector): `keep` multiplies the panorama (the preset's flags cut it toward
+ * black at the sides; the floor takes FLOOR_TINT of the background's mean
+ * colour, as a bounce off the coloured backdrop), `add` is scene-linear
+ * radiance on top (the boxes painted into the set, inEnv, with soft edges).
+ * Before phone3d.light.intensity. Pure; studioScene bakes it into the dome.
  */
-export function studioRadiance(preset: LightPreset, bgMean: Rgb, dir: readonly [number, number, number]): [number, number, number] {
+export function studioSet(preset: LightPreset, bgMean: Rgb, dir: readonly [number, number, number]): { keep: [number, number, number]; add: [number, number, number] } {
   const rig = LIGHT_PRESETS[preset];
-  const set = rig.set;
   const [x, y, z] = dir;
   const az = (Math.atan2(x, z) * 180) / Math.PI;
   const el = (Math.asin(Math.max(-1, Math.min(1, y))) * 180) / Math.PI;
   // As seen from the camera at the default key azimuth (the frame the set is placed in).
   const camAz = az + DEFAULT_KEY_AZIMUTH;
-  const front = set.front * cos2Window(camAz / FRONT_LOBE.halfAz) * cos2Window(el / FRONT_LOBE.halfEl);
-  const sky = set.horizon + (set.top - set.horizon) * (smoothstep(TOP_FROM_DEG, TOP_TO_DEG, el) - smoothstep(TOP_FROM_DEG, TOP_TO_DEG, 0));
-  const [br, bgc, bb] = quantizeBg(bgMean);
-  const tint = (c: number) => set.floor * (1 - FLOOR_TINT + FLOOR_TINT * c);
-  const f = smoothstep(0, FLOOR_BLEND_DEG, -el);
-  const dome = (floorC: number) => sky * (1 - f) + tint(floorC) * f + front;
-  let r = dome(br);
-  let g = dome(bgc);
-  let b = dome(bb);
-  // Flags either side: they cut the dome (not the softboxes) down toward black.
   let flag = 0;
   for (const side of [-1, 1]) flag = Math.max(flag, cos2Window(angleDiff(camAz, side * FLAGS.azimuth) / FLAGS.halfW) * cos2Window((el - FLAGS.elevation) / FLAGS.halfH));
-  const keep = 1 - set.flags * flag;
-  r *= keep;
-  g *= keep;
-  b *= keep;
-  // The boxes painted into the set (inEnv), with soft edges (ENV_BOX_FEATHER of each half-size); in the
-  // environment's own frame a box's azimuth is its offset from the key (the set turns with the rig).
+  const k = 1 - rig.set.flags * flag;
+  const f = smoothstep(0, FLOOR_BLEND_DEG, -el);
+  const [br, bgc, bb] = quantizeBg(bgMean);
+  const floor = (c: number) => 1 - f * FLOOR_TINT + f * FLOOR_TINT * c * 2;
+  const k2 = k * (1 - (1 - FLOOR_FALL.deep) * smoothstep(FLOOR_FALL.fromDeg, FLOOR_FALL.toDeg, -el));
+  const keep: [number, number, number] = [k2 * floor(br), k2 * floor(bgc), k2 * floor(bb)];
+  const add: [number, number, number] = [0, 0, 0];
+  // In the environment's own frame a box's azimuth is its offset from the key (the set turns with the rig).
   for (const box of rig.boxes) {
     if (!box.inEnv) continue;
     const w = softBox(angleDiff(az, box.azimuth) / box.halfW) * softBox((el - box.elevation) / box.halfH);
     if (w <= 0) continue;
     const c = new Color().setStyle(box.color);
-    r += box.radiance * w * c.r;
-    g += box.radiance * w * c.g;
-    b += box.radiance * w * c.b;
+    add[0] += box.radiance * w * c.r;
+    add[1] += box.radiance * w * c.g;
+    add[2] += box.radiance * w * c.b;
   }
-  return [r, g, b];
+  return { keep, add };
 }
 
-/** The scene that goes through PMREM: the dome, studioRadiance as vertex colours. */
-export function studioScene(preset: LightPreset, bgMean: Rgb): Scene {
+/** The set's resolution (studioSetTextures): 0.7° a texel, so the painted strips (half-width 4-5°) keep their soft
+ *  edges. */
+export const SET_TEX = { w: 512, h: 256 } as const;
+
+/** The unit direction at equirect (u, v) (three's equirectUv inverted: u round from +x toward +z, v up). */
+export function equirectDir(u: number, v: number): [number, number, number] {
+  const phi = (u - 0.5) * 2 * Math.PI;
+  const theta = (v - 0.5) * Math.PI;
+  return [Math.cos(phi) * Math.cos(theta), Math.sin(theta), Math.sin(phi) * Math.cos(theta)];
+}
+
+/**
+ * studioSet baked into two small equirect textures (SET_TEX, half float,
+ * linear, row 0 = the bottom): keep (rgb) and add (rgb). The dome reads them
+ * per pixel, so the dome itself can be a coarse mesh: the dense 512 × 256
+ * dome of look round 4 was about 10 MB of vertex buffers while the PMREM was
+ * made, and the 4K memory budget (owner decision 16) counts that peak.
+ */
+export function studioSetTextures(preset: LightPreset, bgMean: Rgb): { keep: DataTexture; add: DataTexture } {
+  const { w, h } = SET_TEX;
+  const keep = new Uint16Array(w * h * 4);
+  const add = new Uint16Array(w * h * 4);
+  const one = DataUtils.toHalfFloat(1);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const v = studioSet(preset, bgMean, equirectDir((i + 0.5) / w, (j + 0.5) / h));
+      const o = (j * w + i) * 4;
+      for (let c = 0; c < 3; c++) {
+        keep[o + c] = DataUtils.toHalfFloat(v.keep[c]);
+        add[o + c] = DataUtils.toHalfFloat(v.add[c]);
+      }
+      keep[o + 3] = one;
+      add[o + 3] = one;
+    }
+  }
+  const tex = (data: Uint16Array) => {
+    const t = new DataTexture(data, w, h, RGBAFormat, HalfFloatType);
+    t.colorSpace = NoColorSpace;
+    t.wrapS = RepeatWrapping;
+    t.wrapT = ClampToEdgeWrapping;
+    t.minFilter = LinearFilter;
+    t.magFilter = LinearFilter;
+    t.generateMipmaps = false;
+    t.needsUpdate = true;
+    return t;
+  };
+  return { keep: tex(keep), add: tex(add) };
+}
+
+/** Dome tessellation: the panorama and the set are read per pixel, so the sphere only has to be round. */
+const DOME_SEG = { w: 64, h: 32 };
+
+const DOME_VERT = /* glsl */ `
+varying vec3 vDir;
+void main() {
+  vDir = position;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+}`;
+
+// The panorama (8-bit RGBE, decoded and interpolated here: RGBE does not filter) in the dome's direction turned by
+// yaw about +y, × gain × tint × the set's keep, + the set's add.
+const DOME_FRAG = /* glsl */ `
+uniform sampler2D map;
+uniform vec2 mapSize;
+uniform sampler2D setKeep;
+uniform sampler2D setAdd;
+uniform vec3 gainTint;
+uniform float yaw;
+varying vec3 vDir;
+vec2 equirect( vec3 d ) {
+  return vec2( atan( d.z, d.x ) * 0.15915494309189535 + 0.5, asin( clamp( d.y, -1.0, 1.0 ) ) * 0.3183098861837907 + 0.5 );
+}
+vec3 rgbe( int x, int y ) {
+  vec4 c = floor( texelFetch( map, ivec2( x, y ), 0 ) * 255.0 + 0.5 );
+  return c.a < 0.5 ? vec3( 0.0 ) : c.rgb * ( exp2( c.a - 128.0 ) / 255.0 );
+}
+void main() {
+  vec3 d = normalize( vDir );
+  vec2 uvSet = equirect( d );
+  float c = cos( yaw );
+  float s = sin( yaw );
+  vec2 t = equirect( vec3( c * d.x + s * d.z, d.y, -s * d.x + c * d.z ) ) * mapSize - 0.5;
+  vec2 f = fract( t );
+  ivec2 i0 = ivec2( floor( t ) );
+  int W = int( mapSize.x );
+  int H = int( mapSize.y );
+  int x0 = ( ( i0.x % W ) + W ) % W;
+  int x1 = ( x0 + 1 ) % W;
+  int y0 = clamp( i0.y, 0, H - 1 );
+  int y1 = clamp( i0.y + 1, 0, H - 1 );
+  vec3 hdr = mix( mix( rgbe( x0, y0 ), rgbe( x1, y0 ), f.x ), mix( rgbe( x0, y1 ), rgbe( x1, y1 ), f.x ), f.y );
+  gl_FragColor = vec4( hdr * gainTint * texture2D( setKeep, uvSet ).rgb + texture2D( setAdd, uvSet ).rgb, 1.0 );
+}`;
+
+/** The scene that goes through PMREM: a dome reading the HDRI (HDRI_LOOK) under the set (studioSetTextures). `map` is
+ *  the panorama texture (hdri.ts), owned by the caller; the set textures go with the scene (disposeScene). */
+export function studioScene(preset: LightPreset, bgMean: Rgb, map: Texture & { image: { width: number; height: number } }): Scene {
   const scene = new Scene();
   const dome = new SphereGeometry(DOME_RADIUS, DOME_SEG.w, DOME_SEG.h);
-  const pos = dome.getAttribute('position');
-  const colors = new Float32Array(pos.count * 3);
-  for (let i = 0; i < pos.count; i++) {
-    const v = studioRadiance(preset, bgMean, [pos.getX(i) / DOME_RADIUS, pos.getY(i) / DOME_RADIUS, pos.getZ(i) / DOME_RADIUS]);
-    colors[i * 3] = v[0];
-    colors[i * 3 + 1] = v[1];
-    colors[i * 3 + 2] = v[2];
-  }
-  dome.setAttribute('color', new BufferAttribute(colors, 3));
-  const domeMesh = new Mesh(dome, new MeshBasicMaterial({ vertexColors: true, side: BackSide, toneMapped: false }));
+  const set = studioSetTextures(preset, bgMean);
+  const look = HDRI_LOOK[preset];
+  const tint = new Color().setStyle(look.tint).multiplyScalar(look.gain);
+  const mat = new ShaderMaterial({
+    uniforms: {
+      map: { value: map },
+      mapSize: { value: new Vector2(map.image.width, map.image.height) },
+      setKeep: { value: set.keep },
+      setAdd: { value: set.add },
+      gainTint: { value: new Vector3(tint.r, tint.g, tint.b) },
+      yaw: { value: HDRI.yawDeg * deg },
+    },
+    vertexShader: DOME_VERT,
+    fragmentShader: DOME_FRAG,
+    side: BackSide,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const domeMesh = new Mesh(dome, mat);
   domeMesh.name = 'studio:dome';
+  domeMesh.userData.textures = [set.keep, set.add];
   scene.add(domeMesh);
-
   return scene;
 }
 
@@ -256,11 +372,13 @@ export function studioEnv(renderer: WebGLRenderer, preset: LightPreset, bgMean: 
  * disposes it (the engine keeps one, LRU 1, for the §3.9 budget).
  */
 export function createStudioEnv(renderer: WebGLRenderer, preset: LightPreset, bgMean: Rgb): WebGLRenderTarget {
-  const scene = studioScene(preset, bgMean);
+  const map = hdriTexture();
+  const scene = studioScene(preset, bgMean, map);
   const pmrem = new PMREMGenerator(renderer);
   const target = pmrem.fromScene(scene, 0, 0.1, DOME_RADIUS * 4, { size: PMREM_SIZE });
   pmrem.dispose();
   disposeScene(scene);
+  map.dispose();
   return target;
 }
 
@@ -276,7 +394,8 @@ function disposeScene(scene: Scene) {
   scene.traverse((o) => {
     if (o instanceof Mesh) {
       o.geometry.dispose();
-      (o.material as MeshBasicMaterial).dispose();
+      (o.material as ShaderMaterial).dispose();
+      for (const t of (o.userData.textures as Texture[] | undefined) ?? []) t.dispose();
     }
   });
 }

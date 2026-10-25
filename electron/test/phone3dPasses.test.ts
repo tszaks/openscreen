@@ -20,12 +20,16 @@ import {
   planGlare,
   GLARE_SAMPLES,
   tileMaxPx,
+  TILE_THRESHOLD_BYTES_FULL,
   TILE_MAX_SIDE,
-  screenSteadiness,
-  SCREEN_STEADY_FLOOR,
+  screenLookup,
+  noRectLights,
+  roomEnv,
+  ROOM_UNIFORMS,
+  setRoom,
+  IBL_WORLD_LINE,
   tentShutter,
 } from '../src/renderer/src/phone3d/passes';
-import { tapGapAt } from '../src/shared/taps';
 import { planScreenTexture, screenUvMatrix } from '../src/renderer/src/phone3d/screenTexture';
 import { blurKernel, catcherFrame } from '../src/renderer/src/phone3d/shadow';
 import {
@@ -96,25 +100,61 @@ describe('sample plan (§3.7 step 4)', () => {
     expect(sd / (sh / Math.sqrt(24))).toBeLessThan(1.1);
   });
 
-  it('screen steadiness: held still facing the viewer or within 0.15 s of a tap; turned away with no tap near, half the blur (the floor)', () => {
-    expect(screenSteadiness(1, Infinity)).toBe(1);
-    expect(screenSteadiness(0.9, Infinity)).toBe(1);
-    // Look round 4: never the full smear; the content moves at most half as far as the body (readable mid-spin).
-    expect(SCREEN_STEADY_FLOOR).toBe(0.5);
-    expect(screenSteadiness(0.8, Infinity)).toBe(SCREEN_STEADY_FLOOR);
-    expect(screenSteadiness(0.5, Infinity)).toBe(SCREEN_STEADY_FLOOR);
-    expect(screenSteadiness(-1, Infinity)).toBe(SCREEN_STEADY_FLOOR);
-    expect(screenSteadiness(0.5, 0)).toBe(1);
-    expect(screenSteadiness(0.5, 0.15)).toBe(1);
-    expect(screenSteadiness(0.5, 0.3)).toBe(SCREEN_STEADY_FLOOR);
-    const mid = screenSteadiness(0.88, Infinity);
-    expect(mid).toBeGreaterThan(SCREEN_STEADY_FLOOR);
-    expect(mid).toBeLessThan(1);
-    expect(screenSteadiness(-1, 0.1)).toBe(1);
-    expect(tapGapAt([], 2)).toBe(Infinity);
-    expect(tapGapAt([{ t: 1 }, { t: 3, duration: 1 }], 2)).toBe(1);
-    expect(tapGapAt([{ t: 1 }, { t: 3, duration: 1 }], 3.5)).toBe(0);
-    expect(tapGapAt([{ t: 1 }, { t: 3, duration: 1 }], 4.2)).toBeCloseTo(0.2, 12);
+  it('the screen blurs exactly as the body does (owner decision 15): no steady hold, only the jitter is undone', () => {
+    const mat = screenLookup(lodBias(new THREE.MeshBasicMaterial()));
+    const sh = { fragmentShader: THREE.ShaderLib.basic.fragmentShader, vertexShader: '', uniforms: {} as Record<string, unknown> };
+    mat.onBeforeCompile(sh as never, undefined as never);
+    expect(sh.fragmentShader).toContain('return vMapUv - dFdx( vMapUv ) * uScreenJitter.x + dFdy( vMapUv ) * uScreenJitter.y;');
+    // Look rounds 3-4 read every sample's screen where the centre pose put it (uSteady): gone.
+    expect(sh.fragmentShader).not.toContain('uSteady');
+    expect(Object.keys(sh.uniforms)).toEqual(['uScreenJitter']);
+  });
+
+  it('roomEnv: the environment is a room of finite size round the phone (parallax-corrected), the front glass through a knee', () => {
+    const frag = () => ({ fragmentShader: THREE.ShaderLib.physical.fragmentShader, vertexShader: '', uniforms: {} as Record<string, unknown> });
+    const s1 = frag();
+    roomEnv(new THREE.MeshPhysicalMaterial()).onBeforeCompile(s1 as never, undefined as never);
+    const fs = s1.fragmentShader;
+    expect(fs).not.toContain('#include <envmap_physical_pars_fragment>');
+    expect(fs).toContain(`${IBL_WORLD_LINE}\n\t\t\treflectVec = p3dRoomDir( reflectVec );`);
+    // The origin is set from the fragment's view position before any IBL is read (lights_fragment_maps).
+    expect(fs.indexOf('p3dRoomOrigin = geometryPosition;')).toBeGreaterThan(fs.indexOf('#include <lights_fragment_begin>'));
+    expect(fs.indexOf('p3dRoomOrigin = geometryPosition;')).toBeLessThan(fs.indexOf('#include <lights_fragment_maps>'));
+    expect(s1.uniforms.uRoomRadius).toBe(ROOM_UNIFORMS.uRoomRadius);
+    expect(fs).not.toContain('/ ( envMapColor.rgb +');
+    const s2 = frag();
+    roomEnv(new THREE.MeshPhysicalMaterial(), { knee: 1 }).onBeforeCompile(s2 as never, undefined as never);
+    expect(s2.fragmentShader).toContain('return envMapColor.rgb * envMapColor.rgb / ( envMapColor.rgb + 1.0000 ) * envMapIntensity;');
+    expect(s2.fragmentShader).not.toContain('return envMapColor.rgb * envMapIntensity;');
+    // The CPU twin of the shader's ray-sphere step: a ray from inside the room hits the sphere; radius 0 = infinitely far.
+    const roomDir = (p: THREE.Vector3, r: THREE.Vector3, c: THREE.Vector3, R: number) => {
+      if (R <= 0) return r.clone();
+      const o = p.clone().sub(c);
+      const b = r.dot(o);
+      const t = -b + Math.sqrt(Math.max(b * b - (o.dot(o) - R * R), 0));
+      return o.add(r.clone().multiplyScalar(t)).normalize();
+    };
+    const c = new THREE.Vector3(10, 0, 0);
+    const r = new THREE.Vector3(0, 0, 1);
+    // Two points of a flat face reflecting the same direction see different parts of the room...
+    const a = roomDir(new THREE.Vector3(9, 0, 0), r, c, 3);
+    const b = roomDir(new THREE.Vector3(11, 0, 0), r, c, 3);
+    expect(a.angleTo(b)).toBeGreaterThan(0.6);
+    // ...and the same part when the room is infinitely far (the old look).
+    expect(roomDir(new THREE.Vector3(9, 0, 0), r, c, 0).angleTo(roomDir(new THREE.Vector3(11, 0, 0), r, c, 0))).toBe(0);
+    setRoom(new THREE.Matrix4(), [1, 2, 3], 7);
+    expect(ROOM_UNIFORMS.uRoomCenter.value.toArray()).toEqual([1, 2, 3]);
+    expect(ROOM_UNIFORMS.uRoomRadius.value).toBe(7);
+  });
+
+  it('noRectLights: the rect lights are compiled out (the environment alone reflects in the optics and the front glass)', () => {
+    const sh = { fragmentShader: THREE.ShaderLib.physical.fragmentShader, vertexShader: '', uniforms: {} };
+    noRectLights(new THREE.MeshPhysicalMaterial()).onBeforeCompile(sh as never, undefined as never);
+    const fs = sh.fragmentShader;
+    expect(fs.indexOf('#undef RE_Direct_RectArea')).toBeGreaterThan(-1);
+    expect(fs.indexOf('#undef RE_Direct_RectArea')).toBeLessThan(fs.indexOf('#include <lights_fragment_begin>'));
+    // three's loop is guarded by that macro, so undefining it removes the rect lights and nothing else.
+    expect(THREE.ShaderChunk.lights_fragment_begin).toContain('#if ( NUM_RECT_AREA_LIGHTS > 0 ) && defined( RE_Direct_RectArea )');
   });
 
   it('screenUvMap: the projected corners of the screen rect map back to the mesh uv corners, portrait and landscape, at any pose', () => {
@@ -232,11 +272,12 @@ describe('tiles (§3.7 step 8)', () => {
       expect(planTiles(1000, 1500, 1, 4, b)).toEqual([{ x: 0, y: 0, w: 1000, h: 1500, px: 0, py: 0, pw: 1000, ph: 1500 }]);
   });
 
-  it('a full-quality 4K ROI (no MSAA target) needs fewer tiles than an MSAA one, each within 120 MB of targets', () => {
+  it('a full-quality 4K ROI (no MSAA target) needs no more tiles than an MSAA one, each within its threshold (full: 80 MB since look v2, MSAA: 120 MB)', () => {
     const full = planTiles(1972, 3840, 1, 6, TILE_BYTES_PER_PX.full);
     const ms = planTiles(1972, 3840, 1, 6, TILE_BYTES_PER_PX.msaa);
-    expect(full.length).toBeLessThan(ms.length);
-    for (const t of full) expect(t.pw * t.ph * TILE_BYTES_PER_PX.full).toBeLessThanOrEqual(120e6);
+    expect(full.length).toBeLessThanOrEqual(ms.length);
+    expect(TILE_THRESHOLD_BYTES_FULL).toBe(80e6);
+    for (const t of full) expect(t.pw * t.ph * TILE_BYTES_PER_PX.full).toBeLessThanOrEqual(80e6);
     for (const t of ms) expect(t.pw * t.ph * TILE_BYTES_PER_PX.msaa).toBeLessThanOrEqual(120e6);
   });
 
