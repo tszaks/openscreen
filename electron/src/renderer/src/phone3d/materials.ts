@@ -364,14 +364,14 @@ function create(hex: string, material: FrameMaterial, back: BackFinish, glass: n
   const lensRing = physical({ color: ringColorOf(hex, material), metalness: 1, roughness: LENS_RING.roughness });
   const plateauGlass = glossy(towardWhite(hex, BACK_LIFT.glossy));
   const plateau = opts.plateau === 'band' ? band : opts.plateau === 'lensRing' ? lensRing : plateauGlass;
-  // A full-width step's wall (only the 17 Pro unibody and the Air have one): the same surface built again (shader
-  // patches do not survive Material.clone), its colour × PLATEAU_WALL.
-  const plateauWall = opts.plateau === 'band' ? bandMaterial(hex, material, !!opts.polishedBand) : opts.plateau === 'lensRing' ? lensRing : glossy(towardWhite(hex, BACK_LIFT.glossy));
-  if (opts.plateau !== 'lensRing') {
-    plateauWall.color.multiplyScalar(PLATEAU_WALL.tint);
-    plateauWall.roughness = Math.max(plateauWall.roughness, PLATEAU_WALL.roughness);
-    plateauWall.metalness = Math.min(plateauWall.metalness, PLATEAU_WALL.metalness);
-  }
+  // A full-width step's wall (only the 17 Pro unibody and the Air have one; PLATEAU_WALL). Built as its own
+  // material: a metal plateau's wall is part diffuse, so it must keep the rect lights' diffuse integral.
+  const plateauWall =
+    opts.plateau === 'band'
+      ? physical({ color: bandF0(hex, material).multiplyScalar(PLATEAU_WALL.tint), metalness: PLATEAU_WALL.metalness, roughness: PLATEAU_WALL.roughness })
+      : opts.plateau === 'lensRing'
+        ? lensRing
+        : glossy(towardWhite(hex, BACK_LIFT.glossy).multiplyScalar(PLATEAU_WALL.tint));
 
   const lensBarrel = physical({ color: srgb('#1c1c1f'), metalness: 1, roughness: 0.5, side: FrontSide });
   // Coated optics: near-black with a cool cast, glossy at the top, rougher deeper down. Multi-coated lens glass

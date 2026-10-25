@@ -706,10 +706,13 @@ describe('materials (§3.4)', () => {
     expect(uni.backPanel.color.r).toBeCloseTo(uni.band.color.r, 6);
     expect(uni.backPanel.color.g).toBeCloseTo(uni.band.color.g, 6);
     expect(uni.backPanel.color.b).toBeCloseTo(uni.band.color.b, 6);
-    // The plateau step's wall: the plateau's metal, darker (it faces down, away from the lights; a lit wall read as a lid).
-    expect(uni.plateauWall.metalness).toBe(uni.plateau.metalness);
-    expect(uni.plateauWall.roughness).toBe(uni.plateau.roughness);
-    expect(lum(uni.plateauWall.color)).toBeCloseTo(lum(uni.plateau.color) * PLATEAU_WALL, 6);
+    // The plateau step's wall: the plateau's metal, a touch darker, rougher and part diffuse (it faces down, away
+    // from the lights: lit, it read as a lid in round 1; as a pure mirror of the dark floor, a black crease).
+    expect(uni.plateauWall.metalness).toBe(PLATEAU_WALL.metalness);
+    expect(uni.plateauWall.roughness).toBe(PLATEAU_WALL.roughness);
+    expect(uni.plateauWall.roughness).toBeGreaterThan(uni.plateau.roughness);
+    expect(lum(uni.plateauWall.color)).toBeCloseTo(lum(uni.plateau.color) * PLATEAU_WALL.tint, 6);
+    expect(PLATEAU_WALL.tint).toBeLessThan(1);
     // Lens rings: a deeper, less saturated shade of the finish's metal (round 3's bright copper read as toy bezels).
     const orange = materialsFor('#E8732F', 'aluminum', 'frosted', 0.25, { backMetal: true, plateau: 'band' });
     expect(lum(orange.lensRing.color)).toBeLessThan(lum(orange.band.color) * 0.6);
