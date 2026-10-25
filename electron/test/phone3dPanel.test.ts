@@ -515,8 +515,8 @@ describe('a "–" field: typed, stepped, or put back', () => {
   });
   it('a mixed Duration drag keeps every move inside 0.1..60 s on its own', () => {
     const base = [{ id: 'a', start: 0, len: 0.5 }, { id: 'b', start: 2, len: 59 }];
-    expect(durationDragOps(base, 5).map((o) => (o as { end: number }).end)).toEqual([5.5, 62]);
-    expect(durationDragOps(base, -5).map((o) => +((o as { end: number }).end).toFixed(3))).toEqual([0.1, 56]);
+    expect(durationDragOps(base, 5).map((o) => (o as { end?: number }).end)).toEqual([5.5, 62]);
+    expect(durationDragOps(base, -5).map((o) => +((o as { end?: number }).end ?? NaN).toFixed(3))).toEqual([0.1, 56]);
   });
 });
 
