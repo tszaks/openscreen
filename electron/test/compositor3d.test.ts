@@ -207,7 +207,7 @@ describe('3D active with an engine', () => {
     expect(r.engine!.calls[0].scale).toBe(1);
   });
 
-  it('never zooms the 3D screen (look round 4): inside a zoom the flat frame crops, the 3D texture shows the whole recording', async () => {
+  it('never crops the 3D screen: inside a zoom the flat frame crops, the 3D texture shows the whole recording', async () => {
     const t = 5.5; // inside the fixture's manual zoom (hold 5-6.2 s, scale 1.5)
     const flat = await renderOnce(base(), t, {}, undefined, true);
     const r = await renderOnce(with3d(base()), t, {}, (h) => fakeEngine(h, 1080, 1920), true);
@@ -218,6 +218,28 @@ describe('3D active with an engine', () => {
     const tex = r.engine!.calls[0].tex;
     const texSrc = args(r.log.find((l) => l.startsWith(`${tex}.drawImage(video:screen,`))!).slice(1, 5).map(Number);
     texSrc.forEach((v, i) => expect(v).toBeCloseTo(full[i], 6));
+  });
+
+  it('a zoom pushes the 3D camera in (owner decision 20): same segment and scale as flat, the screen grows by it, the crop centre lands on the screen centre', async () => {
+    const t = 5.5; // inside the fixture's manual zoom (hold 5-6.2 s, scale 1.5)
+    const still = await renderOnce(with3d(base()), t, {}, (h) => fakeEngine(h, 1080, 1920), false);
+    const zoomed = await renderOnce(with3d(base()), t, {}, (h) => fakeEngine(h, 1080, 1920), true);
+    const q0 = (still.c.screenMap as { phone3d: { map: { quad: { x: number; y: number }[] } } }).phone3d.map.quad;
+    const q1 = (zoomed.c.screenMap as { phone3d: { map: { quad: { x: number; y: number }[] } } }).phone3d.map.quad;
+    const w = (q: { x: number; y: number }[]) => Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y);
+    expect(w(q1) / w(q0)).toBeCloseTo(1.5, 6);
+    // The texture follows the on-canvas size: it is planned from the zoomed screen.
+    expect(zoomed.engine!.calls[0].scale).toBeCloseTo(1.5, 6);
+    expect(still.engine!.calls[0].scale).toBe(1);
+    // Hit-testing goes through the zoomed screen: the canvas point of a source point moves with the push-in.
+    const src = { x: 0.3, y: 0.4 };
+    const a = still.c.sourceToCanvas(src)!;
+    const b = zoomed.c.sourceToCanvas(src)!;
+    expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeGreaterThan(1);
+    expect(zoomed.c.canvasToSource(b.x, b.y)!.x).toBeCloseTo(src.x, 6);
+    // Outside the zoom nothing moves.
+    const after = await renderOnce(with3d(base()), 0.5, {}, (h) => fakeEngine(h, 1080, 1920), true);
+    expect(after.engine!.calls[0].scale).toBe(1);
   });
 
   it('cursor and ripple radii on the texture map back to the flat ones (pxScale, §3.6), at ss 1 and ss 2', async () => {

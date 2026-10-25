@@ -41,6 +41,7 @@ import {
   shadowLightDir,
   WALL_GAP_MM,
   subFrameTimes,
+  zoomViewAt,
   type Cam3D,
   type Quad,
   type Vec3,
@@ -824,5 +825,63 @@ describe('ROI, shadow and depth', () => {
     expect(scene3d(p)).toBeNull();
     expect(renderRoi(p, 0)).toBeNull();
     expect(screenQuad(with3d(phoneProject({ presetId: 'appstore' })), 0)).toBeNull();
+  });
+});
+
+describe('zoom push-in (owner decision 20)', () => {
+  it('zoomViewAt: none at scale 1; the zoom point lands where the screen centre was; at FRONT the screen scales by k about it', () => {
+    const p = with3d(phoneProject({ presetId: 'social-9x16' }));
+    const s = scene3d(p)!;
+    expect(zoomViewAt(s, 0, 1, { x: 0.3, y: 0.7 })).toBeNull();
+    const v = zoomViewAt(s, 0, 2, { x: 0.3, y: 0.7 })!;
+    const before = screenMap3d(s, 0)!;
+    const P = applyHomography(before.h, 0.3, 0.7)!;
+    const R = applyHomography(before.h, 0.5, 0.5)!;
+    expect(v.s * P.x + v.ox).toBeCloseTo(R.x, 6);
+    expect(v.s * P.y + v.oy).toBeCloseTo(R.y, 6);
+    // A scene with the push-in: every projection goes through it.
+    const z = { ...s, viewAt: () => v };
+    const after = screenMap3d(z, 0)!;
+    after.quad.forEach((q, i) => {
+      expect(q.x).toBeCloseTo(v.s * before.quad[i].x + v.ox, 6);
+      expect(q.y).toBeCloseTo(v.s * before.quad[i].y + v.oy, 6);
+    });
+    expect(applyHomography(after.h, 0.3, 0.7)!.x).toBeCloseTo(R.x, 6);
+    // The ROI stays on the canvas (the zoomed phone runs off it).
+    const roi = renderRoi(z, 0)!;
+    expect(roi.x >= 0 && roi.y >= 0 && roi.x + roi.w <= s.canvas.width && roi.y + roi.h <= s.canvas.height).toBe(true);
+    expect(roi.w * roi.h).toBeGreaterThan(0.5 * s.canvas.width * s.canvas.height);
+  });
+
+  it('the renderer\'s view offset (setViewOffset of the s-times view, shifted by −o) draws exactly the zoomed projection', () => {
+    const r = lcg(7);
+    for (let i = 0; i < 40; i++) {
+      const p = with3d(phoneProject({ presetId: LAYOUTS[i % 3] }), { camera: { fov: 12 + r() * 30, elevation: r() * 20 } });
+      const s = scene3d(p)!;
+      const k = 1 + r() * 2;
+      const v = zoomViewAt(s, 0, k, { x: r(), y: r() })!;
+      const z = { ...s, viewAt: () => v };
+      const pose = randomPose(r);
+      const cam = camAt(z, 0, pose);
+      const { width: W, height: H } = cam.canvas;
+      const camera = new THREE.PerspectiveCamera(cam.fov, W / H, 1, 1e7);
+      camera.position.set(...cam.eye);
+      camera.rotation.set(-cam.elevation * (Math.PI / 180), 0, 0);
+      camera.setViewOffset(W * v.s, H * v.s, -v.ox, -v.oy, W, H);
+      camera.updateMatrixWorld(true);
+      for (const q of bodyPointsMm(s, true)) {
+        const t = new THREE.Vector3(...modelToWorld(q, cam)).project(camera);
+        const [x, y] = project(q, cam);
+        expect(Math.hypot(((t.x + 1) / 2) * W - x, ((1 - t.y) / 2) * H - y)).toBeLessThan(0.01);
+      }
+      // The visible catcher is clipped to the ZOOMED canvas.
+      for (const w of catcherInView(z, cam)) {
+        const [x, y] = projectWorld(w, cam);
+        expect(x).toBeGreaterThan(-1e-3);
+        expect(y).toBeGreaterThan(-1e-3);
+        expect(x).toBeLessThan(W + 1e-3);
+        expect(y).toBeLessThan(H + 1e-3);
+      }
+    }
   });
 });
