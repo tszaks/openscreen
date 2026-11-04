@@ -19,7 +19,7 @@ import {
 } from '../src/shared/importVideo';
 import { editorFeatures } from '../src/shared/justMe';
 import { resetProject } from '../src/shared/types';
-import { ffmpegPath, probeMedia } from '../src/node/media';
+import { analyzeTapsInFile, ffmpegPath, probeMedia } from '../src/node/media';
 import { ImportCancelled, importVideoFile } from '../src/node/importVideo';
 
 describe('bundle names', () => {
@@ -241,6 +241,64 @@ describe('importVideoFile', () => {
     const r = await importVideoFile(src('Phone.mov'), { root, bin });
     expect(r.project.recording.sourceKind).toBe('iosDevice');
     expect(r.project.recording.screenVideoFile).toBe('screen.mov');
+  });
+
+  it('keeps the taps agent-device recorded next to the video', async () => {
+    const events = [
+      { kind: 'tap', tMs: 600, x: 36, y: 808, referenceWidth: 402, referenceHeight: 874 },
+      { kind: 'tap', tMs: 200, x: 364, y: 96, referenceWidth: 402, referenceHeight: 874 },
+    ];
+    writeFileSync(src('Phone.gesture-telemetry.json'), JSON.stringify({ version: 1, events }));
+    try {
+      const r = await importVideoFile(src('Phone.mov'), { root, bin });
+      expect(r.recordedTaps).toBe(2);
+      const saved = JSON.parse(readFileSync(join(r.dir, 'project.json'), 'utf8'));
+      expect(saved.tapsAnalyzed).toBe(true);
+      expect(saved.taps.map((t: { t: number }) => t.t)).toEqual([0.2, 0.6]);
+      expect(saved.taps[0]).toMatchObject({ kind: 'tap', confidence: 1 });
+      expect(saved.taps[0].x).toBeCloseTo(364 / 402, 5);
+      expect(saved.taps[0].y).toBeCloseTo(96 / 874, 5);
+      // Still stretches are still found (polish cuts them).
+      expect(Array.isArray(saved.waits)).toBe(true);
+      // The bundle keeps the file, so a re-run after Reset gets the real taps back.
+      expect(existsSync(join(r.dir, 'screen.gesture-telemetry.json'))).toBe(true);
+      const again = await analyzeTapsInFile(join(r.dir, 'screen.mov'), bin);
+      expect(again.taps.map((t) => t.t)).toEqual([0.2, 0.6]);
+      expect(again.taps.every((t) => t.confidence === 1)).toBe(true);
+    } finally {
+      rmSync(src('Phone.gesture-telemetry.json'));
+    }
+  });
+
+  it('stops tap analysis when the import is cancelled', async () => {
+    const r = await importVideoFile(src('Phone.mov'), { root, bin });
+    await expect(analyzeTapsInFile(join(r.dir, 'screen.mov'), bin, AbortSignal.abort())).rejects.toThrow();
+  });
+
+  it('keeps an empty recorded track empty, instead of guessing taps from pixels', async () => {
+    writeFileSync(src('Phone.gesture-telemetry.json'), JSON.stringify({ version: 1, events: [{ kind: 'pinch', tMs: 100 }] }));
+    try {
+      const r = await importVideoFile(src('Phone.mov'), { root, bin });
+      expect(r.recordedTaps).toBe(0);
+      expect(r.project.tapsAnalyzed).toBe(true);
+      expect(r.project.taps).toEqual([]);
+    } finally {
+      rmSync(src('Phone.gesture-telemetry.json'));
+    }
+  });
+
+  it('imports without taps when there is no telemetry, or it is unreadable', async () => {
+    const none = await importVideoFile(src('Phone.mov'), { root, bin });
+    expect(none.recordedTaps).toBe(0);
+    expect(none.project.tapsAnalyzed).toBe(false);
+    writeFileSync(src('Phone.gesture-telemetry.json'), '{ not json');
+    try {
+      const bad = await importVideoFile(src('Phone.mov'), { root, bin });
+      expect(bad.recordedTaps).toBe(0);
+      expect(bad.project.taps).toEqual([]);
+    } finally {
+      rmSync(src('Phone.gesture-telemetry.json'));
+    }
   });
 
   it('converts ProRes to H.264 + AAC, with progress', async () => {

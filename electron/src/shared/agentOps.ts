@@ -16,6 +16,7 @@ import { suggestChapters } from './chapters';
 import { isFillerWord, planSmartCuts, type TimeRange } from './editcuts';
 import { PRESETS } from './exportPresets';
 import { BACKDROPS } from './backdrops';
+import { WALLPAPERS, builtinWallpaperPath } from './wallpaperLibrary';
 import { DEVICES } from './devices';
 import { pendingWaits, speedUpRanges, waitCore, LAYOUT_CHOICES } from './mobileProject';
 import { remapProject } from './remap';
@@ -731,7 +732,7 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
       return { project: { ...p, style: { ...p.style, ...patch } }, note: `style ${JSON.stringify(patch)}` };
     }
     case 'background': {
-      // {swatch:"ocean"} | {solid:"#hex"} | {gradient:{startHex,endHex,angle}} | {image:"/path", blur?} | {blurred:true}
+      // {swatch:"ocean"} | {solid:"#hex"} | {gradient:{startHex,endHex,angle}} | {image:"/path", blur?} | {wallpaper:"azure", blur?} | {blurred:true}
       if (o.blurred === true) return { project: { ...p, layout: { ...p.layout, background: 'blurred' } }, note: 'background: blurred recording' };
       let bg: Background;
       if (typeof o.swatch === 'string') {
@@ -743,7 +744,11 @@ export function applyOp(p: Project, o: EditOp, ctx: ApplyContext = {}): OpResult
         const g = o.gradient as { startHex: string; endHex: string; angle?: number };
         bg = { kind: 'gradient', startHex: g.startHex, endHex: g.endHex, angle: g.angle ?? 135 };
       } else if (typeof o.image === 'string') bg = { kind: 'imageFile', path: o.image, ...(typeof o.blur === 'number' ? { blur: o.blur } : {}) };
-      else throw new OpError('background: pass swatch, solid, gradient, image or blurred:true');
+      else if (typeof o.wallpaper === 'string') {
+        const w = WALLPAPERS.find((x) => x.id === (o.wallpaper as string).toLowerCase());
+        if (!w) throw new OpError(`background: wallpaper must be one of ${WALLPAPERS.map((x) => x.id).join(', ')}`);
+        bg = { kind: 'imageFile', path: builtinWallpaperPath(w.id), ...(typeof o.blur === 'number' ? { blur: o.blur } : {}) };
+      } else throw new OpError('background: pass swatch, solid, gradient, image, wallpaper or blurred:true');
       return { project: { ...p, style: { ...p.style, background: bg }, layout: { ...p.layout, background: 'style' } }, note: `background ${JSON.stringify(bg)}` };
     }
     case 'crop': {

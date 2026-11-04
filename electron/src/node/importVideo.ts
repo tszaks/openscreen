@@ -26,8 +26,9 @@ import {
   uniqueBundleName,
   type ImportConversion,
 } from '../shared/importVideo';
+import { gestureTelemetryPath } from '../shared/gestureTelemetry';
 import type { Project } from '../shared/types';
-import { ffmpegPath, probeMedia } from './media';
+import { analyzeTapsInFile, ffmpegPath, probeMedia, readRecordedTaps } from './media';
 
 export interface ImportProgress {
   /** 'copy': the file is being copied in; 'convert': ffmpeg is re-encoding it. */
@@ -41,6 +42,8 @@ export interface ImportResult {
   project: Project;
   conversion: ImportConversion;
   hasAudio: boolean;
+  /** Taps read from the recording's gesture telemetry (0 when it had none). */
+  recordedTaps: number;
 }
 
 /** The error an import rejects with when it was cancelled. */
@@ -182,14 +185,25 @@ export async function importVideoFile(
     if (!out.width || !out.height || !out.duration) throw new Error(`The converted copy of ${fileName} doesn't play.`);
     const size = conversion === 'none' ? shown : displayedSize(out.width, out.height, out.rotation);
     const name = opts.name?.trim() || importName(source);
-    const project = importedProject({ name, videoFile, size, duration: out.duration });
+    const imported = importedProject({ name, videoFile, size, duration: out.duration });
+    // Real touches from the capture beat guessing them from pixels. A copy of the
+    // file goes in the bundle, so tap analysis (now, and after a Reset) uses it;
+    // the still stretches polish cuts still come from the pixels.
+    const taps = readRecordedTaps(source, out.duration);
+    let project: Project = imported;
+    if (taps) {
+      copyFileSync(gestureTelemetryPath(source), gestureTelemetryPath(dest));
+      const found = await analyzeTapsInFile(dest, bin, opts.signal).catch(() => ({ taps, deadTime: project.waits }));
+      project = { ...imported, taps: found.taps, waits: found.deadTime, tapsAnalyzed: true };
+    }
+    if (opts.signal?.aborted) throw new ImportCancelled();
     writeFileSync(join(staging, 'cursor.json'), JSON.stringify({ samples: [] }, null, 2));
     writeFileSync(join(staging, 'keystrokes.json'), JSON.stringify({ keys: [] }, null, 2));
     writeFileSync(join(staging, 'project.json'), JSON.stringify(project, null, 2));
     const dir = join(opts.root, uniqueBundleName(name, (folder) => existsSync(join(opts.root, folder))));
     renameSync(staging, dir);
     staging = null;
-    return { dir, project, conversion, hasAudio: out.hasAudio };
+    return { dir, project, conversion, hasAudio: out.hasAudio, recordedTaps: taps?.length ?? 0 };
   } catch (e) {
     if (e instanceof ImportCancelled || (e as Error)?.name === 'AbortError' || opts.signal?.aborted) throw new ImportCancelled();
     throw new Error(importErrorMessage(e, fileName));

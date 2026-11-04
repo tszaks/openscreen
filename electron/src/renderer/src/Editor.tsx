@@ -49,6 +49,8 @@ import { useFilmstrip } from './useFilmstrip';
 import { filmstripTile, filmstripTimes, slotFrame, tilesForClip, visibleSlots } from '../../shared/filmstrip';
 import { BACKDROPS, BACKDROP_GROUPS, SOLID_SWATCHES, backgroundCss, isCustomSolid, normalizeHex, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
+import { WALLPAPERS, builtinWallpaperPath } from '../../shared/wallpaperLibrary';
+import { fileUrl } from '../../shared/fileUrl';
 import {
   INSPECTOR_DEFAULT,
   ZOOM_STEP,
@@ -253,6 +255,19 @@ export function Editor({
   };
   const [duration, setDuration] = useState(project.recording.duration || 0);
   const [status, setStatus] = useState('');
+  // Built-in wallpaper files, resolved once by the main process for the tiles.
+  const [wallpaperThumbs, setWallpaperThumbs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let live = true;
+    void Promise.all(
+      WALLPAPERS.map(async (w) => [w.id, await api.prepareBackground(builtinWallpaperPath(w.id)).catch(() => null)] as const),
+    ).then((found) => {
+      if (live) setWallpaperThumbs(Object.fromEntries(found.flatMap(([id, path]) => (path ? [[id, fileUrl(path)]] : []))));
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
   // Zoom and audio settings live in the project, so they save and undo.
   const { autofocus: autofocusOn, dwell: dwellOn, depth: zoomDepth, motionEvents: motionEv } = proj.zoom;
   const { clickSounds: clickSfx, voiceCleanup } = proj.audio;
@@ -2266,6 +2281,19 @@ export function Editor({
     seekOutput(0);
   };
   const blurredBg = isPhone && proj.layout.background === 'blurred';
+  const imageBgPath = !blurredBg && proj.style.background.kind === 'imageFile' ? proj.style.background.path : null;
+  /** Use `path` as the background once it has loaded; say so when it can't be shown. */
+  const useImageBackground = async (path: string) => {
+    if (!(await backgroundReady(path))) {
+      setStatus("Couldn't open that image. Use a PNG, JPEG, WebP or HEIC file.");
+      return;
+    }
+    setProj((p) => ({
+      ...p,
+      style: { ...p.style, background: { kind: 'imageFile', path, ...(p.style.background.kind === 'imageFile' && p.style.background.blur ? { blur: p.style.background.blur } : {}) } },
+      layout: { ...p.layout, background: 'style' },
+    }));
+  };
 
   const importCaptionsButton = (variant: 'secondary' | 'ghost', size: 'sm' | 'md') => (
     <label className={`btn btn-${variant} btn-${size}`}>
@@ -2299,6 +2327,25 @@ export function Editor({
           />
         </Section>
       )}
+      <Section title="Wallpaper">
+        <div className="tiles">
+          {WALLPAPERS.map((w) => {
+            const path = builtinWallpaperPath(w.id);
+            return (
+              <button
+                key={w.id}
+                type="button"
+                title={w.name}
+                className={`tile${imageBgPath === path ? ' selected' : ''}`}
+                onClick={() => void useImageBackground(path)}
+              >
+                <span className="tile-swatch wallpaper" style={wallpaperThumbs[w.id] ? { backgroundImage: `url("${wallpaperThumbs[w.id]}")` } : undefined} />
+                <span className="tile-label">{w.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Section>
       {BACKDROP_GROUPS.map((group) => (
         <Section key={group.id} title={group.title}>
           <div className="tiles">
@@ -2367,21 +2414,15 @@ export function Editor({
           )}
           <button
             type="button"
-            title="Custom background image"
-            className="tile"
+            title="Use your own image as the background"
+            className={`tile${imageBgPath && !imageBgPath.startsWith('builtin:') ? ' selected' : ''}`}
             onClick={async () => {
               const path = await api.pickBackground();
-              if (path) {
-                setProj((p) => ({
-                  ...p,
-                  style: { ...p.style, background: { kind: 'imageFile', path } },
-                  layout: { ...p.layout, background: 'style' },
-                }));
-              }
+              if (path) await useImageBackground(path);
             }}
           >
-            <span className="tile-swatch tile-text">Image…</span>
-            <span className="tile-label">Choose</span>
+            <span className="tile-swatch tile-text">Upload…</span>
+            <span className="tile-label">Your image</span>
           </button>
           <button
             type="button"
@@ -2405,7 +2446,7 @@ export function Editor({
             <span className="tile-label">Wallpaper</span>
           </button>
         </div>
-        {proj.style.background.kind === 'imageFile' && !blurredBg && (
+        {imageBgPath && (
           <ScrubField
             slider
             label="Image blur"
@@ -2413,7 +2454,7 @@ export function Editor({
             max={60}
             step={1}
             unit="px"
-            value={proj.style.background.blur ?? 0}
+            value={proj.style.background.kind === 'imageFile' ? (proj.style.background.blur ?? 0) : 0}
             onCommit={sealHistory}
             onChange={(v) =>
               setProj((p) => ({
