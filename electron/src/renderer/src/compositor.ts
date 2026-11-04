@@ -74,6 +74,10 @@ export function backgroundReady(path: string): Promise<boolean> {
   return backgroundImage(path).ready;
 }
 
+export function forgetBackground(path: string): void {
+  bgImages.delete(path);
+}
+
 export interface FrameInputs {
   frame: CanvasImageSource; // source frame at this output time
   cursor: Point | null; // normalized position, or null to hide

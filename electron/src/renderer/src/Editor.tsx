@@ -11,7 +11,7 @@ import { History } from '../../shared/history';
 import { ToastQueue } from '../../shared/toasts';
 import { UndoableEdits } from '../../shared/undoableEdits';
 import { Toasts } from './components/Toasts';
-import { CanvasCompositor, backgroundReady } from './compositor';
+import { CanvasCompositor, backgroundReady, forgetBackground } from './compositor';
 import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
 import {
@@ -50,7 +50,7 @@ import { filmstripTile, filmstripTimes, slotFrame, tilesForClip, visibleSlots } 
 import { BACKDROPS, BACKDROP_GROUPS, SOLID_SWATCHES, backgroundCss, isCustomSolid, normalizeHex, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
 import { WALLPAPERS, builtinWallpaperPath } from '../../shared/wallpaperLibrary';
-import type { LibraryImage } from '../../shared/imageLibrary';
+import { backgroundAfterLibraryRemoval, type LibraryImage } from '../../shared/imageLibrary';
 import { fileUrl } from '../../shared/fileUrl';
 import {
   INSPECTOR_DEFAULT,
@@ -2391,8 +2391,14 @@ export function Editor({
               onContextMenu={async (e) => {
                 e.preventDefault();
                 if (!window.confirm(`Remove "${img.label}" from your images? Projects that use it lose this background.`)) return;
-                await api.removeFromLibrary(img.name).catch(() => setStatus(`Couldn't remove ${img.label}`));
-                await refreshLibrary();
+                try {
+                  await api.removeFromLibrary(img.name);
+                  forgetBackground(img.path);
+                  setProj((p) => ({ ...p, style: { ...p.style, background: backgroundAfterLibraryRemoval(p.style.background, img.path) } }));
+                  await refreshLibrary();
+                } catch {
+                  setStatus(`Couldn't remove ${img.label}`);
+                }
               }}
             >
               <span className="tile-swatch wallpaper" style={img.thumb ? { backgroundImage: `url("${img.thumb}")` } : undefined} />

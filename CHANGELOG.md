@@ -4,7 +4,7 @@ All notable changes to OpenScreen are listed here. The format follows [Keep a Ch
 
 Versions 1.5.0 through 1.5.2 are local builds with no tag or GitHub release yet. The latest published release is 1.4.1.
 
-## [1.5.2] - 2026-11-04
+## [Unreleased]
 
 ### Added
 - A wallpaper library: 20 built-in wallpapers in the Background panel, with a Blur slider. Agents set one with the `background` op (`wallpaper: <id>`).

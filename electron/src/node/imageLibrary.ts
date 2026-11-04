@@ -6,8 +6,9 @@
 // throwaway one), so the editor and the agent CLI see the same images.
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { homedir, tmpdir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import type { LibraryImage } from '../shared/imageLibrary';
 
@@ -26,6 +27,20 @@ export const libraryLabel = (name: string) => basename(name, extname(name)).repl
 /** A safe file stem from an original name: letters, digits, spaces, `-` and `_`. */
 const safeStem = (file: string) =>
   basename(file, extname(file)).replace(/[^\p{L}\p{N} _-]+/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Image';
+
+/** Decode before keeping an upload. macOS sips also supports HEIC/HEIF. */
+function validateImage(source: string) {
+  const scratch = mkdtempSync(join(tmpdir(), 'openscreen-image-'));
+  const decoded = join(scratch, 'decoded.png');
+  try {
+    execFileSync('/usr/bin/sips', ['-s', 'format', 'png', source, '--out', decoded], { timeout: 30_000, stdio: 'pipe' });
+    if (!existsSync(decoded) || statSync(decoded).size === 0) throw new Error('no image');
+  } catch {
+    throw new Error('This image cannot be read. Choose a PNG, JPEG, WebP, GIF or HEIC image.');
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
 
 /** Every image in the library, newest first. */
 export function listLibrary(dir = imageLibraryDir()): LibraryImage[] {
@@ -48,6 +63,8 @@ export function addToLibrary(source: string, dir = imageLibraryDir()): LibraryIm
   const src = resolve(source);
   if (!isImage(src)) throw new Error(`not an image OpenScreen can use (${LIBRARY_EXTENSIONS.join(', ')}): ${src}`);
   if (!existsSync(src)) throw new Error(`no such file: ${src}`);
+  if (!statSync(src).isFile()) throw new Error('Choose an image file, not a folder.');
+  validateImage(src);
   mkdirSync(dir, { recursive: true });
   if (resolve(dir) === resolve(src, '..')) {
     const name = basename(src);
