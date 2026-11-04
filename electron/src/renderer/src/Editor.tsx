@@ -2371,6 +2371,9 @@ export function Editor({
               if (!picked) return;
               try {
                 const saved = await api.addToLibrary(picked);
+                // Re-uploading restores the same path; an Undo may have cached
+                // a failed load while that library file was removed.
+                forgetBackground(saved.path);
                 await refreshLibrary();
                 await useImageBackground(saved.path);
               } catch {
