@@ -6,6 +6,11 @@ Versions 1.5.0 and 1.5.1 were merged to `main` but have no tag or GitHub release
 
 ## [Unreleased]
 
+### Added
+- A wallpaper library: 20 built-in wallpapers in the Background panel, with a Blur slider. Agents set one with the `background` op (`wallpaper: <id>`).
+- Upload… in the Background panel uses your own image as the wallpaper.
+- Importing an agent-device capture keeps the real taps, long presses and swipes it recorded, instead of guessing them from the pixels. Reset gets the same taps back.
+
 ## [1.5.1] - 2026-10-15
 
 ### Added

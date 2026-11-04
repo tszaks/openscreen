@@ -270,6 +270,11 @@ describe('importVideoFile', () => {
     }
   });
 
+  it('stops tap analysis when the import is cancelled', async () => {
+    const r = await importVideoFile(src('Phone.mov'), { root, bin });
+    await expect(analyzeTapsInFile(join(r.dir, 'screen.mov'), bin, AbortSignal.abort())).rejects.toThrow();
+  });
+
   it('keeps an empty recorded track empty, instead of guessing taps from pixels', async () => {
     writeFileSync(src('Phone.gesture-telemetry.json'), JSON.stringify({ version: 1, events: [{ kind: 'pinch', tMs: 100 }] }));
     try {

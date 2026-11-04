@@ -187,7 +187,7 @@ export function readRecordedTaps(videoFile: string, duration: number): TapSugges
  * recorded touches when the bundle has them (an imported agent-device capture),
  * so a re-run (Reset, Redetect, polish) gets the real touches back.
  */
-export async function analyzeTapsInFile(file: string, bin = ffmpegPath()): Promise<{ taps: TapSuggestion[]; deadTime: WaitRange[] }> {
+export async function analyzeTapsInFile(file: string, bin = ffmpegPath(), signal?: AbortSignal): Promise<{ taps: TapSuggestion[]; deadTime: WaitRange[] }> {
   const banner = await probeBanner(file, bin);
   const size = parseFfmpegVideoSize(banner);
   if (!size) throw new Error('could not read the video size');
@@ -197,7 +197,8 @@ export async function analyzeTapsInFile(file: string, bin = ffmpegPath()): Promi
   const raw = await new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let err = '';
-    const ff = spawn(bin, tapAnalysisFfmpegArgs(file, { fps }));
+    // An abort (Cancel during import) kills ffmpeg, and the promise rejects.
+    const ff = spawn(bin, tapAnalysisFfmpegArgs(file, { fps }), { signal });
     ff.stdout.on('data', (c: Buffer) => chunks.push(c));
     ff.stderr.on('data', (c: Buffer) => (err += c.toString()));
     ff.on('error', reject);

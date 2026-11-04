@@ -193,7 +193,7 @@ export async function importVideoFile(
     let project: Project = imported;
     if (taps) {
       copyFileSync(gestureTelemetryPath(source), gestureTelemetryPath(dest));
-      const found = await analyzeTapsInFile(dest, bin).catch(() => ({ taps, deadTime: project.waits }));
+      const found = await analyzeTapsInFile(dest, bin, opts.signal).catch(() => ({ taps, deadTime: project.waits }));
       project = { ...imported, taps: found.taps, waits: found.deadTime, tapsAnalyzed: true };
     }
     if (opts.signal?.aborted) throw new ImportCancelled();
