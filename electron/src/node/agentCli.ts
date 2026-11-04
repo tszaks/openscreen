@@ -787,6 +787,7 @@ async function importCmd(args: string[]) {
     video: rec.screenVideoFile,
     converted: r.conversion,
     hasAudio: r.hasAudio,
+    recordedTaps: r.recordedTaps,
     next: `openscreen-agent review "${r.dir}"`,
   };
 }

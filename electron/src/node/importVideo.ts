@@ -8,7 +8,7 @@
 // a half-made project behind. The original file is only ever read.
 
 import { spawn } from 'node:child_process';
-import { closeSync, constants, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -26,6 +26,8 @@ import {
   uniqueBundleName,
   type ImportConversion,
 } from '../shared/importVideo';
+import { gestureTelemetryPath, tapsFromGestureTelemetry } from '../shared/gestureTelemetry';
+import type { TapSuggestion } from '../shared/taps';
 import type { Project } from '../shared/types';
 import { ffmpegPath, probeMedia } from './media';
 
@@ -41,6 +43,8 @@ export interface ImportResult {
   project: Project;
   conversion: ImportConversion;
   hasAudio: boolean;
+  /** Taps read from the recording's gesture telemetry (0 when it had none). */
+  recordedTaps: number;
 }
 
 /** The error an import rejects with when it was cancelled. */
@@ -63,6 +67,21 @@ function removeStaleStaging(root: string) {
       if (Date.now() - statSync(dir).mtimeMs > 24 * 3600 * 1000) rmSync(dir, { recursive: true, force: true });
     }
   } catch {}
+}
+
+/**
+ * The touches agent-device recorded next to `source`, or null when there is
+ * no telemetry file (or it can't be read; the import goes on without it).
+ */
+function recordedTaps(source: string, duration: number): TapSuggestion[] | null {
+  const file = gestureTelemetryPath(source);
+  if (!existsSync(file)) return null;
+  try {
+    const taps = tapsFromGestureTelemetry(JSON.parse(readFileSync(file, 'utf8')), duration);
+    return taps && taps.length ? taps : null;
+  } catch {
+    return null;
+  }
 }
 
 const freeBytes = (dir: string) => {
@@ -182,14 +201,17 @@ export async function importVideoFile(
     if (!out.width || !out.height || !out.duration) throw new Error(`The converted copy of ${fileName} doesn't play.`);
     const size = conversion === 'none' ? shown : displayedSize(out.width, out.height, out.rotation);
     const name = opts.name?.trim() || importName(source);
-    const project = importedProject({ name, videoFile, size, duration: out.duration });
+    const imported = importedProject({ name, videoFile, size, duration: out.duration });
+    // Real touches from the capture beat guessing them from pixels, so tap analysis is skipped.
+    const taps = recordedTaps(source, out.duration);
+    const project: Project = taps ? { ...imported, taps, tapsAnalyzed: true } : imported;
     writeFileSync(join(staging, 'cursor.json'), JSON.stringify({ samples: [] }, null, 2));
     writeFileSync(join(staging, 'keystrokes.json'), JSON.stringify({ keys: [] }, null, 2));
     writeFileSync(join(staging, 'project.json'), JSON.stringify(project, null, 2));
     const dir = join(opts.root, uniqueBundleName(name, (folder) => existsSync(join(opts.root, folder))));
     renameSync(staging, dir);
     staging = null;
-    return { dir, project, conversion, hasAudio: out.hasAudio };
+    return { dir, project, conversion, hasAudio: out.hasAudio, recordedTaps: taps?.length ?? 0 };
   } catch (e) {
     if (e instanceof ImportCancelled || (e as Error)?.name === 'AbortError' || opts.signal?.aborted) throw new ImportCancelled();
     throw new Error(importErrorMessage(e, fileName));

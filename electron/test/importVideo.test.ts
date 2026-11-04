@@ -243,6 +243,40 @@ describe('importVideoFile', () => {
     expect(r.project.recording.screenVideoFile).toBe('screen.mov');
   });
 
+  it('keeps the taps agent-device recorded next to the video', async () => {
+    const events = [
+      { kind: 'tap', tMs: 600, x: 36, y: 808, referenceWidth: 402, referenceHeight: 874 },
+      { kind: 'tap', tMs: 200, x: 364, y: 96, referenceWidth: 402, referenceHeight: 874 },
+    ];
+    writeFileSync(src('Phone.gesture-telemetry.json'), JSON.stringify({ version: 1, events }));
+    try {
+      const r = await importVideoFile(src('Phone.mov'), { root, bin });
+      expect(r.recordedTaps).toBe(2);
+      const saved = JSON.parse(readFileSync(join(r.dir, 'project.json'), 'utf8'));
+      expect(saved.tapsAnalyzed).toBe(true);
+      expect(saved.taps.map((t: { t: number }) => t.t)).toEqual([0.2, 0.6]);
+      expect(saved.taps[0]).toMatchObject({ kind: 'tap', confidence: 1 });
+      expect(saved.taps[0].x).toBeCloseTo(364 / 402, 5);
+      expect(saved.taps[0].y).toBeCloseTo(96 / 874, 5);
+    } finally {
+      rmSync(src('Phone.gesture-telemetry.json'));
+    }
+  });
+
+  it('imports without taps when there is no telemetry, or it is unreadable', async () => {
+    const none = await importVideoFile(src('Phone.mov'), { root, bin });
+    expect(none.recordedTaps).toBe(0);
+    expect(none.project.tapsAnalyzed).toBe(false);
+    writeFileSync(src('Phone.gesture-telemetry.json'), '{ not json');
+    try {
+      const bad = await importVideoFile(src('Phone.mov'), { root, bin });
+      expect(bad.recordedTaps).toBe(0);
+      expect(bad.project.taps).toEqual([]);
+    } finally {
+      rmSync(src('Phone.gesture-telemetry.json'));
+    }
+  });
+
   it('converts ProRes to H.264 + AAC, with progress', async () => {
     const seen: string[] = [];
     const r = await importVideoFile(src('Master.mov'), { root, bin, onProgress: (p) => seen.push(p.stage) });
