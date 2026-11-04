@@ -1515,6 +1515,9 @@ canvas.preview.cropping {
     box-shadow var(--t2) var(--ease),
     transform var(--t2) var(--ease);
 }
+.tile-swatch.wallpaper {
+  background: var(--control) center / cover no-repeat;
+}
 .tile-text {
   background: var(--control);
   font-size: var(--text-callout);

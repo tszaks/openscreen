@@ -115,6 +115,12 @@ describe('agent ops: style, phone, set', () => {
     expect(p.style.cornerRadius).toBe(40);
   });
 
+  it('background wallpaper from the built-in library', () => {
+    const p = applyOp(desktop(), { op: 'background', wallpaper: 'Azure', blur: 12 }, ctx).project;
+    expect(p.style.background).toEqual({ kind: 'imageFile', path: 'builtin:azure', blur: 12 });
+    expect(() => applyOp(desktop(), { op: 'background', wallpaper: 'nope' }, ctx)).toThrow(/wallpaper must be one of/);
+  });
+
   it('taps and waits', () => {
     let p = applyOp(phone(), { op: 'addTap', t: 3, x: 0.2, y: 0.8 }, ctx).project;
     p = applyOp(p, { op: 'moveTap', index: 0, x: 0.5 }, ctx).project;

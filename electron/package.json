@@ -45,6 +45,10 @@
       {
         "from": "dist/native/ios-capture",
         "to": "native/ios-capture"
+      },
+      {
+        "from": "resources/wallpapers",
+        "to": "wallpapers"
       }
     ],
     "publish": [

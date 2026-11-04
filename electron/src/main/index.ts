@@ -31,6 +31,7 @@ import { ImportCancelled, importVideoFile } from '../node/importVideo';
 import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
 import { getPreset, type PresetId } from '../shared/exportPresets';
 import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
+import { builtinWallpaperId } from '../shared/wallpaperLibrary';
 import {
   alignToVideoStart,
   cursorModeFor,
@@ -999,6 +1000,14 @@ app.whenReady().then(() => {
   // Chromium can't decode HEIC (the usual macOS wallpaper format): hand the
   // renderer a JPEG copy made with sips.
   ipcMain.handle('background:prepare', async (_e, path: string) => {
+    // A wallpaper that ships with the app: `builtin:<id>` → its file.
+    if (path.startsWith('builtin:')) {
+      const id = builtinWallpaperId(path);
+      if (!id) return null;
+      const dir = app.isPackaged ? join(process.resourcesPath, 'wallpapers') : join(__dirname, '../../resources/wallpapers');
+      const file = join(dir, `${id}.jpg`);
+      return existsSync(file) ? file : null;
+    }
     if (!/\.hei[cf]$/i.test(path)) return path;
     const { execFile } = await import('node:child_process');
     const out = await backgroundCachePath(path);
