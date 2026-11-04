@@ -8,6 +8,9 @@ import { Timeline, toOutputTime } from '../../shared/timeline';
 import { locate, mediaDuration, playbackTick, type PlaybackTick } from '../../shared/playback';
 import { remapProject, remapTime } from '../../shared/remap';
 import { History } from '../../shared/history';
+import { ToastQueue } from '../../shared/toasts';
+import { UndoableEdits } from '../../shared/undoableEdits';
+import { Toasts } from './components/Toasts';
 import { CanvasCompositor, backgroundReady } from './compositor';
 import { parseCaptions, toSrt } from '../../shared/captions';
 import { keysAt } from '../../shared/keystrokes';
@@ -220,6 +223,27 @@ export function Editor({
       window.removeEventListener('pointerup', seal, true);
     };
   }, []);
+  // Undo toasts. An announced edit is one history step and gets a toast whose
+  // Undo goes through the same history as Cmd+Z, and only while that step is
+  // still the newest one.
+  const toasts = useMemo(() => new ToastQueue(3), []);
+  const announced = useMemo(
+    () =>
+      new UndoableEdits<Project>({
+        history: historyRef.current,
+        toasts,
+        current: () => projRef.current,
+        restore: (prev) => {
+          applyingHistory.current = true;
+          setProj(prev);
+        },
+        now: () => performance.now(),
+      }),
+    [toasts],
+  );
+  /** Make an edit one undo step and say what happened, with Undo. */
+  const announce = (message: string, edit: () => void) => announced.run(message, edit);
+
   // Output time, always. The video element only knows source time.
   const [playhead, setPlayhead] = useState(0);
   const playheadRef = useRef(0);
@@ -275,7 +299,6 @@ export function Editor({
   const saveTracker = useRef(new SaveTracker(proj));
   // Where to go once the unsaved-changes confirm is answered.
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
-  const [confirmReset, setConfirmReset] = useState(false);
   // The title's inline rename field, while open: its draft text.
   const [renameDraft, setRenameDraft] = useState<string | null>(null);
   // Escape closes the field, and its blur must not then save the draft.
@@ -1412,7 +1435,7 @@ export function Editor({
   const deleteSelectedClip = () => deleteClip(selectedClip);
   const deleteClip = (id: string | null) => {
     if (!id || proj.clips.length <= 1) return;
-    editClips(proj.clips.filter((c) => c.id !== id));
+    announce('Clip deleted', () => editClips(proj.clips.filter((c) => c.id !== id)));
     setSelectedClip(null);
   };
 
@@ -1447,12 +1470,14 @@ export function Editor({
 
   /** Remove source-time ranges from the timeline; returns seconds removed.
    *  Captions, words and the rest follow the cut via `editClips`. */
-  const cutSourceRanges = (ranges: { start: number; end: number }[]) => {
+  const cutSourceRanges = (ranges: { start: number; end: number }[], said: string) => {
     const tl = new Timeline(proj.recording.duration, proj.clips.map((c) => ({ ...c })));
     const removed = tl.cutRanges(ranges);
     if (removed > 0) {
-      editClips(tl.clips);
-      setWordSel(null);
+      announce(said, () => {
+        editClips(tl.clips);
+        setWordSel(null);
+      });
     }
     return removed;
   };
@@ -1506,9 +1531,9 @@ export function Editor({
   const applySmartCuts = () => {
     const sel = (smartCuts ?? []).filter((p) => p.on);
     setSmartCuts(null);
+    setStatus(''); // "N cuts proposed, review & apply" is done; the toast says what was cut
     if (!sel.length) return;
-    const removed = cutSourceRanges(sel);
-    setStatus(`cut ${sel.length} span(s), ${removed.toFixed(1)}s removed — ⌘Z to undo`);
+    cutSourceRanges(sel, `${sel.length} cut${sel.length === 1 ? '' : 's'}`);
   };
 
   /** Proposals live in source time; display them in output-time coords. */
@@ -1534,8 +1559,8 @@ export function Editor({
       setStatus('selection already cut');
       return;
     }
-    const removed = cutSourceRanges([{ start: s, end: e }]);
-    setStatus(removed ? `cut “${sel.map((w) => w.text).join(' ')}” (${removed.toFixed(1)}s)` : 'nothing cut');
+    const removed = cutSourceRanges([{ start: s, end: e }], 'Words cut');
+    if (!removed) setStatus('nothing cut');
   };
 
   const cutCue = (cue: { start: number; end: number }) => {
@@ -1545,8 +1570,8 @@ export function Editor({
       setStatus('cue already cut');
       return;
     }
-    const removed = cutSourceRanges([{ start: s, end: e }]);
-    setStatus(removed ? `cut ${removed.toFixed(1)}s` : 'nothing cut');
+    const removed = cutSourceRanges([{ start: s, end: e }], 'Caption cut');
+    if (!removed) setStatus('nothing cut');
   };
 
   const undo = () => {
@@ -1657,7 +1682,8 @@ export function Editor({
           if (!exporting) splitAtPlayhead();
           return;
         case 'resetProject':
-          if (!exporting) setConfirmReset(true);
+          // Not behind a blocking sheet (the conflict sheet or the save prompt).
+          if (!exporting && !externalChange) doReset();
           return;
       }
     };
@@ -1752,8 +1778,7 @@ export function Editor({
       editClips(speedUpRanges(proj.clips, waitCores, 3));
       setStatus(`${waitCores.length} wait${waitCores.length === 1 ? '' : 's'} sped up 3×, ${(secs * (2 / 3)).toFixed(1)}s saved`);
     } else {
-      const removed = cutSourceRanges(waitCores);
-      setStatus(`${waitCores.length} wait${waitCores.length === 1 ? '' : 's'} cut, ${removed.toFixed(1)}s removed`);
+      cutSourceRanges(waitCores, `${waitCores.length} pause${waitCores.length === 1 ? '' : 's'} cut`);
     }
   };
 
@@ -2234,17 +2259,15 @@ export function Editor({
 
   /** Everything back to the raw take except the backdrop, as one undo step. */
   const doReset = () => {
-    setConfirmReset(false);
-    historyRef.current.seal();
-    setProj((p) => {
-      const fresh = resetProject(p);
-      // "Just me" goes back to its own starting look, keeping the backdrop.
-      if (!isCameraProject(p)) return fresh;
-      const cam = cameraDefaults(fresh);
-      return { ...cam, style: { ...cam.style, background: fresh.style.background } };
-    });
-    // Sealed after the change lands, so a quick next edit can't merge into it.
-    requestAnimationFrame(() => historyRef.current.seal());
+    announce('Reset', () =>
+      setProj((p) => {
+        const fresh = resetProject(p);
+        // "Just me" goes back to its own starting look, keeping the backdrop.
+        if (!isCameraProject(p)) return fresh;
+        const cam = cameraDefaults(fresh);
+        return { ...cam, style: { ...cam.style, background: fresh.style.background } };
+      }),
+    );
     setSelectedClip(null);
     setSelectedTap(null);
     setSelectedAudio(null);
@@ -2256,7 +2279,6 @@ export function Editor({
     tlZoomRef.current = 1;
     movePlayhead(0);
     seekOutput(0);
-    setStatus('Project reset to the original recording · ⌘Z to undo');
   };
   const blurredBg = isPhone && proj.layout.background === 'blurred';
   const imageBgPath = !blurredBg && proj.style.background.kind === 'imageFile' ? proj.style.background.path : null;
@@ -3002,10 +3024,12 @@ export function Editor({
                   label="Delete"
                   className="sm"
                   onClick={() =>
-                    setProj((p) => ({
-                      ...p,
-                      annotations: p.annotations.filter((x) => x.id !== a.id),
-                    }))
+                    announce('Text deleted', () =>
+                      setProj((p) => ({
+                        ...p,
+                        annotations: p.annotations.filter((x) => x.id !== a.id),
+                      })),
+                    )
                   }
                 >
                   {Icon.close(12)}
@@ -3323,7 +3347,7 @@ export function Editor({
             <IconButton label="Redo (⇧⌘Z)" onClick={redo}>{Icon.redo(15)}</IconButton>
           </span>
           <span className="tb-group">
-            <Button size="sm" variant="ghost" disabled={exporting} onClick={() => setConfirmReset(true)} title="Undo every edit, keeping the recording and backdrop">
+            <Button size="sm" variant="ghost" disabled={exporting} onClick={doReset} title="Undo every edit, keeping the recording and backdrop">
               Reset
             </Button>
           </span>
@@ -3400,6 +3424,7 @@ export function Editor({
 
       <main className="ed-stage">
         <div className="stage-canvas">
+          <Toasts queue={toasts} blocked={!!externalChange || !!pendingLeave} />
           <div className="stage-inner">
             <canvas
               ref={canvasRef}
@@ -3786,26 +3811,6 @@ export function Editor({
           }
         >
           <p>Something outside OpenScreen (an agent, a text editor) changed this project, and you have unsaved edits. Load the version on disk, or keep yours and overwrite it?</p>
-        </Sheet>
-      )}
-      {confirmReset && (
-        <Sheet
-          title={`Reset ${bundleName}?`}
-          onCancel={() => setConfirmReset(false)}
-          actions={
-            <>
-              <div className="spacer" />
-              <Button autoFocus onClick={() => setConfirmReset(false)}>Cancel</Button>
-              <Button variant="danger" onClick={doReset}>
-                Reset Project
-              </Button>
-            </>
-          }
-        >
-          <p>
-            Removes every edit: cuts, speed changes, zooms, taps, captions, text, music, crop and frame
-            settings. The original recording and your backdrop stay. You can undo this with ⌘Z.
-          </p>
         </Sheet>
       )}
       {pendingLeave && (
