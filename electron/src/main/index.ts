@@ -32,6 +32,7 @@ import { buildExportArgs, ffmpegFailure } from '../shared/exportArgs';
 import { getPreset, type PresetId } from '../shared/exportPresets';
 import { WALLPAPER_JXA, planWallpaper } from '../shared/wallpaper';
 import { builtinWallpaperId } from '../shared/wallpaperLibrary';
+import { addToLibrary, listLibrary, removeFromLibrary } from '../node/imageLibrary';
 import {
   alignToVideoStart,
   cursorModeFor,
@@ -951,6 +952,11 @@ app.whenReady().then(() => {
     });
     return picked.canceled ? null : picked.filePaths[0];
   });
+
+  // "Your images": uploaded backgrounds, kept for reuse (node/imageLibrary.ts).
+  ipcMain.handle('library:list', () => listLibrary());
+  ipcMain.handle('library:add', (_e, path: string) => addToLibrary(path));
+  ipcMain.handle('library:remove', (_e, name: string) => removeFromLibrary(name));
 
   // Where converted backgrounds live: a JPEG per source file, keyed by path +
   // mtime so an edited file converts again.

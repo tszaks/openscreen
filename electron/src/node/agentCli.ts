@@ -22,6 +22,7 @@ import { itemSpan } from '../shared/audioTracks';
 import { phoneDevice, phoneLayerOn } from '../shared/phoneLayer';
 import { layerOrder } from '../shared/canvasLayers';
 import { importVideoFile } from './importVideo';
+import { addToLibrary, imageLibraryDir, listLibrary, removeFromLibrary } from './imageLibrary';
 import { analyzeTapsInFile, bundleAudioPath, detectSilences, ffmpegPath, probeAudioDuration, ffmpegRun, ffmpegStderr, parseWhisperJson, probeMedia, transcribeBundle, whisperCli } from './media';
 
 // ---------------------------------------------------------------------------
@@ -792,6 +793,31 @@ async function importCmd(args: string[]) {
   };
 }
 
+/** `library [list] | add <image> | remove <name>`: "Your images", the editor's uploaded backgrounds. */
+function libraryCmd(args: string[]) {
+  const sub = args[0] && !args[0].startsWith('-') ? args.shift() : 'list';
+  const shown = (i: { name: string; label: string; path: string; added: number }) => ({ name: i.name, label: i.label, path: i.path, added: new Date(i.added).toISOString() });
+  try {
+    if (sub === 'list') return { ok: true, dir: imageLibraryDir(), images: listLibrary().map(shown), use: 'background {"image": "<path>"}' };
+    if (sub === 'add') {
+      const file = args.shift();
+      if (!file) throw new CliError('usage: library add <image file>', 2);
+      const img = addToLibrary(file);
+      return { ok: true, ...shown(img), next: `apply <bundle> '[{"op":"background","image":"${img.path}"}]'` };
+    }
+    if (sub === 'remove') {
+      const name = args.shift();
+      if (!name) throw new CliError('usage: library remove <name>', 2);
+      removeFromLibrary(name);
+      return { ok: true, removed: name };
+    }
+  } catch (e) {
+    if (e instanceof CliError) throw e;
+    throw new CliError((e as Error).message);
+  }
+  throw new CliError('usage: library [list] | add <image file> | remove <name>', 2);
+}
+
 // ---------------------------------------------------------------------------
 
 const HELP = {
@@ -802,6 +828,7 @@ const HELP = {
     'record stop': 'record stop  finish it and write project.json',
     'record status': 'record status',
     import: 'import <video file> [--name N]  copy (or convert) a video into a new bundle, as File > Import Video… does',
+    library: 'library [list] | add <image> | remove <name>  "Your images": uploaded backgrounds kept for reuse; use one with background {image: <path>}',
     latest: 'latest  newest bundle in the recordings folder',
     list: 'list  all bundles, newest first',
     info: 'info <bundle>  project summary: clips, captions, transcript, style, taps…',
@@ -879,6 +906,9 @@ export async function main(argv: string[]): Promise<number> {
         break;
       case 'import':
         result = await importCmd(args);
+        break;
+      case 'library':
+        result = libraryCmd(args);
         break;
       case 'record': {
         const sub = args.shift();

@@ -50,6 +50,7 @@ import { filmstripTile, filmstripTimes, slotFrame, tilesForClip, visibleSlots } 
 import { BACKDROPS, BACKDROP_GROUPS, SOLID_SWATCHES, backgroundCss, isCustomSolid, normalizeHex, sameBackground } from '../../shared/backdrops';
 import { planTapZoom } from '../../shared/autozoomTaps';
 import { WALLPAPERS, builtinWallpaperPath } from '../../shared/wallpaperLibrary';
+import type { LibraryImage } from '../../shared/imageLibrary';
 import { fileUrl } from '../../shared/fileUrl';
 import {
   INSPECTOR_DEFAULT,
@@ -268,6 +269,19 @@ export function Editor({
       live = false;
     };
   }, []);
+  // "Your images": uploads kept for reuse, with a drawable file for each tile
+  // (HEIC goes through the same JPEG conversion as a background).
+  const [libraryImages, setLibraryImages] = useState<(LibraryImage & { thumb: string | null })[]>([]);
+  const refreshLibrary = useCallback(async () => {
+    const list = await api.listLibrary().catch(() => [] as LibraryImage[]);
+    const withThumbs = await Promise.all(
+      list.map(async (i) => ({ ...i, thumb: await api.prepareBackground(i.path).then((f) => (f ? fileUrl(f) : null)).catch(() => null) })),
+    );
+    setLibraryImages(withThumbs);
+  }, []);
+  useEffect(() => {
+    void refreshLibrary();
+  }, [refreshLibrary]);
   // Zoom and audio settings live in the project, so they save and undo.
   const { autofocus: autofocusOn, dwell: dwellOn, depth: zoomDepth, motionEvents: motionEv } = proj.zoom;
   const { clickSounds: clickSfx, voiceCleanup } = proj.audio;
@@ -2346,6 +2360,47 @@ export function Editor({
           })}
         </div>
       </Section>
+      <Section title="Your Images">
+        <div className="tiles">
+          <button
+            type="button"
+            title="Add your own image. It is kept here so you can use it again."
+            className={`tile${imageBgPath && !imageBgPath.startsWith('builtin:') && !libraryImages.some((i) => i.path === imageBgPath) ? ' selected' : ''}`}
+            onClick={async () => {
+              const picked = await api.pickBackground();
+              if (!picked) return;
+              try {
+                const saved = await api.addToLibrary(picked);
+                await refreshLibrary();
+                await useImageBackground(saved.path);
+              } catch {
+                setStatus("Couldn't add that image. Use a PNG, JPEG, WebP or HEIC file.");
+              }
+            }}
+          >
+            <span className="tile-swatch tile-text">Upload…</span>
+            <span className="tile-label">Add image</span>
+          </button>
+          {libraryImages.map((img) => (
+            <button
+              key={img.name}
+              type="button"
+              title={`${img.label} · right-click to remove`}
+              className={`tile${imageBgPath === img.path ? ' selected' : ''}`}
+              onClick={() => void useImageBackground(img.path)}
+              onContextMenu={async (e) => {
+                e.preventDefault();
+                if (!window.confirm(`Remove "${img.label}" from your images? Projects that use it lose this background.`)) return;
+                await api.removeFromLibrary(img.name).catch(() => setStatus(`Couldn't remove ${img.label}`));
+                await refreshLibrary();
+              }}
+            >
+              <span className="tile-swatch wallpaper" style={img.thumb ? { backgroundImage: `url("${img.thumb}")` } : undefined} />
+              <span className="tile-label">{img.label}</span>
+            </button>
+          ))}
+        </div>
+      </Section>
       {BACKDROP_GROUPS.map((group) => (
         <Section key={group.id} title={group.title}>
           <div className="tiles">
@@ -2412,18 +2467,6 @@ export function Editor({
               <span className="tile-label">Blurred</span>
             </button>
           )}
-          <button
-            type="button"
-            title="Use your own image as the background"
-            className={`tile${imageBgPath && !imageBgPath.startsWith('builtin:') ? ' selected' : ''}`}
-            onClick={async () => {
-              const path = await api.pickBackground();
-              if (path) await useImageBackground(path);
-            }}
-          >
-            <span className="tile-swatch tile-text">Upload…</span>
-            <span className="tile-label">Your image</span>
-          </button>
           <button
             type="button"
             title="Use desktop wallpaper"
