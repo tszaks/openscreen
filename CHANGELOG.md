@@ -2,13 +2,13 @@
 
 All notable changes to OpenScreen are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and OpenScreen uses [Semantic Versioning](https://semver.org/).
 
-Versions 1.5.0 and 1.5.1 were merged to `main` but have no tag or GitHub release yet. The latest published release is 1.4.1.
+Versions 1.5.0 through 1.5.2 are local builds with no tag or GitHub release yet. The latest published release is 1.4.1.
 
 ## [Unreleased]
 
 ### Added
 - A wallpaper library: 20 built-in wallpapers in the Background panel, with a Blur slider. Agents set one with the `background` op (`wallpaper: <id>`).
-- Upload… in the Background panel uses your own image as the wallpaper.
+- Your Images in the Background panel: Upload… keeps your image there, so you can use it again in any project. Right-click an image to remove it. Agents use `library add|list|remove`.
 - Importing an agent-device capture keeps the real taps, long presses and swipes it recorded, instead of guessing them from the pixels. Reset gets the same taps back.
 
 ## [1.5.1] - 2026-10-15

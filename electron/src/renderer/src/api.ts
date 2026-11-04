@@ -1,5 +1,6 @@
 import type { CursorSample, KeystrokeSample, Project, TranscriptWord, WaitRange } from '../../shared/types';
 import type { TapSuggestion } from '../../shared/taps';
+import type { LibraryImage } from '../../shared/imageLibrary';
 import type { IosDevice, IosFinished, IosPreview, IosWarning } from '../../shared/iosCapture';
 import type { ContextMenuItem, MenuAction, MenuPhase } from '../../shared/menu';
 import type { PresetId } from '../../shared/exportPresets';
@@ -94,6 +95,11 @@ declare global {
       wallpaperPath(): Promise<string | null>;
       /** A path Chromium can decode (HEIC becomes a cached JPEG); null if conversion failed. */
       prepareBackground(path: string): Promise<string | null>;
+      /** "Your images": uploaded backgrounds kept for reuse, newest first. */
+      listLibrary(): Promise<LibraryImage[]>;
+      /** Copy an image into the library (kept once per picture) and return the copy. */
+      addToLibrary(path: string): Promise<LibraryImage>;
+      removeFromLibrary(name: string): Promise<void>;
       transcribe(dir: string, videoFile: string): Promise<{ start: number; end: number; text: string; words: TranscriptWord[] }[]>;
       detectSilences(dir: string, videoFile: string, thresholdDb?: number, minDur?: number): Promise<{ start: number; end: number }[]>;
       /** Tap/swipe suggestions and still stretches (source seconds) for a phone recording. */

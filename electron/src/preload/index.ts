@@ -52,6 +52,9 @@ const api = {
   pickBackground: () => ipcRenderer.invoke('background:pick'),
   wallpaperPath: () => ipcRenderer.invoke('background:wallpaper'),
   prepareBackground: (path: string) => ipcRenderer.invoke('background:prepare', path),
+  listLibrary: () => ipcRenderer.invoke('library:list'),
+  addToLibrary: (path: string) => ipcRenderer.invoke('library:add', path),
+  removeFromLibrary: (name: string) => ipcRenderer.invoke('library:remove', name),
   transcribe: (dir: string, videoFile: string) =>
     ipcRenderer.invoke('captions:transcribe', { dir, videoFile }),
   detectSilences: (dir: string, videoFile: string, thresholdDb?: number, minDur?: number) =>
