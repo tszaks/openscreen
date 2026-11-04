@@ -11,6 +11,7 @@ import { parseFfmpegDuration, parseFfmpegProgressTime, parseFfmpegVideoSize, fin
 import { extractWavArgs, parseSilences, silenceDetectArgs } from '../shared/silence';
 import { analysisFrameSize, analyzeFrames, detectTaps, findDeadTime, splitRawGray, tapAnalysisFfmpegArgs, type TapSuggestion } from '../shared/taps';
 import { tokensToWords, type WhisperToken } from '../shared/transcript';
+import { gestureTelemetryPath, tapsFromGestureTelemetry } from '../shared/gestureTelemetry';
 import type { TranscriptWord, WaitRange } from '../shared/types';
 
 /** The bundled ffmpeg (ffmpeg-static; unpacked from the asar when packaged), else PATH. */
@@ -165,7 +166,27 @@ export function peaksOf(samples: Int16Array, buckets: number): number[] {
   return out;
 }
 
-/** The editor's tap analysis: tap/swipe suggestions and still stretches (source seconds). */
+/**
+ * The touches agent-device recorded next to `videoFile` (its
+ * `.gesture-telemetry.json`). Null when there is no such file or it can't be
+ * read; an empty list when the capture had no touches OpenScreen shows.
+ */
+export function readRecordedTaps(videoFile: string, duration: number): TapSuggestion[] | null {
+  const file = gestureTelemetryPath(videoFile);
+  if (!existsSync(file)) return null;
+  try {
+    return tapsFromGestureTelemetry(JSON.parse(readFileSync(file, 'utf8')), duration);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The editor's tap analysis: tap/swipe suggestions and still stretches (source
+ * seconds). Still stretches always come from the pixels. Taps come from the
+ * recorded touches when the bundle has them (an imported agent-device capture),
+ * so a re-run (Reset, Redetect, polish) gets the real touches back.
+ */
 export async function analyzeTapsInFile(file: string, bin = ffmpegPath()): Promise<{ taps: TapSuggestion[]; deadTime: WaitRange[] }> {
   const banner = await probeBanner(file, bin);
   const size = parseFfmpegVideoSize(banner);
@@ -184,7 +205,8 @@ export async function analyzeTapsInFile(file: string, bin = ffmpegPath()): Promi
   });
   const frames = splitRawGray(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength), w, h, fps);
   const analysis = analyzeFrames(frames);
-  const taps = detectTaps(analysis).map((t) => ({ ...t, id: randomUUID() }));
+  const recorded = readRecordedTaps(file, parseFfmpegDuration(banner) ?? Infinity);
+  const taps = recorded ?? detectTaps(analysis).map((t) => ({ ...t, id: randomUUID() }));
   const deadTime = findDeadTime(analysis).map((d) => ({ start: d.start, end: d.end, ...(d.edge ? { edge: d.edge } : {}) }));
   return { taps, deadTime };
 }

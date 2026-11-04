@@ -19,7 +19,7 @@ import {
 } from '../src/shared/importVideo';
 import { editorFeatures } from '../src/shared/justMe';
 import { resetProject } from '../src/shared/types';
-import { ffmpegPath, probeMedia } from '../src/node/media';
+import { analyzeTapsInFile, ffmpegPath, probeMedia } from '../src/node/media';
 import { ImportCancelled, importVideoFile } from '../src/node/importVideo';
 
 describe('bundle names', () => {
@@ -258,6 +258,25 @@ describe('importVideoFile', () => {
       expect(saved.taps[0]).toMatchObject({ kind: 'tap', confidence: 1 });
       expect(saved.taps[0].x).toBeCloseTo(364 / 402, 5);
       expect(saved.taps[0].y).toBeCloseTo(96 / 874, 5);
+      // Still stretches are still found (polish cuts them).
+      expect(Array.isArray(saved.waits)).toBe(true);
+      // The bundle keeps the file, so a re-run after Reset gets the real taps back.
+      expect(existsSync(join(r.dir, 'screen.gesture-telemetry.json'))).toBe(true);
+      const again = await analyzeTapsInFile(join(r.dir, 'screen.mov'), bin);
+      expect(again.taps.map((t) => t.t)).toEqual([0.2, 0.6]);
+      expect(again.taps.every((t) => t.confidence === 1)).toBe(true);
+    } finally {
+      rmSync(src('Phone.gesture-telemetry.json'));
+    }
+  });
+
+  it('keeps an empty recorded track empty, instead of guessing taps from pixels', async () => {
+    writeFileSync(src('Phone.gesture-telemetry.json'), JSON.stringify({ version: 1, events: [{ kind: 'pinch', tMs: 100 }] }));
+    try {
+      const r = await importVideoFile(src('Phone.mov'), { root, bin });
+      expect(r.recordedTaps).toBe(0);
+      expect(r.project.tapsAnalyzed).toBe(true);
+      expect(r.project.taps).toEqual([]);
     } finally {
       rmSync(src('Phone.gesture-telemetry.json'));
     }
